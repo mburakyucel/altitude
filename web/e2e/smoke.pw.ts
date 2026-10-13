@@ -137,7 +137,8 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       const { update } = await (await request.get("/api/overview")).json();
       await expect(main.getByRole("region", { name: "About", exact: true })).toHaveCount(update ? 1 : 0);
       await expect(main.getByRole("region", { name: "This project", exact: true })).toHaveCount(0);
-      await expect(main.getByRole("button", { name: "New tasks Auto · each project's own defaults", exact: true })).toBeEnabled();
+      await expect(main.getByRole("group", { name: "New tasks · All projects", exact: true }).getByRole("combobox", { name: "Model", exact: true })).toHaveValue("");
+      await expect(main.getByRole("group", { name: "New tasks · All projects", exact: true }).getByRole("combobox", { name: "Model", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: /^All projects 1 project · folder / })).toHaveAttribute("href", "/settings/projects");
       await expect(main.getByText(`${new URL(page.url()).origin} · HTTPS off`, { exact: true })).toBeVisible();
       await expect(main.getByRole("radio")).toHaveCount(0);
@@ -184,7 +185,8 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       for (const section of ["L3", "Auto defaults", "Routing", "Project"]) {
         await expect(main.getByRole("region", { name: section, exact: true })).toBeVisible();
       }
-      await expect(main.getByRole("button", { name: "Change…", exact: true })).toBeEnabled();
+      await expect(main.getByRole("region", { name: "L3", exact: true }).getByRole("combobox", { name: "Model", exact: true })).toHaveValue("");
+      await expect(main.getByRole("region", { name: "L3", exact: true }).getByRole("combobox", { name: "Model", exact: true })).toBeEnabled();
       await expect(main.getByRole("combobox", { name: "Tasks routing" })).toHaveValue("");
       await expect(main.getByRole("button", { name: "Remove…", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");

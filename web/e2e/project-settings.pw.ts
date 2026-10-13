@@ -51,7 +51,8 @@ test("Settings holds project models and effort; the menu reaches them and the dr
     action: () => menu.getByRole("menuitem", { name: "All settings…", exact: true }).click(),
     visible: [row, section("Models"), section("Devices and access")], hidden: [menu, l3First],
   });
-  await expect(row).toContainText("L3: Auto · routing Auto");
+  await expect(row).toContainText("routing Auto");
+  await expect(main.getByRole("group", { name: `L3 · ${project.name}`, exact: true }).getByRole("combobox", { name: "Model", exact: true })).toHaveValue("");
   await walk.state("03-project-settings", {
     action: () => row.click(),
     visible: [section("L3"), section("Auto defaults"), section("Routing"), section("Project"), l3First, l3Second, l2Group,
@@ -59,9 +60,10 @@ test("Settings holds project models and effort; the menu reaches them and the dr
     hidden: [row, main.getByRole("combobox", { name: "L3 routing" })],
   });
   // Tasks come before L3 in the Auto defaults table.
-  await expect(main.getByRole("group", { name: /^(Tasks|L3) · / }).first()).toHaveAccessibleName(`Tasks · ${l2First.label}`);
+  await expect(section("Auto defaults").getByRole("group", { name: /^(Tasks|L3) · / }).first()).toHaveAccessibleName(`Tasks · ${l2First.label}`);
   await expect(l3First.getByLabel("Effort")).toHaveValue("");
-  await expect(l3First.getByLabel("Model")).toHaveAttribute("placeholder", `Default: ${first!.model.default}`);
+  await expect(l3First.getByLabel("Model")).toHaveValue("");
+  await expect(l3First.getByLabel("Model")).toHaveDisplayValue(`Default (${first!.model.default})`);
   await expect(l2Group.getByLabel("Effort")).toHaveValue("");
 
   const choice = first!.effort.choices.at(-1)!;
@@ -69,12 +71,14 @@ test("Settings holds project models and effort; the menu reaches them and the dr
     action: () => l3First.getByLabel("Effort").selectOption(choice.value),
     visible: [saved("Effort")], hidden: [l3Second.getByRole("status", { name: "Saved.", exact: true }), l2Group.getByRole("status", { name: "Saved.", exact: true })],
   });
-  await l3First.getByLabel("Model").fill("fixture-model");
+  await l3First.getByLabel("Model", { exact: true }).selectOption("other");
+  await l3First.getByLabel("Model ID", { exact: true }).fill("fixture-model");
   await walk.state("05-model-saved-on-enter", {
-    action: () => l3First.getByLabel("Model").press("Enter"),
+    action: () => l3First.getByLabel("Model ID", { exact: true }).press("Enter"),
     visible: [saved("Model")], hidden: [l3First.getByRole("alert")],
   });
-  await expect(l3First.getByLabel("Model")).toHaveValue("fixture-model");
+  await expect(l3First.getByLabel("Model", { exact: true })).toHaveValue(JSON.stringify([first!.engine, "fixture-model"]));
+  await expect(l3First.getByLabel("Model ID", { exact: true })).toHaveCount(0);
   expect(values(await defaults(request, project.name))).toEqual({
     ...values(initial), [first!.effort.setting]: choice.value, [first!.model.setting]: "fixture-model",
   });
@@ -89,10 +93,9 @@ test("Settings holds project models and effort; the menu reaches them and the dr
   await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
   await walk.state("07-persisted-on-direct-visit", { visible: [l3First], hidden: [saved("Model"), saved("Effort")] });
   await expect(l3First.getByLabel("Effort")).toHaveValue(choice.value);
-  await expect(l3First.getByLabel("Model")).toHaveValue("fixture-model");
+  await expect(l3First.getByLabel("Model")).toHaveValue(JSON.stringify([first!.engine, "fixture-model"]));
   await expect(l3Second.getByLabel("Effort")).toHaveValue("");
-  await l3First.getByLabel("Model").fill("");
-  await l3First.getByLabel("Effort").focus();
+  await l3First.getByLabel("Model").selectOption("");
   await expect(l3First.getByLabel("Model")).toHaveValue("");
   await l3First.getByLabel("Effort").selectOption("");
   await walk.state("08-default-restored", { visible: [saved("Model"), saved("Effort")], hidden: [] });
@@ -108,26 +111,22 @@ test("the L3 choice saves from Settings, reads back and returns to Auto", async 
   const model = initial.models.find((row) => row.engine === initial.engines[0]!.value && row.model)!;
   const l3 = main.getByRole("region", { name: "L3", exact: true });
   const dialog = page.getByRole("dialog", { name: `Models · L3 · ${project.name} only`, exact: true });
-  const back = l3.getByRole("button", { name: "Back to Auto", exact: true });
+  const select = l3.getByRole("combobox", { name: "Model", exact: true });
   await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
-  await walk.state("01-auto", { visible: [l3.getByText("Auto", { exact: true }), l3.getByRole("button", { name: "Change…", exact: true })], hidden: [back, dialog] });
-
-  await walk.state("02-change-opens-models-on-l3", {
-    action: () => l3.getByRole("button", { name: "Change…", exact: true }).click(),
-    visible: [dialog, dialog.getByRole("tab", { name: /^L3/, selected: true })], hidden: [],
-  });
-  await dialog.getByRole("radio", { name: new RegExp(`^${model.label}`) }).check();
-  await walk.state("03-l3-choice-saved", {
-    action: () => dialog.getByRole("button", { name: `Use for L3 in ${project.name}`, exact: true }).click(),
-    visible: [l3.getByText(model.label, { exact: true }), back], hidden: [dialog],
+  await walk.state("01-auto", { visible: [select], hidden: [dialog] });
+  await expect(select).toHaveValue("");
+  await walk.state("02-l3-choice-saved-directly", {
+    action: () => select.selectOption(JSON.stringify([model.engine, model.model])),
+    visible: [select, l3.getByRole("status", { name: "Saved.", exact: true })], hidden: [dialog],
   });
   expect((await defaults(request, project.name)).l3_choice).toEqual({ engine: model.engine, model: model.model });
   await page.reload();
-  await expect(l3.getByText(model.label, { exact: true })).toBeVisible();
+  await expect(select).toHaveValue(JSON.stringify([model.engine, model.model]));
 
   await walk.state("04-back-to-auto", {
-    action: () => back.click(), visible: [l3.getByText("Auto", { exact: true })], hidden: [back],
+    action: () => select.selectOption(""), visible: [select, l3.getByRole("status", { name: "Saved.", exact: true })], hidden: [dialog],
   });
+  await expect(select).toHaveValue("");
   expect((await defaults(request, project.name)).l3_choice).toBeNull();
 });
 
