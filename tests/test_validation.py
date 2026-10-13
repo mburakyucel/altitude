@@ -23,7 +23,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest import TestCase, mock
+from unittest import TestCase, mock, skipIf
 
 from tests.support import AltitudeCase, make_repo
 from tests.test_grant import SHIM, wait_for
@@ -35,7 +35,7 @@ RUNNER_HOME = validation.home
 class TestValidationResults(TestCase):
     def test_receipts_and_failure_logs_precede_traces_across_the_whole_tree(self):
         files = {
-            "artifacts/a.trace": b"t" * 100,
+            "artifacts/a.trace": b"t" * 10,  # would fit what the context leaves if it came first
             "artifacts/b.zip": b"z" * 100,
             "artifacts/error-context.md": b"failed journey",
             "journeys.log": b"journey timed out",
@@ -94,6 +94,7 @@ class TestValidationResults(TestCase):
                 "linked.json: not a regular file or folder", "linked-folder: not a regular file or folder",
                 "pipe.log: not a regular file or folder"})
 
+    @skipIf(os.geteuid() == 0, "root reads any folder")
     def test_an_unreadable_folder_is_listed_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

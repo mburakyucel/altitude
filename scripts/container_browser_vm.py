@@ -242,6 +242,7 @@ def run(args):
         _, commit, tree = identity(candidate)
         if (commit, tree) != (args.commit, args.tree):
             raise RuntimeError('Captured candidate identity differs')
+        origin = repository()  # before the guest boots: the release build needs the GitHub origin
         record['seeded_existing_ubuntu_cache'] = seed(cache)
         record['image'] = vm.base_image(cache, budget=budget.host_bytes)
         original = vm.user_data
@@ -275,7 +276,7 @@ def run(args):
         bundle = work / 'source.bundle'
         subprocess.run(['git', '-C', str(candidate), 'bundle', 'create', str(bundle), 'HEAD'], check=True, timeout=120)
         machine.copy(str(bundle), GUEST + 'input/')
-        machine.ssh('git clone -q input/source.bundle input/source && git -C input/source remote set-url origin ' + shlex.quote(repository()))
+        machine.ssh('git clone -q input/source.bundle input/source && git -C input/source remote set-url origin ' + shlex.quote(origin))
         source = work / 'source.tar'
         record['source'] = archive(candidate, source)
         identity_record = {key: record[key] for key in ('run_id', 'commit', 'tree', 'controller_sha256')}
