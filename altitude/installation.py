@@ -22,7 +22,7 @@ import tarfile
 import tempfile
 import time
 import uuid
-from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
 
 
 VERSION = re.compile(r"v0\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?\Z")
@@ -483,15 +483,16 @@ def _probe(version: str, *, prefix: Path, timeout: float = 30, network: dict | N
     network = network or {"host": config.HOST, "port": config.PORT, "tls_dir": config.TLS_DIR}
     ca = Path(network["tls_dir"]) / "ca.crt"
     context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None)
+    service = build_opener(ProxyHandler({}), HTTPSHandler(context=context))
     host = network["host"] if network["host"] not in ("0.0.0.0", "::") else "localhost"
     authority = f"[{host}]" if ":" in host else host
     base = f"https://{authority}:{network['port']}"
     deadline = time.monotonic() + timeout
     while True:
         try:
-            with urlopen(base + "/api/health", context=context, timeout=2) as response:
+            with service.open(base + "/api/health", timeout=2) as response:
                 health = json.load(response)
-            with urlopen(base + "/", context=context, timeout=2) as response:
+            with service.open(base + "/", timeout=2) as response:
                 html = response.read().decode()
             native = platform.status()
             if (health.get("version") == version and health.get("commit") == expected["commit"]

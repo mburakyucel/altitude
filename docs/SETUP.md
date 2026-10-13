@@ -105,7 +105,7 @@ alt service configure --host <private-address> --apply
 Both IPv4 and IPv6 addresses use matching daemon listeners; IPv6 URLs enclose the address in brackets.
 The preview shows current/proposed URLs, the retained CA fingerprint, certificate action and
 `alt recover`. Apply retains the port, CA, keys, pairing and projects, updates the owned service
-and verifies its HTTPS API and UI if running. Failure restores the original configuration and
+and verifies its HTTPS API and UI directly, without ambient proxies, if running. Failure restores the original configuration and
 certificate. An interruption leaves a receipt for `alt recover`; a stopped service stays stopped.
 External certificates must already cover the new address. Wildcard, public and link-local binds
 are outside this operation. Preview and apply `--host 127.0.0.1` to return to local-only access.

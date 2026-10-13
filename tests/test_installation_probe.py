@@ -4,13 +4,13 @@ import os
 import shlex
 import ssl
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import unittest
 from unittest import mock
 
 from tests.support import AltitudeCase
 from tests import test_installation
-from altitude import config, installation, platform, tls
+from altitude import config, installation, platform, server, tls
 
 
 class ProbeCase(AltitudeCase):
@@ -24,7 +24,7 @@ class ProbeCase(AltitudeCase):
         release.write_text(json.dumps({"version": self.version, "commit": self.commit}))
         self.patch(config, "INSTALL_PREFIX", None)
         self.patch(config, "TLS_DIR", self.tmp / "private-tls")
-        self.patch(config, "HOST", "127.0.0.1")
+        self.patch(config, "HOST", getattr(self, "bind_host", "127.0.0.1"))
         tls.initialize()
         self.health = {"version": self.version, "commit": self.commit, "pid": os.getpid()}
         self.html = '<html><script src="/assets/app.js"></script></html>'
@@ -43,7 +43,7 @@ class ProbeCase(AltitudeCase):
             def log_message(self, *args):
                 pass
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd = server.ThreadingHTTPServer((config.HOST, 0), Handler)
         self.httpd.socket = tls.check().wrap_socket(self.httpd.socket, server_side=True)
         self.patch(config, "PORT", self.httpd.server_port)
         thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
@@ -98,6 +98,21 @@ class TestInstallationProbe(ProbeCase):
         create.assert_called_once_with(cafile=None)
         self.assertTrue(trusted.check_hostname)
         self.assertEqual(trusted.verify_mode, ssl.CERT_REQUIRED)
+
+
+class TestIPv6InstallationProbe(ProbeCase):
+    bind_host = "::1"
+
+    def test_service_identity_and_bundle_are_verified_directly_despite_ambient_proxy(self):
+        # The supported proxy environment exempts only IPv4 loopback, not the chosen IPv6 address.
+        with mock.patch.dict(os.environ, {"HTTPS_PROXY": "http://127.0.0.1:1",
+                                         "https_proxy": "http://127.0.0.1:1",
+                                         "NO_PROXY": "localhost,127.0.0.1",
+                                         "no_proxy": "localhost,127.0.0.1"}):
+            self.assertIsNone(self.probe())
+            self.health["pid"] += 1
+            with self.assertRaisesRegex(RuntimeError, "did not become healthy"):
+                self.probe()
 
 
 class TestInstallationBoundaries(unittest.TestCase):
