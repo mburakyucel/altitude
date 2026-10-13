@@ -79,6 +79,7 @@ def project_lock(project: str):
 
 def session_key(project: str, slug: str, attempt: int) -> str:
     """One name per task attempt, shared by the L2's environment and the files written under it."""
+    project = config.require_project_name(project)
     return f"{project}--{slug}-{attempt}"
 
 

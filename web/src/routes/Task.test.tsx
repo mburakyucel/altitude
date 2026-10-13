@@ -820,7 +820,8 @@ describe("Task on desktop", () => {
       expect(approve).toHaveAttribute("aria-disabled", "true");
       const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
       expect(sent).toHaveLength(1);
-      expect(JSON.parse(String(sent[0]![1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Approved: merge PR #204." });
+      expect(JSON.parse(String(sent[0]![1]?.body))).toEqual({ project: "altitude", slug: "fix-timer",
+        text: "Approved: merge PR #204.", review_pr: 204, review_hold_id: null });
     });
 
     it("turns Approve merge into a red Retry with Not sent when the send fails", async () => {

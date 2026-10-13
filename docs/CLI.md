@@ -1182,7 +1182,14 @@ unchanged members queues nothing new. Faults keep their existing separate incide
 
 ### Planned tasks
 
-Create decided short-term work with a written brief on stdin and one wait:
+Use a planned task for decided short-term work whose verified prerequisite prevents useful
+authorized progress. Under the [coordinator guidance](../personas/l3.md#authority-and-coordination),
+check supplied reference locations within existing read access before declaring evidence missing;
+an incomplete checkout search is insufficient. Pass evidence and unresolved investigation to the
+owner and create actionable work without `--wait` or `--after`. An inaccessible indispensable input
+still warrants a wait naming what was checked, who acts next and the release trigger.
+
+Create prerequisite-bound work with a written brief on stdin and one wait:
 
 ```sh
 alt task new --title "Enable the merge CI gate" --wait "PR #376 and the browser fix to land" -
@@ -1427,8 +1434,14 @@ unchanged re-parking retains the response. Independent unanswered members remain
 An open operator question about the held PR replaces its generated review card: one marked
 `"review": "changes"`, or an unmarked one linking or naming the PR, including a freeform question.
 This holds while a submitted response awaits owner interpretation.
-After resolution the fallback returns if merge approval is still needed. A held PR closed without
-merging asks for no review: `alt task block` by the owner reads the PR's state from the checkout origin's repository and records the closure
+After resolution the fallback returns if merge approval is still needed. Automatic approval waits
+until every active review is completed and assessed with no open findings, and no L3 question or
+L3 wait remains. Explicit operator questions
+keep their saved response surfaces independently. The generated approval button checks the current
+PR, hold and readiness atomically before sending; a stale card sends nothing. Approval remains a
+message, and landing still checks current review evidence, CI and hold authority.
+A held PR closed without merging asks for no review: `alt task block` by the owner reads the PR's
+state from the checkout origin's repository and records the closure
 as a `pr-closed` task event, or a later reopening as `pr-reopened`; when that read fails, the block
 still lands, the review stays shown and stderr says the state was unavailable. This display rule neither
 classifies the answer as approval nor changes the quick-option requirement for a changes review.

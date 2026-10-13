@@ -759,6 +759,7 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             question_id: str | None = None, revision: int | None = None,
             group_id: str | None = None, group_revision: int | None = None,
             stop_id: str | None = None,
+            review_number: int | None = None, review_hold_id: str | None = None,
             uploads: list[dict] | None = None, image_ids: list[str] | None = None,
             request_id: str | None = None, request_digest: str | None = None,
             summary: str | None = None, capture_run: int | None = None, to_l3: bool = False,
@@ -779,6 +780,12 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         raise TransitionError(f"task message summary exceeds {SUMMARY_LIMIT} characters")
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if review_number is not None:
+            # #902: a generated approval card can become stale while the operator reads it.
+            if (role != OPERATOR_MESSAGE_ROLE or type(review_number) is not int or review_number <= 0
+                    or review_pr(project, task) != review_number
+                    or task.get("hold_merge_id") != review_hold_id):
+                raise TransitionError("This PR is not ready for automatic merge approval. Refresh the task.")
         if request_id:
             previous = next((row for row in task.get("image_messages", []) if row["id"] == request_id), None)
             if previous:
@@ -2751,13 +2758,21 @@ def review_pr(project: str, task: dict) -> int | None:
     An open question about the PR supplies its single response surface, with quick choices or a freeform
     field. Its submitted response stays there until the owner resolves the question.
     The question does not supply merge authority; recorded approval keeps its separate rules (#451).
-    A PR observed closed without merging asks for no review (#575)."""
+    A PR observed closed without merging asks for no review (#575). Active review work and L3
+    prerequisites keep the automatic approval away without suppressing authored operator questions (#902)."""
+    from . import reviews
     number = _held_pr(task, S.read_events(project, task["slug"]))
     if (number and (task.get("delivery") or task.get("adopted_pr"))
             and task.get("state") in ("blocked", "reported") and not any(
                 task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))
+            and task.get("waiting_on") != "l3"
+            and not any(q["status"] == "open" and q["audience"] == "l3" for q in task.get("questions", []))
             and not any(_references_held_pr(task, q) for q in task.get("questions", []) if q["status"] == "open")
             and not approved_pr(project, task)):
+        try:
+            reviews.require_resolved(task)
+        except TransitionError:
+            return None
         return number
     return None
 
@@ -2827,6 +2842,7 @@ def review_row(project: str, task: dict) -> dict | None:
     delivery = task.get("delivery") or {}
     at = delivery.get("at") or task.get("updated")
     return {"project": project, "slug": task["slug"], "title": task.get("title"), "kind": "review", "pr": number,
+            "review_hold_id": task.get("hold_merge_id"),
             "question": f"Review PR #{number} before merge", "detail": task["hold_merge"],
             "review": reviews.status(project, task, "changes"), "recommendation": None, "asked": at, "since": at}
 

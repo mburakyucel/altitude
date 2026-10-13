@@ -1568,7 +1568,12 @@ tool call as one compact row (`$ git status`, `Read altitude/tasks.py`, a Codex 
 its output folded under it; task boundaries (queued → running, stopped, resume held) as thin separators.
 Every prompt, reply, tool row and boundary shows its recorded time ("14:05", dated when not today, exact on
 hover) or **time unavailable**; a call without a result while the worker runs shows how long it has waited
-("running · 4 min"). Every row carries its role (user, assistant, tool, system), and a tool result carries the
+("running · 4 min"). A folded command keeps its first recorded event time through completion,
+history and reconnect. Translated item notifications receive their local UTC receipt time in the
+adapter; native session messages retain
+their own timestamps. This time is not a duration or an exact OS process-start time. Untimed
+records remain unavailable, including older saved events; launch, poll and file times do not fill them.
+Every row carries its role (user, assistant, tool, system), and a tool result carries the
 id of the call it answers, so the page nests output under the command that produced it. Codex does not echo
 its prompt into the thread, so the projection shows the task's own record of it: the brief for the first
 turn, the delivered task messages for a resumed one. Hidden model reasoning (Claude thinking blocks, Codex

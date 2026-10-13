@@ -311,6 +311,7 @@ export const DecisionSchema = z
     /** The identity every alert uses: the question group since the operator's latest reply (altitude/digest.py). */
     alert_key: z.string().nullish(),
     pr: z.number().nullish(),
+    review_hold_id: z.string().nullish(),
     /** A proposal or merge question's review (SPEC.md §3.8.3): its kind's latest review, or state "none". */
     review: z.object({
       subject: z.enum(["proposal", "changes"]), id: z.string().nullable(),
@@ -1611,6 +1612,8 @@ export interface L2MessageInput {
   slug: string;
   text: string;
   stop_id?: string;
+  review_pr?: number;
+  review_hold_id?: string | null;
   question_id?: string;
   revision?: number;
   group_id?: string;

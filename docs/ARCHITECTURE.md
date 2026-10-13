@@ -91,6 +91,12 @@ or exact missing operator action; legitimate waits and running workers need no r
 Its task briefs convey the actual problem, intended outcome, acceptance and material project context;
 brainstorming stays distinct from requirements. The [L2 persona](../personas/l2.md) owns investigation,
 approach, relevant system implications, source assessment, questions and verified delivery within that outcome.
+L3 checks supplied reference locations within existing read access before declaring evidence missing,
+including a named sibling beside the checkout when implied by the request. It hands relevant private
+evidence and unresolved investigation to L2 and creates actionable work without a planned wait.
+A wait needs a verified indispensable prerequisite that prevents useful authorized progress, with
+the checked evidence, next actor and release trigger recorded. This guidance grants no broader
+filesystem access or crawling and preserves genuine operator decisions and merge holds.
 These responsibilities use existing task operations, with no broadcast, runtime classifier or
 memory store. Project-local authority, proposal checkpoints, merge holds and verified recovery
 remain governed by the existing boundaries.
@@ -532,8 +538,13 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | L3 journal reading | `journalctl` shim | not available; L3 reads service status through the broker | Isolation and landing |
 | Incident system facts | `os-release` name, kernel release, DMI vendor and product family (product name when the family is a placeholder) | macOS version, Darwin release, `hw.model` identifier | [Incident issues](CLI.md#incident-issues) |
 
-Case-insensitive project names are refused on both hosts, because macOS disks are case-insensitive by
-default and runtime folders are named after projects.
+Project identifiers are single folder names on both hosts. The shared path resolver validates them
+before project storage or locks are accessed; registration validates before resolving a repository
+folder, and monitor session keys use the same check. Empty names, `.` and `..`, path separators and
+NUL are refused. Flat names retain their case, spaces, Unicode, dots and underscores. Validation does
+not require registration, so initialization and detached project archives use the same resolver.
+Names differing only by case are refused at registration on both hosts, because macOS disks are
+case-insensitive by default and runtime folders are named after projects.
 
 ### Project setup
 
@@ -3161,8 +3172,11 @@ without one, with an image count when it carries images. Its Show opens the comp
 images in place; the task record, the L2's inbox and authority checks keep every word, and the summary
 is stored beside the text as display metadata only. Then come the open question group at the end of the conversation (closed groups
 at their recorded message anchor), a held review card when one waits, no open operator question is about its PR (marked as its merge question, or
-unmarked and linking or naming it) and the PR is not already
-approved since its hold, and the composer
+unmarked and linking or naming it), all active reviews are completed and assessed with no open findings,
+no L3 question or L3 wait remains, and the PR is not already
+approved since its hold. The generated approval submits its PR and hold identity through the message
+endpoint, which rechecks this readiness under the task lock before writing. Explicit operator
+questions retain their existing response surfaces. The composer appears
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
 concise explanation with its complete reason in details. Task rows and pages share a read-only
@@ -3198,6 +3212,11 @@ results fold on the server before paging; stable row identities are distinct fro
 order, so late events and updates to old commands merge into their correct positions. Raw events
 shows one preview per source record. Full record opens an explicit 4,000-character chunk, with
 Show more for subsequent chunks; the complete redacted record remains accessible.
+Translated item notifications record their local UTC receipt time in the engine adapter; native
+session records retain their source timestamps. A folded command keeps its first event's time
+through output updates, history and reconnect. This is recorded event time, not elapsed duration
+or an exact OS process-start time. Records without timing evidence remain unavailable; launch,
+poll and file modification times never fill a command's missing timestamp.
 
 Transcript polling sends a scoped epoch/version cursor and the oldest loaded order boundary.
 The server retains only row signatures, order and change versions for active/recent viewer scopes.

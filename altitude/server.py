@@ -91,7 +91,7 @@ def design_viewer_url(project: str) -> str | None:
     from a paired browser redirects to that browser's read pass (`design_entry`)."""
     try:
         root = config.project_path(project)
-    except (KeyError, OSError):
+    except (KeyError, ValueError, OSError):
         return None
     if not (root / DESIGN_ENTRY).is_file():
         return None
@@ -2643,9 +2643,9 @@ class Handler(BaseHTTPRequestHandler):
                 except (ValueError, KeyError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if api == "project" and len(parts) > 2 and parts[2] == "add":
-                name = o["name"]
-                restoring = name not in config.load_projects() and bool(l3.chat_history(name, 1))
                 try:
+                    name = config.require_project_name(o["name"])
+                    restoring = name not in config.load_projects() and bool(l3.chat_history(name, 1))
                     with config.add_project(name, path=o.get("path"), approval=o.get("approval") or "default") as entry:
                         pass
                 except ValueError as exc:
@@ -2749,7 +2749,8 @@ class Handler(BaseHTTPRequestHandler):
                     message = T.message(project, slug, T.OPERATOR_MESSAGE_ROLE, text,
                                         question_id=o.get("question_id"), revision=o.get("revision"),
                                         group_id=o.get("group_id"), group_revision=o.get("group_revision"),
-                                        stop_id=o.get("stop_id"), **image_args)
+                                        stop_id=o.get("stop_id"), review_number=o.get("review_pr"),
+                                        review_hold_id=o.get("review_hold_id"), **image_args)
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 try:
