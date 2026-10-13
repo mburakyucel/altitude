@@ -83,6 +83,24 @@ class TestOperatorName(OnboardingCase):
 
 
 class TestIncidentReports(OnboardingCase):
+    def test_repository_grammar_preserves_ascii_punctuation_and_refuses_ambiguous_values(self):
+        for value in (None, False, "Owner_2/project.name-3", "./-", "fixture/" + "a" * 10000):
+            with self.subTest(value=repr(value)[:60]):
+                config.validate_incident_repository(value)
+        for value in (True, 0, [], "", "owner", "/name", "owner/", "owner/name/extra",
+                      "owner/name\n", "owner/náme", "owner\\name", " owner/name", "owner/name?query"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "GitHub owner/name"):
+                config.validate_incident_repository(value)
+
+    def test_repository_validation_does_not_delegate_to_a_string_subclass(self):
+        class RedirectedPartition(str):
+            def partition(self, separator):
+                raise AssertionError("caller-controlled partition must not execute")
+
+        config.validate_incident_repository(RedirectedPartition("fixture/project"))
+        with self.assertRaisesRegex(ValueError, "GitHub owner/name"):
+            config.validate_incident_repository(RedirectedPartition("malformed"))
+
     def test_publication_is_off_until_turned_on_and_the_form_offers_altitude(self):
         view = server.machine_view()
         self.assertEqual((view["incident_repository"], view["altitude_repository"]), (None, "mburakyucel/altitude"))
