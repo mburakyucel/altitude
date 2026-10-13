@@ -12,14 +12,14 @@ def main():
     # Initial ready setup uses a signed-in external account fixture; prerequisites still run their real checks.
     installation._gh_signed_in = lambda: True
     # Guard composition generations belong to a disposable installation, never this checkout.
-    installation = SUITE / "installation"
-    installation.mkdir()
-    shutil.copytree(config.HOOKS, installation / "hooks")
-    git("init", "-q", "-b", "main", cwd=installation)
-    git("add", "hooks", cwd=installation)
-    git("commit", "-qm", "Fixture installation", cwd=installation)
-    git("commit", "--allow-empty", "-qm", "Fixture upgrade", cwd=installation)
-    config.REPO = installation
+    application = SUITE / "installation"
+    application.mkdir()
+    shutil.copytree(config.HOOKS, application / "hooks")
+    git("init", "-q", "-b", "main", cwd=application)
+    git("add", "hooks", cwd=application)
+    git("commit", "-qm", "Fixture installation", cwd=application)
+    git("commit", "--allow-empty", "-qm", "Fixture upgrade", cwd=application)
+    config.REPO = application
     gate = threading.Event()
     calls = []
     fail_intro = False

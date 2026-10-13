@@ -111,5 +111,7 @@ test("optional voice setup remains in Settings with its current privacy, downloa
   await walk.state("voice-02-setting-up", { visible: [page.getByText(/Setting up/, { exact: false }).first()], hidden: [setUp] });
   host.state = { state: "unavailable", reason: "Fictional capability unavailable" };
   await page.reload();
-  await walk.state("voice-03-unavailable", { visible: [page.getByText(/Fictional capability unavailable/)], hidden: [setUp] });
+  await expect(setUp).toHaveAttribute("aria-disabled", "true");
+  await walk.state("voice-03-unavailable", { action: () => setUp.click(), visible: [setUp, page.getByText(/Fictional capability unavailable/).first()], hidden: [] });
+  expect(host.requests).toEqual(["setup"]);
 });
