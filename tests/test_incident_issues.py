@@ -85,8 +85,9 @@ class TestPublication(IncidentIssueCase):
                                    "for [project]\n[REDACTED]\nat [path]")
             with self.assertRaisesRegex(ValueError, "operator's name"):
                 incidents.check_public("Ada Fixture")
-        # Key runs are matched from their start, flag hyphens included; other redactions keep their reach.
-        for flag in ("--password=hunter22", "-token=abcd1234", "--api-key=abcd1234"):
+        # Key runs match from their start, flag hyphens included, and a Bearer or Basic scheme is skipped to the value.
+        for flag in ("--password=hunter22", "-token=abcd1234", "--api-key=abcd1234", "X-Auth-Token: Bearer abcd1234",
+                     'access_token="Basic abcd1234"'):
             with self.subTest(flag=flag):
                 self.assertEqual(incidents.sanitize(f"ran tool {flag} then"), "ran tool [REDACTED] then")
                 with self.assertRaisesRegex(ValueError, "credential"):
