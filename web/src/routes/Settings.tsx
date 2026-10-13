@@ -33,16 +33,20 @@ function voiceSummary(settings: VoiceSettings) {
   return settings.host.state === "ready" ? labels.host
     : `${labels.host} · ${settings.host.state === "outdated" ? "update required" : "not set up"}`;
 }
-type SaveState = { status: "idle" } | { status: "saving" | "saved" } | { status: "failed"; error: Error };
 
 const megabytes = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
 
-/** Availability and replacement progress are independent: supported voice still serves during updates. */
-function HostVoicePanel({ host, onChange }: { host: HostVoice; onChange: (value: VoiceSettings) => void }) {
+type HostAction = "setup" | "cancel" | "remove";
+
+/** Availability and replacement progress are independent: supported voice still serves during updates.
+ *  The actions share the voice page's lock: `locked` while a choice saves, `busy` while one of them runs. */
+function HostVoicePanel({ host, use, locked, busy, setBusy, onChange }: {
+  host: HostVoice; use: ReactNode; locked: boolean; busy: HostAction | null;
+  setBusy: (action: HostAction | null) => void; onChange: (value: VoiceSettings) => void;
+}) {
   const client = useQueryClient();
-  const [busy, setBusy] = useState<"setup" | "cancel" | "remove" | null>(null);
   const [error, setError] = useState("");
-  const act = async (action: "setup" | "cancel" | "remove") => {
+  const act = async (action: HostAction) => {
     setBusy(action);
     setError("");
     try {
@@ -59,35 +63,40 @@ function HostVoicePanel({ host, onChange }: { host: HostVoice; onChange: (value:
   const update = host.update;
   const installed = host.state === "ready" || host.state === "outdated";
   const updating = update && update.state !== "failed" && update.state !== "cancelled";
-  const button = (action: "setup" | "cancel" | "remove", label: string, working: string, style = "") =>
-    <button type="button" className={`btn ${style}`} disabled={busy !== null} onClick={() => void act(action)}>
+  const button = (action: HostAction, label: string, working: string, style = "") =>
+    <button type="button" className={`btn ${style}`} disabled={busy !== null || locked} onClick={() => void act(action)}>
       <BusyLabel busy={busy === action} label={label} working={working} />
     </button>;
+  // A server reason ends with its own retry advice; the Retry beside it says that already.
+  const reason = (text?: string) => (text ?? "").replace(/\s*Try again\.?$/, "");
+  const required = host.state === "outdated";
   return <div className="voice-host">
     {host.state === "setting-up" ? <>
       <progress max={host.download_bytes} value={host.done_bytes ?? 0} aria-label="Voice setup" />
       <p role="status" className="text-meta text-muted"><span className="sr-only">Setting up… </span>{megabytes(host.done_bytes ?? 0)} of {size}</p>
       {button("cancel", "Cancel setup", "Cancelling setup")}
     </> : installed ? <>
-      {host.state === "outdated" ? <p className="text-meta text-muted">Voice needs an update.</p> : null}
-      <div role={update?.state === "failed" && host.state !== "ready" ? "alert" : "status"}
-        className={`text-meta ${update?.state === "failed" && host.state !== "ready" ? "text-danger" : "text-muted"}`}>
-        {update?.state === "downloading" ? <>
-          <progress max={update.download_bytes} value={update.done_bytes ?? 0} aria-label="Updating voice" />
-          <p>Updating voice · {megabytes(update.done_bytes ?? 0)} of {megabytes(update.download_bytes ?? 0)}</p>
-        </> : update?.state === "preparing" || update?.state === "checking" ?
-          <p className="voice-update-phase"><StatusMark label={update.state === "preparing" ? "Preparing update…" : "Checking update…"} announce={false} />
-            {update.state === "preparing" ? "Preparing update…" : "Checking update…"}</p>
-          : update?.state === "waiting" ? <p>The update will finish after dictation.</p>
-            : update?.state === "failed" ? <p>Update did not finish. {update.reason}</p>
-              : update?.state === "cancelled" ? <p>Update cancelled.</p>
-                : host.state === "ready" ? <p>While you dictate, the speech process uses about 2 GB of memory.</p> : null}
-      </div>
-      <div className="voice-host-actions">
-        {updating ? button("cancel", "Cancel update", "Cancelling update")
-          : update || host.state === "outdated" ? button("setup", update ? "Retry update" : "Update voice", "Starting update", update?.state === "cancelled" ? "" : "btn-primary") : null}
-        {button("remove", "Remove voice", "Removing voice", "btn-outline-danger")}
-      </div>
+      {updating && required ? <p className="text-meta text-muted">Voice needs an update.</p> : null}
+      {updating ? <div role="status" className="voice-update">
+        {update.state === "downloading" ? <progress max={update.download_bytes} value={update.done_bytes ?? 0} aria-label="Updating voice" /> : null}
+        <p className="text-meta text-muted voice-update-line">
+          {update.state === "downloading" ? null : <StatusMark label="Updating voice" announce={false} />}
+          <span>{update.state === "downloading" ? `Updating · ${megabytes(update.done_bytes ?? 0)} of ${megabytes(update.download_bytes ?? 0)}`
+            : update.state === "waiting" ? "Updating · finishes after dictation" : "Updating…"}</span>
+          <button type="button" className="link" disabled={busy !== null || locked} onClick={() => void act("cancel")}>
+            <BusyLabel busy={busy === "cancel"} label="Cancel update" working="Cancelling update" /></button>
+        </p>
+      </div> : required ? <p role={update?.state === "failed" ? "alert" : undefined} className={`text-meta ${update?.state === "failed" ? "text-danger" : "text-muted"}`}>
+        Voice needs an update.{update?.state === "failed" ? ` ${reason(update.reason)}` : ""}
+      </p> : update?.state === "failed" ? <p role="status" className="text-meta text-muted">
+        Update did not finish. {reason(update.reason)}
+      </p> : !update ? <p className="text-meta text-muted">While you dictate, the speech process uses about 2 GB of memory.</p> : null}
+      {updating ? use : <div className="voice-host-actions">
+        {use}
+        {required || update?.state === "cancelled" ? button("setup", "Update voice", "Starting update", required ? "btn-primary" : "")
+          : update?.state === "failed" ? button("setup", "Retry update", "Starting update") : null}
+        {button("remove", `Remove voice (${size})`, "Removing voice")}
+      </div>}
     </> : <>
       <p className={`text-meta ${host.state === "failed" ? "text-danger" : "text-muted"}`} role={host.state === "failed" ? "alert" : undefined}>
         {host.state === "failed" ? `Setup did not finish. ${host.reason ?? ""}`
@@ -100,12 +109,24 @@ function HostVoicePanel({ host, onChange }: { host: HostVoice; onChange: (value:
   </div>;
 }
 
+type VoiceSave = { action: string; backend: VoiceBackend; status: "saving" | "saved" } | { action: string; backend: VoiceBackend; status: "failed"; error: Error };
+const useLabels: Record<VoiceBackend, string> = { host: "Use this computer", browser: "Use browser recognition", service: "Use your speech service" };
+
+/*
+ * Each transcription is a card. The one in use carries an In use check; the others offer one Use button,
+ * which saves at once. Only the speech service has fields, so only its edits wait for a Save, and leaving it
+ * asks first because that deletes its address and key. Progress, Saved and errors appear in the card acted on.
+ */
 function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void }) {
   const client = useQueryClient();
+  // The setting this form edits against: a ref for handlers, state so the page shows it as soon as it changes.
   const committed = useRef(saved);
+  const [baseline, setBaseline] = useState(saved);
+  const commit = useCallback((value: VoiceSettings) => { committed.current = value; setBaseline(value); }, []);
   const [host, setHost] = useState(saved.host);
   const dirty = useRef(false);
-  const [choice, setChoice] = useState(saved.backend);
+  const [opened, setOpened] = useState(false);
+  const [confirming, setConfirming] = useState<VoiceBackend | null>(null);
   const [url, setUrl] = useState(saved.service?.url ?? "");
   const [model, setModel] = useState(saved.service?.model ?? "");
   const [key, setKey] = useState("");
@@ -113,8 +134,8 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const [invalid, setInvalid] = useState(false);
   const reset = useCallback((value: VoiceSettings) => {
     dirty.current = false;
-    setChoice(value.backend); setUrl(value.service?.url ?? ""); setModel(value.service?.model ?? "");
-    setKey(""); setRemoveKey(false); setInvalid(false);
+    setUrl(value.service?.url ?? ""); setModel(value.service?.model ?? "");
+    setKey(""); setRemoveKey(false); setInvalid(false); setOpened(false); setConfirming(null);
   }, []);
   const synchronize = useCallback((value: VoiceSettings) => {
     const unchanged = value.backend === committed.current.backend && value.selection === committed.current.selection;
@@ -122,87 +143,121 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
     // Preserve the edit's expected selection. A concurrent backend change must conflict at Save,
     // rather than silently replacing the draft or granting it the new destination's saved key.
     if (unchanged || !dirty.current) {
-      committed.current = value;
+      commit(value);
       if (!unchanged) reset(value);
     }
-  }, [reset]);
+  }, [commit, reset]);
   useEffect(() => synchronize(saved), [saved, synchronize]);
-  const [save, setSave] = useState<SaveState>({ status: "idle" });
-  const baseline = dirty.current ? committed.current : saved;
-  const submit = async (update: VoiceUpdate) => {
-    setSave({ status: "saving" });
+  const [save, setSave] = useState<VoiceSave | null>(null);
+  const [hostBusy, setHostBusy] = useState<HostAction | null>(null);
+  const active = baseline.backend;
+  const saving = save?.status === "saving";
+  const busy = saving || hostBusy !== null;
+  // A control that disappears after a press hands focus to its successor (a CSS selector inside the page).
+  const section = useRef<HTMLElement>(null);
+  const [focus, setFocus] = useState<string | null>(null);
+  useEffect(() => {
+    if (!focus) return;
+    section.current?.querySelector<HTMLElement>(focus)?.focus();
+    setFocus(null);
+  }, [focus]);
+  const submit = async (update: VoiceUpdate, action: string) => {
+    setSave({ action, backend: update.backend, status: "saving" });
     try {
       await client.cancelQueries({ queryKey });
       const value = await saveVoiceSettings(update);
       // Use the cache's structurally shared value so its later notification cannot reset a new edit.
-      committed.current = client.setQueryData<VoiceSettings>(queryKey, value)!;
+      commit(client.setQueryData<VoiceSettings>(queryKey, value)!);
       updateVoiceSettings(value);
       setHost(value.host);
       reset(value);
-      setSave({ status: "saved" });
+      setSave({ action, backend: update.backend, status: "saved" });
+      setFocus(`#voice-${update.backend}`);
     } catch (error) {
-      setSave({ status: "failed", error: error as Error });
+      setSave({ action, backend: update.backend, status: "failed", error: error as Error });
     }
   };
-  const choose = (backend: VoiceBackend) => {
-    dirty.current = true;
-    setChoice(backend);
-    setSave({ status: "idle" });
+  const use = (backend: VoiceBackend) => {
+    if (active === "service" && confirming !== backend) { setConfirming(backend); setSave(null); setFocus(`[data-action="use-${backend}"]`); return; }
+    void submit({ backend, selection: committed.current.selection }, `use-${backend}`);
   };
-  const saveDraft = () => {
-    if (choice === "service") {
-      try {
-        const parsed = new URL(url.trim());
-        if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
-      } catch { setInvalid(true); return; }
-    }
+  const saveService = () => {
+    try {
+      const parsed = new URL(url.trim());
+      if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
+    } catch { setInvalid(true); return; }
     setInvalid(false);
-    void submit({ backend: choice, selection: committed.current.selection,
-      ...(choice === "service" ? { url: url.trim(), model: model.trim(), key, remove_key: removeKey } : {}) });
+    void submit({ backend: "service", selection: committed.current.selection, url: url.trim(), model: model.trim(), key, remove_key: removeKey }, "service");
   };
-  const stale = save.status === "failed" && save.error instanceof ApiError && save.error.status === 409;
+  const edit = () => { dirty.current = true; setSave(null); };
+  const showFields = active === "service" || opened;
+  const edited = active !== "service" || url.trim() !== (baseline.service?.url ?? "")
+    || model.trim() !== (baseline.service?.model ?? "") || Boolean(key) || removeKey;
   const hostChanged = (value: VoiceSettings) => {
     synchronize(client.setQueryData<VoiceSettings>(queryKey, value)!);
     updateVoiceSettings(value);
   };
+  // Buttons stay focusable while a save runs: aria-disabled, and presses ignored.
+  const button = (action: string, label: string, onPress: () => void, { primary = false, describedBy }: { primary?: boolean; describedBy?: string } = {}) =>
+    <button type={action === "service" ? "submit" : "button"} className={`btn ${primary ? "btn-primary" : ""}`} data-action={action}
+      aria-disabled={busy || undefined} aria-describedby={describedBy}
+      onClick={(event) => { if (action === "service") return; event.preventDefault(); if (!busy) onPress(); }}>
+      <BusyLabel busy={saving && save?.action === action} label={label} working="Saving…" />
+    </button>;
+  const outcome = (backend: VoiceBackend) => {
+    if (save?.backend !== backend) return null;
+    if (save.status !== "failed") return null;
+    const stale = save.error instanceof ApiError && save.error.status === 409;
+    const retry = save.action === "service" ? saveService : () => use(backend);
+    return <p role="alert" className="text-meta text-danger">
+      {stale ? "Voice settings changed." : save.error instanceof ApiError && save.error.message && !/^HTTP \d/.test(save.error.message) ? save.error.message : "Could not save voice settings."}{" "}
+      <button type="button" className="link" onClick={() => stale ? reload() : retry()}>{stale ? "Reload settings" : "Retry"}</button>
+    </p>;
+  };
   return <>
-    <form className="settings-card" noValidate onSubmit={(event) => { event.preventDefault(); saveDraft(); }}>
-      <fieldset disabled={save.status === "saving"}>
-        <legend>Transcription</legend>
-        {saved.error ? <p role="alert" className="text-meta text-danger">{INVALID_SERVICE}</p> : null}
-        {(["host", "browser", "service"] as const).map((backend) => <div className="voice-option" key={backend}>
-          <label className="voice-choice">
-            <input type="radio" name="voice-backend" value={backend} checked={choice === backend} onChange={() => choose(backend)}
-              disabled={backend === "host" && saved.host.state === "unavailable" && choice !== "host"} />
-            <span>{labels[backend]}</span>
-          </label>
-          <p className="text-muted text-meta">{explanations[backend]}</p>
-          {backend === "host" && (choice === "host" || host.state !== "absent") ? <HostVoicePanel host={host} onChange={hostChanged} /> : null}
-          {backend === "service" && choice === "service" ? <div className="choice-fields service-fields">
-            <label htmlFor="voice-url">Transcription URL</label>
-            <input id="voice-url" type="url" autoComplete="off" value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" aria-invalid={invalid || undefined} aria-describedby={invalid ? "voice-url-help voice-url-error" : "voice-url-help"} onChange={(event) => { dirty.current = true; setUrl(event.target.value); setKey(""); setRemoveKey(false); setSave({ status: "idle" }); }} />
-            <p id="voice-url-help" className="text-meta text-muted">Use a compatible audio transcription endpoint reachable from the computer running Altitude.</p>
-            {invalid ? <p id="voice-url-error" role="alert" className="text-meta text-danger">Enter a complete http:// or https:// transcription URL.</p> : null}
-            {url.trim().toLowerCase().startsWith("http:") ? <p className="text-meta text-danger">This connection is unencrypted. Audio and any key travel over HTTP.</p> : null}
-            <details><summary>Key or model (optional)</summary>
-              <label htmlFor="voice-key">API key</label>
-              <input id="voice-key" type="password" autoComplete="new-password" value={key} aria-describedby="voice-key-help" placeholder={baseline.service?.key_present && url.trim() === baseline.service.url ? "Key saved — leave blank to keep" : undefined} onChange={(event) => { dirty.current = true; setKey(event.target.value); setRemoveKey(false); }} />
-              {baseline.service?.key_present && url.trim() === baseline.service.url ? <label className="service-remove-key"><input type="checkbox" checked={removeKey} onChange={(event) => { dirty.current = true; setRemoveKey(event.target.checked); setKey(""); }} /> Remove saved key</label> : null}
-              <p id="voice-key-help" className="text-meta text-muted">{baseline.service && url.trim() !== baseline.service.url ? "Enter a key for the new address, if needed." : ""}</p>
-              <label htmlFor="voice-model">Model</label><input id="voice-model" value={model} autoComplete="off" onChange={(event) => { dirty.current = true; setModel(event.target.value); }} />
-            </details>
-            <a className="service-help" href="https://github.com/mburakyucel/altitude/blob/main/docs/SETUP.md#your-speech-service" target="_blank" rel="noreferrer">How to run one</a>
-            <p className="text-meta text-muted">If transcription fails, record again. Recordings are not kept.</p>
+    <section ref={section} className="settings-card" aria-labelledby="voice-transcription">
+      <h2 id="voice-transcription">Transcription</h2>
+      <p className="sr-only" role="status">{save?.status === "saved" ? "Saved." : ""}</p>
+      {(["host", "browser", "service"] as const).map((backend) => <div className="voice-option" key={backend}>
+        <div className="voice-option-head">
+          <h3 id={`voice-${backend}`} tabIndex={-1}>{labels[backend]}</h3>
+          {active === backend ? <span className="voice-in-use"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4.5 10.5 8 14l7.5-8" /></svg>In use</span> : null}
+        </div>
+        <p className="text-muted text-meta">{explanations[backend]}</p>
+        {backend === "service" && saved.error ? <p role="alert" className="text-meta text-danger">{INVALID_SERVICE}</p> : null}
+        {active !== backend && confirming === backend ? <div className="voice-confirm">
+          <p id={`voice-confirm-${backend}`} className="text-meta">Switching removes your speech service’s address and key.</p>
+          <div className="voice-actions">
+            {button(`use-${backend}`, "Remove service and switch", () => use(backend), { primary: true, describedBy: `voice-confirm-${backend}` })}
+            {button("keep-service", "Keep service", () => { setConfirming(null); setSave(null); setFocus(`[data-action="use-${backend}"]`); })}
+          </div>
+        </div> : active !== backend && backend === "browser" ? <div className="voice-actions">
+          {button(`use-${backend}`, useLabels[backend], () => use(backend))}
+        </div> : backend === "service" && !showFields ? <div className="voice-actions">
+          {button("open-service", useLabels.service, () => { setOpened(true); setSave(null); })}
+        </div> : null}
+        {backend === "host" ? <HostVoicePanel host={host} onChange={hostChanged} locked={saving} busy={hostBusy} setBusy={setHostBusy}
+          use={active !== "host" && confirming !== "host" && host.state === "ready" ? button("use-host", useLabels.host, () => use("host")) : null} /> : null}
+        {backend === "service" && showFields ? <form className="choice-fields service-fields" noValidate onSubmit={(event) => { event.preventDefault(); if (!busy) saveService(); }}>
+          <label htmlFor="voice-url">Transcription URL</label>
+          <input id="voice-url" type="url" autoComplete="off" autoFocus={opened || undefined} value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" aria-invalid={invalid || undefined} aria-describedby={invalid ? "voice-url-error" : undefined} onChange={(event) => { edit(); setUrl(event.target.value); setKey(""); setRemoveKey(false); }} />
+          {invalid ? <p id="voice-url-error" role="alert" className="text-meta text-danger">Enter a complete http:// or https:// transcription URL.</p> : null}
+          {url.trim().toLowerCase().startsWith("http:") ? <p className="text-meta text-muted">This connection is unencrypted. Audio and any key travel over HTTP.</p> : null}
+          <details><summary>Key or model (optional)</summary>
+            <label htmlFor="voice-key">API key</label>
+            <input id="voice-key" type="password" autoComplete="new-password" value={key} placeholder={baseline.service?.key_present && url.trim() === baseline.service.url ? "Key saved — leave blank to keep" : undefined} onChange={(event) => { edit(); setKey(event.target.value); setRemoveKey(false); }} />
+            {baseline.service?.key_present && url.trim() === baseline.service.url ? <label className="service-remove-key"><input type="checkbox" checked={removeKey} onChange={(event) => { edit(); setRemoveKey(event.target.checked); setKey(""); }} /> Remove saved key</label> : null}
+            <label htmlFor="voice-model">Model</label><input id="voice-model" value={model} autoComplete="off" onChange={(event) => { edit(); setModel(event.target.value); }} />
+          </details>
+          <a className="service-help" href="https://github.com/mburakyucel/altitude/blob/main/docs/SETUP.md#your-speech-service" target="_blank" rel="noreferrer">How to run one</a>
+          {edited ? <div className="voice-actions">
+            {button("service", active === "service" ? "Save" : "Use this service", saveService, { primary: true })}
+            {button("cancel-service", "Cancel", () => { commit(saved); reset(saved); setSave(null); setFocus(active === "service" ? "#voice-url" : '[data-action="open-service"]'); })}
           </div> : null}
-        </div>)}
-        <div className="onboarding-nav voice-actions"><button type="submit" className="btn btn-primary"><span role={save.status === "saving" ? "status" : undefined} aria-label={save.status === "saving" ? "Saving…" : undefined}><BusyLabel busy={save.status === "saving"} working="Saving…" label={choice !== "service" && baseline.backend === "service" ? "Save and remove service" : choice === "service" && baseline.backend !== "service" ? "Save and use service" : "Save changes"} /></span></button>
-          <button type="button" className="btn" onClick={() => { committed.current = saved; reset(saved); setSave({ status: "idle" }); }}>Cancel</button></div>
-      </fieldset>
-      {save.status === "saved" ? <StatusMark busy={false} label="Saved." /> : null}
-      {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{stale ? "Voice settings changed. Reload settings and try again." : save.error instanceof ApiError && save.error.message && !/^HTTP \d/.test(save.error.message) ? save.error.message : "Could not save voice settings."}{" "}
-        <button type="button" className="link" onClick={() => stale ? reload() : saveDraft()}>{stale ? "Reload settings" : "Retry"}</button>
-      </p> : null}
-    </form>
+        </form> : null}
+        {outcome(backend)}
+      </div>)}
+    </section>
     <VoiceDiagnostics />
   </>;
 }

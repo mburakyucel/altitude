@@ -10,40 +10,57 @@ const downloading = { state: "downloading", done_bytes: 12_000_000, download_byt
 const updating = (update: Record<string, unknown>, state = "ready") => ({ ...READY, state, update });
 const button = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
 
+const remove = (page: Page) => page.getByRole("button", { name: /^Remove voice \(/ });
+const inUse = (page: Page, title: string) => page.getByRole("main").locator(".voice-option")
+  .filter({ has: page.getByRole("heading", { name: title, exact: true }) }).getByText("In use", { exact: true });
+
 test("voice update presentation: all phases and outcomes keep supported voice installed", async ({ page }, info) => {
   const host = await fixtureHost(page, updating({ state: "preparing" }));
   const walk = walkthrough(page, info);
   const cancel = button(page, "Cancel update");
   const retry = button(page, "Retry update");
-  const remove = button(page, "Remove voice");
+  const update = button(page, "Update voice");
+  // Running phases are one line with Cancel update; Remove voice returns when the update ends.
   const phases = [
-    { name: "01-preparing", update: { state: "preparing" }, text: "Preparing update…" },
-    { name: "02-downloading", update: downloading, text: "Updating voice · 12 MB of 40 MB" },
-    { name: "03-waiting", update: { state: "waiting" }, text: "The update will finish after dictation." },
-    { name: "04-checking", update: { state: "checking" }, text: "Checking update…" },
-    { name: "05-failed", update: { state: "failed", reason: "Download failed." }, text: "Update did not finish. Download failed." },
-    { name: "06-cancelled", update: { state: "cancelled" }, text: "Update cancelled." },
-    { name: "07-resource-refusal", update: { state: "failed", reason: "Voice needs 2.5 GB of free memory to check the update." }, text: "Update did not finish. Voice needs 2.5 GB of free memory to check the update." },
+    { name: "01-preparing", update: { state: "preparing" }, text: "Updating…" },
+    { name: "02-downloading", update: downloading, text: "Updating · 12 MB of 40 MB" },
+    { name: "03-waiting", update: { state: "waiting" }, text: "Updating · finishes after dictation" },
+    { name: "04-checking", update: { state: "checking" }, text: "Updating…" },
   ];
   for (const phase of phases) {
     host.state = updating(phase.update);
     await walk.open("/settings/voice");
-    const finished = ["failed", "cancelled"].includes(phase.update.state);
     await walk.state(phase.name, {
-      visible: [["preparing", "checking"].includes(phase.update.state)
-        ? page.getByRole("img", { name: phase.text, exact: true }) : page.getByText(phase.text, { exact: true }), remove, finished ? retry : cancel],
-      hidden: [finished ? cancel : retry, page.getByRole("alert"), button(page, "Set up voice")],
+      visible: [page.getByText(phase.text, { exact: true }), cancel, inUse(page, "This computer")],
+      hidden: [remove(page), retry, update, page.getByRole("alert"), button(page, "Set up voice")],
     });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (phase.update.state === "downloading") {
       await expect(page.getByRole("progressbar", { name: "Updating voice", exact: true })).toHaveAttribute("value", "12000000");
+    } else {
+      await expect(page.getByRole("progressbar")).toHaveCount(0);
     }
+  }
+  const outcomes = [
+    { name: "05-failed", update: { state: "failed", reason: "Download failed. Try again." }, text: "Update did not finish. Download failed.", action: retry },
+    { name: "06-cancelled", update: { state: "cancelled" }, text: null, action: update },
+    { name: "07-resource-refusal", update: { state: "failed", reason: "Voice needs 2.5 GB of free memory to check the update." }, text: "Update did not finish. Voice needs 2.5 GB of free memory to check the update.", action: retry },
+  ];
+  for (const outcome of outcomes) {
+    host.state = updating(outcome.update);
+    await walk.open("/settings/voice");
+    await walk.state(outcome.name, {
+      visible: [...(outcome.text ? [page.getByText(outcome.text, { exact: true })] : []), outcome.action, remove(page)],
+      hidden: [cancel, page.getByRole("alert"), page.getByText(/cancelled/i), button(page, "Set up voice")],
+    });
+    await expect(outcome.action).not.toHaveClass(/btn-primary/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
   host.state = READY;
   await walk.open("/settings/voice");
   await walk.state("08-completed", {
-    visible: [remove, page.getByText("While you dictate, the speech process uses about 2 GB of memory.", { exact: true })],
-    hidden: [retry, cancel, page.getByRole("progressbar")],
+    visible: [remove(page), page.getByText("While you dictate, the speech process uses about 2 GB of memory.", { exact: true })],
+    hidden: [retry, cancel, update, page.getByRole("progressbar")],
   });
   host.state = updating(downloading);
   await walk.open("/settings");
@@ -54,7 +71,7 @@ test("voice update presentation: all phases and outcomes keep supported voice in
   expect(host.requests).toEqual([]);
 });
 
-test("voice update presentation: cancel, retry, denied removal and removal show authoritative outcomes", async ({ page }, info) => {
+test("voice update presentation: cancel, denied removal, update again and removal show authoritative outcomes", async ({ page }, info) => {
   const host = await fixtureHost(page, updating(downloading));
   const walk = walkthrough(page, info);
   let release = () => {};
@@ -77,45 +94,45 @@ test("voice update presentation: cancel, retry, denied removal and removal show 
     await button(page, "Cancel update").click();
     await walk.state("01-cancel-pending", {
       visible: [page.getByRole("img", { name: "Cancelling update", exact: true })],
-      hidden: [button(page, "Retry update")],
+      hidden: [button(page, "Update voice"), remove(page)],
     });
-    await expect(button(page, "Remove voice")).toBeDisabled();
     expect(actions).toEqual(["cancel"]);
     release();
     await walk.state("02-cancelled", {
-      visible: [page.getByText("Update cancelled.", { exact: true }), button(page, "Retry update")],
-      hidden: [page.getByRole("progressbar"), button(page, "Cancel update"), page.getByRole("alert")],
+      visible: [button(page, "Update voice"), remove(page)],
+      hidden: [page.getByRole("progressbar"), button(page, "Cancel update"), page.getByRole("alert"), page.getByText(/cancelled/i)],
     });
     await page.reload();
-    await expect(page.getByText("Update cancelled.", { exact: true })).toBeVisible();
+    await expect(button(page, "Update voice")).toBeVisible();
+    await remove(page).click();
+    await walk.state("03-remove-denied", {
+      visible: [page.getByRole("alert").filter({ hasText: "Fixture voice removal denied" }), button(page, "Update voice"), remove(page), inUse(page, "This computer")],
+      hidden: [button(page, "Set up voice")],
+    });
     hold();
-    await button(page, "Retry update").click();
-    await walk.state("03-retry-pending", {
+    await button(page, "Update voice").click();
+    await walk.state("04-update-pending", {
       visible: [page.getByRole("img", { name: "Starting update", exact: true })],
       hidden: [button(page, "Cancel update")],
     });
-    await expect(button(page, "Remove voice")).toBeDisabled();
+    await expect(remove(page)).toBeDisabled();
     release();
     await expect(button(page, "Cancel update")).toBeVisible();
-    await button(page, "Remove voice").click();
-    await walk.state("04-remove-denied", {
-      visible: [page.getByRole("alert").filter({ hasText: "Fixture voice removal denied" }), button(page, "Cancel update"), button(page, "Remove voice")],
-      hidden: [button(page, "Set up voice")],
-    });
-    await expect(page.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
+    await button(page, "Cancel update").click();
+    await expect(remove(page)).toBeVisible();
     denyRemove = false;
     hold();
-    await button(page, "Remove voice").click();
+    await remove(page).click();
     await walk.state("05-removal-pending", {
       visible: [page.getByRole("img", { name: "Removing voice", exact: true })], hidden: [],
     });
-    await expect(button(page, "Cancel update")).toBeDisabled();
+    await expect(button(page, "Update voice")).toBeDisabled();
     release();
     await walk.state("06-removed", {
       visible: [button(page, "Set up voice")],
-      hidden: [button(page, "Cancel update"), button(page, "Retry update"), button(page, "Remove voice"), page.getByRole("progressbar"), page.getByRole("alert")],
+      hidden: [button(page, "Cancel update"), button(page, "Update voice"), remove(page), page.getByRole("progressbar"), page.getByRole("alert")],
     });
-    expect(actions).toEqual(["cancel", "setup", "remove", "remove"]);
+    expect(actions).toEqual(["cancel", "remove", "setup", "cancel", "remove"]);
   } finally {
     release();
     await page.unrouteAll({ behavior: "wait" });
@@ -135,17 +152,18 @@ test("voice update presentation: unsupported runtime points to update without st
   });
   await viewUpdate.click();
   await walk.state("02-required-update", {
-    visible: [page.getByText("Voice needs an update.", { exact: true }), button(page, "Cancel update"), button(page, "Remove voice")],
-    hidden: [button(page, "Set up voice")],
+    visible: [page.getByText("Voice needs an update.", { exact: true }), page.getByText("Updating · 12 MB of 40 MB", { exact: true }), button(page, "Cancel update")],
+    hidden: [button(page, "Set up voice"), remove(page)],
   });
   await walk.open("/settings");
   await expect(page.getByRole("link", { name: "Voice input This computer · update required", exact: true })).toBeVisible();
-  host.state = updating({ state: "failed", reason: "Download failed." }, "outdated");
+  host.state = updating({ state: "failed", reason: "Download failed. Try again." }, "outdated");
   await walk.open("/settings/voice");
   await walk.state("03-unusable-failure-alert", {
-    visible: [page.getByRole("alert").filter({ hasText: "Download failed." }), button(page, "Retry update")],
-    hidden: [button(page, "Cancel update")],
+    visible: [page.getByRole("alert").filter({ hasText: "Voice needs an update. Download failed." }), button(page, "Update voice")],
+    hidden: [button(page, "Cancel update"), button(page, "Retry update")],
   });
+  await expect(button(page, "Update voice")).toHaveClass(/btn-primary/);
   await walk.open(project.path);
   await button(page, "Start voice input").click();
   await walk.state("04-needs-explicit-update", {
@@ -155,7 +173,7 @@ test("voice update presentation: unsupported runtime points to update without st
   expect(host.requests).toEqual([]);
 });
 
-test("voice update presentation: choosing browser leaves cancellation visible when switching back", async ({ page }, info) => {
+test("voice update presentation: choosing browser leaves the cancelled update's action when switching back", async ({ page }, info) => {
   const host = await fixtureHost(page, updating(downloading));
   const walk = walkthrough(page, info);
   await page.route((url) => url.pathname === "/api/voice", async (route) => {
@@ -166,21 +184,15 @@ test("voice update presentation: choosing browser leaves cancellation visible wh
     return route.fulfill({ json: { backend: host.backend, selection: `fixture-${host.backend}`, host: host.state } });
   });
   await walk.open("/settings/voice");
-  const browser = page.getByRole("radio", { name: "Browser recognition", exact: true });
-  const computer = page.getByRole("radio", { name: "This computer", exact: true });
-  await browser.click();
-  await button(page, "Save changes").click();
-  await expect(browser).toBeChecked();
+  await button(page, "Use browser recognition").click();
   await walk.state("01-browser-shows-cancelled-host-update", {
-    visible: [page.getByText("Update cancelled.", { exact: true }), button(page, "Retry update"), button(page, "Remove voice")],
+    visible: [inUse(page, "Browser recognition"), button(page, "Use this computer"), button(page, "Update voice"), remove(page)],
     hidden: [button(page, "Cancel update"), page.getByRole("progressbar")],
   });
-  await computer.click();
-  await button(page, "Save changes").click();
-  await expect(computer).toBeChecked();
-  await walk.state("02-host-keeps-manual-retry", {
-    visible: [page.getByText("Update cancelled.", { exact: true }), button(page, "Retry update")],
-    hidden: [button(page, "Cancel update"), page.getByRole("progressbar")],
+  await button(page, "Use this computer").click();
+  await walk.state("02-host-keeps-manual-update", {
+    visible: [inUse(page, "This computer"), button(page, "Update voice")],
+    hidden: [button(page, "Cancel update"), button(page, "Use this computer"), page.getByRole("progressbar")],
   });
   expect(host.requests).toEqual([]);
 });

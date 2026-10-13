@@ -51,8 +51,8 @@ test("container settings explain unavailable actions and container-only setup", 
     expect((await response.json()).error).toMatch(/container|image-managed/);
   }
   await walk.open("/settings/voice");
-  const host = page.getByRole("radio", { name: "This computer", exact: true });
-  await expect(host).toBeDisabled();
+  const host = page.getByRole("heading", { name: "This computer", exact: true });
+  await expect(page.getByRole("button", { name: "Use this computer", exact: true })).toHaveCount(0);
   const setup = page.getByRole("button", { name: "Set up voice", exact: true });
   const hostReason = page.getByText(/^Not available on this computer:/);
   await expect(setup).toHaveAttribute("aria-disabled", "true");
