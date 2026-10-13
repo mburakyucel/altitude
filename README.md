@@ -42,15 +42,11 @@ One engine is enough, and each integration is
 
 [See it all in the desktop and phone walkthrough](docs/WALKTHROUGH.md#see-the-features)
 
-[Container browser validation](docs/CONTAINERS.md#container-browser-validation) on an Apple silicon Mac
-uses a disposable Linux guest with a sandboxed browser container.
-
 ## Get started
 
 Altitude runs for one person on Linux with a systemd user manager or on macOS 15 or newer; releases
 are validated on Ubuntu 24.04 x86_64 and Apple silicon Macs. You need Python 3.12+, Git, OpenSSL (on
-a Mac, Homebrew's `openssl@3`, which Altitude finds without an OpenSSL PATH change),
-an authenticated GitHub CLI 2.72 or newer ([setup](docs/SETUP.md))
+a Mac, Homebrew's `openssl@3`), an authenticated GitHub CLI 2.72 or newer ([setup](docs/SETUP.md))
 and one authenticated coding CLI. Agent work uses your coding account's allowance and normal charges.
 
 1. Install the latest release as the account that will use Altitude:

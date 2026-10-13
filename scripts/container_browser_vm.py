@@ -1,7 +1,6 @@
 """Trusted controller for the fixed Mac guest browser validation lane.
 
-Candidate code runs only in the throwaway Linux guest. `--bootstrap-only` is a
-non-browser budget diagnostic under the standing VM grant, never browser acceptance.
+Candidate code runs only in the throwaway Linux guest.
 """
 from __future__ import annotations
 
@@ -26,6 +25,7 @@ SOURCE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE))
 from altitude import config, platform
 from scripts import linux_vm_mac as vm
+from scripts.installation_vm import repository
 
 LIMIT = 1_000_000_000
 MARGIN = 128_000_000
@@ -193,7 +193,7 @@ def verify_protection(root, identity):
                                     or r.get('own_user_namespace') is not True
                                     or r.get('own_pid_namespace') is not True for r in renderers)):
         raise RuntimeError('Required Chromium protection evidence failed')
-    if network.get('passed') is not True or set(network.get('attempts', {})) != {'gateway', 'host_listener', 'internet'} or any(a.get('refused') is not True for a in network['attempts'].values()):
+    if network.get('passed') is not True or set(network.get('attempts', {})) != {'gateway', 'internet'} or any(a.get('refused') is not True for a in network['attempts'].values()):
         raise RuntimeError('Browser network control evidence failed')
     for name in ('network', 'sandbox'):
         container = json.loads((root / (name + '-container.json')).read_text())[0]
@@ -225,7 +225,7 @@ def run(args):
     results.mkdir(parents=True, exist_ok=True)
     work.mkdir()
     record = {'passed': False, 'run_id': args.run_id, 'commit': args.commit, 'tree': args.tree,
-              'scope': 'non-browser bootstrap diagnostic' if args.bootstrap_only else 'fixed Mac validation guest actual-image fictional browser',
+              'scope': 'fixed Mac validation guest actual-image fictional browser',
               'controller_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     machine = thread = monitor = original_ssh = None
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -242,6 +242,7 @@ def run(args):
         _, commit, tree = identity(candidate)
         if (commit, tree) != (args.commit, args.tree):
             raise RuntimeError('Captured candidate identity differs')
+        origin = repository()  # before the guest boots: the release build needs the GitHub origin
         record['seeded_existing_ubuntu_cache'] = seed(cache)
         record['image'] = vm.base_image(cache, budget=budget.host_bytes)
         original = vm.user_data
@@ -275,7 +276,7 @@ def run(args):
         bundle = work / 'source.bundle'
         subprocess.run(['git', '-C', str(candidate), 'bundle', 'create', str(bundle), 'HEAD'], check=True, timeout=120)
         machine.copy(str(bundle), GUEST + 'input/')
-        machine.ssh('git clone -q input/source.bundle input/source && git -C input/source remote set-url origin https://github.com/mburakyucel/altitude')
+        machine.ssh('git clone -q input/source.bundle input/source && git -C input/source remote set-url origin ' + shlex.quote(origin))
         source = work / 'source.tar'
         record['source'] = archive(candidate, source)
         identity_record = {key: record[key] for key in ('run_id', 'commit', 'tree', 'controller_sha256')}
@@ -285,13 +286,13 @@ def run(args):
         record['denied_host_addresses'] = host_addresses
         with socket.create_server((gateway, 0)) as listener:
             listener.settimeout(1)
-            targets = {'gateway': [gateway, listener.getsockname()[1]], 'host_listener': [gateway, listener.getsockname()[1]], 'internet': ['1.1.1.1', 443]}
+            targets = {'gateway': [gateway, listener.getsockname()[1]], 'internet': ['1.1.1.1', 443]}
             record['network_before_filter'] = network_probe(machine, targets)
             if not all(record['network_before_filter'].values()):
                 raise RuntimeError('Guest network positive controls failed')
             network_filter(machine, args.port, host_addresses)
             record['network_after_filter'] = network_probe(machine, targets)
-            if record['network_after_filter']['host_listener']:
+            if record['network_after_filter']['gateway']:
                 raise RuntimeError('Guest provisioning can reach Mac stand-in listener')
             identity_record['network_targets'] = targets
             guest_file(machine, identity_record, 'input/validation-identity.json', work)
@@ -339,23 +340,22 @@ def run(args):
         thread.join(15)
         marker = {'run_id': args.run_id, 'unplugged': True, 'helper_event': 'unplugged', 'probes': record['network_after_unplug']}
         guest_file(machine, marker, 'input/network-unplugged.json', work)
-        if not args.bootstrap_only:
-            preflight = machine.ssh('python3 input/controller/scripts/container_browser_guest.py preflight', timeout=120, check=False)
-            (results / 'preflight.log').write_text(preflight.stdout + preflight.stderr)
-            protected = results / 'protection-evidence'
-            protected.mkdir()
-            machine.copy(GUEST + 'input/browser-results/.', str(protected))
-            if preflight.returncode:
-                raise RuntimeError('Deployed protection preflight failed')
-            record['protection'] = verify_protection(protected, identity_record)
-            result = machine.ssh('python3 input/controller/scripts/container_browser_guest.py run', timeout=1180, check=False)
-            (results / 'browser.log').write_text(result.stdout + result.stderr)
-            record['browser_exit'] = result.returncode
-            machine.copy(GUEST + 'input/browser-results', str(results))
-            inner = json.loads((results / 'browser-results/guest.json').read_text())
-            if result.returncode or not inner['passed']:
-                raise RuntimeError('Guest browser acceptance failed')
-            verify_journeys(results / 'browser-results', identity_record)
+        preflight = machine.ssh('python3 input/controller/scripts/container_browser_guest.py preflight', timeout=120, check=False)
+        (results / 'preflight.log').write_text(preflight.stdout + preflight.stderr)
+        protected = results / 'protection-evidence'
+        protected.mkdir()
+        machine.copy(GUEST + 'input/browser-results/.', str(protected))
+        if preflight.returncode:
+            raise RuntimeError('Deployed protection preflight failed')
+        record['protection'] = verify_protection(protected, identity_record)
+        result = machine.ssh('python3 input/controller/scripts/container_browser_guest.py run', timeout=1180, check=False)
+        (results / 'browser.log').write_text(result.stdout + result.stderr)
+        record['browser_exit'] = result.returncode
+        machine.copy(GUEST + 'input/browser-results', str(results))
+        inner = json.loads((results / 'browser-results/guest.json').read_text())
+        if result.returncode or not inner['passed']:
+            raise RuntimeError('Guest browser acceptance failed')
+        verify_journeys(results / 'browser-results', identity_record)
         cleaned = original_ssh('python3 input/controller/scripts/container_browser_guest.py cleanup', timeout=60, check=False)
         (results / 'fixture-cleanup.log').write_text(cleaned.stdout + cleaned.stderr)
         if cleaned.returncode:
@@ -411,7 +411,6 @@ def main():
     parser.add_argument('--commit')
     parser.add_argument('--tree')
     parser.add_argument('--port', type=int)
-    parser.add_argument('--bootstrap-only', action='store_true')
     parser.add_argument('--timeout', type=int, default=3300, help='total finite controller budget, including cleanup')
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
