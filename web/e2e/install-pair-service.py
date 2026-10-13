@@ -88,7 +88,7 @@ def run(case, probe, info):
     running.join(timeout=2)
     serve(httpd=httpd, paired=False,
           ready={"url": result["url"], "certificate": str(case.certificates / "ca.crt"),
-                 "pairing": link, "output": output, "machine": access.machine_key()})
+                 "pairing": link, "output": output})
 
 
 if __name__ == "__main__":

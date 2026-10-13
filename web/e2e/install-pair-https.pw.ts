@@ -6,7 +6,7 @@ import { walkthrough } from "./walkthrough";
 test.use({ paired: false, serviceScript: "install-pair-service.py" });
 test.skip(process.platform !== "linux", "Disposable NSS trust is Linux Chromium evidence; native Mac trust stays on the change's issue.");
 
-test("fresh verified installation prints a private link that pairs over trusted HTTPS into First run @chromium", async ({ page, altitude, request }, info) => {
+test("fresh verified installation prints a private link that pairs over trusted HTTPS into First run @chromium", async ({ page, altitude }, info) => {
   const walk = walkthrough(page, info);
   expect(altitude.output!.indexOf("Trust the certificate")).toBeLessThan(altitude.output!.indexOf("private link"));
   expect(altitude.output!.indexOf("private link")).toBeLessThan(altitude.output!.indexOf("Terminal setup (optional now)"));
@@ -24,7 +24,7 @@ test("fresh verified installation prints a private link that pairs over trusted 
   expect(new URL(page.url()).hash).toBe("");
   const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage }, history: history.state, text: document.body.textContent }));
   expect(stored.includes(secret)).toBe(false);
-  const devices = await (await request.get("/api/devices")).json();
+  const devices = await page.evaluate(async () => (await fetch("/api/devices")).json());
   expect(devices.devices).toHaveLength(1);
   const active = await page.context().cookies();
   expect(active.some(cookie => cookie.name === "altitude_device" && cookie.httpOnly && cookie.secure && cookie.sameSite === "Strict")).toBe(true);
@@ -34,7 +34,7 @@ test("fresh verified installation prints a private link that pairs over trusted 
   await page.goto(altitude.pairing!);
   await expect(page.getByRole("heading", { name: "Welcome to Altitude" })).toBeVisible();
   expect(pairs).toBe(1);
-  expect((await (await request.get("/api/devices")).json()).devices).toHaveLength(1);
+  expect((await page.evaluate(async () => (await fetch("/api/devices")).json())).devices).toHaveLength(1);
 });
 
 test("reopening the original installer link in a fresh trusted context keeps the restart handoff @chromium", async ({ context, altitude }, info) => {
