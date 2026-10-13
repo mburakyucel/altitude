@@ -2479,11 +2479,11 @@ audio.
 The composer reads the installation's voice backend and destination identity from `GET /api/voice` and
 shows no microphone until it answers. With `host`, `hostCapture.ts` wraps streaming in the same
 recorder shape: a dedicated audio graph, separate from the waveform, runs an audio worklet (loaded
-from a blob URL) that averages the microphone down to 16 kHz 16-bit samples. The composer shows
-"Starting voice…" until the first samples arrive, then Listening. One request is in flight at a time,
-carrying what gathered since the last answer (normally half a second, at most ten seconds); a request
-lost on the network is repeated with the same number up to three times. Each answer replaces the words
-after the typed draft. Stop releases the microphone and sends the rest as the final chunk; Transcribing
+from a blob URL once the graph's context is running) that averages the microphone down to 16 kHz
+16-bit samples. The composer shows "Starting voice…" until the first samples arrive, then Listening.
+One request is in flight at a time, carrying what gathered since the last answer (normally half a
+second, at most ten seconds); a request lost on the network is repeated with the same number up to
+three times. Each answer replaces the words after the typed draft. Stop releases the microphone and sends the rest as the final chunk; Transcribing
 lasts until the final text lands. No samples within two seconds, an ended track, a worklet that cannot
 load, a refusal or a lost connection stops the recording: the words already shown land in the draft
 and the hint gives the reason. A 409 reads the backend again. Before setup, the microphone explains
