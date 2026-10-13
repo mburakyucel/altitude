@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-from . import capture as C, config, github_intake, images as image_store, platform, state as S, usage
+from . import capture as C, config, github_intake, images as image_store, platform, state as S, storage, usage
 
 def short_reason(reason: str, limit: int = 200) -> str:
     """The first sentence of a block reason, for the card; the whole reason stays in detail."""
@@ -53,46 +53,26 @@ _SHOWN_TYPES = {".md": "md", ".txt": "txt", ".png": "png", ".jpg": "jpg", ".jpeg
 CAPTURE_TASK_LIMIT = 64 << 20   # attached validation captures one task keeps
 
 
-@contextmanager
-def _directory(root: Path | int, parts: list[str], *, create: bool = False, search: bool = False):
-    """Walk relative to an open root without following any symlink, including racing replacements."""
-    flags = (platform.directory_search_access() if search else os.O_RDONLY) | os.O_DIRECTORY | os.O_NOFOLLOW
-    fd = os.dup(root) if isinstance(root, int) else os.open(root, flags)
-    try:
-        for part in parts:
-            if not part or part in (".", "..") or "/" in part or "\\" in part:
-                raise ValueError("invalid relative directory path")
-            if create:
-                try:
-                    os.mkdir(part, mode=0o700, dir_fd=fd)
-                    os.fsync(fd)
-                except FileExistsError:
-                    pass
-            child = os.open(part, flags, dir_fd=fd)
-            os.close(fd)
-            fd = child
-        yield fd
-    finally:
-        os.close(fd)
-
-
 def _bounded_bytes(root: Path | int, relative: str, limit: int) -> bytes:
     parts = relative.split("/")
     if any(not p or p in (".", "..") or "\\" in p for p in parts):
         raise ValueError("invalid relative file path")
-    with _directory(root, parts[:-1]) as directory:
-        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    with storage.directory(root, parts[:-1], search=True) as directory, storage.regular_reader(directory, parts[-1]) as fd:
         before = os.fstat(fd)
-        if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
-            os.close(fd)
+        if before.st_size > limit:
             raise ValueError("not a bounded regular file")
-        with os.fdopen(fd, "rb") as stream:
+        with os.fdopen(fd, "rb", closefd=False) as stream:
             data = stream.read(limit + 1)
             after = os.fstat(stream.fileno())
     if len(data) > limit or (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
             after.st_size, after.st_mtime_ns, after.st_ctime_ns):
         raise ValueError("file changed while it was read")
     return data
+
+
+def _runtime_bytes(relative: str, limit: int) -> bytes:
+    with storage.runtime_directory([], search=True) as root:
+        return _bounded_bytes(root, relative, limit)
 
 
 TASK_FILE_LIMIT = 1 << 20
@@ -137,11 +117,10 @@ def task_file(project: str, reference: str) -> dict:
     if Path(name).suffix.lower() not in (".md", ".txt"):
         raise TaskFileError(unsupported, 415)
     try:
-        # Starting at / also refuses symlinks in ancestors of the configured runtime home.
-        with _directory(Path("/"), list(config.project_dir(project).parts[1:]), search=True) as root:
+        with storage.runtime_directory([config.require_project_name(project)], search=True) as root:
             for location in ("tasks", "archive"):
                 try:
-                    with _directory(root, [location, slug]) as directory:
+                    with storage.directory(root, [location, slug], search=True) as directory:
                         try:
                             record = json.loads(_bounded_bytes(directory, "status.json", SHOWN_IMAGE_LIMIT))
                         except (OSError, ValueError):
@@ -369,13 +348,13 @@ def _save_files(project: str, slug: str, files: dict[str, bytes], folder: str = 
                 limit: int = SHOWN_IMAGE_LIMIT) -> None:
     """Content-named `files` in the task's `folder`, written without following links."""
     relative = (S.task_dir(project, slug) / folder).relative_to(config.ROOT)
-    with _directory(config.ROOT, list(relative.parts), create=True) as directory:
+    with storage.runtime_directory(list(relative.parts), create=True) as directory:
         for name, data in files.items():
             try:
                 saved = os.stat(name, dir_fd=directory, follow_symlinks=False)
                 if not stat.S_ISREG(saved.st_mode):
                     raise ValueError("saved path is not a regular file")
-                if saved.st_size <= limit and _bounded_bytes(config.ROOT, str(relative / name), limit) == data:
+                if saved.st_size <= limit and _bounded_bytes(directory, name, limit) == data:
                     continue
             except FileNotFoundError:
                 pass
@@ -407,7 +386,7 @@ def shown_file(project: str, slug: str, shown: dict, name: str) -> bytes:
     if size is None or not re.fullmatch(r"[a-f0-9]{64}\.(md|txt|png|jpg|gif|webp)", name):
         raise ValueError("shown file unavailable")
     relative = (S.task_dir(project, slug) / SHOWN_FOLDER / name).relative_to(config.ROOT)
-    data = _bounded_bytes(config.ROOT, str(relative), SHOWN_IMAGE_LIMIT)
+    data = _runtime_bytes(str(relative), SHOWN_IMAGE_LIMIT)
     if len(data) != size or hashlib.sha256(data).hexdigest() != name.split(".")[0]:
         raise ValueError("saved shown file was altered")
     return data
@@ -510,7 +489,7 @@ def _run_captures(project: str, slug: str, run: object) -> tuple[list[dict], dic
     evidence = S.task_dir(project, slug).relative_to(config.ROOT) / "validation"
     sources = [(str(evidence / f"{run}.simulator.gif"), "Simulator iPhone")]
     try:
-        with _directory(config.ROOT, [*evidence.parts, str(run), "captures"]) as folder:
+        with storage.runtime_directory([*evidence.parts, str(run), "captures"]) as folder:
             names = sorted(name for name in os.listdir(folder) if name.endswith(".gif"))
         sources += [(str(evidence / str(run) / "captures" / name), name[:-4].replace("-", " ").capitalize()) for name in names]
     except FileNotFoundError:
@@ -520,7 +499,7 @@ def _run_captures(project: str, slug: str, run: object) -> tuple[list[dict], dic
     captures, files = [], {}
     for path, title in sources:
         try:
-            data = _bounded_bytes(config.ROOT, path, C.BUDGET)
+            data = _runtime_bytes(path, C.BUDGET)
             shape = C.describe(data)
         except FileNotFoundError:
             continue
@@ -562,7 +541,7 @@ def capture_image(project: str, slug: str, row: dict, name: str) -> bytes:
     if not re.fullmatch(r"[a-f0-9]{64}\.gif", name) or not any(c["name"] == name for c in row["captures"]):
         raise ValueError("capture unavailable")
     relative = (S.task_dir(project, slug) / "captures" / name).relative_to(config.ROOT)
-    data = _bounded_bytes(config.ROOT, str(relative), C.BUDGET)
+    data = _runtime_bytes(str(relative), C.BUDGET)
     if hashlib.sha256(data).hexdigest() != name[:-4]:
         raise ValueError("saved capture was altered")
     C.describe(data)
@@ -1908,7 +1887,7 @@ def _remove_tool_cache(project: str, slug: str) -> None:
     """Dispose tool data before a terminal state is saved, under the caller's project lock."""
     try:
         relative = (S.tasks_dir(project) / slug / "l2-engine").relative_to(config.ROOT)
-        with _directory(config.ROOT.resolve(), list(relative.parts)) as directory:
+        with storage.runtime_directory(list(relative.parts)) as directory:
             shutil.rmtree("tool-cache", dir_fd=directory)
     except FileNotFoundError:
         pass  # Tasks that never launched have no tool caches.

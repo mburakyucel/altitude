@@ -90,6 +90,13 @@ repair through L3; an unavailable safe repair remains an explicit task-local dep
 The configured runtime home may itself be a symlink; its resolved root anchors cleanup, while
 links below it are refused.
 
+Runtime-storage regressions use disposable real directories and task records for project lock
+contention, leaf/ancestor replacement, startup aliases, descriptor failure cleanup, full UTF-8 briefs
+and live/archive selection. Normal, Raw and record transcript reads exercise fixed-brief refusal;
+invocation and native-source regression coverage does not establish their physical containment.
+The Linux execute-only case requires a non-root runner, denied directory listing and successful
+full brief reads and lock acquisition. No provider, private-place or native sandbox probe runs.
+
 On macOS the suite runs natively with Homebrew's `python@3.12`, `node@24`, `openssl@3`, `ffmpeg`,
 `lcms2`, `webp` (Homebrew's `ffmpeg` decodes WebP but cannot encode it, so the image fixtures use
 `cwebp`) and `bash` (macOS's own bash 3.2 has no bracketed paste, which the terminal walkthroughs

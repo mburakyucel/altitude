@@ -12,7 +12,7 @@ from urllib.parse import quote
 from unittest import mock
 
 from tests.support import AltitudeCase, REPO
-from altitude import config, platform, server, tasks
+from altitude import config, platform, server, storage, tasks
 
 
 class StaticFiles(AltitudeCase):
@@ -563,7 +563,7 @@ class StaticFiles(AltitudeCase):
                 status, _, data = self.request("/assets/app.js", encoded)
                 self.assertEqual((status, data), (200, b"console.log('fictional build');"))
             # The sole existing search-mode caller also keeps lookup without directory listing.
-            with tasks._directory(self.dist, ["assets"], search=True) as directory:
+            with storage.directory(self.dist, ["assets"], search=True) as directory:
                 fd = os.open("app.js", os.O_RDONLY, dir_fd=directory)
                 try:
                     self.assertEqual(os.read(fd, 4096), b"console.log('fictional build');")

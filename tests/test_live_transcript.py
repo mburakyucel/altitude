@@ -1,8 +1,10 @@
 """Live transcript: every turn of the thread in time order, conversation fields, hidden reasoning, parsing,
 fencing, and access policy."""
 import json
+import os
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 from tests.support import AltitudeCase
 from altitude import config, dispatch, engines, state as S, tasks as T, transcript
@@ -124,6 +126,45 @@ class TestCodexTranscript(_CodexTranscriptCase):
         raw = json.loads(self._view(raw=True, mode="record", record=event["id"])["text"])
         self.assertEqual(raw["authorization"], "[REDACTED]")
         self.assertNotIn("ghp_", raw["output"])
+
+
+class TestFixedBriefContainment(_CodexTranscriptCase):
+    def test_normal_raw_and_record_keep_exact_brief_and_refuse_a_link(self):
+        brief = S.task_dir(self.project, self.slug) / "brief.md"
+        text = "# Complete brief\nRésumé and unusual punctuation.\n"
+        brief.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+        for raw in (False, True):
+            page = self._view(raw=raw)
+            row = next(row for row in page["events"] if row.get("type") == "prompt")
+            self.assertEqual(json.loads(row["text"]) if raw else {"prompt": row["text"]}, {"prompt": text})
+            record = self._view(raw=raw, mode="record", record=row["id"])
+            self.assertEqual(json.loads(record["text"]), {"prompt": text})
+        outside = self.tmp / "outside-brief.md"
+        outside.write_text("outside fictional marker")
+        brief.unlink()
+        brief.symlink_to(outside)
+        for raw in (False, True):
+            self.assertNotIn("outside fictional marker", json.dumps(self._view(raw=raw)))
+            self.assertFalse(any(row.get("type") == "prompt" for row in self._view(raw=raw)["events"]))
+
+    def test_replacement_before_brief_open_never_projects_outside_marker(self):
+        brief = S.task_dir(self.project, self.slug) / "brief.md"
+        brief.write_text("inside brief")
+        outside = self.tmp / "outside-brief.md"
+        outside.write_text("outside fictional marker")
+        original_open = os.open
+        def replace(path, flags, *args, **kwargs):
+            if path == "brief.md" and not brief.is_symlink():
+                brief.unlink()
+                brief.symlink_to(outside)
+            return original_open(path, flags, *args, **kwargs)
+        before = S.load_task(self.project, self.slug)
+        with mock.patch.object(os, "open", side_effect=replace):
+            for raw in (False, True):
+                self.assertNotIn("outside fictional marker", json.dumps(self._view(raw=raw)))
+        after = S.load_task(self.project, self.slug)
+        self.assertEqual([before[k] for k in ("agent_id", "session_id", "l2_engine", "attempt")],
+                         [after[k] for k in ("agent_id", "session_id", "l2_engine", "attempt")])
 
 
 class TestClaudeTranscript(AltitudeCase):

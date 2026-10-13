@@ -14,6 +14,7 @@ class ProjectIdentifierCase(AltitudeCase):
         self.private_ledgers()
         self.runtime = self.tmp / "runtime"
         self.patch(config, "ROOT", self.runtime)
+        self.patch(config, "RUNTIME_ROOT", self.runtime.resolve())
         self.patch(config, "PROJECTS_FILE", self.runtime / "projects.json")
         self.patch(config, "MONITOR_DIR", self.runtime / "monitor")
         self.patch(config, "PROJECT_ROOTS", [self.tmp / "repositories"])
