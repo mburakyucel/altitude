@@ -2,7 +2,6 @@
 from __future__ import annotations
 import argparse
 import base64
-import functools
 import gzip
 import hashlib
 import ipaddress
@@ -21,7 +20,8 @@ import threading
 import time
 import traceback
 import uuid
-from contextlib import ExitStack
+from collections import OrderedDict
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 import http.server
@@ -108,10 +108,60 @@ def design_entry(project: str, device_id: str) -> str:
 GZIP_ASSETS = {".js", ".mjs", ".css", ".wasm", ".tsv", ".svg", ".json"}
 
 
-@functools.lru_cache(maxsize=64)
-def _gzipped(path: Path) -> bytes:
-    """An asset's gzip encoding, made once per process: a hashed asset's name changes with its content."""
-    return gzip.compress(path.read_bytes(), compresslevel=9, mtime=0)
+_gzip_cache: OrderedDict[Path, tuple[tuple[int, ...], bytes]] = OrderedDict()
+_gzip_guard = threading.Lock()
+
+
+def _gzipped(path: Path, stream) -> bytes:
+    """Cache at most 64 encodings, bound to the verified open file's identity and signature."""
+    def signature():
+        info = os.fstat(stream.fileno())
+        return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+    with _gzip_guard:
+        before = signature()
+        cached = _gzip_cache.get(path)
+        if cached is not None and cached[0] == before:
+            _gzip_cache.move_to_end(path)
+            return cached[1]
+        data = gzip.compress(stream.read(), compresslevel=9, mtime=0)
+        if signature() != before:
+            raise ValueError("asset changed while it was read")
+        _gzip_cache[path] = (before, data)
+        _gzip_cache.move_to_end(path)
+        if len(_gzip_cache) > 64:
+            _gzip_cache.popitem(last=False)
+        return data
+
+
+@contextmanager
+def _static_directory(root: Path | int, parts: tuple[str, ...]):
+    """Pin normalized directory components without following replacement links."""
+    flags = platform.directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW
+    with ExitStack() as opened:
+        fd = os.dup(root) if isinstance(root, int) else os.open(root, flags)
+        opened.callback(os.close, fd)
+        for part in parts:
+            fd = os.open(part, flags, dir_fd=fd)
+            opened.callback(os.close, fd)
+        yield fd
+
+
+@contextmanager
+def _static_file(root: int, relative: Path):
+    """Read only a regular file beneath a pinned root; even a substituted FIFO cannot block."""
+    with _static_directory(root, relative.parts[:-1]) as directory:
+        fd = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            mode = os.fstat(fd).st_mode
+            if stat.S_ISDIR(mode):
+                raise IsADirectoryError(relative)
+            if not stat.S_ISREG(mode):
+                raise ValueError("not a regular website file")
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                yield stream
+        finally:
+            os.close(fd)
 
 
 def _accepts_gzip(header: str | None) -> bool:
@@ -1643,29 +1693,41 @@ class Handler(BaseHTTPRequestHandler):
         """The built SPA (web/dist): hashed /assets/* immutable, index.html no-store, and any
         other GET falls back to index.html so client-side routes deep-link. A missing build is
         an explicit 503 naming `make web`, never a silent fallback."""
-        dist = config.WEB_DIST.resolve()
-        index = dist / "index.html"
-        if not index.is_file():
-            return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
-        rel = unquote(raw_path).lstrip("/")
         try:
-            resolved = (dist / rel).resolve() if rel else index
-        except (OSError, ValueError):  # embedded NUL and friends
+            dist = config.WEB_DIST.resolve()
+            with ExitStack() as opened:
+                try:
+                    root = opened.enter_context(_static_directory(Path("/"), dist.parts[1:]))
+                except OSError:
+                    return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
+                index = (dist / "index.html").resolve()
+                index_relative = index.relative_to(dist)
+                try:
+                    page = opened.enter_context(_static_file(root, index_relative))
+                except (FileNotFoundError, IsADirectoryError, ValueError):
+                    return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
+                rel = unquote(raw_path).lstrip("/")
+                resolved = (dist / rel).resolve() if rel else index
+                relative = resolved.relative_to(dist)
+                html = not rel
+                if html:
+                    stream = page
+                else:
+                    try:
+                        stream = opened.enter_context(_static_file(root, relative))
+                    except (FileNotFoundError, IsADirectoryError):
+                        if relative.parts[:1] == ("assets",):
+                            # Missing build assets are stale imports, never client-side routes.
+                            return self._json({"error": "not found"}, 404)
+                        stream, resolved, relative, html = page, index, index_relative, True
+                immutable = not html and resolved != dist / "index.html" and relative.parts[:1] == ("assets",)
+                compressible = immutable and resolved.suffix in GZIP_ASSETS
+                encoded = compressible and _accepts_gzip(self.headers.get("Accept-Encoding"))
+                data = _gzipped(resolved, stream) if encoded else stream.read()
+                ctype = "text/html; charset=utf-8" if html or resolved.suffix == ".html" else (
+                    mimetypes.guess_type(str(resolved))[0] or "application/octet-stream")
+        except (OSError, ValueError, RuntimeError):
             return self._json({"error": "not found"}, 404)
-        if not resolved.is_relative_to(dist):  # traversal (incl. percent-encoded) and symlink escapes
-            return self._json({"error": "not found"}, 404)
-        if not resolved.is_file():
-            if resolved.relative_to(dist).parts[:1] == ("assets",):
-                # a miss under the hashed build output is a stale index, not a client route:
-                # serving index.html there hands JS/CSS a text/html body (MIME parse error)
-                return self._json({"error": "not found"}, 404)
-            resolved = index  # SPA fallback: /projects/x, /chat/y, ... render client-side
-        immutable = resolved != index and resolved.relative_to(dist).parts[:1] == ("assets",)
-        compressible = immutable and resolved.suffix in GZIP_ASSETS
-        encoded = compressible and _accepts_gzip(self.headers.get("Accept-Encoding"))
-        data = _gzipped(resolved) if encoded else resolved.read_bytes()
-        ctype = "text/html; charset=utf-8" if resolved.suffix == ".html" else (
-            mimetypes.guess_type(str(resolved))[0] or "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))

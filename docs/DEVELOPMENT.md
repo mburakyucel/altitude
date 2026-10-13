@@ -7,6 +7,13 @@ use the operator's service or runtime records.
 
 ## Local checks
 
+`python3 -m unittest tests.test_static_files tests.test_server_head tests.test_task_files`
+checks website bytes and response metadata, index/SPA and inside-build links, plain/gzip replacement
+races, missing assets, malformed paths, regular-file refusals and descriptor cleanup. It warms the
+64-entry compression cache and verifies replacement and modification invalidation. The Linux-only
+execute-only-directory case requires an unprivileged process and proves directory listing is denied
+while readable assets and the task-file search helper remain accessible; a root run is not evidence.
+
 Contributors work from a repository checkout; the private archive is for running the application.
 With repository access, clone it, then use the commands below from its root.
 Owners and helpers run tests relevant to their changes during development. The required PR

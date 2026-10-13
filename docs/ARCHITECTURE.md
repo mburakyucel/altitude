@@ -2090,8 +2090,15 @@ build; Vite names every file under `/assets/` by its content hash, and those fil
 immutable. A warm open therefore fetches only the page and its API reads, and a cold open, the first
 on a device or the first after an update changes the app script, downloads the script and styles
 before anything shows. Hashed scripts, styles, WebAssembly, word lists, SVG and JSON travel
-gzip-encoded (`Vary: Accept-Encoding`) to browsers that accept gzip; altd compresses each once per
-process. That cuts the cold download to about a third: in the fictional walkthrough on simulated
+gzip-encoded (`Vary: Accept-Encoding`) to browsers that accept gzip. Website files, including the
+homepage and client-route index, are read through regular-file descriptors beneath the pinned
+build directory. Inside-build links are normalized before opening; directory and file opens refuse
+replacement links. Root and client-route pages remain HTML and uncached; directly requested files
+use their resolved target's type and cache policy. Compression uses the same verified descriptor.
+The process keeps at most 64 compressed assets, checking each opened file's device, inode, size and
+modification/change timestamps before reusing an encoding. Replacement or modification invalidates
+that entry. This does not promise an atomic snapshot against a writer changing file contents in place.
+Gzip cuts the cold download to about a third: in the fictional walkthrough on simulated
 slow 4G the page appears in about 1.7 seconds instead of 4.4. The punctuation model's packed weights
 barely compress and travel as stored. Opening requests no dictation asset; `web/e2e/first-open.pw.ts`
 walks cold, warm and slow opens with dictation assets failing.

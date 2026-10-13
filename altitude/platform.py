@@ -2499,8 +2499,8 @@ def validation_guest_seed_cache() -> Path | None:
 
 
 def directory_search_access() -> int:
-    """Look up names without reading hidden ancestors on Mac (#625); keep Linux directory access."""
-    return os.O_SEARCH if _darwin() else os.O_RDONLY
+    """Look up names without requiring directory listing permission on either platform."""
+    return os.O_SEARCH if _darwin() else os.O_PATH
 
 
 def validation_browser_environment(temp: Path) -> dict[str, str]:
