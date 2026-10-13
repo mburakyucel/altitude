@@ -124,7 +124,7 @@ class TestRoutingView(AltitudeCase):
         row = self.rows()[("l2", self.project)]
         self.assertEqual(row["pin"], "codex")
         self.assertIsNone(row["engine"])
-        self.assertIn("forced codex:default is unavailable", row["why"])
+        self.assertIn("forced codex:gpt-6.1-sol is unavailable", row["why"])
         self.assertIn("weekly window exhausted", row["why"])
 
     def test_an_l3_choice_on_an_exhausted_engine_shows_auto_answering_instead(self):
@@ -134,7 +134,7 @@ class TestRoutingView(AltitudeCase):
         row = self.rows()[("l3", self.project)]
         self.assertIsNone(row["pin"])
         self.assertEqual(row["engine"], "claude")
-        self.assertIn("codex:default unavailable: weekly window exhausted", row["why"])
+        self.assertIn("codex:gpt-6.1-sol unavailable: weekly window exhausted", row["why"])
 
     def test_no_engine_available_says_so_for_every_role(self):
         self.claude = {"known": True, "five_hour": 100, "seven_day": 100}

@@ -96,8 +96,12 @@ AUTOCOMPACT_WINDOW = 300_000      # passed as Claude Code's `autoCompactWindow` 
 # Per engine: (warn fraction, act fraction, window). Warn colours the monitor and says "rotate next" for L3;
 # act rotates a Claude L3 to a fresh session. Codex compacts natively at its limit; Altitude only watches.
 CONTEXT_LINES = {"claude": (0.25, 0.30, CONTEXT_WINDOW), "codex": (0.80, 1.00, 256_000)}
-# Built-in role models, below explicit requests and installation-wide engine defaults.
-MODELS = {"l3": "fable", "l2": "opus"}
+# Built-in role models per engine, below explicit requests and installation-wide engine defaults. Codex always
+# receives a model and effort: its CLI's own defaults (and the user's Codex configuration) never choose silently.
+MODELS = {"claude": {"l3": "fable", "l2": "opus"}, "codex": {"l3": "gpt-6.1-sol", "l2": "gpt-6.1-sol"}}
+# Built-in efforts per engine and role, and the level a Native choice passes. Claude has none: it receives no effort
+# flag and keeps its native default. Codex's Native sends Medium explicitly.
+EFFORTS = {"codex": {"l2": "high", "l3": "medium", "native": "medium"}}
 ENGINES = ("claude", "codex")
 #: Models the improvement review can use, with published dollars per million input and output tokens. The review runs
 #: on the plan; these figures only set Claude Code's budget stop at the review's token maximum. Codex has no
@@ -147,6 +151,14 @@ def model_family(name: str | None) -> str | None:
     return next((alias for alias in MODEL_ALIASES if alias in words), None)
 
 
+def model_name(engine: str, model: str) -> str:
+    """A model the way the task page and its chooser name it: "gpt-6.1-sol" is "6.1 Sol" and "claude-opus-5-5" on
+    Claude is "Opus 5.5"; an unknown id stays as reported."""
+    label = dict(NAMED_MODELS.get(engine, ())).get(model) or model_label(model)
+    prefix = ENGINE_LABELS.get(engine, engine) + " "
+    return label.removeprefix(prefix)
+
+
 #: Every project default: registry key -> (role, engine, kind). Each is independent of the others.
 DEFAULT_SETTINGS = {role_setting(role, engine, kind): (role, engine, kind)
                     for role in ROLES for engine in ENGINES for kind in ("model", "effort")}
@@ -175,9 +187,8 @@ def task_effort(engine: str | None, effort: str | None, *, role: str = "l2") -> 
         raise ValueError(f"effort must be one of {', '.join(TASK_EFFORTS)}")
     if effort is not None and engine is not None and effort not in ENGINE_EFFORTS.get(engine, ()):
         raise ValueError(f"{ENGINE_LABELS.get(engine, engine)} does not support reasoning effort {effort}; choose a supported level or Native")
-    if effort == "native":
-        return None
-    return effort or ("high" if role == "l2" and engine == "codex" else None)
+    built_in = EFFORTS.get(engine, {})
+    return built_in.get("native") if effort == "native" else effort or built_in.get(role)
 
 
 def validate_project_default(setting: str, value) -> None:
@@ -207,10 +218,7 @@ def defaults_view(name: str) -> dict:
     def field(role, engine, kind):
         key = role_setting(role, engine, kind)
         if kind == "model":
-            return {"setting": key, "value": entry.get(key),
-                    "default": default_model(role, engine) or f"{ENGINE_LABELS[engine]}'s own default",
-                    "note": ("Tasks use Codex settings outside Altitude; L3 uses its built-in default. "
-                             "The model is reported after it runs.") if engine == "codex" else ""}
+            return {"setting": key, "value": entry.get(key), "default": default_model(role, engine)}
         return {"setting": key, "value": entry.get(key), "default": effort_label(task_effort(engine, None, role=role)),
                 "choices": [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[engine]]}
     return {"l2_engine": entry.get("l2_engine"), "l3_choice": entry.get("l3_choice"),
@@ -482,7 +490,7 @@ def role_routing(role: str, project: dict) -> list[list[dict]]:
 def default_model(role: str, engine: str, project: dict | None = None) -> str | None:
     """Explicit project value, installation engine pair, then the built-in role default."""
     return ((project or {}).get(role_setting(role, engine, "model")) or model_default_pair(engine)["model"]
-            or (MODELS[role] if engine == "claude" else None))
+            or MODELS[engine][role])
 
 
 def default_effort(role: str, engine: str, project: dict | None = None) -> str | None:
@@ -513,6 +521,11 @@ def validate_model_pair(engine: str, value) -> None:
     task_effort(engine, value["effort"])
 
 
+def _built_in(labels: dict, tasks: str, chat: str) -> str:
+    """One engine's built-in role defaults in the words the Models dialog shows."""
+    return f"{labels['l2']} for all roles" if labels["l2"] == labels["l3"] else f"{tasks}: {labels['l2']} · {chat}: {labels['l3']}"
+
+
 def model_defaults_view() -> dict:
     from . import route
     settings, overrides = machine_settings(), []
@@ -539,9 +552,12 @@ def model_defaults_view() -> dict:
     return {"engines": [{"engine": engine, "label": ENGINE_LABELS[engine], "value": model_default_pair(engine),
                          "models": [{"value": value, "label": label} for value, label in NAMED_MODELS[engine]],
                          "efforts": [{"value": value, "label": effort_label(value)} for value in ENGINE_EFFORTS[engine]],
-                         "default_model": (f"Tasks/reviews: {MODELS['l2'].title()} · Chat: {MODELS['l3'].title()}"
-                                           if engine == 'claude' else f"{ENGINE_LABELS[engine]}'s own default"),
-                         "default_effort": "Tasks: High · Chat/reviews: Native" if engine == "codex" else "Native for all roles",
+                         "default_model": _built_in({role: dict(NAMED_MODELS[engine]).get(MODELS[engine][role])
+                                                     for role in ROLES}, "Tasks/reviews", "Chat"),
+                         "default_effort": _built_in({role: effort_label(task_effort(engine, None, role=role))
+                                                      for role in ROLES}, "Tasks", "Chat/reviews"),
+                         "native_effort": (f"Altitude sends {effort_label(native)}" if (native := task_effort(engine, "native"))
+                                           else "Provider chooses effort"),
                          "unavailable": route.choice_unavailable("l2", {"engine": engine, **model_default_pair(engine)})}
                         for engine in ENGINES], "overrides": overrides}
 

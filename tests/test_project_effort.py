@@ -41,7 +41,7 @@ class TestProjectEffort(AltitudeCase):
             set_default(self.project, setting, None)
         self.assertEqual(config.project(self.project), original)
         for engine in config.ENGINES:
-            self.assertIsNone(config.task_effort(engine, None, role="l3"))
+            self.assertEqual(config.task_effort(engine, None, role="l3"), "medium" if engine == "codex" else None)
             self.assertEqual(config.task_effort(engine, None), "high" if engine == "codex" else None)
 
     def test_defaults_follow_the_routed_engine_and_an_explicit_launch_choice_wins(self):
@@ -143,10 +143,11 @@ class TestProjectEffort(AltitudeCase):
                     self.assertTrue(l3.turn(self.project, "Next turn")["completed"])
                     set_default(self.project, setting, "native")
                     self.assertTrue(l3.turn(self.project, "Native turn")["completed"])
-                self.assertEqual([call["effort"] for call in calls], ["high", "max", None])
+                native = "medium" if engine == "codex" else None  # Codex always receives a level
+                self.assertEqual([call["effort"] for call in calls], ["high", "max", native])
                 self.assertEqual([call["resume"] for call in calls], [None, f"{engine}-conversation", f"{engine}-conversation"])
                 saved = l3.info(self.project)["sessions"][engine]
-                self.assertEqual((saved["effort"], saved["launch_effort"]), ("native", None))
+                self.assertEqual((saved["effort"], saved["launch_effort"]), ("native", native))
                 self.assertEqual(saved["engine_reasoning_effort"], "low" if engine == "codex" else None)
 
     def test_l3_model_rejection_keeps_requested_effort_without_fallback(self):
@@ -193,12 +194,11 @@ class TestProjectEffortHTTP(AltitudeCase):
         self.assertNotIn("l3_engine", view)
         self.assertEqual([row["role"] for row in view["roles"]], ["l3", "l2"])
         self.assertEqual(field(view, "l2", "claude", "effort")["value"], "medium")
-        self.assertEqual(field(view, "l3", "claude", "model"), {"setting": "l3_model", "value": None, "default": "fable",
-                                                               "note": ""})
+        self.assertEqual(field(view, "l3", "claude", "model"), {"setting": "l3_model", "value": None, "default": "fable"})
         self.assertEqual(field(view, "l2", "codex", "model"), {"setting": "l2_codex_model", "value": None,
-                                                              "default": "Codex's own default",
-                                                              "note": "Tasks use Codex settings outside Altitude; L3 uses its built-in default. The model is reported after it runs."})
+                                                              "default": "gpt-6.1-sol"})
         self.assertEqual(field(view, "l2", "codex", "effort")["default"], "High")
+        self.assertEqual(field(view, "l3", "codex", "effort")["default"], "Medium")
         self.assertEqual([c["value"] for c in field(view, "l3", "claude", "effort")["choices"]], list(config.ENGINE_EFFORTS["claude"]))
         self.assertEqual([c["value"] for c in field(view, "l3", "codex", "effort")["choices"]], list(config.TASK_EFFORTS))
         for setting, value in (("l3_effort", "high"), ("l2_codex_effort", "ultra"), ("l3_codex_model", "codex-model"), ("l3_effort", None)):

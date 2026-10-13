@@ -1,7 +1,26 @@
 # Changelog
 
-Release notes describe user-visible behavior, compatibility and recovery. The project is an early
+Release notes briefly describe user-visible changes and material known limits. The project is an early
 preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is not a published release.
+
+## v0.6.0 — 2026-10-13
+
+Feature release of the early preview.
+
+- A fresh installation ends with a private link: after you trust the certificate, opening it
+  pairs that first browser and goes straight to First run, with no separate `alt pair` step. On a
+  Mac, an installed Homebrew OpenSSL is found without changing PATH.
+- Settings holds one model and effort default for each engine, and a task's composer can move
+  that task to another engine, model or effort while keeping its work, questions and merge holds.
+  Opening the chooser starts nothing, and a switch in progress shows who started it.
+- Merge approval is offered only once a held delivery is ready, Live session keeps reliable
+  command times, and usage limits are tracked for each quota window separately.
+- Project names, runtime records and file reads are checked more strictly.
+
+Known limits: an installation whose earlier version wrote Python cache files into its release
+folder cannot update to this release, and an automatic attempt can stay stuck (#912); the repair
+is not in this release. Native installer and device confirmation of first-browser pairing
+remains open (#926). Live providers are not part of release testing.
 
 ## v0.5.0 — 2026-10-13
 

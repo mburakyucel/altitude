@@ -733,6 +733,11 @@ export const TaskViewSchema = z
     worktree: z.string().nullish(),
     /** The project's GitHub page, for pull request links. */
     repository: z.string().nullish(),
+    /** The engine, model and effort the task runs with, named as its chooser names them. */
+    running_model: z.object({
+      engine: z.string(), model: z.string().nullable(), effort: z.string(),
+      chosen: z.string().nullable(), launched: z.string(), reported: z.string().nullable(),
+    }).nullish(),
     files: z.record(z.string(), z.string()).nullish(),
     messages: z.array(TaskMessageSchema).nullish(),
     review: TaskReviewSchema.nullish(),
@@ -1695,7 +1700,7 @@ const ModelDefaultsSchema = z.object({
   engines: z.array(z.object({ engine: z.string(), label: z.string(), value: ModelPairSchema,
     models: z.array(z.object({ value: z.string(), label: z.string() })),
     efforts: z.array(z.object({ value: z.string(), label: z.string() })),
-    default_model: z.string(), default_effort: z.string(), unavailable: z.string().nullable(),
+    default_model: z.string(), default_effort: z.string(), native_effort: z.string(), unavailable: z.string().nullable(),
   })),
   overrides: z.array(z.object({ id: z.string(), project: z.string().nullable(), label: z.string(),
     engine: z.string().nullable(), model: z.string().nullable(), effort: z.string().nullable(), expected: z.unknown(), editable: z.boolean() })),
@@ -1746,7 +1751,7 @@ const ProjectDefaultsSchema = ChoiceOptionsSchema.extend({
     role: z.enum(["l3", "l2"]),
     engines: z.array(z.object({
       engine: z.string(), label: z.string(),
-      model: DefaultFieldSchema.extend({ note: z.string().optional() }),
+      model: DefaultFieldSchema,
       effort: DefaultFieldSchema.extend({ choices: z.array(z.object({ value: z.string(), label: z.string() })) }),
     })),
   })),

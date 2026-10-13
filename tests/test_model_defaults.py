@@ -96,7 +96,7 @@ class TestModelDefaults(AltitudeCase):
                 project = {config.role_setting(role, engine, "model"): "scoped",
                            config.role_setting(role, engine, "effort"): "native"}
                 choice = route.pick_engine(role, forced=engine, project=project)
-                self.assertEqual((choice["model"], choice["effort"]), ("scoped", None))
+                self.assertEqual((choice["model"], choice["effort"]), ("scoped", config.task_effort(engine, "native")))
                 pinned = route.pick_engine(role, forced=engine, model="exact", effort="low", project=project)
                 self.assertEqual((pinned["model"], pinned["effort"]), ("exact", "low"))
         S.write_json(config.ROOT / "settings.json", {**config.machine_settings(), "new_tasks": {
@@ -105,23 +105,25 @@ class TestModelDefaults(AltitudeCase):
         self.assertEqual((choice["model"], choice["effort"]), ("explicit-new-task", "low"))
 
     def test_inherited_and_native_effort_have_distinct_role_behavior(self):
-        for role, expected in (("l2", "high"), ("l3", None)):
+        for role, expected in (("l2", "high"), ("l3", "medium")):
             self.assertEqual(route.pick_engine(role, forced="codex")["effort"], expected)
         self.save("codex", effort="native")
         for role in config.ROLES:
             choice = route.pick_engine(role, forced="codex")
-            self.assertEqual((choice["effort"], choice["requested_effort"]), (None, "native"))
+            self.assertEqual((choice["effort"], choice["requested_effort"]), ("medium", "native"))
+        texts = {row["engine"]: row["native_effort"] for row in config.model_defaults_view()["engines"]}
+        self.assertEqual(texts, {"claude": "Provider chooses effort", "codex": "Altitude sends Medium"})
 
     def test_review_uses_engine_pair_without_copying_owner_task_effort(self):
         inherited = route.pick_review({"l2_engine": "claude", "effort": "ultra"}, {"l2_codex_effort": "max"})
-        self.assertIsNone(inherited["effort"], "existing reviewers keep Native after upgrade")
+        self.assertEqual(inherited["effort"], "medium", "reviews use the chat role's effort, never the owner's")
         self.save("codex", "gpt-6.1-sol", "ultra")
         choice = route.pick_review({"l2_engine": "claude", "effort": "low"}, {})
         self.assertEqual((choice["engine"], choice["model"], choice["effort"]), ("codex", "gpt-6.1-sol", "ultra"))
         explicit = route.pick_review({"l2_engine": "claude"}, {}, engine="codex", model="exact")
         self.assertEqual((explicit["model"], explicit["effort"]), ("exact", "ultra"))
         self.save("codex", "gpt-6.1-sol", "native")
-        self.assertIsNone(route.pick_review({"l2_engine": "claude"}, {"l2_codex_effort": "max"})["effort"])
+        self.assertEqual(route.pick_review({"l2_engine": "claude"}, {"l2_codex_effort": "max"})["effort"], "medium")
 
     def test_reset_clears_pair_atomically_keeps_engine_and_preserves_other_scopes(self):
         self.register(self.project, l3_choice={"engine": "codex", "model": "custom", "effort": "high"},
@@ -167,10 +169,10 @@ class TestModelDefaults(AltitudeCase):
         self.save("codex", "other-model", "native")
         self.assertTrue(l3.turn(self.project, "Next turn")["completed"])
         self.assertEqual([(row["model"], row["effort"], row["resume"]) for row in calls],
-                         [("gpt-6.1-sol", "high", None), ("other-model", None, "conversation")])
+                         [("gpt-6.1-sol", "high", None), ("other-model", "medium", "conversation")])
 
     def test_null_saved_session_model_is_not_reinterpreted_after_global_change(self):
-        self.save("codex", "gpt-6.1-sol", "high")
+        self.save("codex", "other-model", "high")
         hold = self.patch(route, "_hold", return_value=None)
-        self.assertIsNone(route.resume_hold("codex", None))
-        self.assertIsNone(hold.call_args.args[0]["model"])
+        self.assertIsNone(dispatch.resume_engine_hold({"l2_engine": "codex", "launch_model": None}))
+        self.assertEqual(hold.call_args.args[0]["model"], "gpt-6.1-sol")

@@ -98,8 +98,9 @@ remain governed by the existing boundaries.
 L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with the operator is stored apart from tool logs, so
 the operator messages it directly without routing through L3. Messages queue on the task and reach the
-worker at its next checkpoint; the operator's own messages reach it only as a user turn, at the next session
-turn. An explicit Stop ends a worker. **Send now** on an inbox-owned operator
+worker at its next checkpoint. A Claude owner's hook checkpoint names the operator's own messages, which reach
+it only as a user turn, at the next session turn; a Codex owner's driver writes waiting messages into its
+running turn as they arrive, with the exceptions [message delivery](#message-delivery-and-voice) names. An explicit Stop ends a worker. **Send now** on an inbox-owned operator
 message hands the queued operator group to the running turn in arrival order, without stopping its
 work (see [message delivery](#message-delivery-and-voice)). Each message keeps its own visible row and
 delivery receipt; messages arriving after the claim wait for a later checkpoint. Task message writers hold the project
@@ -228,8 +229,8 @@ See [source references and bounds](CLI.md#historical-evidence-search).
 Tasks and L3 session records carry `engine_model` and `engine_reasoning_effort`. The engine adapter
 reads Codex's rollout `turn_context` after the thread starts, recording the actual model and effort
 for the current turn. altd reads the provider home; the sandboxed worker does not. Missing or delayed
-rollouts leave the observation unknown and are retried while the turn runs. The launch model pin is
-kept separately, so recording a default does not turn it into an override on resume. Status, task
+rollouts leave the observation unknown and are retried while the turn runs. `engine_model` holds only
+what the engine reported; the launch model and effort are kept separately and are what resumes ask for. Status, task
 header chips, and the Monitor API expose the observation; old records remain readable.
 `GET /api/task/<project>/<slug>` returns `engine_model` and `engine_reasoning_effort`;
 a missing task returns HTTP 404 without a failure traceback. Archival only renames the live task
@@ -267,11 +268,13 @@ The CLI retains reason-bearing project settings requests; these apply on a daemo
 of worker capacity. A conflicting pending request refuses a save until applied.
 
 Fresh task dispatch records resolved `launch_model` and `launch_effort`. Message/resume keeps those
-saved values, including null, without re-resolving global defaults or copying observed provider values.
+saved values without re-resolving global defaults or copying observed provider values. Every role has
+a built-in model on each engine, and every Codex launch passes its model and effort explicitly.
 L3 resolves each turn, including same-conversation resumes; a running turn keeps its launch choice.
-Inherited effort retains built-in behavior: native on Claude, High for Codex tasks and native
+Inherited effort retains built-in behavior: native on Claude, High for Codex tasks and Medium
 for Codex chat/reviews. Ordinary reviews use an explicit global effort when set; otherwise they
-retain native effort rather than inheriting project task effort overrides. Explicit `native` requests no override. Unsupported explicit efforts refuse; Auto
+use the chat role's effort rather than inheriting project task effort overrides. Explicit `native` passes no
+effort to Claude and Medium to Codex. Unsupported explicit efforts refuse; Auto
 excludes engines that cannot accept an explicit level. Provider caps and model compatibility remain
 native decisions; effort failures do not cause application-side downgrading.
 
@@ -635,16 +638,20 @@ preferences or explicit pins and can operate with one installed engine and one a
 [Configuration](OPERATIONS.md#configuration) lists the settings an installation reads.
 
 Owner launch and resume pre-approve `Bash(alt *)` in native auto mode, so Altitude's own
-coordination commands do not depend on the permission classifier. Native deny/ask rules,
-worker confinement and Altitude's role, task-attempt, merge-hold and operator-grant checks still
-apply. Other external commands retain their native permission checks. The other launcher already
-admits coordination within its network-enabled workspace-write sandbox. The allowance is shared
-by Linux and macOS launches; it grants no additional filesystem or service access.
+coordination commands do not depend on the permission classifier. The rule matches a plain `alt`
+invocation only; a chained or redirected form, or a shell or interpreter command that writes a file
+for `alt` to read, goes to the classifier, which can refuse it. The L2 persona therefore has owners
+run each `alt` command alone, write its input files with the engine's own file-editing method, and
+rerun a refused chained form plainly. Native deny/ask rules, worker confinement and Altitude's role,
+task-attempt, merge-hold and operator-grant checks still apply. Other external commands retain
+their native permission checks. The other launcher already admits coordination within its
+network-enabled workspace-write sandbox. The allowance is shared by Linux and macOS launches; it
+grants no additional filesystem or service access.
 The native classifier reads user turns, never hook context, as the user's intent
 ([issue #612](https://github.com/mburakyucel/altitude/issues/612)). The operator's own task messages therefore
 reach a running owner only as a user turn: the inbox hook names them in a waiting notice, and when the
 owner stops with nothing else to deliver, the turn ends and altd resumes the same session with them as
-the prompt, as the clean-turn resume does for an engine without hooks. L3, server and other-owner
+the prompt, as the clean-turn resume does for messages an engine without hooks could not take into its turn. L3, server and other-owner
 messages, tool output and files keep hook delivery. A resume prompt carries every waiting message with
 its sender. Streamed launch input with images is marked as the human's, as a text prompt is.
 
@@ -2094,8 +2101,8 @@ runs headlessly with a temporary profile and its browser sandbox disabled inside
 worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation, commands,
 timings and candidate identity; [operations](OPERATIONS.md) covers service activation and mobile access.
 
-The sandbox-disabled configuration belongs only to Altitude's fictional UI harness. Fresh and
-resumed owners receive the distinction between the approved Mac validation exception and Linux
+The sandbox-disabled configuration belongs only to Altitude's fictional UI harness. The L2 persona
+gives owners the distinction between the approved Mac validation exception and Linux
 dual-protection checks. `make ui-validate` repeats dependencies/build, finite full-Chromium preflight
 and named phone/desktop journeys with exact launch evidence in disposable storage. The daemon
 receipt identifies the tested tree and actual run profile; native context and cleanup evidence remain
@@ -2533,6 +2540,10 @@ is recorded as unconfirmed and never sent again. Images anywhere in the queued g
 group waiting for next-turn delivery in order. A question wait, a fault, a Stop, another owner action,
 another group being sent, or a worker launched before this driver also keeps the group for the next
 turn instead. Operator grants and merge holds keep their existing rules.
+Codex has no hook checkpoint, so a Codex owner's driver makes the same claim by itself, without the
+button: while its turn runs, every message waiting for the owner, from the operator, L3 or Altitude, is
+written into the turn in arrival order up to the first message with images. After the engine refuses one,
+the rest of that turn's messages wait for the next turn.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.

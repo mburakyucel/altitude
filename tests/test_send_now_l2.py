@@ -358,6 +358,85 @@ class TestSendNowL2(AltitudeCase):
             self.assertEqual((delivery["send_now"], delivery["send_now_reason"], delivery["removable"]),
                              (False, dispatch.IMAGE_SEND_NOW, True))
 
+    # ---- a driver without a hook checkpoint claims waiting messages itself -----------------------------------
+
+    def steer(self, task):
+        T.steer_waiting(self.project, task["slug"], task["agent_id"], self.sends(task))
+
+    def test_a_driver_without_hooks_claims_waiting_messages_up_to_the_first_with_images(self):
+        task = self.launch("codex")
+        first = self.send(task, "Use the staging copy")
+        note = T.message(self.project, task["slug"], "l3", "The release moved to Friday")
+        image = self.send(task, "See the screenshot", uploads=[upload()])
+        later = self.send(task, "And then this")
+        stop_worker, stop_unit = self.no_stop()
+        with stop_worker, stop_unit, mock.patch.object(dispatch, "run_task_operation") as operation:
+            self.steer(task)
+            self.steer(task)  # one claim at a time, until the driver settles it
+            operation.assert_not_called()
+        sends = self.sends(task)
+        self.assertEqual(sorted(path.name for path in sends.iterdir()), [f"{first['id']}.json"])
+        self.assertEqual(json.loads((sends / f"{first['id']}.json").read_text())["text"],
+                         T.render_inbox([first, note]))
+        self.assertEqual(S.load_task(self.project, task["slug"])["send_now"]["ids"], self.ids([first, note]))
+        self.assertEqual(self.delivery(task, first)["send_now_reason"], SENDING)
+        self.assertEqual(self.request(task, first), {"status": "sending", "idempotent": True})
+        T.settle_send_now(self.project, task["slug"], first["id"], "delivered", agent_id=task["agent_id"])
+        self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids([image, later]))
+        self.steer(task)  # images keep their message, and everything after it, for the next turn
+        self.assertNotIn("send_now", S.load_task(self.project, task["slug"]))
+        T.block(self.project, task["slug"], "Turn ended", resume_pending=True)
+        dispatch.resume(self.project, task["slug"])
+        self.assertIn(later["text"], self.worker.calls[-1]["prompt"])
+        self.assertEqual(T.pending(self.project, task["slug"]), [])
+
+    def test_a_driver_without_hooks_leaves_messages_an_owner_cannot_take_now(self):
+        for change in ({"state": "blocked"}, {"state": "blocked", "waiting_on": "operator"},
+                       {"fault": "fixture fault"}, {"stop_id": "explicit-stop"},
+                       {"daemon_request": {"id": "r1", "operation": "handoff", "status": "pending"}},
+                       {"dispatching": "2026-10-09T00:00:00Z"}, {"agent_id": "a-later-worker"}):
+            with self.subTest(change=change):
+                task = self.launch("codex")
+                message = self.send(task, "Queued before the change")
+                original = S.load_task(self.project, task["slug"])
+                S.save_task(self.project, {**original, **change})
+                before = S.load_task(self.project, task["slug"])
+                self.steer(task)
+                self.assertEqual(S.load_task(self.project, task["slug"]), before)
+                self.assertFalse(self.sends(task).exists() and any(self.sends(task).iterdir()))
+                self.assertEqual(T.pending(self.project, task["slug"]), [message])
+                # Leave no ready resume holding the next launch's machine slot.
+                S.save_task(self.project, original)
+                T.remove_message(self.project, task["slug"], message["id"])
+
+    def test_an_idle_owner_is_woken_with_the_message_as_before(self):
+        task = self.launch("codex")
+        T.block(self.project, task["slug"], "Waiting for CI", actor="l2")
+        message = self.send(task, "CI is green now")
+        self.steer(task)
+        current = S.load_task(self.project, task["slug"])
+        self.assertNotIn("send_now", current)
+        self.assertEqual(current["resume_request"], message["id"])
+        dispatch.resume(self.project, task["slug"])
+        self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([message]))
+
+    def test_an_answer_the_turn_may_have_read_is_never_delivered_again(self):
+        task = self.launch("codex")
+        question = T.block(self.project, task["slug"], "Continue?", actor="l2", updates={"waiting_on": "operator"},
+                           recommendation="Continue", recommendation_label="Continue")["questions"][-1]
+        current = S.load_task(self.project, task["slug"])
+        current.update(state="running", blocked_reason=None)
+        for key in ("waiting_on", "resume_after", "resume_request"):
+            current.pop(key, None)
+        S.save_task(self.project, current)  # the owner went on working while its question stays open
+        T.accept_question(self.project, task["slug"], question["id"], question["revision"])
+        answer = S.load_task(self.project, task["slug"])["questions"][-1]["acceptance_message"]
+        self.steer(task)
+        self.assertEqual(S.load_task(self.project, task["slug"])["send_now"]["ids"], [answer["id"]])
+        T.settle_send_now(self.project, task["slug"], answer["id"], "unconfirmed", agent_id=task["agent_id"])
+        self.assertTrue(S.load_task(self.project, task["slug"])["questions"][-1]["acceptance_delivered"])
+        self.assertEqual(T.pending(self.project, task["slug"]), [])
+
     def test_only_a_queued_operator_message_can_be_sent_now(self):
         task = self.launch(config.ENGINES[0])
         coordinator = T.message(self.project, task["slug"], "l3", "Coordinator note")

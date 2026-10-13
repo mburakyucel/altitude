@@ -62,9 +62,10 @@ acceptance evidence; its pending or failed runs on main do not gate PR delivery 
    findings or explicitly dismiss them with evidence. Record remaining external/host confidence
    gaps rather than describing the preview as universally validated. Live-provider tests and
    the real tiny task are deferred; they are not candidate gates under the current policy.
-4. Keep [Unreleased](../CHANGELOG.md) current in every behavior-changing PR. Prepare curated
-   notes with user-visible changes, compatibility/migration needs, known limitations and a
-   recovery plan. Review notes/artifacts for fictional or sanitized data; never publish runtime
+4. Keep [Unreleased](../CHANGELOG.md) current in every behavior-changing PR. Prepare short
+   notes: a few bullets of user-visible changes, the most useful first and related changes
+   grouped, then material known limits in a sentence. Mention compatibility, migration or
+   recovery steps only when this release needs them. Review notes/artifacts for fictional or sanitized data; never publish runtime
    conversations, credentials or private incident records. Docs describing behavior ship in
    the same PR as that behavior.
 5. Record targeted validation and any applicable observation interval and results. When it is already activated, normal

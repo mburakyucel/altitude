@@ -63,7 +63,8 @@ Inspect routing, usage windows and observed sessions in **Monitor**. Missing or 
 remain explicit. **Settings → This project**, opened from the project's three dots, sets independent
 model and effort defaults for L3 and L2 on each engine. These settings preserve running task attempts;
 L3 defaults apply on its next turn, while L2 defaults apply on fresh dispatch. Unset effort is native
-except High for a Codex L2; **Native** explicitly requests no effort override. Higher effort can use more
+on Claude, and High for a Codex L2 and Medium for other Codex roles; **Native** asks Claude for its own
+level and sends Codex Medium. Higher effort can use more
 time and tokens. The CLI reference covers [routing preferences](CLI.md#automatic-routing-preferences),
 [model defaults](CLI.md#default-models) and [effort selection](CLI.md#task-reasoning-effort),
 including the same settings from the terminal.

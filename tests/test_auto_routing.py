@@ -134,7 +134,7 @@ class TestAutoIntegration(AltitudeCase):
         with mock.patch.object(engines, "start_l2", side_effect=launch) as execute:
             dispatch.run(self.project, task["slug"])
         self.assertEqual([(call.args[0], call.kwargs["model"]) for call in execute.call_args_list],
-                         [("codex", None), ("claude", "fable")])
+                         [("codex", config.default_model("l2", "codex")), ("claude", "fable")])
         saved = S.load_task(self.project, task["slug"])
         self.assertEqual((saved["l2_engine"], saved["launch_model"], saved["routing_pinned"]), ("claude", "fable", False))
         self.assertFalse(saved.get("engine"))
@@ -165,7 +165,7 @@ class TestAutoIntegration(AltitudeCase):
         self.assertEqual((saved["l2_engine"], saved["session_id"], saved["launch_model"], saved["attempt"]),
                          ("claude", "conversation", "opus", 1))
 
-    def test_global_pair_applies_at_dispatch_and_never_reinterprets_null_resume(self):
+    def test_global_pair_applies_at_dispatch_and_never_reinterprets_a_saved_resume(self):
         original = config.machine_settings()
         for name in ("events.jsonl", "model_defaults_codex-request.json"):
             path = config.ROOT / name
@@ -183,7 +183,7 @@ class TestAutoIntegration(AltitudeCase):
         task = self.task()
         with mock.patch.object(engines, "start_l2", side_effect=self.launched) as launch:
             dispatch.run(self.project, task["slug"])
-        self.assertEqual((launch.call_args.kwargs["model"], launch.call_args.kwargs["effort"]), (None, None))
+        self.assertEqual((launch.call_args.kwargs["model"], launch.call_args.kwargs["effort"]), ("gpt-6.1-sol", "medium"))
         T.block(self.project, task["slug"], "Waiting for requested input")
         queued = self.task()
         server.save_model_defaults({"engine": "codex", "value": {"model": "gpt-6.1-sol", "effort": "ultra"},
@@ -191,7 +191,7 @@ class TestAutoIntegration(AltitudeCase):
         with mock.patch.object(engines, "resume_l2", return_value={"returncode": 0, "agent": {
                 "id": "resumed", "sessionId": "conversation", "state": "working"}}) as resume:
             dispatch.resume(self.project, task["slug"])
-        self.assertEqual((resume.call_args.kwargs["model"], resume.call_args.kwargs["effort"]), (None, None))
+        self.assertEqual((resume.call_args.kwargs["model"], resume.call_args.kwargs["effort"]), ("gpt-6.1-sol", "medium"))
         with mock.patch.object(engines, "start_l2", side_effect=self.launched) as launch:
             dispatch.run(self.project, queued["slug"])
         self.assertEqual((launch.call_args.kwargs["model"], launch.call_args.kwargs["effort"]), ("gpt-6.1-sol", "ultra"))
