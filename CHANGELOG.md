@@ -10,6 +10,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   outside the sandbox.
 - Live session works for every valid project name, including names with capitals, spaces or dots, and
   redacting long incident text no longer takes seconds.
+- Task agents cannot act with the coordinator's or your authority: an agent's own task commands are
+  admitted by its task, and no Altitude sandbox can read the access key, paired devices or HTTPS keys.
+  After the update Altitude replaces its access key, and once more when the agents running at the
+  update have finished; each replacement ends open design-board links, and the first cancels a
+  pairing code in progress. Linux needs kernel 6.5 or newer.
 
 ## v0.6.0 — 2026-10-13
 
