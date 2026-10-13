@@ -469,11 +469,14 @@ class StaticFiles(AltitudeCase):
         self.assertNotIn(b"console.log", data)
         self.assertNotIn(self.asset, server._gzip_cache)
 
-    def test_document_build_copies_do_not_change_original_signature_during_gzip(self):
-        spec = importlib.util.spec_from_file_location("document_update_fixture", REPO / "web/e2e/document-update-service.py")
-        module = importlib.util.module_from_spec(spec)
-        with mock.patch.object(sys, "path", [str(REPO / "web/e2e"), *sys.path]):
-            spec.loader.exec_module(module)
+    def test_mutable_fixture_build_copies_preserve_original_signature_during_gzip(self):
+        modules = []
+        for name in ("document-update", "terminal"):
+            spec = importlib.util.spec_from_file_location(name + "_fixture", REPO / f"web/e2e/{name}-service.py")
+            module = importlib.util.module_from_spec(spec)
+            with mock.patch.object(sys, "path", [str(REPO / "web/e2e"), *sys.path]):
+                spec.loader.exec_module(module)
+            modules.append(module)
         expected = self.asset.read_bytes()
         def signature():
             info = self.asset.stat()
@@ -482,7 +485,7 @@ class StaticFiles(AltitudeCase):
         snapshots = []
         original = server.gzip.compress
         def compressed(data, **kwargs):
-            for _ in range(2):
+            for module in modules:
                 snapshot = module.copy_build(self.dist)
                 snapshots.append(snapshot)
                 copied = snapshot / "assets/app.js"

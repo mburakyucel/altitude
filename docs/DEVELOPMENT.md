@@ -16,9 +16,9 @@ are 404. Positive 64-link chains, contextual hardlinked links and completed repe
 link behavior; self/mutual/expanding cycles are refused. Pinned-build replacements retain complete
 original bytes/headers without consulting the replacement. A bounded branching-alias case checks
 complete successful responses and operation counts, while reused-address replacements are refused.
-It warms the
-64-entry compression cache and verifies replacement and modification invalidation. The built-update
-fixture copies independent inodes; concurrent snapshot creation/update leaves the original build's
+The checks warm the 64-entry compression cache and verify replacement and modification invalidation.
+The terminal and document-update fixtures share independent-inode build copying; concurrent snapshot
+creation/update leaves the original build's
 bytes and signature unchanged, including while gzip is running. The Linux-only
 execute-only-directory case requires an unprivileged process and proves directory listing is denied
 while readable assets and the task-file search helper remain accessible; a root run is not evidence.

@@ -2,23 +2,12 @@
 import re
 import socket
 import shutil
-import tempfile
 import struct
 import zlib
-from pathlib import Path
 
-from service_support import configure, serve
+from service_support import configure, copy_build, serve
 from tests.support import add_worktree, make_repo
 from altitude import config, l3, server, state as S, tasks
-
-
-def copy_build(source: Path) -> Path:
-    """An update mutates only this service's own build, including inode metadata."""
-    artifacts = source.parent / "ui-artifacts"
-    artifacts.mkdir(exist_ok=True)
-    dist = Path(tempfile.mkdtemp(prefix="document-dist-", dir=artifacts))
-    shutil.copytree(source, dist, dirs_exist_ok=True)
-    return dist
 
 
 def main():
