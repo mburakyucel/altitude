@@ -2823,7 +2823,7 @@ desktop operator row open Settings. `POST /api/voice` saves `{backend, selection
 durable request/apply path as the CLI, with no restart or provider probe; a selection that no longer
 matches the saved one is refused (409) and asks the person to reload settings. Failed saves leave the
 persisted choice unchanged. Fresh settings reads update the form as well as the composer's selection.
-First run offers the same choice as its Voice step (see the design spec §3.12); a setup failure there
+First run offers built-in or browser recognition in its Voice step (see the design spec §3.12); a setup failure there
 never blocks onboarding.
 
 On start, `dispatch.forget_speech_service()` deletes only untagged legacy service settings and
@@ -2840,8 +2840,9 @@ remains available without voice.
 
 Paired Settings reads expose URL/model/key-present, never the key. Machine output exposes the backend
 only. Before capturing service audio, the browser reads the current selection and paired owner;
-both are checked again before accepting and forwarding `POST /api/voice/service`, and before applying
-the result in the browser. Saving URL/model/key changes the service selection identity independently
+both are checked again before accepting and forwarding `POST /api/voice/service`, and before the
+server releases its result. Local settings and unpairing events also invalidate pending captures.
+Saving URL/model/key changes the service selection identity independently
 of the built-in installation identity. Re-pairing or selection changes invalidate unfinished work.
 
 The browser retains raw mono 16 kHz signed 16-bit PCM in page memory until Stop/Send, at most
