@@ -149,7 +149,7 @@ class TestChatIsolation(AltitudeCase):
                 with self.assertRaises(transcript.TranscriptAccessError):
                     transcript.view(project, slug, engine=engine, session_id=f"{engine}-{other}", attempt=1)
 
-    def test_command_times_reach_http_without_borrowing_missing_evidence(self):
+    def test_command_times_reach_http_from_the_first_recorded_event(self):
         started, ended = "2026-09-03T10:00:01+00:00", "2026-09-03T10:00:05+00:00"
         for engine in ("claude", "codex"):
             for timestamp in (started, None):
@@ -185,10 +185,10 @@ class TestChatIsolation(AltitudeCase):
                     delta = json.loads(self.request(url + f"&mode=delta&cursor={first['cursor']}"))
                     updated, = delta["events"]
                     self.assertEqual((updated["id"], updated["at"], updated["status"], updated["output"]),
-                                     (command["id"], timestamp, "completed", "fixture"))
+                                     (command["id"], timestamp or ended, "completed", "fixture"))
                     reconnect = json.loads(self.request(url))
                     command, = [row for row in reconnect["events"] if row["kind"] == "command"]
-                    self.assertEqual(command["at"], timestamp)
+                    self.assertEqual(command["at"], timestamp or ended)
 
 
 if __name__ == "__main__":

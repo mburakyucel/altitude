@@ -452,7 +452,9 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
                         known = calls.get(tool_id)
                         if known:
                             identity, order, at = known["id"], known["order"], known["at"]
-                            known.update(item, id=identity, order=order, at=at)
+                            # A command keeps its first recorded time; an untimed start takes its completion's.
+                            known.update(item, id=identity, order=order,
+                                         at=at if _when(at) is not None else item["at"])
                             folded.add(item["id"])
                         else:
                             calls[tool_id] = item
@@ -466,6 +468,8 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
                     call["output"] = "\n".join(result["text"] for result in results)
                     call["error"] = call.get("error", False) or any(result.get("error") for result in results)
                     call["status"] = "completed"
+                    if _when(call["at"]) is None:
+                        call["at"] = results[0]["at"]
                     for result in results:
                         folded.add(result["id"])
     if set(previous_sources) - set(source_state):

@@ -98,7 +98,7 @@ class TestTranscriptProtocol(_CodexTranscriptCase):
         self.assertEqual({row["output"]: row["at"] for row in reconnected},
                          {"finished": started, "other turn": completed})
 
-    def test_untimed_start_does_not_borrow_completion_turn_or_file_time(self):
+    def test_untimed_start_takes_its_completion_time_but_never_turn_or_file_time(self):
         for timestamp in (None, "not a date"):
             with self.subTest(timestamp=timestamp):
                 records = [{"type": "item.started", "timestamp": timestamp, "item": {
@@ -112,7 +112,7 @@ class TestTranscriptProtocol(_CodexTranscriptCase):
                 self.write(records[1:], append=True)
                 row, = self._view(mode="delta", cursor=first["cursor"], lower="")["events"]
                 self.assertEqual(row["status"], "completed")
-                self.assertEqual(row["at"], timestamp)
+                self.assertEqual(row["at"], _stamp(5))
                 self.assertEqual(row["output"], "done")
 
     def test_bursts_are_byte_bounded_and_continuations_never_skip_equal_time_siblings(self):

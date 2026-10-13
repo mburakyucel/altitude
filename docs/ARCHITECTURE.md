@@ -3273,8 +3273,9 @@ order, so late events and updates to old commands merge into their correct posit
 shows one preview per source record. Full record opens an explicit 4,000-character chunk, with
 Show more for subsequent chunks; the complete redacted record remains accessible.
 Translated item notifications record their local UTC receipt time in the engine adapter; native
-session records retain their source timestamps. A folded command keeps its first event's time
-through output updates, history and reconnect. This is recorded event time, not elapsed duration
+session records retain their source timestamps. A folded command keeps its first recorded event
+time through output updates, history and reconnect; a command whose start is untimed takes its
+completion's recorded time. This is recorded event time, not elapsed duration
 or an exact OS process-start time. Records without timing evidence remain unavailable; launch,
 poll and file modification times never fill a command's missing timestamp.
 
