@@ -1558,6 +1558,7 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
 def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, agent_id: str | None,
              worktree: str | None, branch: str | None, l2_engine: str = "claude",
              engine_model: str | None = None, routing: str | None = None, actor: str = "altd",
+             launch_model: str | None = None, launch_effort: str | None = None, routing_pinned: bool = False,
              messages: list[dict] | None = None, input_delivered: bool = False) -> dict:
     if not session_id or not agent_id:
         raise TransitionError(f"{slug}: dispatch requires a concrete worker and session")
@@ -1571,6 +1572,8 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
         usage.remember(task)
         task.update({"attempt": attempt, "session_id": session_id, "agent_id": agent_id, "worktree": worktree,
                      "branch": branch, "blocked_reason": None, "l2_engine": l2_engine, "engine_model": engine_model,
+                     "launch_model": launch_model, "launch_effort": launch_effort,
+                     "engine_reasoning_effort": None, "routing_pinned": routing_pinned,
                      "routing": routing, "dispatched": S.now()})
         task.pop("next_engine", None)
         task.pop("next_selection", None)

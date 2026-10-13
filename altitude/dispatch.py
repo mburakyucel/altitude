@@ -1098,7 +1098,7 @@ def _restore_task_branch(project: str, slug: str, worktree: Path, actual: str, e
     S.append_event(project, slug, "task-branch-restored", left=actual, branch=expected)
 
 
-def build_brief(project: str, slug: str) -> str:
+def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
     task = S.load_task(project, slug)
     d = S.task_dir(project, slug)
     proj = config.project(project)
@@ -1111,7 +1111,8 @@ def build_brief(project: str, slug: str) -> str:
     else:
         merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete.",
                         "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)
-    engine = task.get("l2_engine") or task.get("engine") or "pending quota route"
+    engine = choice["engine"] if choice else task.get("l2_engine") or task.get("engine") or "pending quota route"
+    model = choice.get("model") if choice else task.get("engine_model") or task.get("model")
     other_leases = leases(project, exclude=slug)
     overlaps = [f"`{other['slug']}` on {', '.join(shared)}" for other in other_leases
                 if (shared := shared_paths(task_paths(project, task), other["paths"]))]
@@ -1129,7 +1130,7 @@ def build_brief(project: str, slug: str) -> str:
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         engine=engine,
-        model=task.get("engine_model") or task.get("model") or "provider default",
+        model=model or "provider default",
         leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in other_leases) or "none"),
         overlaps=(f" Shared with {'; '.join(overlaps)}: rebase onto main before landing and keep shared-doc "
                   "edits to your own sections." if overlaps else ""),
@@ -1228,10 +1229,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         messages = T.pending(project, slug)
         for row in messages:
             task.setdefault("message_deliveries", {})[row["id"]] = {"state": "unconfirmed", "at": None}
-        task.update({"dispatching": S.now(), "worker_started_at": datetime.now(timezone.utc).isoformat(),
-                     "l2_engine": engine, "engine_model": selected_model,
-                     "launch_model": selected_model, "launch_effort": selected_effort, "engine_reasoning_effort": None,
-                     "routing": choice["why"], "routing_pinned": choice.get("pinned", False)})
+        task.update({"dispatching": S.now(), "worker_started_at": datetime.now(timezone.utc).isoformat()})
         S.save_task(project, task)
     attempt = task.get("attempt", 0) + 1
     agent = {}
@@ -1239,7 +1237,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         settings = session_settings(project, slug, S.session_key(project, slug, attempt))
         tried = []
         while True:
-            brief_md = build_brief(project, slug)
+            brief_md = build_brief(project, slug, choice=choice)
             history = [row for row in task.get("image_messages", []) if row.get("delivered")] if task.get("attempt") else []
             if history:
                 brief_md += "\n\nPreviously delivered image context; these are saved messages, not new requests:\n" + T.render_inbox(history)
@@ -1269,11 +1267,6 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
                 raise T.TransitionError(f"engine hold: {choice['why']}")
             engine, selected_model = choice["engine"], choice["model"]
             selected_effort = choice.get("effort")
-            with S.project_lock(project):
-                current = S.load_task(project, slug)
-                current.update(l2_engine=engine, launch_model=selected_model, engine_model=selected_model,
-                               launch_effort=selected_effort, routing=choice["why"])
-                S.save_task(project, current)
     except T.TransitionError:
         raise
     except Exception as exc:
@@ -1288,6 +1281,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         T.dispatch(project, slug, attempt=attempt, session_id=agent["sessionId"], agent_id=agent["id"],
                    worktree=worktree, branch=worktree_branch(slug, worktree),
                    l2_engine=engine, engine_model=agent.get("engine_model", selected_model), routing=choice["why"],
+                   launch_model=selected_model, launch_effort=selected_effort, routing_pinned=choice.get("pinned", False),
                    messages=messages, input_delivered=agent.get("input_delivered") is True)
     except T.TransitionError as exc:
         if agent.get("id"):

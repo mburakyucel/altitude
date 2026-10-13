@@ -13,6 +13,7 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   const request = info?.request;
   const active = Boolean(request && ["pending", "executing"].includes(request.status));
   const stopping = active && request?.phase === "stopping";
+  const queued = request?.status === "done" && task.state === "queued";
   const [dialog, setDialog] = useState<"" | "start" | "now">("");
   const [target, setTarget] = useState("");
   const [model, setModel] = useState("");
@@ -50,9 +51,11 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   };
   const blocked = disabled || pending || uncertain;
   const start = () => {
-    if (blocked) return;
+    if (blocked || stopping || queued) return;
     if (!info) return;
-    const next = info.targets.find((item) => item.engine === info.current_engine && item.available)
+    const next = (info.quota_limited && info.resume_hold
+      ? info.targets.find((item) => item.engine !== info.current_engine && item.available)
+      : info.targets.find((item) => item.engine === info.current_engine && item.available))
       || info.targets.find((item) => item.available) || info.targets[0];
     if (next) pickEngine(next.engine);
     setError(""); setUnavailable(""); openDialog("start");
@@ -89,7 +92,7 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   const label = uncertain ? "Switch unconfirmed" : active ? stopping ? `Switching to ${request?.target_label}` : "Preparing switch"
     : request?.status === "done" && task.state === "queued" ? `Waiting for ${request.target_label}` : "";
   const quotaOffer = Boolean(task.state === "blocked" && info?.quota_limited && info.resume_hold && info.targets.length && !active && !uncertain && !error);
-  return { info, shown, request, active, stopping, label, dialog, setDialog: openDialog, target, setTarget, selected,
+  return { info, shown, request, active, stopping, queued, label, dialog, setDialog: openDialog, target, setTarget, selected,
     pending, uncertain, error, unavailable, blocked, disabled, quotaOffer, start, perform, recheck,
     model, setModel, effort, setEffort, pickEngine, selectedModel, changed,
     controls: active && !stopping || uncertain,
@@ -106,7 +109,7 @@ export function TransferModelButton({ transfer: t }: { transfer: Transfer }) {
   const label = t.info.current_model_label || `${t.info.current_label} · Settings unknown`;
   const effort = t.info.current_model ? t.info.current_effort_label : "";
   return <button type="button" className="models-pill task-model-pill" aria-haspopup="dialog"
-    aria-label={`Task model: ${label}${effort ? ` · ${effort}` : ""}`} disabled={t.blocked} onClick={t.start}>
+    aria-label={`Task model: ${label}${effort ? ` · ${effort}` : ""}`} disabled={t.blocked || t.stopping || t.queued} onClick={t.start}>
     L2 · <strong>{label}{effort ? ` · ${effort}` : ""}</strong> <span aria-hidden>⌄</span>
   </button>;
 }

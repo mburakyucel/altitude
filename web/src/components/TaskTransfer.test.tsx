@@ -75,7 +75,7 @@ it("returns to the composer chooser after the completed outcome enters history",
 it("shows queued progress without offering a conflicting new switch", () => {
   render(<Harness task={{ ...initial, state: "queued", transfer: { ...initial.transfer!, request: { ...preparing.transfer!.request!, status: "done", phase: "done" } } }} />);
   expect(screen.getByText("Waiting for Engine B")).toBeVisible();
-  expect(screen.getByRole("button", { name: /Task model:/ })).toBeEnabled();
+  expect(screen.getByRole("button", { name: /Task model:/ })).toBeDisabled();
 });
 it("does not promote historical quota evidence after the current hold clears", () => {
   render(<Harness task={{ ...initial, state: "blocked", transfer: { ...initial.transfer!, quota_limited: true, resume_hold: null } }} />);

@@ -279,6 +279,42 @@ class TestProviderHandoff(AltitudeCase):
         self.assertEqual(fresh["questions"], task["questions"])
         self.assertEqual(fresh["hold_merge"], task["hold_merge"])
 
+    def test_current_launch_facts_change_only_after_successful_successor_start(self):
+        task = self.owner()
+        selection = {"model": "target-a", "effort": "medium"}
+        self.select(task, "codex", selection)
+        self.execute(task)
+        observed = []
+
+        def start(engine, name, prompt, **kwargs):
+            current = S.load_task(self.project, task["slug"])
+            view = server.task_transfer_view(self.project, current)
+            observed.append(current)
+            self.assertEqual(current["state"], "queued")
+            self.assertEqual((view["current_engine"], view["current_model"], view["current_effort"]),
+                             (task["l2_engine"], task["launch_model"], task.get("launch_effort")))
+            self.assertIn("codex (target-a)", prompt)
+            return self.engine.start_l2(engine, name, prompt, **kwargs)
+
+        with mock.patch.object(engines, "start_l2", side_effect=start):
+            dispatch.run(self.project, task["slug"])
+        self.assertEqual(len(observed), 1)
+        fresh = S.load_task(self.project, task["slug"])
+        self.assertEqual((fresh["l2_engine"], fresh["launch_model"], fresh["launch_effort"]),
+                         ("codex", "target-a", "medium"))
+
+    def test_failed_successor_launch_does_not_apply_requested_settings(self):
+        task = self.owner()
+        self.select(task, "codex", {"model": "target-a", "effort": "medium"})
+        self.execute(task)
+        with mock.patch.object(engines, "start_l2", return_value={"returncode": 1, "stderr": "fixture failure"}), \
+                mock.patch("altitude.incidents.system_fault"):
+            with self.assertRaises(dispatch.DispatchFailure):
+                dispatch.run(self.project, task["slug"])
+        failed = S.load_task(self.project, task["slug"])
+        for key in ("l2_engine", "launch_model", "launch_effort", "attempt"):
+            self.assertEqual(failed.get(key), task.get(key), key)
+
     def test_default_preview_changes_and_unchanged_tuple_create_no_request(self):
         task = self.running_owner()
         current = {"model": task["launch_model"], "effort": task.get("launch_effort")}

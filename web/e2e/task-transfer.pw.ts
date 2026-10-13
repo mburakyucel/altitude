@@ -99,6 +99,34 @@ test("explicit switch now replaces a running owner and preserves the merge hold"
   await walk.state("03-new-attempt-hold-kept", { visible: [page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm] });
 });
 
+test("same-engine effort change shows the current tuple until the fresh attempt runs", async ({ page, request }, info) => {
+  const slug="transfer-running-work";
+  const read=async ()=>(await (await request.get(path(slug))).json());
+  const before=await read();
+  const walk=walkthrough(page,info);
+  await walk.open(`/projects/atlas/tasks/${slug}`);
+  await draft(page).fill("Keep the unsent task instruction.");
+  await page.getByRole("button",{name:/^Task model:/}).click();
+  await page.getByLabel("Engine",{exact:true}).selectOption(before.transfer.current_engine);
+  await page.getByLabel("Model",{exact:true}).selectOption(before.transfer.current_model);
+  await expect(page.getByRole("button",{name:"Prepare change",exact:true})).toBeDisabled();
+  await page.getByLabel("Effort",{exact:true}).selectOption("medium");
+  await walk.state("01-same-engine-effort-confirmation",{visible:[page.getByRole("dialog",{name:"This task’s model"})],hidden:[]});
+  await page.getByRole("button",{name:"Prepare change",exact:true}).click();
+  await expect.poll(async ()=>(await read()).daemon_request?.selection).toEqual({model:before.transfer.current_model,effort:"medium"});
+  await expect(page.getByRole("button",{name:/^Task model:/})).toContainText("High");
+  await request.post("/fixture/transfer",{data:{slug,ready:true}});
+  await request.post("/fixture/transfer",{data:{slug,dispatch:true}});
+  await expect.poll(async ()=>(await read()).attempt).toBe(2);
+  await expect(page.getByRole("button",{name:/^Task model:/})).toContainText("Medium");
+  const after=await read();
+  expect(after.l2_engine).toBe(before.l2_engine);
+  expect(after.session_id).not.toBe(before.session_id);
+  expect(after.hold_merge).toEqual(before.hold_merge);
+  await expect(draft(page)).toHaveValue("Keep the unsent task instruction.");
+  await walk.state("02-new-effort-applied",{visible:[draft(page),page.getByRole("button",{name:/^Task model:/})],hidden:[page.getByRole("dialog")]});
+});
+
 test("a blocked question owner switches from saved context without answering the question", async ({ page, request }, info) => {
   const slug = "transfer-question-work";
   const read = async () => (await (await request.get(path(slug))).json());

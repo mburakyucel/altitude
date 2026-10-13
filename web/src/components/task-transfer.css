@@ -15,7 +15,9 @@
 .transfer-dialog label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 44px; }
 .transfer-dialog input { accent-color: var(--accent); }
 .transfer-dialog .transfer-actions { margin-top: 0; }
-.models-pill.task-model-pill { min-height: 44px; min-width: 44px; }
+.models-pill.task-model-pill, .shell[data-phone] .models-pill.task-model-pill { min-height: 44px; min-width: 44px; }
+.shell[data-phone] .composer:is([data-phase="listening"], [data-phase="starting"], [data-phase="transcribing"]) .composer-row:has(.task-model-pill) { flex-wrap: wrap; }
+.shell[data-phone] .composer:is([data-phase="listening"], [data-phase="starting"], [data-phase="transcribing"]) .composer-pill:has(.task-model-pill) { display: inline-flex; flex-basis: 100%; }
 .task-model-fields { display: grid; gap: 12px; border: 0; margin: 0; padding: 0; }
 .task-model-fields label { display: grid; gap: 6px; font-size: 13px; color: var(--text-secondary); }
 .task-model-fields select { width: 100%; min-width: 0; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font-size: 16px; }
