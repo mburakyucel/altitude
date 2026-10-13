@@ -22,13 +22,15 @@ class TestEngineDriver(AltitudeCase):
         for path in (self.log, self.tool):
             path.unlink(missing_ok=True)
 
-    def drive(self, engine, *, tool=True, ask=False, task=None, helpers=False, end="completed", output=None):
+    def drive(self, engine, *, tool=True, ask=False, task=None, helpers=False, end="completed", output=None,
+              refuse=False):
         command = [sys.executable, str(FAKE), *(["app-server"] if engine == "codex" else [])]
         spec = {"engine": engine, "command": command, "input": engines.common._engine_input(engine, "Start the work.", ()),
                 "cwd": str(self.repo), "sends": str(self.sends), "worker_id": "worker", "task": task}
         env = {**os.environ, "FAKE_ENGINE_LOG": str(self.log), **({"FAKE_ENGINE_TOOL": str(self.tool)} if tool else {}),
                **({"FAKE_ENGINE_ASK": "1"} if ask else {}),
-               **({"FAKE_ENGINE_HELPERS": str(helpers)} if helpers else {}), "FAKE_ENGINE_END": end}
+               **({"FAKE_ENGINE_HELPERS": str(helpers)} if helpers else {}), "FAKE_ENGINE_END": end,
+               **({"FAKE_ENGINE_REFUSE_STEER": "1"} if refuse else {})}
         proc = subprocess.Popen(engines.common._driver_command(), stdin=subprocess.PIPE, stdout=output or subprocess.PIPE,
                                 stderr=subprocess.PIPE, env=env)
         proc.stdin.write(engines.common._driver_input(spec).encode())
@@ -339,6 +341,54 @@ class TestEngineDriver(AltitudeCase):
         self.assertEqual(current["message_deliveries"][message["id"]]["state"], "delivered")
         self.assertEqual(current["message_deliveries"][message["id"]]["agent_id"], "worker")
         self.assertNotIn(message["id"], [row["id"] for row in T.pending(self.project, task["slug"])])
+
+    def owner(self):
+        """A running task whose worker is this driver's job, with an ordinary operator message waiting."""
+        task = T.new(self.project, "Steered owner", "Brief.")
+        with S.project_lock(self.project):
+            current = S.load_task(self.project, task["slug"])
+            current.update(state="running", agent_id="worker", session_id="fake-thread", attempt=1)
+            S.save_task(self.project, current)
+        record = engines.common._worker_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker")["record"]
+        record.parent.mkdir(parents=True, exist_ok=True)
+        S.atomic_write(record, json.dumps({"id": "worker", "sends": str(self.sends)}))
+        return {"project": self.project, "slug": task["slug"]}
+
+    def test_an_ordinary_message_reaches_a_running_codex_turn_without_send_now(self):
+        task = self.owner()
+        proc = self.drive("codex", task=task)
+        self.wait_for_tool(proc)
+        message = T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, TEXT)
+        events = self.finish(proc)
+        self.assertEqual(self.tool.with_suffix(".completed").read_text(), "completed")
+        self.assertIn({"type": "altitude.send", "message_id": message["id"], "outcome": "delivered"}, events)
+        steer = next(row for row in self.received() if row.get("method") == "turn/steer")
+        self.assertEqual(steer["params"]["input"][0]["text"], T.render_inbox([message]))
+        current = S.load_task(self.project, task["slug"])
+        self.assertNotIn("send_now", current)
+        self.assertEqual(current["message_deliveries"][message["id"]]["state"], "delivered")
+        self.assertEqual(T.pending(self.project, task["slug"]), [])
+
+    def test_a_refused_steer_leaves_the_message_for_the_next_turn_without_retrying(self):
+        task = self.owner()
+        proc = self.drive("codex", task=task, refuse=True)
+        self.wait_for_tool(proc)
+        message = T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, TEXT)
+        events = self.finish(proc)
+        self.assertIn({"type": "altitude.send", "message_id": message["id"], "outcome": "returned"}, events)
+        self.assertEqual(sum(row.get("method") == "turn/steer" for row in self.received()), 1)
+        current = S.load_task(self.project, task["slug"])
+        self.assertNotIn("send_now", current)
+        self.assertEqual(current.get("message_deliveries") or {}, {})
+        self.assertEqual(T.pending(self.project, task["slug"]), [message])  # the next turn's prompt carries it
+
+    def test_a_claude_owner_keeps_its_hook_checkpoint(self):
+        task = self.owner()
+        message = T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, TEXT)
+        self.finish(self.drive("claude", tool=False, task=task))
+        self.assertNotIn("send_now", S.load_task(self.project, task["slug"]))
+        self.assertEqual(T.pending(self.project, task["slug"]), [message])
+        self.assertFalse(self.sends.exists() and any(self.sends.iterdir()))
 
     def test_missing_launch_input_starts_no_engine(self):
         proc = subprocess.run(engines.common._driver_command(), input=b"", capture_output=True, timeout=30)
