@@ -63,7 +63,7 @@ test("Settings holds project models and effort; the menu reaches them and the dr
   await expect(section("Auto defaults").getByRole("group", { name: /^(Tasks|L3) · / }).first()).toHaveAccessibleName(`Tasks · ${l2First.label}`);
   await expect(l3First.getByLabel("Effort")).toHaveValue("");
   await expect(l3First.getByLabel("Model")).toHaveValue("");
-  await expect(l3First.getByLabel("Model")).toHaveDisplayValue(`Default (${first!.model.default})`);
+  await expect(l3First.getByLabel("Model").locator("option:checked")).toHaveText(`Default (${first!.model.default})`);
   await expect(l2Group.getByLabel("Effort")).toHaveValue("");
 
   const choice = first!.effort.choices.at(-1)!;
