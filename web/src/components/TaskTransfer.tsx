@@ -83,7 +83,7 @@ export function TransferEntry({ transfer: t, quota = false }: { transfer: Transf
   if (!t.info?.targets.length || t.active || t.uncertain) return null;
   const offered = t.info.targets.filter((target) => target.available);
   return <div className="transfer-entry">
-    <button type="button" className={quota ? "btn primary" : "btn"} disabled={t.blocked}
+    <button type="button" className={quota ? "btn btn-primary" : "btn"} disabled={t.blocked}
       aria-disabled={!t.info.eligible} onClick={t.start}>
       {quota && offered.length === 1 ? `Switch to ${offered[0]?.label}` : "Switch engine…"}
     </button>
@@ -126,7 +126,7 @@ export function TransferDialog({ transfer: t }: { transfer: Transfer }) {
       {!now ? <><p className="transfer-warning">Some session context may not carry over. The new engine uses extra tokens to get up to speed.</p><p>Your saved work, questions and merge holds stay.</p></> : null}
       <div className="transfer-actions">
         <button type="button" className="btn" data-autofocus disabled={t.pending} onClick={t.close}>{now ? "Keep waiting" : "Cancel"}</button>
-        <button type="button" className="btn primary" disabled={t.blocked || (!now && !t.selected?.available)} onClick={() => void t.perform(now ? "handoff-now" : "handoff")}>
+        <button type="button" className="btn btn-primary" disabled={t.blocked || (!now && !t.selected?.available)} onClick={() => void t.perform(now ? "handoff-now" : "handoff")}>
           <BusyLabel busy={t.pending} label={now ? "Switch now" : info.preparation ? "Prepare switch" : `Switch to ${name}`} working="Submitting…" />
         </button>
       </div>
