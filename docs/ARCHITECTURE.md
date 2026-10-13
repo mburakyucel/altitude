@@ -636,13 +636,14 @@ preferences or explicit pins and can operate with one installed engine and one a
 
 Owner launch and resume pre-approve `Bash(alt *)` in native auto mode, so Altitude's own
 coordination commands do not depend on the permission classifier. The rule matches a plain `alt`
-invocation only: Claude Code sends `alt` chained with `cd`, pipes, `;`, `&&` or output redirection
-to its classifier, so the L2 persona has owners run each `alt` command alone and rerun a refused
-chained form plainly. Native deny/ask rules, worker confinement and Altitude's role, task-attempt,
-merge-hold and operator-grant checks still apply. Other external commands retain their native
-permission checks. The other launcher already admits coordination within its network-enabled
-workspace-write sandbox. The allowance is shared by Linux and macOS launches; it grants no
-additional filesystem or service access.
+invocation only; a chained or redirected form, or a shell or interpreter command that writes a file
+for `alt` to read, goes to the classifier, which can refuse it. The L2 persona therefore has owners
+run each `alt` command alone, write its input files with the engine's file tool, and rerun a
+refused chained form plainly. Native deny/ask rules, worker confinement and Altitude's role,
+task-attempt, merge-hold and operator-grant checks still apply. Other external commands retain
+their native permission checks. The other launcher already admits coordination within its
+network-enabled workspace-write sandbox. The allowance is shared by Linux and macOS launches; it
+grants no additional filesystem or service access.
 The native classifier reads user turns, never hook context, as the user's intent
 ([issue #612](https://github.com/mburakyucel/altitude/issues/612)). The operator's own task messages therefore
 reach a running owner only as a user turn: the inbox hook names them in a waiting notice, and when the
