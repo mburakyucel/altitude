@@ -143,6 +143,7 @@ class TestNativeImages(ImageDeliveryCase):
                         self.assertIn(expected, text)
 
     def test_task_fresh_and_resumed_workers_keep_engine_model_session_and_images(self):
+        worktree = self.task_worktree("owner")
         for engine in ("claude", "codex"):
             for resume in (False, True):
                 processes = []
@@ -155,9 +156,8 @@ class TestNativeImages(ImageDeliveryCase):
                 with self.subTest(engine=engine, resume=resume), \
                      mock.patch.object(engines.claude, "claude_agents", return_value=[]), \
                      mock.patch.object(platform, "job_active", return_value=True), \
-                     mock.patch.object(engines.common, "_git_dirs", return_value=[]), \
                      mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen) as launch:
-                    common = dict(cwd=self.repo, persona=persona, model="original-model", settings=self.tmp / "settings.json",
+                    common = dict(cwd=worktree, persona=persona, model="original-model", settings=self.tmp / "settings.json",
                                   extra_env={"ALTITUDE_TASK": "owner"}, job_root=self.runtime_tmp / "jobs", images=[self.image],
                                   effort="xhigh" if engine == "codex" else None)
                     result = (engines.resume_l2(engine, "owner", "session", "inspect the screenshot", **common) if resume else
@@ -187,16 +187,16 @@ class TestNativeImages(ImageDeliveryCase):
                 self.assertNotIn("attached visually", prompt)
 
     def test_missing_or_unsupported_images_never_launch_or_stop_an_existing_worker(self):
+        worktree = self.task_worktree("owner")
         for unavailable in (False, True):
             with self.subTest(unavailable=unavailable), \
                  mock.patch.object(engines.common, "image_capability", return_value={"available": not unavailable, "why": "Image input unavailable"}), \
                  mock.patch.object(engines.common.subprocess, "Popen") as launch, \
-                 mock.patch.object(engines.common, "_git_dirs", return_value=[]), \
                  mock.patch.object(engines.claude, "claude_agents", return_value=[]) as old_workers:
                 image = {**self.image, "path": str(self.tmp / "missing.png")}
                 for engine in ("claude", "codex"):
                     with self.assertRaises(engines.ImageInputError):
-                        engines.common._start_worker(engine, "owner", "caption", cwd=self.repo,
+                        engines.common._start_worker(engine, "owner", "caption", cwd=worktree,
                                               job_root=self.runtime_tmp / "jobs", images=[image])
                 launch.assert_not_called()
                 old_workers.assert_not_called()
@@ -238,7 +238,7 @@ class TestImageInbox(ImageDeliveryCase):
         self.quiet_engines()
         self.private_ledgers()
         self.patch(dispatch.git_policy, "fetch_origin", return_value="a" * 40)
-        self.patch(dispatch, "_task_worktree", return_value=self.repo)
+        self.patch(dispatch, "_task_worktree", side_effect=self.task_worktree)
         self.patch(dispatch, "_validate_task_worktree")
         self.patch(dispatch, "wip_hold", return_value=None)
         self.patch(engines, "worker_live", return_value=False)
@@ -250,7 +250,7 @@ class TestImageInbox(ImageDeliveryCase):
         task.update(images=[{key: value for key, value in self.image.items() if key != "path"}])
         if running:
             task.update(state="running", attempt=1, session_id="session", agent_id="old-worker",
-                        worktree=str(self.repo), l2_engine="codex", launch_model="original-model")
+                        worktree=str(self.task_worktree(task["slug"])), l2_engine="codex", launch_model="original-model")
         S.save_task(self.project, task)
         return task
 

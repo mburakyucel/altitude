@@ -342,7 +342,7 @@ class Jobs(DarwinCase):
         env = {"PATH": "/usr/bin:/bin", "ALTITUDE_TASK": "task"}
         spec = self.spec(platform.job_command("altitude-codex-w1.service", ["codex", "exec"], env, runtime_max=60))
         self.assertEqual(spec, {"label": "dev.altitude.job.altitude-codex-w1", "mode": "pipe", "command": ["codex", "exec"],
-                                "env": env, "runtime_max": 60, "writable": None})
+                                "env": env, "runtime_max": 60, "writable": None, "read_only": []})
         spec = self.spec(platform.job_command("altitude-claude-c.service", ["claude"], env,
                                               writable=(Path("/work/tree"), Path("/home/.altitude"))))
         self.assertEqual(spec["writable"], ["/work/tree", "/home/.altitude"])
