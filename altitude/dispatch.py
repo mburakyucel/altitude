@@ -287,6 +287,8 @@ def _require_handoff(project: str, task: dict, engine: str, attempt: int) -> dic
         raise T.TransitionError("handoff requires the expected running or stopped/exit/limit-blocked attempt, with no active claim")
     if (task["state"] == "blocked" and task.get("fault") != "l2-died"
             and not task.get("usage_limit") and T.stopped_by(task) not in DAEMON_REQUEST_ACTORS):
+        if task.get("fault") or not any(q.get("status") == "open" for q in task.get("questions", [])):
+            raise T.TransitionError("handoff cannot release this recovery or dependency wait")
         worker = engines.worker(l2_engine(task), task, job_root=l2_job_root(project, task["slug"]))
         if not worker or worker.get("state") not in ("done", "failed", "stopped"):
             raise T.TransitionError("handoff requires confirmed worker exit for this blocked attempt")
@@ -446,7 +448,11 @@ def handoff_reason(note: str) -> str:
         return "Waiting for the current worker to finish."
     if "active claim" in note or "already in progress" in note:
         return "Another task action is in progress or the task has changed."
-    return "The selected engine is unavailable. Check task status."
+    if "recovery or dependency" in note:
+        return "This task is waiting for recovery or a dependency."
+    if "unavailable" in note or "routing options" in note or "no eligible" in note.lower():
+        return "The selected engine is unavailable. Check task status."
+    return "The switch could not proceed. Check task status."
 
 
 def _handoff_outcome_text(request: dict) -> str:

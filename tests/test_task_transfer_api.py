@@ -198,7 +198,13 @@ class TestTaskTransferAPI(AltitudeCase):
         for status in ("done", "cancelled"):
             ended = {**after, "daemon_request": {**after["daemon_request"], "status": status}}
             self.assertEqual(T.steering_view(ended, [])["state"], "running")
-        T.block(self.project, self.task["slug"], "The worker exited.", actor="altd", updates={"fault": "l2-died"})
+        item = next(row for row in dispatch.poll(self.project) if row["task"]["slug"] == self.task["slug"])
+        self.assertTrue(item["died"])
+        with mock.patch.object(server.incidents, "system_fault") as fault:
+            server._on_l2_finished(self.project, item)
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args[0], "l2-died")
+        self.assertEqual(S.load_task(self.project, self.task["slug"])["state"], "blocked")
         with mock.patch.object(engines, "worker_termination", return_value=None):
             self.assertEqual(self.request(url)["steering"]["state"], "stop_unconfirmed")
         with mock.patch.object(engines, "worker_termination", return_value=True):

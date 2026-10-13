@@ -153,8 +153,8 @@ The coordinator transport takes the same argument list:
 `{"kind":"alt","args":["task","handoff","blocked-owner","--engine","<engine>","--attempt","2","--reason","Continue the authorized work"]}`.
 The CLI persists a daemon request; it launches no worker. The task must have a prior attempt and
 worker/session identity and be running, stopped by L3 or the operator, or blocked by worker death
-(`l2-died`), a confirmed ended worker, or a recognized usage limit. This includes an ended owner waiting
-on an unanswered question; switching does not answer it. A running owner receives a request to refresh `progress.md`
+(`l2-died`) or a recognized usage limit. An owner waiting on an unanswered question also qualifies
+when its worker has ended and it has no recovery fault; switching does not answer the question. A running owner receives a request to refresh `progress.md`
 with its current work, completed checks, unfinished work and next steps, then write the exact
 request-scoped readiness receipt supplied in that instruction. Existing workers use their file tools;
 they do not need an updated CLI. The readiness receipt replaces the owner's normal end-of-turn
@@ -184,7 +184,7 @@ termination refuses the transfer. The new brief says whether the handoff note wa
 context is not current verification and does not include the complete previous native conversation.
 
 The daemon checks the attempt, worker/session and block again. Active lifecycle claims and reviews,
-blocked owners whose exit is unconfirmed, reported/completed tasks, explicit task/project pins and unavailable or unconfigured
+other recovery/dependency waits, blocked question owners whose exit is unconfirmed, reported/completed tasks, explicit task/project pins and unavailable or unconfigured
 targets refuse. A changed block or replacement worker invalidates the request. An identical retry reuses
 its receipt while the resulting lifecycle still matches.
 

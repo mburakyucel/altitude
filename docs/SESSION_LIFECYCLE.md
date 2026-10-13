@@ -923,7 +923,7 @@ No eligible alternative leaves the task blocked. Only a provider-reported reset 
 unknown reset times create no timer. The existing thirty-minute routing observation expiry is an
 availability recheck, not a reset claim. Ordinary resume preserves the provider conversation and launch model.
 
-For a running owner, an operator/L3-stopped owner, or one blocked with a confirmed ended worker or a recognized usage limit, L3 or the operator
+For a running owner, an operator/L3-stopped owner, or one blocked by worker death, a recognized usage limit or an unanswered question with a confirmed ended worker, L3 or the operator
 uses [`alt task handoff`](CLI.md#explicit-provider-handoff) with the observed attempt, target engine
 and reason. A running owner gets one native checkpoint instruction to refresh `progress.md` and write a
 request-specific readiness file identifying its attempt and worker/session. That receipt replaces
@@ -942,7 +942,7 @@ turn when possible and retained for its next turn otherwise. Owner blocks and ex
 supersede preparation; a newly finished report proceeds to verification. Pending native commands
 may move to background when the checkpoint is delivered; their unfinished status stays explicit.
 The daemon fences worker/session and block identity, refuses in-flight claims and active reviews,
-finished tasks and blocked owners whose exit is unconfirmed, and checks task/project pins and target availability. An ended owner
+finished tasks, other recovery/dependency waits and blocked question owners whose exit is unconfirmed, and checks task/project pins and target availability. An ended owner
 waiting on a question can transfer without resolving that question. It retains
 the old worker records and requeues the same task with a one-attempt `next_engine`. Requeue clears the
 current verification snapshot; prior reports and delivery history remain. Dispatch checks pins

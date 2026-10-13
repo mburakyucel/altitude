@@ -139,7 +139,7 @@ request as idempotent while the terminal receipt still matches; an intervening l
 identity-fenced request before altd relaunches, stops, or removes a worker.
 `alt task handoff <slug> --engine <engine> --attempt <N> --reason '…'` uses this same coordinator
 transport and daemon request for a running owner, an operator/L3-stopped owner, or one blocked by
-a confirmed ended worker or a recognized usage limit, including an unanswered question whose owner has exited.
+worker death or a recognized usage limit, or an unanswered question whose owner has exited without a recovery fault.
 The running owner receives a native instruction to refresh
 `progress.md` and write a request/attempt/worker-bound readiness file; no updated owner CLI is required.
 The task page invokes that same request from task details or a quota-stop action, with an atomic fence

@@ -474,6 +474,16 @@ class TestProviderHandoff(AltitudeCase):
                     self.request(task)
                 self.assertEqual(S.load_task(self.project, task["slug"]), task)
 
+    def test_ended_worker_does_not_release_a_fault_or_dependency_wait(self):
+        for fault in ("external-ci", "git", None):
+            with self.subTest(fault=fault):
+                task = self.owner(f"Ended wait {fault}", question=bool(fault))
+                task.update(fault=fault, questions=task.get("questions", []) if fault else [])
+                S.save_task(self.project, task)
+                with self.assertRaisesRegex(T.TransitionError, "recovery or dependency"):
+                    self.request(task)
+                self.assertEqual(S.load_task(self.project, task["slug"]), task)
+
     def test_usage_block_with_unknown_reset_is_eligible_without_claiming_a_system_fault(self):
         task = self.owner()
         task.pop("fault")
