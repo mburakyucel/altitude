@@ -77,12 +77,25 @@ class TestRead(unittest.TestCase):
                 self.assertFalse(result["known"])
                 self.assertIn(repr(used_percent), result["why"])
 
-    def test_missing_primary_reset_is_unknown(self):
-        primary = {"usedPercent": 1, "windowDurationMins": 10080}
+    def test_missing_reset_keeps_the_reported_window_without_inventing_a_deadline(self):
+        primary = {"usedPercent": 100, "windowDurationMins": 10080}
         with patch.object(quota_codex, "_talk", return_value=transcript(primary=primary)):
             result = quota_codex.read()
-        self.assertFalse(result["known"])
-        self.assertIn("primary.resetsAt", result["why"])
+        self.assertTrue(result["known"])
+        self.assertEqual((result["primary_used"], result["primary_window_minutes"]), (100, 10080))
+        self.assertIsNone(result["primary_resets"])
+
+    def test_valid_secondary_survives_absent_or_invalid_primary(self):
+        secondary = {"usedPercent": 0, "windowDurationMins": 300, "resetsAt": 1788649878}
+        for primary in (None, {}, {"usedPercent": float("nan")},
+                        {"usedPercent": 5, "resetsAt": "invalid"}):
+            with self.subTest(primary=primary), patch.object(
+                    quota_codex, "_talk", return_value=transcript(primary=primary, secondary=secondary)):
+                result = quota_codex.read()
+                self.assertTrue(result["known"])
+                self.assertIsNone(result["primary_used"])
+                self.assertEqual((result["secondary_used"], result["secondary_window_minutes"]), (0, 300))
+                self.assertEqual(result["secondary_resets"], datetime.fromtimestamp(1788649878, timezone.utc).isoformat())
 
     def test_invalid_secondary_used_percent_is_dropped(self):
         secondary = {"usedPercent": "garbage", "windowDurationMins": 300, "resetsAt": 1788649878}

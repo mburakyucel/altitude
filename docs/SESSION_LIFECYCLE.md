@@ -1204,6 +1204,12 @@ the child starts from Altitude's clean environment plus the actor identity; stop
 process tree. Codex stdout JSONL is private task evidence: `thread.started.thread_id` is the session identity and
 `turn.completed.usage` the latest reported usage. A turn that ends without a report, a block, or a completion
 blocks the task with a system fault and incident carrying the engine's result error or stderr tail.
+Completed assistant message items can be followed by reasoning, tools and more messages in the same
+turn. They supply output, not task completion: the task adapter waits for the owner turn's terminal
+status and worker lifetime, and normal report/block/completion checks still apply. The coordinator
+waits for its headless process to return and uses its last assistant message. Usage updates replace
+the reported thread aggregate rather than adding repeated snapshots; per-request local records
+supply task accounting and current context independently.
 
 ## L3 sessions and provider changes
 
@@ -1706,6 +1712,11 @@ observation time; it does not restamp cached scalar windows or parse presentatio
 subscription authentication. Safe mode, empty tools and no session persistence keep the local usage
 command separate from task conversations. No inference prompt or credential extraction is involved.
 Codex retains its native `account/rateLimits/read` reader.
+Its primary and secondary windows are independently optional. Either valid window is retained,
+including zero usage, when the other is absent or malformed. A missing reset deadline stays unknown;
+it does not discard the window's reported usage or exhaustion. Refresh reads replace the snapshot
+with the account's current percentages and deadlines; they do not consume earned reset credits or
+reset provider conversations, task token counters or routing preferences.
 
 Missing login, unsupported CLI/schema, missing account windows, malformed responses, command failure
 or timeout yield unknown quota and replace the prior success. A read refused for sign-in also records

@@ -643,6 +643,9 @@ Statusline snapshots supply session display data, not routing quota. Failed read
 success with unknown; successful observations expire after thirty minutes. Collection neither
 resumes task sessions nor changes routing preferences. See the [quota source and compatibility
 limits](SESSION_LIFECYCLE.md#context-and-prompt-cache-evidence).
+The native account reader retains each valid window independently, even when the other window or
+its reset deadline is absent. A reported exhausted window excludes the seat with an unknown reset
+time when no deadline is provided.
 
 `config.subprocess_env()` supplies the common tool environment for engine discovery/launch,
 landing and restart builds. It preserves Node on PATH, otherwise asks installed nvm for its
