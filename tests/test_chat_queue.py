@@ -700,9 +700,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
 
     def test_terminal_precondition_failure_is_reported_once_and_not_retried_each_tick(self):
         T.message(self.project, self.slug, "l3", "Resume after checking the worktree.", by="l3")
-        task = S.load_task(self.project, self.slug)
-        task["worktree"] = str(self.repo / "missing-worktree")
-        S.save_task(self.project, task)
+        self.worktree.rmdir()
 
         with mock.patch.object(incidents, "system_fault") as fault, \
              mock.patch.object(engines, "resume_l2") as launch:

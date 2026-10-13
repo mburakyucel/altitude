@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-from tests.support import AltitudeCase, make_repo
+from tests.support import AltitudeCase
 from altitude import config, engines, platform
 from tests.test_restart_command import load_script
 
@@ -121,7 +121,7 @@ class TestToolchain(AltitudeCase):
         self.assertEqual(commands[0], ["pnpm", "install", "--frozen-lockfile"])
 
     def test_fresh_and_resumed_workers_execute_tools_with_identity_and_failure_intact(self):
-        make_repo(self.repo)
+        worktree = self.task_worktree("toolchain-task")
         nvm_fixture(self)
         self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "claude_agents", return_value=[])
@@ -174,7 +174,7 @@ class TestToolchain(AltitudeCase):
 
                     with mock.patch.object(platform, "job_command", side_effect=service_command):
                         result = engines.common._start_worker(
-                            engine, "fixture", "continue", cwd=self.repo, job_root=self.runtime_tmp / "jobs",
+                            engine, "fixture", "continue", cwd=worktree, job_root=self.runtime_tmp / "jobs",
                             resume="session" if resume else None,
                             extra_env={"ALTITUDE_TASK": "toolchain-task", "ALTITUDE_ATTEMPT": "1"})
                     self.assertEqual(result["returncode"], 0, result)

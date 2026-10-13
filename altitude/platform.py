@@ -1179,11 +1179,12 @@ def _scrub(env: dict[str, str]) -> list[str]:
 
 
 def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_max: int | None = None,
-                writable: tuple[Path, ...] | None = None) -> list[str]:
+                writable: tuple[Path, ...] | None = None, read_only: tuple[Path, ...] = ()) -> list[str]:
     """Run a command synchronously, piped to the caller, in a job of its own that holds every descendant.
 
     `writable` confines the job with Altitude's Seatbelt profile on macOS: it may signal only its own processes and
-    write only under these roots and the user's temporary directories. Linux leaves file confinement to the engine.
+    write only under these roots and the user's temporary directories, except under `read_only`. Linux leaves file
+    confinement to the engine.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
     creates the child. This lets nested bwrap initialize without weakening altd's ``NoNewPrivileges=yes`` boundary.
@@ -1193,7 +1194,8 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
     if _darwin():
         return _entry("launch", json.dumps({
             "label": _label(name), "mode": "pipe", "command": command, "env": env, "runtime_max": runtime_max,
-            "writable": None if writable is None else [str(root) for root in writable]}))
+            "writable": None if writable is None else [str(root) for root in writable],
+            "read_only": [str(path) for path in read_only]}))
     return [SYSTEMD_RUN, "--user", "--wait", "--pipe", f"--unit={name}", "--quiet", "--collect",
             "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
             "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no",
@@ -1913,31 +1915,35 @@ def _fd_path(fd: int) -> str | None:
     return fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH", 50), bytes(1024)).split(b"\0", 1)[0].decode()
 
 
-def seatbelt_profile(writable: list[str]) -> str:
+def seatbelt_profile(writable: list[str], read_only: list[str] = ()) -> str:
     """Altitude's Seatbelt profile. The job may signal only processes in its own sandbox, never its supervisor, and
     write only under `writable` (a root ending in * admits every path that starts with it), the user's temporary and
-    cache directories, /private/tmp and devices, and neither read nor write macOS's private places. Seatbelt matches
-    resolved paths. launchd refuses service control to every sandboxed process, and the profile refuses the services
-    and Apple Events that would run a program outside it."""
+    cache directories, /private/tmp and devices, except under `read_only`, the most specific path deciding, and
+    neither read nor write macOS's private places. Seatbelt matches resolved paths and lets the last matching rule
+    decide, so rules follow from shallow to deep. launchd refuses service control to every sandboxed process, and the
+    profile refuses the services and Apple Events that would run a program outside it."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
     rules = []
     for root in dict.fromkeys((*writable, user, "/private/tmp", "/private/var/tmp", "/dev")):
         if root.endswith("*"):
             prefix = os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root)[:-1])
-            rules.append('(regex #"^' + re.escape(prefix).replace('"', '\\"') + '")')
+            rules.append((prefix, "allow", '(regex #"^' + re.escape(prefix).replace('"', '\\"') + '")'))
         else:
-            rules.extend(_filters("subpath", [os.path.realpath(root)]))
-    return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))"
-            f"(deny file-write*)(allow file-write* {' '.join(rules)}){private_rule()}{SERVICE_ESCAPES}")
+            rules.extend((path, "allow", rule) for path in [os.path.realpath(root)] for rule in _filters("subpath", [path]))
+    rules.extend((path, "deny", rule) for path in map(os.path.realpath, read_only) for rule in _filters("subpath", [path]))
+    rules.sort(key=lambda rule: (rule[0].count("/"), rule[1] == "deny"))
+    return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))(deny file-write*)"
+            + "".join(f"({verdict} file-write* {rule})" for _, verdict, rule in rules) + private_rule() + SERVICE_ESCAPES)
 
 
-def confined(command: list[str], writable: tuple[Path, ...]) -> list[str]:
+def confined(command: list[str], writable: tuple[Path, ...], read_only: tuple[Path, ...] = ()) -> list[str]:
     """`command` under Altitude's Seatbelt profile on macOS, for a process that runs as the caller's own child
     rather than as a job; unchanged on Linux. sandbox-exec replaces itself with the command, so its PID is the
     command's."""
     if not _darwin():
         return command
-    return [SANDBOX_EXEC, "-p", seatbelt_profile([str(root) for root in writable]), *command]
+    return [SANDBOX_EXEC, "-p", seatbelt_profile([str(root) for root in writable], [str(path) for path in read_only]),
+            *command]
 
 
 def job_main(argv: list[str]) -> None:
@@ -2086,7 +2092,7 @@ def _supervise(job: Path) -> int:
                 os.set_blocking(streams[-1], True)
         command = spec["command"]
         if spec.get("writable") is not None:
-            command = confined(command, spec["writable"])
+            command = confined(command, spec["writable"], spec["read_only"])
         try:
             child = subprocess.Popen(command, stdin=streams[0], stdout=streams[1], stderr=streams[2],
                                      env=spec["env"], cwd=spec["cwd"], start_new_session=terminal,

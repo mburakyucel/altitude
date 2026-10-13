@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 from datetime import datetime, timedelta, timezone
 
-from tests.support import REPO, AltitudeCase, add_worktree, git, make_repo
+from tests.support import REPO, AltitudeCase, git, make_repo
 from altitude import config, dispatch, engines, line, platform, server, state as S, tasks as T, terminal
 
 # On the suite's interpreter: macOS's /usr/bin/python3 is an xcrun shim whose cache warnings would join the log.
@@ -75,9 +75,8 @@ class TestOperatorGrant(AltitudeCase):
         self.at = "2026-09-16T06:00:00+00:00"
         self.patch(S, "now", side_effect=lambda: self.at)
         self.patch(T, "_conversation_time", side_effect=lambda: self.at)
-        self.worktree = self.tmp / "worktree"
-        self.worktree.mkdir()
         self.slug = T.new(self.project, "Preserve the service configuration", "Keep TLS across the install.")["slug"]
+        self.worktree = self.task_worktree(self.slug)
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
                    worktree=str(self.worktree), branch="work")
         root = dispatch.l2_job_root(self.project, self.slug)
@@ -202,8 +201,8 @@ class TestOperatorGrant(AltitudeCase):
 
     def test_l3_applies_an_operator_answer_from_another_task_for_the_identical_purpose(self):
         earlier = T.new(self.project, "Close device installation", "Verify the published release.")["slug"]
-        T.dispatch(self.project, earlier, attempt=1, session_id="earlier", agent_id="earlier", worktree=str(self.repo),
-                   branch="earlier")
+        T.dispatch(self.project, earlier, attempt=1, session_id="earlier", agent_id="earlier",
+                   worktree=str(self.task_worktree(earlier)), branch="earlier")
         self.tick()
         T.block(self.project, earlier, "May I run repeated installation VMs against the published release?",
                 actor="l2", expected_state="running", expected_attempt=1, updates={"waiting_on": "burak"})
@@ -310,8 +309,6 @@ class TestOperatorGrant(AltitudeCase):
     def test_standing_cli_grant_resume_run_and_revoke_preserve_original_authority(self):
         approval = self.standing()
         commit = git("rev-parse", "main", cwd=self.repo).strip()
-        task = S.load_task(self.project, self.slug)
-        S.save_task(self.project, {**task, "worktree": str(add_worktree(self.repo, self.slug))})
         self.patch(engines, "worker_live", return_value=False)
         question = self.ask(" ".join(self.standing_text.split()), "l3")
         self.assertLess(approval["at"], question["asked"])
@@ -478,8 +475,6 @@ class TestOperatorGrant(AltitudeCase):
         return request["id"]
 
     def test_l3_resume_after_recording_the_grant_settles_the_owners_grant_dependency(self):
-        task = S.load_task(self.project, self.slug)
-        S.save_task(self.project, {**task, "worktree": str(add_worktree(self.repo, self.slug))})
         self.patch(engines, "worker_live", return_value=False)
         grant, _question, _row = self.granted()
         waiting = self.ask("L3: record the operator grant for the approved purpose, then resume me.", "l3")

@@ -19,8 +19,8 @@ import urllib.error
 import zipfile
 from pathlib import Path
 
-from tests.support import AltitudeCase
-from altitude import access, config, engines, platform, server, speech, speech_worker, state as S, terminal
+from tests.support import AltitudeCase, add_worktree, make_repo
+from altitude import access, config, engines, git_policy, platform, server, speech, speech_worker, state as S, terminal
 
 #: Where this process keeps voice's runtime, before any test patches it.
 RUNTIME_HOME = speech.ROOT
@@ -822,19 +822,15 @@ class TestSetup(SpeechCase):
     # Task workers can write Altitude's home; the speech worker imports the runtime's code outside any sandbox.
 
     def worktree(self) -> Path:
-        repo, tree = self.tmp / "project", self.tmp / "project-task"
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        subprocess.run(["git", "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-                        "commit", "-q", "--allow-empty", "-m", "fictional"], check=True)
-        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "task", str(tree)], check=True)
-        return tree
+        return add_worktree(make_repo(self.tmp / "project"), "task")
 
     def writable_roots(self, tree: Path) -> dict[str, list[Path]]:
         """What the real launch code gives each engine's task worker: Codex's sandbox on both hosts, Claude's
         Seatbelt profile on macOS (which matches resolved paths)."""
-        codex = tomllib.loads("\n".join(engines.codex.codex_sandbox(tree, extra_roots=engines.common._git_dirs(tree))))
+        git_roots, read_only = git_policy.worker_git_access(tree)
+        codex = tomllib.loads("\n".join(engines.codex.codex_sandbox(tree, extra_roots=git_roots, read_only=read_only)))
         self.patch(engines.claude, "claude_agents", return_value=[])
-        _, _, claude = engines.claude.prepare_worker("task", "Fictional.", cwd=tree, persona=None, model=None,
+        _, _, claude, _ = engines.claude.prepare_worker("task", "Fictional.", cwd=tree, persona=None, model=None,
                                                      settings=self.tmp / "settings.json", effort=None, resume=None,
                                                      images=())
         return {"codex": [Path(root) for root in codex["permissions"]["altitude-task"]["workspace_roots"]],

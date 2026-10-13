@@ -196,9 +196,10 @@ class RuntimeStorage(AltitudeCase):
         jobs.symlink_to(self.outside, target_is_directory=True)
         self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "claude_agents", return_value=[])
+        worktree = self.task_worktree("demo")
         with mock.patch.object(engines.common.subprocess, "Popen", side_effect=AssertionError("launched")), \
                 self.assertRaises((OSError, ValueError)):
-            engines.start_l2("claude", "project/worker-1", "brief", cwd=self.tmp, persona=None, model=None,
+            engines.start_l2("claude", "project/worker-1", "brief", cwd=worktree, persona=None, model=None,
                              settings=None, extra_env={"ALTITUDE_TASK": "demo"}, job_root=jobs)
         self.assertEqual(list(self.outside.iterdir()), [])
 

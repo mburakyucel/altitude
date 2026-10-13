@@ -18,7 +18,7 @@ assert "security.capability" not in os.listxattr(binary)
 os.environ['ALTITUDE_HOME'] = str(home / 'sandbox-fixture-state')
 os.environ['CODEX_HOME'] = str(home / '.codex')
 sys.path.insert(0, '/opt/altitude')
-from altitude import config, engines, l3, platform, state as S, tasks as T
+from altitude import config, engines, git_policy, l3, platform, state as S, tasks as T
 
 def command(args, cwd=None):
     return subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=20, check=True)
@@ -39,8 +39,9 @@ config.PROJECTS_FILE.write_text(json.dumps({'fixture': {'path': str(project)}}))
 task = T.new('fixture', 'Confined status fixture', 'Provider-free image identity probe.', hold_merge='Fixture hold')
 task.update(worktree=str(workspace), branch='task')
 S.save_task('fixture', task)
-git_roots = engines.common._git_dirs(workspace)
+git_roots, git_read_only = git_policy.worker_git_access(workspace)
 targets = {'workspace': workspace, 'git_common': git_roots[0], 'git_worktree': git_roots[-1],
+           **{'git_' + name: git_roots[0] / name for name in ('hooks', 'info', 'modules', 'worktrees')},
            'state': config.ROOT, 'project': project, 'sibling': sibling,
            'deployment': config.SOURCE, 'tls': tls, 'runtime': runtime,
            'image_metadata': platform.CONTAINER_MARKER.parent, 'image_etc': Path('/etc'), 'image_root': Path('/'),
@@ -126,7 +127,7 @@ print(json.dumps(out))
 records = {}
 records['unsandboxed_control'] = json.loads(command(
     ['/usr/bin/python3', '-c', child, json.dumps(spec), 'control']).stdout)
-profiles = {'task': engines.codex_sandbox(workspace, extra_roots=git_roots),
+profiles = {'task': engines.codex_sandbox(workspace, extra_roots=git_roots, read_only=git_read_only),
             'coordinator': engines.codex_l3_permissions(runtime, project='fixture')}
 for role, settings in profiles.items():
     args = [str(binary), 'sandbox']

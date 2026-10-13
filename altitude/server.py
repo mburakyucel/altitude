@@ -3522,7 +3522,7 @@ def _start_machine_command(project: str, slug: str, task: dict, row: dict, gone)
     watcher.start()
     try:  # a launch that fails still settles its row, so it never holds the next command
         launch_error = engines.machine_command(row["command"], folder=folder, unit=row["unit"],
-                                               cwd=Path(task.get("worktree") or config.project_path(project)),
+                                               cwd=config.task_worktree(project, slug) if task.get("worktree") else config.project_path(project),
                                                timeout=config.MACHINE_COMMAND_TIMEOUT,
                                                identity=dispatch.l2_env(project, slug, task["attempt"]))
     except (OSError, RuntimeError, ValueError, KeyError) as exc:

@@ -36,6 +36,7 @@ class TaskToolCache(AltitudeCase):
             for engine in ("claude", "codex"):
                 task = T.new(self.project, f"{host} {engine} cache", "Fictional worker")
                 root = S.task_dir(self.project, task["slug"]) / "l2-engine"
+                worktree = self.task_worktree(task["slug"])
                 for resume in (False, True):
                     with self.subTest(host=host, engine=engine, resume=resume):
                         # The real driver runs an engine that writes every cache, starts its session and fails.
@@ -79,7 +80,7 @@ class TaskToolCache(AltitudeCase):
                              mock.patch.object(config, "CLAUDE_BIN", str(native)), \
                              mock.patch.object(config, "CODEX_BIN", str(native)), \
                              mock.patch.object(platform, "job_command", side_effect=command):
-                            result = engines.common._start_worker(engine, "fixture", "continue", cwd=self.repo,
+                            result = engines.common._start_worker(engine, "fixture", "continue", cwd=worktree,
                                 job_root=root, resume="session" if resume else None,
                                 extra_env={"ALTITUDE_TASK":task["slug"], "COREPACK_HOME":"/fixture/managers",
                                            "XDG_CACHE_HOME":"/unwritable/service-cache", "PIP_CACHE_DIR":"/unwritable/pip"})

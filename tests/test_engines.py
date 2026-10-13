@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-from tests.support import ALT, AltitudeCase
+from tests.support import ALT, AltitudeCase, add_worktree, make_repo
 from altitude import config, dispatch, engines, platform, state as S, tasks as T
 
 
@@ -40,9 +40,10 @@ class TestForegroundUnits(AltitudeCase):
         self.persona = self.tmp / "persona.md"
         self.persona.write_text("Worker instructions")
         self.patch(engines.common, "_worker_processes", {})
+        self.worktree = add_worktree(make_repo(self.repo), "worker-1")
 
     def launch(self, *, resume=False, model=None):
-        kw = dict(cwd=self.repo, persona=self.persona, model=model, settings=self.settings,
+        kw = dict(cwd=self.worktree, persona=self.persona, model=model, settings=self.settings,
                   extra_env={"ALTITUDE_TASK": "worker"}, job_root=self.job_root)
         if resume:
             return engines.resume_l2("claude", "project/worker-1", "session", "continue", **kw)
@@ -110,7 +111,7 @@ class TestForegroundUnits(AltitudeCase):
                     if model:
                         self.assertEqual(cli[cli.index("--model") + 1], model)
                     self.assertIn("DBUS_SESSION_BUS_ADDRESS", popen.call_args.kwargs["env"])
-                    self.assertEqual(popen.call_args.kwargs["cwd"], str(self.repo))
+                    self.assertEqual(popen.call_args.kwargs["cwd"], str(self.worktree))
                     prompt = spec["input"][0]["text"]
                     self.assertTrue(prompt.endswith("\n\ncontinue" if resume else "\n\nbrief"))
                     self.assertIn(str(config.PERSONAS / "l1.md"), prompt)
@@ -150,7 +151,7 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                         if host == "darwin":
                             specification = json.loads(command[-1])
                             wrapped, environment = specification["command"], specification["env"]
-                            self.assertIn(str(self.repo), specification["writable"])
+                            self.assertIn(str(self.worktree), specification["writable"])
                             self.assertIn(str(config.ROOT), specification["writable"])
                         else:
                             child = command[command.index("--") + 1:]
@@ -174,7 +175,7 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                          mock.patch.object(platform, "job_active", side_effect=lambda *_: processes[-1].poll() is None), \
                          mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen):
                         result = engines.common._start_worker("claude", "owner-fixture", "Report the result.",
-                            cwd=self.repo, job_root=self.job_root, resume="session" if resume else None,
+                            cwd=self.worktree, job_root=self.job_root, resume="session" if resume else None,
                             persona=self.persona, settings=self.settings,
                             extra_env=dispatch.l2_env(self.project, task["slug"], 1))
                         self.assertEqual(result["returncode"], 0, result["stderr"])
@@ -340,6 +341,7 @@ class TestWorkerTokenInput(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.patch(engines.common, "github_token", return_value=self.TOKEN)
+        self.worktree = add_worktree(make_repo(self.repo), "worker-1")
         self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=True)
@@ -361,9 +363,8 @@ class TestWorkerTokenInput(AltitudeCase):
             return launches[-1][1]
 
         with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(engines.codex, "codex_sandbox", return_value=[]), \
-             mock.patch.object(engines.common, "_git_dirs", return_value=[]):
-            result = engines.start_l2(engine, "project/worker-1", "brief", cwd=self.repo, persona=self.tmp / "persona.md",
+             mock.patch.object(engines.codex, "codex_sandbox", return_value=[]):
+            result = engines.start_l2(engine, "project/worker-1", "brief", cwd=self.worktree, persona=self.tmp / "persona.md",
                                       model=None, settings=self.tmp / "settings.json",
                                       extra_env={"ALTITUDE_TASK": "worker", "FAKE_ENGINE_LOG": str(self.log)},
                                       job_root=self.runtime_tmp / "jobs")

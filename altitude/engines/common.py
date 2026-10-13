@@ -1139,31 +1139,6 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
             "status": "partial" if any(row["total_tokens"] is not None for row in sessions) else "unknown", "notes": notes}
 
 
-def _git_dirs(cwd: Path) -> list[Path]:
-    """The Git directories a worker writes: the common directory (objects, refs) and, for a linked worktree, its
-    own metadata under `.git/worktrees/<name>` (HEAD, index, FETCH_HEAD). Codex marks that metadata read-only
-    unless it is a writable root of its own, which blocked task give-the-chat-section-its-own-scrollbar at
-    `git fetch` on 2026-09-03 (codex 0.153)."""
-    p = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir", "--git-dir"],
-                       cwd=str(cwd), capture_output=True, text=True, timeout=30)
-    if p.returncode != 0:
-        raise RuntimeError(f"not a Git worktree: {cwd}: {(p.stderr or '').strip()[:200]}")
-    return list(dict.fromkeys(Path(line.strip()) for line in p.stdout.splitlines() if line.strip()))
-
-
-def _worktree_git_dirs(cwd: Path) -> list[Path]:
-    """The Git directories a worker writes, read from the worktree's `.git` without running Git: the repository's
-    own, or a linked worktree's metadata and the common directory it names. None outside a worktree's root."""
-    dot = Path(cwd) / ".git"
-    try:
-        if dot.is_dir():
-            return [dot.resolve()]
-        gitdir = (Path(cwd) / dot.read_text().removeprefix("gitdir:").strip()).resolve()
-        return [(gitdir / (gitdir / "commondir").read_text().strip()).resolve(), gitdir]
-    except (OSError, ValueError):
-        return []
-
-
 def _worker_events(path: Path, engine: str) -> list[dict]:
     return implementation(engine).worker_events(path)
 
@@ -1244,7 +1219,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     config.task_effort(engine, effort)
     prompt = owner_prompt(cwd, persona, resume=bool(resume)) + prompt
     native = implementation(engine)
-    cmd, content, writable = native.prepare_worker(name, prompt, cwd=cwd, persona=persona, model=model,
+    cmd, content, writable, read_only = native.prepare_worker(name, prompt, cwd=cwd, persona=persona, model=model,
                                                     settings=settings, effort=effort, resume=resume, images=images)
     worker_id = uuid.uuid4().hex
     unit = native.worker_unit_name(worker_id)
@@ -1263,7 +1238,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     try:
         with open(paths["stdout"], "ab", buffering=0, opener=storage.opener) as out, \
                 open(paths["stderr"], "ab", buffering=0, opener=storage.opener) as err:
-            proc = subprocess.Popen(platform.job_command(unit, _driver_command(), job_env, writable=writable),
+            proc = subprocess.Popen(platform.job_command(unit, _driver_command(), job_env, writable=writable,
+                                                         read_only=read_only),
                                     cwd=str(cwd), stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=worker_env, start_new_session=True)
         input_written = False
