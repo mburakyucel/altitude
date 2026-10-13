@@ -968,18 +968,21 @@ def steering_view(task: dict, events: list[dict], *, job_root=None) -> dict:
     stop_id = task.get("stop_id")
     current_stop = request.get("operation") == "stop" and request.get("id") == stop_id
     active_request = request.get("status") in ("pending", "executing")
+    handoff_stop = (request.get("operation") == "handoff" and request.get("phase") == "stopping"
+                    and request.get("status") in ("pending", "executing", "refused", "failed")
+                    and all(request.get(key) == task.get(key) for key in ("attempt", "agent_id", "session_id")))
     confirmed = stop_id and any(e.get("kind") == "stopped" and e.get("stop_id") == stop_id for e in events)
-    if stop_id and not confirmed and not active_request and job_root is not None:
+    if (stop_id or handoff_stop) and not confirmed and not active_request and job_root is not None:
         from . import engines
         confirmed = engines.worker_termination(task, job_root=job_root) is True
     state = "running" if task.get("state") == "running" else "idle"
-    if stop_id and task.get("state") in ("running", "blocked"):
-        if current_stop and active_request:
+    if (stop_id or handoff_stop) and task.get("state") in ("running", "blocked"):
+        if (current_stop or handoff_stop) and active_request:
             state = "stopping"
         elif task.get("resume_after") or (request.get("operation") == "resume" and active_request):
             state = "resuming"
         elif confirmed:
-            state = "stopped"
+            state = "idle" if handoff_stop and not stop_id and task.get("state") == "blocked" else "stopped"
         else:
             state = "stop_unconfirmed"
     elif task.get("state") == "blocked" and task.get("resume_after"):
@@ -1562,6 +1565,7 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
 def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, agent_id: str | None,
              worktree: str | None, branch: str | None, l2_engine: str = "claude",
              engine_model: str | None = None, routing: str | None = None, actor: str = "altd",
+             launch_model: str | None = None, launch_effort: str | None = None, routing_pinned: bool = False,
              messages: list[dict] | None = None, input_delivered: bool = False) -> dict:
     if not session_id or not agent_id:
         raise TransitionError(f"{slug}: dispatch requires a concrete worker and session")
@@ -1575,8 +1579,11 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
         usage.remember(task)
         task.update({"attempt": attempt, "session_id": session_id, "agent_id": agent_id, "worktree": worktree,
                      "branch": branch, "blocked_reason": None, "l2_engine": l2_engine, "engine_model": engine_model,
+                     "launch_model": launch_model, "launch_effort": launch_effort,
+                     "engine_reasoning_effort": None, "routing_pinned": routing_pinned,
                      "routing": routing, "dispatched": S.now()})
         task.pop("next_engine", None)
+        task.pop("next_selection", None)
         ids = {row["id"] for row in (messages or [])} if input_delivered else set()
         for message_id in ids:
             task.setdefault("message_deliveries", {})[message_id] = {
@@ -1738,6 +1745,7 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
 
 
 def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None = None,
+            selection: dict | None = None,
             clear_worker: bool = False, expected_daemon_request: str | None = None,
             expected_agent_id: object = _UNSET, expected_session_id: object = _UNSET,
             expected_block_id: object = _UNSET, **ev) -> dict:
@@ -1757,8 +1765,12 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
         usage.capture(project, task)
         task.pop("verified", None)  # A fresh attempt must establish its own current verification.
         task.pop("nudged", None)  # and its session gets its own nudge
-        task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None,
+        task.update({"agent_id": None, "session_id": None, "engine_model": None,
                      "next_engine": engine or task.get("next_engine"), "routing": None})
+        if selection is not None:
+            task["next_selection"] = dict(selection)
+        elif engine is not None:
+            task.pop("next_selection", None)
         _clear_block(project, task)
         return _move(project, task, "queued", actor, **ev)
 

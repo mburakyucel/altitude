@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import dispatch, engines, incidents, server, state as S
+from altitude import config, dispatch, engines, incidents, route, server, state as S
 
 
 class TestTemporaryCapacity(AltitudeCase):
@@ -48,6 +48,8 @@ class TestTemporaryCapacity(AltitudeCase):
 
     def test_codex_failed_quota_message_is_a_provider_hold_not_a_dead_worker(self):
         task = self._task("codex-quota-poll")
+        task.update(launch_model=task["engine_model"], launch_effort="high")
+        S.save_task(self.project, task)
         worker = {
             "id": task["agent_id"], "sessionId": task["session_id"], "state": "failed", "status": "exited",
             "detail": "You've hit your usage limit · resets 8pm (America/Los_Angeles)",
@@ -66,7 +68,15 @@ class TestTemporaryCapacity(AltitudeCase):
         switched = S.load_task(self.project, task["slug"])
         self.assertEqual(switched["state"], "queued", "a fresh attempt on the other engine, from saved progress")
         self.assertEqual((switched["l2_engine"], switched["engine_model"], switched["agent_id"], switched["session_id"]),
-                         (None, None, None, None))
+                         (task["l2_engine"], None, None, None))
+        self.assertEqual((switched["launch_model"], switched["launch_effort"], switched["attempt"]),
+                         (task["launch_model"], task["launch_effort"], task["attempt"]))
+        # Applied facts describe the last successful launch, not the next routing decision.
+        self.assertIsNone(switched.get("next_engine"))
+        self.assertIsNone(switched.get("next_selection"))
+        choice = route.pick_task(config.project(self.project), switched)
+        self.assertIsNotNone(choice["engine"], choice)
+        self.assertNotEqual(choice["engine"], task["l2_engine"])
         self.assertNotIn("resume_after", switched)
         removed.assert_called_once_with("codex", task["agent_id"],
                                         job_root=dispatch.l2_job_root(self.project, task["slug"]))

@@ -91,7 +91,9 @@ class TestProviderHandoff(AltitudeCase):
         self.assertFalse(current.get("engine") or current.get("model") or current.get("routing_pinned"))
         for key in ("slug", "title", "request", "worktree", "branch", "paths", "prs", "adopted_pr", "delivery", "questions", "hold_merge"):
             self.assertEqual(current.get(key), before.get(key), key)
-        self.assertEqual(T.task_messages(self.project, slug), conversation)
+        messages = T.task_messages(self.project, slug)
+        self.assertEqual(messages[:-1], conversation)
+        self.assertEqual(messages[-1]["text"], "Switch to Codex queued.")
         self.assertEqual(S.read_events(self.project, slug)[:len(events)], events)
         self.assertIn(before["agent_id"], self.engine.workers, "earlier worker evidence stays available")
         self.assertIn({"engine": "claude", "session_id": before["session_id"], "attempt": 1, "attempts": [1]},
@@ -133,7 +135,9 @@ class TestProviderHandoff(AltitudeCase):
         self.assertEqual((current["attempt"], launch["engine"]), (2, "codex"))
         self.assertIsNone(launch["session_id"], "An explicit handoff uses a fresh native session")
         self.assertEqual(current["hold_merge"], before["hold_merge"])
-        self.assertEqual(T.task_messages(self.project, slug), rows)
+        messages = T.task_messages(self.project, slug)
+        self.assertEqual(messages[:-1], rows)
+        self.assertEqual(messages[-1]["text"], "Switch to Codex queued.")
         self.assertEqual(T.pending(self.project, slug), [], "Historical context must not requeue delivered messages")
         self.assertEqual(len(launch["images"]), len(rows))
         content = engines._engine_input(launch["engine"], launch["prompt"], launch["images"])
@@ -232,6 +236,110 @@ class TestProviderHandoff(AltitudeCase):
         task = T.new(self.project, title, "Finish the existing authorized change.", paths=["README.md"])
         dispatch.run(self.project, task["slug"])
         return S.load_task(self.project, task["slug"])
+
+    def select(self, task, engine, selection, **options):
+        return dispatch.request_task_operation(
+            self.project, task["slug"], "handoff", "Apply the chosen task model and effort.",
+            actor="l3", engine=engine, selection=selection, expected_attempt=task["attempt"], **options)
+
+    def test_same_engine_selection_waits_then_starts_exact_fresh_attempt_without_pin(self):
+        task = self.running_owner()
+        selection = {"model": task["launch_model"], "effort": "high"}
+        request = self.select(task, task["l2_engine"], selection)["request"]
+        waiting = dispatch.run_task_operation(self.project, task["slug"])
+        self.assertTrue(waiting["pending"])
+        self.assertEqual(len(self.engine.calls), 1)
+        self.ready(task, request)
+        queued = self.execute(task)
+        self.assertEqual(queued["next_selection"], selection)
+        self.assertEqual(queued["l2_engine"], task["l2_engine"])
+        dispatch.run(self.project, task["slug"])
+        fresh = S.load_task(self.project, task["slug"])
+        self.assertEqual(fresh["attempt"], 2)
+        self.assertNotEqual(fresh["session_id"], task["session_id"])
+        self.assertEqual((fresh["launch_model"], fresh["launch_effort"]), (selection["model"], "high"))
+        self.assertFalse(fresh["routing_pinned"])
+        self.assertNotIn("next_selection", fresh)
+        self.assertNotIn("next_engine", fresh)
+        self.assertTrue(self.select(fresh, fresh["l2_engine"], {**selection, "effort": "medium"})["queued"])
+
+    def test_selected_tuple_is_frozen_across_default_changes_and_request_retries(self):
+        task = self.owner(question=True)
+        selection = {"model": "target-a", "effort": "medium"}
+        first = self.select(task, "codex", selection)
+        self.assertEqual(self.select(task, "codex", selection)["request"]["id"], first["request"]["id"])
+        with self.assertRaisesRegex(T.TransitionError, "already queued"):
+            self.select(task, "codex", {**selection, "effort": "high"})
+        with mock.patch.object(config, "default_model", return_value="different-default"), \
+                mock.patch.object(config, "default_effort", return_value="ultra"):
+            self.execute(task)
+            dispatch.run(self.project, task["slug"])
+        fresh = S.load_task(self.project, task["slug"])
+        self.assertEqual((fresh["launch_model"], fresh["launch_effort"]), ("target-a", "medium"))
+        self.assertEqual(fresh["questions"], task["questions"])
+        self.assertEqual(fresh["hold_merge"], task["hold_merge"])
+
+    def test_current_launch_facts_change_only_after_successful_successor_start(self):
+        task = self.owner()
+        selection = {"model": "target-a", "effort": "medium"}
+        self.select(task, "codex", selection)
+        self.execute(task)
+        observed = []
+
+        def start(engine, name, prompt, **kwargs):
+            current = S.load_task(self.project, task["slug"])
+            view = server.task_transfer_view(self.project, current)
+            observed.append(current)
+            self.assertEqual(current["state"], "queued")
+            self.assertEqual((view["current_engine"], view["current_model"], view["current_effort"]),
+                             (task["l2_engine"], task["launch_model"], task.get("launch_effort")))
+            self.assertIn("codex (target-a)", prompt)
+            return self.engine.start_l2(engine, name, prompt, **kwargs)
+
+        with mock.patch.object(engines, "start_l2", side_effect=start):
+            dispatch.run(self.project, task["slug"])
+        self.assertEqual(len(observed), 1)
+        fresh = S.load_task(self.project, task["slug"])
+        self.assertEqual((fresh["l2_engine"], fresh["launch_model"], fresh["launch_effort"]),
+                         ("codex", "target-a", "medium"))
+
+    def test_failed_successor_launch_does_not_apply_requested_settings(self):
+        task = self.owner()
+        self.select(task, "codex", {"model": "target-a", "effort": "medium"})
+        self.execute(task)
+        with mock.patch.object(engines, "start_l2", return_value={"returncode": 1, "stderr": "fixture failure"}), \
+                mock.patch("altitude.incidents.system_fault"):
+            with self.assertRaises(dispatch.DispatchFailure):
+                dispatch.run(self.project, task["slug"])
+        failed = S.load_task(self.project, task["slug"])
+        for key in ("l2_engine", "launch_model", "launch_effort", "attempt"):
+            self.assertEqual(failed.get(key), task.get(key), key)
+
+    def test_default_preview_changes_and_unchanged_tuple_create_no_request(self):
+        task = self.running_owner()
+        current = {"model": task["launch_model"], "effort": task.get("launch_effort")}
+        with self.assertRaisesRegex(T.TransitionError, "already uses"):
+            self.select(task, task["l2_engine"], current)
+        with self.assertRaisesRegex(T.TransitionError, "Default changed"):
+            self.select(task, "codex", {"model": "old-default", "effort": "high"}, handoff_default="old-default")
+        self.assertFalse(S.load_task(self.project, task["slug"]).get("daemon_request"))
+
+    def test_selected_transfer_keeps_pin_and_attempt_refusals(self):
+        task = self.owner()
+        selection = {"model": "target-a", "effort": "medium"}
+        task["routing_pinned"] = True
+        S.save_task(self.project, task)
+        with self.assertRaisesRegex(T.TransitionError, "pin"):
+            self.select(task, "codex", selection)
+        task["routing_pinned"] = False
+        S.save_task(self.project, task)
+        self.select(task, "codex", selection)
+        changed = S.load_task(self.project, task["slug"])
+        changed["attempt"] += 1
+        S.save_task(self.project, changed)
+        result = dispatch.run_task_operation(self.project, task["slug"])
+        self.assertEqual(result["request"]["status"], "refused")
+        self.assertNotIn("next_selection", S.load_task(self.project, task["slug"]))
 
     def ready(self, task, request):
         folder = S.task_dir(self.project, task["slug"])
@@ -457,15 +565,26 @@ class TestProviderHandoff(AltitudeCase):
             self.assertFalse(any(row["id"] == request["id"] + "-cancel"
                                  for row in T.pending(self.project, task["slug"])))
 
-    def test_decision_only_other_fault_unlaunched_and_finished_tasks_are_ineligible(self):
+    def test_unconfirmed_blocked_unlaunched_and_finished_tasks_are_ineligible(self):
         for state, fault, attempt in (("blocked", None, 1), ("blocked", "external-ci", 1),
                                       ("blocked", "l2-died", 0), ("reported", "l2-died", 1),
                                       ("done", "l2-died", 1)):
             with self.subTest(state=state, fault=fault, attempt=attempt):
                 task = self.owner(f"Eligibility {state} {fault} {attempt}", question=True)
+                self.engine.workers[task["agent_id"]].update(state="working", status="busy")
                 task.update(state=state, fault=fault, attempt=attempt)
                 S.save_task(self.project, task)
                 with self.assertRaises(T.TransitionError):
+                    self.request(task)
+                self.assertEqual(S.load_task(self.project, task["slug"]), task)
+
+    def test_ended_worker_does_not_release_a_fault_or_dependency_wait(self):
+        for fault in ("external-ci", "git", None):
+            with self.subTest(fault=fault):
+                task = self.owner(f"Ended wait {fault}", question=bool(fault))
+                task.update(fault=fault, questions=task.get("questions", []) if fault else [])
+                S.save_task(self.project, task)
+                with self.assertRaisesRegex(T.TransitionError, "recovery or dependency"):
                     self.request(task)
                 self.assertEqual(S.load_task(self.project, task["slug"]), task)
 

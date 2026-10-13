@@ -278,20 +278,31 @@ def run_ci_recheck(project: str, slug: str) -> None:
     l3.queue_ci_recheck(project, slug)
 
 
-def _require_handoff(project: str, task: dict, engine: str, attempt: int) -> dict:
+def _require_handoff(project: str, task: dict, engine: str, attempt: int,
+                     selection: dict | None = None, *, allow_unchanged: bool = False) -> dict:
     # Explicit transfer preserves decisions and pins; a lifecycle already in flight keeps ownership.
     if (task.get("state") not in ("running", "blocked") or task.get("attempt") != attempt or not attempt
             or not task.get("agent_id") or not task.get("session_id")
-            or (task.get("state") == "blocked" and task.get("fault") != "l2-died"
-                and not task.get("usage_limit") and T.stopped_by(task) not in DAEMON_REQUEST_ACTORS)
             or task.get("completion_requested") or task.get("resume_claim") or task.get("dispatching")
             or any(review.get("state") == "running" for review in task.get("reviews", []))):
         raise T.TransitionError("handoff requires the expected running or stopped/exit/limit-blocked attempt, with no active claim")
-    if engine == l2_engine(task):
+    if (task["state"] == "blocked" and task.get("fault") != "l2-died"
+            and not task.get("usage_limit") and T.stopped_by(task) not in DAEMON_REQUEST_ACTORS):
+        if task.get("fault") or not any(q.get("status") == "open" for q in task.get("questions", [])):
+            raise T.TransitionError("handoff cannot release this recovery or dependency wait")
+        worker = engines.worker(l2_engine(task), task, job_root=l2_job_root(project, task["slug"]))
+        if not worker or worker.get("state") not in ("done", "failed", "stopped"):
+            raise T.TransitionError("handoff requires confirmed worker exit for this blocked attempt")
+    if engine == l2_engine(task) and selection is None:
         raise T.TransitionError("handoff requires another engine; use ordinary resume for this engine")
-    choice = route.pick_task(config.project(project), {**task, "next_engine": engine})
+    choice = route.pick_task(config.project(project), {**task, "next_engine": engine,
+                                                      "next_selection": selection})
     if not choice.get("engine"):
         raise T.TransitionError(choice["why"])
+    if (not allow_unchanged and selection is not None and engine == l2_engine(task)
+            and (choice.get("model"), choice.get("effort")) ==
+                (task.get("launch_model", task.get("engine_model")), task.get("launch_effort"))):
+        raise T.TransitionError("This task already uses that model and effort.")
     return choice
 
 
@@ -304,7 +315,7 @@ def handoff(project: str, slug: str, request: dict) -> dict:
                  "expected_session_id": request.get("session_id"), "expected_block_id": request.get("block_id")}
         T._require_daemon_fence(task, slug, **fence)
         request = task["daemon_request"]
-        _require_handoff(project, task, request["engine"], request["attempt"])
+        _require_handoff(project, task, request["engine"], request["attempt"], request.get("selection"))
         job_root = l2_job_root(project, slug)
         ready = _handoff_ready(project, slug, request)
         worker = engines.worker(l2_engine(task), task, job_root=job_root)
@@ -326,7 +337,7 @@ def handoff(project: str, slug: str, request: dict) -> dict:
         if task["state"] == "running":
             task.update(blocked_reason=request["reason"], block_actor=request["actor"], stop_id=request["id"])
             T._move(project, task, "blocked", request["actor"], reason=request["reason"])
-    return T.requeue(project, slug, engine=request["engine"], clear_worker=True, **fence,
+    return T.requeue(project, slug, engine=request["engine"], selection=request.get("selection"), clear_worker=True, **fence,
                      reason=request["reason"], actor=request["actor"], checkpoint=request["checkpoint"],
                      previous_engine=l2_engine(task), previous_agent_id=task["agent_id"],
                      previous_session_id=task["session_id"], attempt=task["attempt"])
@@ -402,6 +413,7 @@ def _notify_handoff_cancelled(project: str, task: dict) -> None:
     """End checkpoint instructions durably, including if the old turn has already exited."""
     request = task["daemon_request"]
     if request.get("cancel_notified"):
+        _record_handoff_outcome(project, task)
         return
     if (request.get("checkpoint_requested")
             and all(request.get(key) == task.get(key) for key in ("attempt", "agent_id", "session_id"))):
@@ -409,7 +421,8 @@ def _notify_handoff_cancelled(project: str, task: dict) -> None:
         row_id = request["id"] + "-cancel"
         row = next((row for row in T._rows(folder / "conversation.jsonl", "task conversation") if row["id"] == row_id), None)
         if row is None:
-            row = {"id": row_id, "at": S.now(), "role": "system", "by": "altd",
+            row = {"id": row_id, "at": T._conversation_time(), "role": "system", "by": "altd",
+                   "display_text": _handoff_outcome_text(request),
                    "text": f"Engine transfer {request['id']} ended ({request['status']}). Stop waiting for that transfer. "
                            "Continue the same authorized work only as the current task state permits; newer transfer "
                            "requests, unanswered questions, Stop actions and merge holds remain in force.",
@@ -426,6 +439,50 @@ def _notify_handoff_cancelled(project: str, task: dict) -> None:
                 T.claim_send_now(project, task, [row], sends, once=True)
     request["cancel_notified"] = True
     S.save_task(project, task)
+    _record_handoff_outcome(project, task)
+
+
+def handoff_reason(note: str) -> str:
+    """Short task-page copy; the daemon request retains the diagnostic evidence."""
+    if "stop is unconfirmed" in note:
+        return "The previous worker's stop is unconfirmed. Check task status."
+    if "finished its report" in note:
+        return "The task finished before the switch. Review its result."
+    if "pin" in note:
+        return "An engine or model is pinned for this task or project."
+    if "confirmed worker exit" in note:
+        return "Waiting for the current worker to finish."
+    if "active claim" in note or "already in progress" in note:
+        return "Another task action is in progress or the task has changed."
+    if "recovery or dependency" in note:
+        return "This task is waiting for recovery or a dependency."
+    if "unavailable" in note or "routing options" in note or "no eligible" in note.lower():
+        return "The selected engine is unavailable. Check task status."
+    return "The switch could not proceed. Check task status."
+
+
+def _handoff_outcome_text(request: dict) -> str:
+    target = config.ENGINE_LABELS.get(request.get("engine"), request.get("engine"))
+    status, note = request.get("status"), request.get("note") or ""
+    if status == "done":
+        return f"Switch to {target} queued."
+    if status == "cancelled":
+        return {"Superseded by stop": "Switch cancelled by Stop.",
+                "Superseded by reject": "Switch cancelled because the task was rejected.",
+                "Owner needs to block": "Switch cancelled because the current engine needs a decision or dependency."}.get(
+                    note, "Switch cancelled.")
+    return f"Switch to {target} did not finish. " + handoff_reason(note)
+
+
+def _record_handoff_outcome(project: str, task: dict) -> None:
+    """One durable conversation receipt; a native correction already carries its display text."""
+    request = task["daemon_request"]
+    path = S.task_dir(project, task["slug"]) / "conversation.jsonl"
+    row_id = request["id"] + "-outcome"
+    if any(row["id"] in (row_id, request["id"] + "-cancel") for row in T._rows(path, "task conversation")):
+        return
+    T._append_jsonl(path, {"id": row_id, "at": T._conversation_time(), "role": "system", "by": "altd",
+                          "text": _handoff_outcome_text(request), "wake": False})
 
 
 def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str, **options) -> dict:
@@ -442,7 +499,9 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
 def _request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
                             engine: str | None = None, expected_attempt: int | None = None,
                             generation: object = T._UNSET, stop_id: object = T._UNSET,
-                            deliver_reason: bool = True, handoff_now: bool = False) -> dict:
+                            deliver_reason: bool = True, handoff_now: bool = False,
+                            handoff_observed: dict | None = None,
+                            selection: dict | None = None, handoff_default: str | None = None) -> dict:
     """A resume's authored reason reaches the resumed owner; the UI's buttons send fixed text and deliver none.
 
     I-20260904-062512: the request and its audit event land under the project lock before the daemon acts. The
@@ -458,6 +517,10 @@ def _request_task_operation(project: str, slug: str, operation: str, reason: str
     contract = DAEMON_TASK_OPERATIONS[operation]
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if operation == "handoff" and handoff_observed is not None:
+            if any(key not in handoff_observed or handoff_observed[key] != task.get(key)
+                   for key in ("attempt", "agent_id", "session_id", "block_id")):
+                raise T.TransitionError("The task attempt, worker or block changed. Refresh before switching engines.")
         if operation == "stop" and generation is not T._UNSET and generation != task.get("agent_id"):
             raise T.TransitionError("The worker changed. Refresh before stopping it.")
         if operation == "resume" and stop_id is not T._UNSET:
@@ -475,9 +538,10 @@ def _request_task_operation(project: str, slug: str, operation: str, reason: str
         same = (previous.get("operation"), previous.get("reason"), previous.get("actor"),
                 previous.get("engine"), previous.get("attempt") if operation == "handoff" else None,
                 bool(previous.get("now")) if operation == "handoff" else False,
-                previous.get("deliver_reason") if operation == "resume" else None) == (
+                previous.get("deliver_reason") if operation == "resume" else None,
+                previous.get("selection") if operation == "handoff" else None) == (
             operation, reason, actor, engine, expected_attempt, handoff_now if operation == "handoff" else False,
-            deliver_reason if operation == "resume" else None)
+            deliver_reason if operation == "resume" else None, selection if operation == "handoff" else None)
         if previous.get("status") in ("pending", "executing"):
             if same:
                 return {"queued": True, "idempotent": True, "request": previous}
@@ -499,7 +563,11 @@ def _request_task_operation(project: str, slug: str, operation: str, reason: str
                 f"{slug}: cannot {operation} from {task.get('state')}; expected {' or '.join(contract['from'])}"
             )
         if operation == "handoff":
-            _require_handoff(project, task, engine, expected_attempt)
+            if handoff_default is not None and (not isinstance(selection, dict)
+                    or selection.get("model") != handoff_default
+                    or config.default_model("l2", engine, config.project(project)) != handoff_default):
+                raise T.TransitionError("Default changed. Review the selection again.")
+            _require_handoff(project, task, engine, expected_attempt, selection)
         if operation == "resume" and task.get("state") == "reported":
             task = T.continue_report(project, task, actor=actor, reason=reason)
         request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": operation, "reason": reason,
@@ -511,6 +579,8 @@ def _request_task_operation(project: str, slug: str, operation: str, reason: str
             request["deliver_reason"] = deliver_reason
         if operation == "handoff":
             request.update(engine=engine, attempt=expected_attempt, now=handoff_now)
+            if selection is not None:
+                request["selection"] = dict(selection)
         task["daemon_request"] = request
         if operation == "stop":
             task["stop_id"] = request["id"]
@@ -759,6 +829,7 @@ def pending_task_operations(project: str) -> list[str]:
 def _handoff_requeued(task: dict, request: dict) -> bool:
     return (request.get("operation") == "handoff" and task.get("state") == "queued"
             and task.get("next_engine") == request.get("engine")
+            and task.get("next_selection") == request.get("selection")
             and task.get("attempt") == request.get("attempt") and not task.get("agent_id")
             and not task.get("session_id") and task.get("block_id") == request.get("block_id"))
 
@@ -775,6 +846,7 @@ def _finish_task_operation_locked(project: str, task: dict, request_id: str | No
     if request.get("id") != request_id:
         return {"stale": True}
     if request.get("operation") == "handoff" and request.get("status") in ("done", "cancelled"):
+        _record_handoff_outcome(project, task)
         return {"request": request, "state": task.get("state"), "idempotent": True}
     if _handoff_requeued(task, request):
         status, note = "done", "handoff requeued the observed attempt"
@@ -788,6 +860,8 @@ def _finish_task_operation_locked(project: str, task: dict, request_id: str | No
     S.save_task(project, task)
     if request.get("operation") == "handoff" and status in ("cancelled", "refused", "failed"):
         _notify_handoff_cancelled(project, task)
+    elif request.get("operation") == "handoff" and status == "done":
+        _record_handoff_outcome(project, task)
     return {"request": request, "state": task.get("state")}
 
 
@@ -1034,7 +1108,7 @@ def _restore_task_branch(project: str, slug: str, worktree: Path, actual: str, e
     S.append_event(project, slug, "task-branch-restored", left=actual, branch=expected)
 
 
-def build_brief(project: str, slug: str) -> str:
+def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
     task = S.load_task(project, slug)
     d = S.task_dir(project, slug)
     proj = config.project(project)
@@ -1047,7 +1121,8 @@ def build_brief(project: str, slug: str) -> str:
     else:
         merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete.",
                         "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)
-    engine = task.get("l2_engine") or task.get("engine") or "pending quota route"
+    engine = choice["engine"] if choice else task.get("l2_engine") or task.get("engine") or "pending quota route"
+    model = choice.get("model") if choice else task.get("engine_model") or task.get("model")
     other_leases = leases(project, exclude=slug)
     overlaps = [f"`{other['slug']}` on {', '.join(shared)}" for other in other_leases
                 if (shared := shared_paths(task_paths(project, task), other["paths"]))]
@@ -1065,7 +1140,7 @@ def build_brief(project: str, slug: str) -> str:
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         engine=engine,
-        model=task.get("engine_model") or task.get("model") or "provider default",
+        model=model or "provider default",
         leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in other_leases) or "none"),
         overlaps=(f" Shared with {'; '.join(overlaps)}: rebase onto main before landing and keep shared-doc "
                   "edits to your own sections." if overlaps else ""),
@@ -1164,10 +1239,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         messages = T.pending(project, slug)
         for row in messages:
             task.setdefault("message_deliveries", {})[row["id"]] = {"state": "unconfirmed", "at": None}
-        task.update({"dispatching": S.now(), "worker_started_at": datetime.now(timezone.utc).isoformat(),
-                     "l2_engine": engine, "engine_model": selected_model,
-                     "launch_model": selected_model, "launch_effort": selected_effort, "engine_reasoning_effort": None,
-                     "routing": choice["why"], "routing_pinned": choice.get("pinned", False)})
+        task.update({"dispatching": S.now(), "worker_started_at": datetime.now(timezone.utc).isoformat()})
         S.save_task(project, task)
     attempt = task.get("attempt", 0) + 1
     agent = {}
@@ -1175,7 +1247,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         settings = session_settings(project, slug, S.session_key(project, slug, attempt))
         tried = []
         while True:
-            brief_md = build_brief(project, slug)
+            brief_md = build_brief(project, slug, choice=choice)
             history = [row for row in task.get("image_messages", []) if row.get("delivered")] if task.get("attempt") else []
             if history:
                 brief_md += "\n\nPreviously delivered image context; these are saved messages, not new requests:\n" + T.render_inbox(history)
@@ -1205,11 +1277,6 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
                 raise T.TransitionError(f"engine hold: {choice['why']}")
             engine, selected_model = choice["engine"], choice["model"]
             selected_effort = choice.get("effort")
-            with S.project_lock(project):
-                current = S.load_task(project, slug)
-                current.update(l2_engine=engine, launch_model=selected_model, engine_model=selected_model,
-                               launch_effort=selected_effort, routing=choice["why"])
-                S.save_task(project, current)
     except T.TransitionError:
         raise
     except Exception as exc:
@@ -1224,6 +1291,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         T.dispatch(project, slug, attempt=attempt, session_id=agent["sessionId"], agent_id=agent["id"],
                    worktree=worktree, branch=worktree_branch(slug, worktree),
                    l2_engine=engine, engine_model=agent.get("engine_model", selected_model), routing=choice["why"],
+                   launch_model=selected_model, launch_effort=selected_effort, routing_pinned=choice.get("pinned", False),
                    messages=messages, input_delivered=agent.get("input_delivered") is True)
     except T.TransitionError as exc:
         if agent.get("id"):

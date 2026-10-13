@@ -927,7 +927,7 @@ No eligible alternative leaves the task blocked. Only a provider-reported reset 
 unknown reset times create no timer. The existing thirty-minute routing observation expiry is an
 availability recheck, not a reset claim. Ordinary resume preserves the provider conversation and launch model.
 
-For a running owner, an operator/L3-stopped owner, or one blocked by worker death or a recognized usage limit, L3 or the operator
+For a running owner, an operator/L3-stopped owner, or one blocked by worker death, a recognized usage limit or an unanswered question with a confirmed ended worker, L3 or the operator
 uses [`alt task handoff`](CLI.md#explicit-provider-handoff) with the observed attempt, target engine
 and reason. A running owner gets one native checkpoint instruction to refresh `progress.md` and write a
 request-specific readiness file identifying its attempt and worker/session. That receipt replaces
@@ -936,6 +936,14 @@ This works with workers
 whose immutable CLI predates handoff. Readiness does not depend on file modification time or a send receipt.
 There is no automatic timeout. Confirmed engine exit, a recorded usage limit, an existing Stop or an
 explicit `--now` allows saved-context transfer without a new note; silence and network failure do not.
+The task composer's model chooser uses this same lifecycle for engine, model and effort changes.
+Confirmation freezes its resolved selection; later defaults do not alter the pending attempt. An
+unchanged selection creates no request. Same-engine changes start a fresh session after the same
+patient checkpoint and confirmed termination. This selection is local to the new attempt and its
+ordinary resumes; it changes no global/project settings or explicit pin. Pending questions and holds
+stay open, and confirmed quota exhaustion uses saved progress without requiring a fresh note.
+While a fresh attempt is queued, the previous launch's engine, model and effort remain applied
+facts; only a successful replacement launch updates them. These facts do not pin Auto routing.
 `--request <id> --cancel` cancels while the request waits and sends a correction to the same owner.
 Once the daemon records its stopping phase, cancellation refuses. The daemon stops the entire owned
 job and requires confirmed termination before requeue. A restart retains the request and readiness
@@ -946,13 +954,25 @@ turn when possible and retained for its next turn otherwise. Owner blocks and ex
 supersede preparation; a newly finished report proceeds to verification. Pending native commands
 may move to background when the checkpoint is delivered; their unfinished status stays explicit.
 The daemon fences worker/session and block identity, refuses in-flight claims and active reviews,
-finished tasks and decision-only waits, and checks task/project pins and target availability. It retains
+finished tasks, other recovery/dependency waits and blocked question owners whose exit is unconfirmed, and checks task/project pins and target availability. An ended owner
+waiting on a question can transfer without resolving that question. It retains
 the old worker records and requeues the same task with a one-attempt `next_engine`. Requeue clears the
 current verification snapshot; prior reports and delivery history remain. Dispatch checks pins
 and configured target options again, ignores new-task model choices, preserves committed and uncommitted work in the existing worktree,
 validates isolation and adopted ancestry, and increments the attempt only when the fresh worker binds. The target is then
 consumed. Task identity, PRs, expected files, saved messages, unanswered questions, decisions and merge holds
-survive; continuation supplies no missing approval. L3 verifies activation and fresh task state before
+survive; continuation supplies no missing approval. The task-page confirmation submits the observed
+attempt, worker, session and block together; a stale confirmation refuses. Its waiting card follows
+the daemon request, and switch-now/cancel address that exact request. Network uncertainty disables
+further switch mutations until a successful status read. Stop remains independently available.
+Transfer actions preserve the composer draft and recording. Send addresses the current task during
+preparation and after the replacement starts, retaining undelivered messages for its successor. It is
+disabled while stopping and waiting for that replacement, and never bypasses a known quota hold.
+Resume becomes available again when the current engine's hold clears, even if the task retains its
+earlier quota-stop record or has no alternate engine. A refused transfer whose worker later exits
+returns to ordinary blocked-task recovery. Concise conversation
+receipts describe the outcome while the old worker receives its complete checkpoint correction.
+L3 verifies activation and fresh task state before
 requesting a live handoff, and observes the new running attempt before reporting recovery.
 
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume

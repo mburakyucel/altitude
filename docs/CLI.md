@@ -135,6 +135,17 @@ policy. L3 still verifies the actual cause and recovery before resuming work.
 
 ### Explicit provider handoff
 
+The task conversation's model button opens a task-only chooser for engine, model and effort.
+**Prepare change** confirms a fresh attempt, including model or effort changes on the same engine.
+The chooser previews the resolved default model; a changed default requires a refreshed confirmation,
+and an unchanged effective selection creates no attempt. The confirmed selection stays fixed through
+preparation and dispatch, independent of later defaults. Project and global Settings stay unchanged.
+Unanswered decisions precede contextual transfer controls; quota offers use a secondary **Change model…** button.
+A usage-limit stop also offers switching beside its explanation. Confirmation warns that some session
+context may not carry over and the new engine uses extra tokens to get up to speed. A conversation card
+keeps **Switch now** and **Cancel switch** visible during preparation; neither a slow response nor a
+disconnection imposes a cutoff. **Check status** reconciles an uncertain submission without repeating it.
+
 L3 or the operator can transfer a running or stopped owner to a fresh attempt on another configured engine:
 
 ```sh
@@ -147,7 +158,8 @@ The coordinator transport takes the same argument list:
 `{"kind":"alt","args":["task","handoff","blocked-owner","--engine","<engine>","--attempt","2","--reason","Continue the authorized work"]}`.
 The CLI persists a daemon request; it launches no worker. The task must have a prior attempt and
 worker/session identity and be running, stopped by L3 or the operator, or blocked by worker death
-(`l2-died`) or a recognized usage limit. A running owner receives a request to refresh `progress.md`
+(`l2-died`) or a recognized usage limit. An owner waiting on an unanswered question also qualifies
+when its worker has ended and it has no recovery fault; switching does not answer the question. A running owner receives a request to refresh `progress.md`
 with its current work, completed checks, unfinished work and next steps, then write the exact
 request-scoped readiness receipt supplied in that instruction. Existing workers use their file tools;
 they do not need an updated CLI. The readiness receipt replaces the owner's normal end-of-turn
@@ -177,12 +189,14 @@ termination refuses the transfer. The new brief says whether the handoff note wa
 context is not current verification and does not include the complete previous native conversation.
 
 The daemon checks the attempt, worker/session and block again. Active lifecycle claims and reviews,
-decision-only waits, reported/completed tasks, explicit task/project pins and unavailable or unconfigured
+other recovery/dependency waits, blocked question owners whose exit is unconfirmed, reported/completed tasks, explicit task/project pins and unavailable or unconfigured
 targets refuse. A changed block or replacement worker invalidates the request. An identical retry reuses
 its receipt while the resulting lifecycle still matches.
 
 Successful handoff queues the same task for ordinary dispatch, constrained to the requested engine's
-configured options for one fresh attempt, ignoring model choices for new tasks. Configuration and availability are checked again at launch;
+configured options for one fresh attempt, ignoring model choices for new tasks. A task-chooser request
+also fixes its explicit model and effort; the engine-only CLI form retains its configured routing options.
+Configuration and availability are checked again at launch;
 an unavailable target does not fall through to another engine, and the queue shows that target's
 availability or pin conflict using the same routing decision as dispatch. The worktree, uncommitted edits, branch,
 PRs, expected files, progress, messages, provider history, questions and merge holds remain. Prior reports remain

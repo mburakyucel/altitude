@@ -157,8 +157,15 @@ request as idempotent while the terminal receipt still matches; an intervening l
 identity-fenced request before altd relaunches, stops, or removes a worker.
 `alt task handoff <slug> --engine <engine> --attempt <N> --reason '…'` uses this same coordinator
 transport and daemon request for a running owner, an operator/L3-stopped owner, or one blocked by
-worker death or a recognized usage limit. The running owner receives a native instruction to refresh
+worker death or a recognized usage limit, or an unanswered question whose owner has exited without a recovery fault.
+The running owner receives a native instruction to refresh
 `progress.md` and write a request/attempt/worker-bound readiness file; no updated owner CLI is required.
+The task page invokes that same request from its composer chooser or a quota-stop action, with an atomic fence
+on the observed attempt, worker/session and block. A conversation card exposes now/cancel while
+preparing. Confirmation retains the observed identity even if polling sees a replacement; uncertain
+responses require a status read, not a duplicate mutation. Task polling derives target eligibility
+from the routing seam, and concise conversation outcomes retain full native checkpoint instructions
+for the old worker. No browser storage or parallel transfer lifecycle is added.
 The daemon waits without a timeout. Confirmed exit, a recorded usage limit, existing Stop or explicit
 `--now` permits transfer using saved context. `--request <id> --cancel` keeps the current owner until
 the stopping phase commits. Neither silence nor network failure forces a switch. The entire worker
@@ -169,7 +176,11 @@ engine's configured options and is consumed when dispatch binds the fresh attemp
 availability are checked again before execution and launch. `route.pick_task` supplies the same
 target-aware availability and pin explanation to dispatch and the queue. A fresh attempt clears current
 verification while retaining prior reports and delivery history. Handoff ignores new-task model choices
-and reports whether a fresh handoff note was obtained. Ordinary resume remains unchanged.
+and reports whether a fresh handoff note was obtained. The task composer extends this same receipt
+with an explicit model/effort selection, including same-engine changes. Admission checks the displayed
+default resolution and rejects an unchanged effective tuple. Requeue retains that selection for one
+attempt; dispatch consumes it without turning it into a permanent policy pin. Explicit task/project
+pins and unavailable targets still refuse. Ordinary resume remains unchanged.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 resolve a dilemma against its source message, and land only its own task.
 
