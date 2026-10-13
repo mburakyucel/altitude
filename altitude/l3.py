@@ -1802,9 +1802,9 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
     sessions = inf.setdefault("sessions", {})
     session = sessions.setdefault(engine, {})
     sid = session.get("session_id")
-    over = engines.context_rotation_due(session.get("context_percent"), engine)
+    rotate = engines.session_rotation_due(session, engine)
     confinement_changed = bool(sid) and session.get("confinement_version") != L3_CONFINEMENT_VERSION
-    fresh = not sid or session.get("rotate_next", False) or over or confinement_changed
+    fresh = not sid or rotate or confinement_changed
     if fresh and sid:
         rotate_reason = "L3 confinement policy changed" if confinement_changed else (
             session.get("rotate_reason") or "context threshold")

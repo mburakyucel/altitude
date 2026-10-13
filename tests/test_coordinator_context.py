@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, engines, l3
+from altitude import config, engines, l3, platform
 
 
 class TestCoordinatorContext(AltitudeCase):
@@ -24,12 +24,20 @@ class TestCoordinatorContext(AltitudeCase):
                                      "timestamp": at or datetime.now(timezone.utc).isoformat()}) + "\n")
 
     def test_real_adapter_and_coordinator_resume_after_large_aggregate_native_compaction_and_failure(self):
+        self.exercise_adapter(darwin=False)
+
+    def test_real_adapter_and_coordinator_resume_through_macos_launch_wrapper(self):
+        self.exercise_adapter(darwin=True)
+
+    def exercise_adapter(self, *, darwin):
         resumes = []
         real_popen = subprocess.Popen
         # A request at the native threshold still resumes; its next request reflects compaction.
         scenarios = [(50000, False), (475000, False), (40000, True), (45000, False)]
 
         def launch(command, **kwargs):
+            if darwin and command[-2:-1] == ["launch"]:
+                command = json.loads(command[-1])["command"]
             if config.CODEX_BIN not in command:
                 return real_popen(command, **kwargs)
             resumes.append("resume" in command)
@@ -54,6 +62,7 @@ class TestCoordinatorContext(AltitudeCase):
                                    stdin=io.StringIO(), communicate=communicate)
 
         with mock.patch.object(l3, "_select", return_value={"engine": "codex", "why": "fixture"}), \
+             mock.patch.object(platform, "_darwin", return_value=darwin), \
              mock.patch.object(engines, "_codex_home", return_value=self.home), \
              mock.patch.object(engines.subprocess, "Popen", side_effect=launch):
             for tokens, failed in scenarios:
@@ -68,6 +77,23 @@ class TestCoordinatorContext(AltitudeCase):
                     self.assertEqual(session["usage"]["input_tokens"], 3000000)
         self.assertEqual(resumes, [False, True, True, True])
         self.assertEqual(l3.info(self.project)["sessions"]["codex"]["turns"], 4)
+
+    def test_saved_context_rotation_does_not_replace_native_thread_but_explicit_reset_does(self):
+        l3.save_info(self.project, {"sessions": {"codex": {
+            "session_id": "context-thread", "confinement_version": l3.L3_CONFINEMENT_VERSION,
+            "context_percent": 131.3, "rotate_next": True,
+            "rotate_reason": "context 131.3% ≥ act line 100%"}}})
+
+        def execute(prompt, **kwargs):
+            return {"text": "answer", "reported_session_id": kwargs["resume"] or "reset-thread"}
+
+        with mock.patch.object(l3, "_select", return_value={"engine": "codex", "why": "fixture"}), \
+             mock.patch.object(engines, "codex_exec", side_effect=execute) as execute:
+            l3.turn(self.project, "Keep the conversation.")
+            l3.reset(self.project, reason="operator requested reset")
+            l3.turn(self.project, "Start the requested conversation.")
+        self.assertEqual([c.kwargs["resume"] for c in execute.call_args_list], ["context-thread", None])
+        self.assertEqual(l3.info(self.project)["sessions"]["codex"]["session_id"], "reset-thread")
 
     def test_missing_context_does_not_use_aggregate_or_old_request(self):
         self.append("token_usage_record", {"thread_id": "context-thread", "response_id": "old",

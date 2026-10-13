@@ -3425,6 +3425,14 @@ def context_rotation_due(pct: float | None, engine: str) -> bool:
     return engine == "claude" and pct is not None and pct >= config.CONTEXT_LINES[engine][1] * 100
 
 
+def session_rotation_due(session: dict, engine: str) -> bool:
+    """An explicit reset is independent of an engine's automatic context rotation."""
+    pct = session.get("context_percent")
+    automatic_reason = f"context {pct}% ≥ act line {int(config.CONTEXT_LINES[engine][1] * 100)}%"
+    requested = session.get("rotate_next") and session.get("rotate_reason") != automatic_reason
+    return bool(requested or context_rotation_due(pct, engine))
+
+
 def context_state(pct: float | None, engine: str = "claude") -> str:
     """Return ``ok``, ``warn``, or ``act`` against the engine's configured lines."""
     if pct is None:
