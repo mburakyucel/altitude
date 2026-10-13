@@ -337,7 +337,7 @@ function Choices({ tab, project, state, draft, setDraft, saving, only, lastReply
           <input type="radio" name={`models-${tab}`} checked={current === id} data-autofocus={current === id || undefined}
             onChange={() => pick({ engine: m.engine, model: m.model, other: false })} />
           <span>{m.label}{!m.engine ? <small> · {tab === "l3" ? "project routing and defaults" : "each project's defaults"}</small> : null}</span>
-          {m.engine ? <small className="models-engine">{engineLabel(m.engine)}</small> : null}
+          {m.engine && m.model ? <small className="models-engine">{engineLabel(m.engine)}</small> : null}
         </label>;
       })}
       <label className="models-option" data-checked={shown.other || undefined}>
