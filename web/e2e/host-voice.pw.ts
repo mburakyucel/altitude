@@ -212,12 +212,11 @@ test("host voice not set up: the mic points to Settings, which sets it up with p
   await setUp.click();
   const button = page.getByRole("button", { name: "Set up voice", exact: true });
   await walk.state("host-voice-09-settings-absent", {
-    visible: [page.getByRole("radio", { name: "This computer", exact: true }), button,
+    visible: [page.getByRole("main").locator(".voice-option").filter({ has: page.getByRole("heading", { name: "This computer", exact: true }) }).getByText("In use", { exact: true }), button,
       page.getByText("Needs a one-time download of about 698 MB, checked against this release.", { exact: true }),
       page.getByText("Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.", { exact: true })],
     hidden: [page.getByRole("progressbar")],
   });
-  await expect(page.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
   await walk.state("host-voice-10-setting-up", {
     action: () => button.click(),
     visible: [page.getByRole("progressbar", { name: "Voice setup" }), page.getByRole("status").filter({ hasText: "0 MB of 698 MB" }),
@@ -228,7 +227,7 @@ test("host voice not set up: the mic points to Settings, which sets it up with p
   await expect(page.getByRole("status").filter({ hasText: "420 MB of 698 MB" })).toBeVisible({ timeout: 5000 });
   host.state = READY;
   await walk.state("host-voice-11-ready", {
-    visible: [page.getByText("While you dictate, the speech process uses about 2 GB of memory.", { exact: true }), page.getByRole("button", { name: "Remove voice", exact: true })],
+    visible: [page.getByText("While you dictate, the speech process uses about 2 GB of memory.", { exact: true }), page.getByRole("button", { name: "Remove voice (698 MB)", exact: true })],
     hidden: [page.getByRole("progressbar"), page.getByRole("button", { name: "Cancel setup", exact: true })],
   });
   expect(host.requests).toEqual(["setup"]);

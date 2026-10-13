@@ -2957,7 +2957,7 @@ default.
 
 `/settings` shows a compact Voice input summary under This machine and read-only connection details
 (the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds three
-choices, This computer, Browser recognition and Your speech service, with explicit Save/Cancel. Project three-dot menus and the
+choices, This computer, Browser recognition and Your speech service, as cards whose Use buttons save at once; speech-service fields save explicitly. Project three-dot menus and the
 desktop operator row open Settings. `POST /api/voice` saves `{backend, selection}` and, for service,
 `url`, optional `key`/`model` and `remove_key`, from a paired same-origin page through the same
 durable request/apply path as the CLI, with no restart or provider probe; a selection that no longer
