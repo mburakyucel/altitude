@@ -2056,7 +2056,9 @@ separate file tab has no draft warning because reloading it leaves the conversat
 Closing a reader or hiding a system card keeps the unsent draft. A failed shared import also leaves
 subsequent documents readable as source. Only the operator's explicit Reload page reloads the app;
 API read failures retain their existing Retry, and errors inside a loaded renderer reach the route's
-error page. No update or network cause is inferred from import rejection. Document styles travel
+error page. Import rejection also covers a module that cannot finish initialization; an error
+thrown while rendering a successfully loaded module propagates. No update or network cause is
+inferred from import rejection. Document styles travel
 with the initial app CSS, so no deferred stylesheet preload can strand formatting across a reload.
 The formatting script stays deferred, preserving the initial download's performance limit.
 

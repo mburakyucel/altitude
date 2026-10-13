@@ -375,7 +375,8 @@ actual built JS/CSS served by a disposable real server. Separate script, stylesh
 removal cases establish readable-source recovery, saved-image access, draft preservation, repeated
 document entry and explicit whole-page reload at phone and desktop widths. Styles load with the
 app, so removal of an old stylesheet leaves the open page's formatting usable. Connection-drop
-fixtures distinguish failed module loading from offline content reads with API Retry. A successful
+fixtures keep the browser cache enabled and verify same-script reload without module preloads.
+Content transport failures keep API Retry; offline content reads resume on reconnect. A successful
 module whose renderer throws reaches the route error page at each entry point, rather than being
 misclassified as a load failure. `file-references.pw.ts` and `shown-files.pw.ts` cover the readers'
 loading, empty, denied, unavailable and image states; `app-update.pw.ts` retains terminal recovery,

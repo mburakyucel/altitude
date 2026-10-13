@@ -13,10 +13,10 @@ const draft = (page: Page, entry: Entry) => page.getByRole("textbox", {
   name: entry === "shown" ? "Message the L2" : "Message L3 about atlas", exact: true,
 });
 
-async function prepare(page: Page, request: APIRequestContext, entry: Entry) {
+async function prepare(page: Page, request: APIRequestContext, entry: Entry, interceptFile = true) {
   const { slug, path, source } = await (await request.get("/fixture/documents")).json();
   let release = () => {};
-  if (entry === "file") {
+  if (entry === "file" && interceptFile) {
     const gate = new Promise<void>(resolve => { release = resolve; });
     await page.route("**/api/files/atlas?*", async route => { await gate; await route.continue(); });
   }
@@ -24,7 +24,7 @@ async function prepare(page: Page, request: APIRequestContext, entry: Entry) {
     : entry === "shown" ? `/projects/atlas/tasks/${slug}` : "/projects/atlas";
   expect((await page.goto(route))?.ok()).toBe(true);
   if (entry !== "file") await draft(page, entry).fill("Keep this unsent draft.");
-  else await expect(page.getByText("Loading file…", { exact: true })).toBeVisible();
+  else if (interceptFile) await expect(page.getByText("Loading file…", { exact: true })).toBeVisible();
   return {
     source: source as string,
     async show() {
@@ -118,20 +118,34 @@ for (const entry of entries) {
     });
   }
 
-  test(`connection drops during formatting load: ${entry}`, async ({ page, request }, info) => {
-    const view = await prepare(page, request, entry);
-    expect((await request.post("/fixture/unreachable")).ok()).toBe(true);
-    await view.show();
-    await walkthrough(page, info).state(`${entry}-connection-failure-readable`, {
-      visible: [page.locator(".document-source"), page.getByRole("button", { name: "Reload page", exact: true })],
-      hidden: [page.getByText("Unexpected Application Error!", { exact: true })],
-    });
-    expect(await page.locator(".document-source").textContent()).toBe(view.source);
-    expect((await request.post("/fixture/back")).ok()).toBe(true);
-    await page.getByRole("button", { name: "Reload page", exact: true }).click();
-    if (entry === "system") await page.getByRole("button", { name: "Show", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Migration plan", exact: true })).toBeVisible();
-    await expect(page.getByText("Formatting unavailable", { exact: true })).toBeHidden();
+  test(`connection drops during formatting load with the browser cache enabled: ${entry}`, async ({ browser, altitude, request }, info) => {
+    // No interception: exercise WebKit's real cache and refetch of the same script after a failed load.
+    const context = await browser.newContext({ ...info.project.use, baseURL: altitude.url });
+    await context.addCookies([{ name: "altitude_device", value: altitude.device, url: altitude.url }]);
+    const page = await context.newPage();
+    try {
+      const chunks: string[] = [];
+      page.on("request", sent => {
+        if (/\/assets\/MarkdownDocument-.*\.js$/.test(sent.url())) chunks.push(new URL(sent.url()).pathname);
+      });
+      // The standalone file starts its read on entry; dropping code first avoids interception to hold it.
+      expect((await request.post("/fixture/unreachable")).ok()).toBe(true);
+      const view = await prepare(page, request, entry, false);
+      await view.show();
+      await walkthrough(page, info).state(`${entry}-connection-failure-readable`, {
+        visible: [page.locator(".document-source"), page.getByRole("button", { name: "Reload page", exact: true })],
+        hidden: [page.getByText("Unexpected Application Error!", { exact: true })],
+      });
+      expect(await page.locator(".document-source").textContent()).toBe(view.source);
+      await expect(page.locator('link[rel="modulepreload"]')).toHaveCount(0);
+      expect(chunks).toHaveLength(1);
+      expect((await request.post("/fixture/back")).ok()).toBe(true);
+      await page.getByRole("button", { name: "Reload page", exact: true }).click();
+      if (entry === "system") await page.getByRole("button", { name: "Show", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Migration plan", exact: true })).toBeVisible();
+      await expect(page.getByText("Formatting unavailable", { exact: true })).toBeHidden();
+      expect(chunks).toEqual([chunks[0], chunks[0]]);
+    } finally { await context.close(); }
   });
 
   test(`a renderer runtime error is not a load failure: ${entry}`, async ({ page, request }) => {
@@ -145,18 +159,48 @@ for (const entry of entries) {
 }
 
 for (const entry of ["file", "shown"] as const) {
-  test(`offline content read retains API Retry: ${entry}`, async ({ page, request, context }, info) => {
+  test(`failed content transport retains API Retry: ${entry}`, async ({ page, request }, info) => {
     const view = await prepare(page, request, entry);
-    await context.setOffline(true);
+    expect((await request.post("/fixture/content-unreachable")).ok()).toBe(true);
     await view.show();
     const title = entry === "file" ? "File unavailable" : "Preview unavailable";
-    await walkthrough(page, info).state(`${entry}-offline-content`, {
+    await walkthrough(page, info).state(`${entry}-failed-content`, {
       visible: [page.getByRole("heading", { name: title, exact: true }), page.getByRole("button", { name: "Retry", exact: true })],
       hidden: [page.getByText("Formatting unavailable", { exact: true })],
     });
-    await context.setOffline(false);
+    expect((await request.post("/fixture/back")).ok()).toBe(true);
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Migration plan", exact: true })).toBeVisible();
     await view.close();
   });
+  test(`offline content read resumes on reconnect: ${entry}`, async ({ page, request, context }, info) => {
+    const view = await prepare(page, request, entry);
+    await context.setOffline(true);
+    await view.show();
+    await walkthrough(page, info).state(`${entry}-offline-content`, {
+      visible: [entry === "file" ? page.getByRole("heading", { name: "File unavailable", exact: true })
+        : page.getByRole("status", { name: "Loading PLAN.md", exact: true })],
+      hidden: [page.getByText("Formatting unavailable", { exact: true })],
+    });
+    await context.setOffline(false);
+    await expect(page.getByRole("heading", { name: "Migration plan", exact: true })).toBeVisible();
+    await view.close();
+  });
 }
+
+test("offline formatting retains source until explicit reload", async ({ page, request, context }, info) => {
+  const view = await prepare(page, request, "system");
+  await context.setOffline(true);
+  await view.show();
+  await walkthrough(page, info).state("system-offline-formatting", {
+    visible: [page.locator(".document-source"), page.getByText("Formatting unavailable", { exact: true })],
+    hidden: [page.getByText("Unexpected Application Error!", { exact: true })],
+  });
+  await context.setOffline(false);
+  await view.close();
+  await view.show();
+  await expect(page.locator(".document-source")).toHaveText(view.source);
+  await page.getByRole("button", { name: "Reload page", exact: true }).click();
+  await page.getByRole("button", { name: "Show", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Migration plan", exact: true })).toBeVisible();
+});
