@@ -1802,9 +1802,9 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
     sessions = inf.setdefault("sessions", {})
     session = sessions.setdefault(engine, {})
     sid = session.get("session_id")
-    over = (session.get("context_percent") or 0) >= config.CONTEXT_LINES[engine][1] * 100
+    rotate = engines.session_rotation_due(session, engine)
     confinement_changed = bool(sid) and session.get("confinement_version") != L3_CONFINEMENT_VERSION
-    fresh = not sid or session.get("rotate_next", False) or over or confinement_changed
+    fresh = not sid or rotate or confinement_changed
     if fresh and sid:
         rotate_reason = "L3 confinement policy changed" if confinement_changed else (
             session.get("rotate_reason") or "context threshold")
@@ -1881,15 +1881,16 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
     return res
 
 
-def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: float,
+def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: float | None,
                   fresh: bool, cost: float, usage: dict, choice: dict) -> None:
     act = config.CONTEXT_LINES[engine][1] * 100
+    rotate = engines.context_rotation_due(pct, engine)
     session.update({"session_id": sid, "confinement_version": L3_CONFINEMENT_VERSION, "launch_model": choice.get("model"),
                     "turns": (0 if fresh else int(session.get("turns") or 0)) + 1,
                     "context_percent": pct, "last_turn": S.now(), "last_cost": cost,
                     "started": session.get("started") if not fresh else S.now(),
-                    "context_state": engines.context_state(pct, engine), "rotate_next": pct >= act,
-                    "rotate_reason": f"context {pct}% ≥ act line {int(act)}%" if pct >= act else None,
+                    "context_state": engines.context_state(pct, engine), "rotate_next": rotate,
+                    "rotate_reason": f"context {pct}% ≥ act line {int(act)}%" if rotate else None,
                     "usage": usage})
     inf.update({"engine_last": engine, "session_id": sid, "context_percent": pct,
                 "engine_model": session.get("engine_model"),
@@ -1941,7 +1942,8 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, a
     elif sid and reported_sid != sid:
         identity_error = f"Codex L3 resume returned a different thread than {sid}"
     usage = result.get("usage") or {}
-    tokens = int(usage.get("input_tokens", 0) or 0)
+    context = result.get("context") or {}
+    tokens = context.get("tokens")
     out = {"text": str(result.get("text") or ""), "session_id": reported_sid or sid or "",
            "usage": usage, "context_tokens": tokens, "cost": 0.0, "turns": 1, "structured": None,
            "error": identity_error or result.get("error"), "tools": result.get("tools") or [],
@@ -1952,7 +1954,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, a
         on_result({**out, "completed": not bool(out.get("error") or out.get("rejection") or out.get("limited"))})
     if (out.get("rejection") or out.get("limited")) and out.get("safe_to_retry"):
         return out
-    pct = engines.context_percent(tokens, "codex") if tokens else 0.0
+    pct = context.get("percent")
     if identity_error or (result.get("error") and not out["text"]):
         if reported_sid and not identity_error:
             _save_session(inf, session, "codex", reported_sid, pct, fresh, 0.0, usage, choice)

@@ -219,10 +219,13 @@ class PersonaLoading(AltitudeCase):
                 self.assert_persona(resumed, engine, "l3", updated, resumed=True)
                 self.assertEqual(resumed.session, initial.session)
 
-                info = l3.info(self.project)
-                info["sessions"][engine]["context_percent"] = 100
-                l3.save_info(self.project, info)
-                self.assertTrue(l3.turn(self.project, "Continue after context rotation.")["completed"])
+                if engines.context_rotation_due(100, engine):
+                    info = l3.info(self.project)
+                    info["sessions"][engine]["context_percent"] = 100
+                    l3.save_info(self.project, info)
+                else:
+                    l3.reset(self.project, reason="fixture explicit reset")
+                self.assertTrue(l3.turn(self.project, "Continue after the fresh-session boundary.")["completed"])
                 self.assert_persona(self.processes[-1], engine, "l3", updated, resumed=False)
                 self.assertNotEqual(self.processes[-1].session, initial.session)
                 persona.write_text(original)

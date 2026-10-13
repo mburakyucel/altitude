@@ -9,6 +9,7 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   instead of waiting up to half a minute for the next scheduled pass.
 - A task with a long session opens faster: its activity records are redacted once per read instead of
   twice.
+- Voice input in a Linux WebKit browser no longer freezes the page when the machine is busy.
 
 ## v0.4.0 — 2026-10-12
 
