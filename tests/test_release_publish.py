@@ -106,6 +106,29 @@ class InstallScript(unittest.TestCase):
         self.assertNotIn("Put alt on your PATH", on_path.stdout)
         self.assertIn("Check tools and sign-ins with alt doctor.", on_path.stdout)
 
+    def test_no_link_output_has_one_clear_recovery_path(self):
+        script = (REPO / "scripts/install.sh").read_text()
+        renderer = script.split('    "$python" - "$workdir/result.json"', 1)[1].split("\n", 1)[1].split("\nEOF", 1)[0]
+        result_file = self.tmp / "result.json"
+        base = {"version": "v0.1.0", "service": "running", "url": "https://localhost:8443", "trust": {}}
+        for failed in (False, True):
+            with self.subTest(issuance_failed=failed):
+                result_file.write_text(json.dumps({**base, **({"pairing_error": "Run ~/.local/bin/alt pair to pair this browser."} if failed else {})}))
+                rendered = subprocess.run([sys.executable, "-", str(result_file), "https://example.invalid/setup"],
+                                          input=renderer, env=self.env, capture_output=True, text=True)
+                self.assertEqual(rendered.returncode, 0, rendered.stderr)
+                self.assertIn("is installed and its service is running", rendered.stdout)
+                self.assertNotIn("#pair=", rendered.stdout)
+                self.assertNotIn("your existing code", rendered.stdout)
+                self.assertEqual(rendered.stdout.count("~/.local/bin/alt pair"), 1)
+                if failed:
+                    self.assertIn("Run ~/.local/bin/alt pair to pair this browser.", rendered.stdout)
+                    self.assertNotIn("still-valid", rendered.stdout)
+                    self.assertNotIn("Making a new code", rendered.stdout)
+                else:
+                    self.assertIn("use a still-valid code or run ~/.local/bin/alt pair", rendered.stdout)
+                    self.assertIn("Making a new code replaces any earlier one.", rendered.stdout)
+
     def test_says_whether_altitude_keeps_running_without_a_login(self):
         refused = ("Altitude stops when alice's last login session ends and starts again only at the next login. "
                    "To keep it running after logout and start it at boot, run: sudo loginctl enable-linger alice")

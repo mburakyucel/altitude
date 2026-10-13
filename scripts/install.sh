@@ -173,10 +173,11 @@ if pairing:
     print("     If it expires, run ~/.local/bin/alt pair.")
 else:
     print("  2. Open the address; First run walks you through the rest.")
-    print("     If it asks for a code, use your existing code or run ~/.local/bin/alt pair")
-    print("     for a new one when you are ready to replace the existing code.")
-if result.get("pairing_error"):
-    print(f"     {result['pairing_error']}")
+    if result.get("pairing_error"):
+        print(f"     {result['pairing_error']}")
+    else:
+        print("     If it asks for a code, use a still-valid code or run ~/.local/bin/alt pair.")
+        print("     Making a new code replaces any earlier one.")
 print("\nTerminal setup (optional now):")
 if os.path.join(home, ".local/bin") not in os.environ.get("PATH", "").split(os.pathsep):
     print('  Put alt on your PATH (add this line to your shell profile too):\n    export PATH="$HOME/.local/bin:$PATH"')
