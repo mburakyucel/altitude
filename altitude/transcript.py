@@ -35,7 +35,6 @@ PARTIAL_RECORD = "partial record; waiting for completion"
 _SECRET_KEY = re.compile(r"(authorization|cookie|password|passwd|secret|token|api[_-]?key|credential)", re.I)
 _SECRET_VALUE = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{12,}|\b(?:sk|gh[oprsu])_[A-Za-z0-9_-]{12,}")
 BOUNDARIES = {"state", "stopped", "resume-held", "resume-failed", "dispatch-failed"}
-_IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
 RESUME_PROMPT = "Continue from your progress file."
 UNKNOWN_RESUME_PROMPT = "Session continued; input delivery unconfirmed."
 
@@ -46,8 +45,11 @@ class TranscriptAccessError(ValueError):
 
 def _require_task_access(project: str, slug: str) -> None:
     """Authorize named managed task identity before any task path is resolved."""
-    if not _IDENTIFIER.fullmatch(project) or not _IDENTIFIER.fullmatch(slug):
-        raise TranscriptAccessError("invalid task identity")
+    try:
+        config.require_project_name(project)
+        S.require_task_slug(slug)
+    except ValueError:
+        raise TranscriptAccessError("invalid task identity") from None
     if project not in config.load_projects():
         raise TranscriptAccessError("unknown project")
     root = (config.project_dir(project) / "tasks").resolve()
@@ -452,7 +454,9 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
                         known = calls.get(tool_id)
                         if known:
                             identity, order, at = known["id"], known["order"], known["at"]
-                            known.update(item, id=identity, order=order, at=at)
+                            # A command keeps its first recorded time; an untimed start takes its completion's.
+                            known.update(item, id=identity, order=order,
+                                         at=at if _when(at) is not None else item["at"])
                             folded.add(item["id"])
                         else:
                             calls[tool_id] = item
@@ -466,6 +470,8 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
                     call["output"] = "\n".join(result["text"] for result in results)
                     call["error"] = call.get("error", False) or any(result.get("error") for result in results)
                     call["status"] = "completed"
+                    if _when(call["at"]) is None:
+                        call["at"] = next((result["at"] for result in results if _when(result["at"]) is not None), call["at"])
                     for result in results:
                         folded.add(result["id"])
     if set(previous_sources) - set(source_state):

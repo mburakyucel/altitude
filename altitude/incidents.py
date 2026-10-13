@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import config, engines, platform, state as S, tasks as T
+from . import config, engines, platform, state as S, storage, tasks as T
 
 STATUSES = ("open", "watch", "closed")
 ISSUE_LABEL = "incident"
@@ -31,8 +31,7 @@ _BULLET = re.compile(r"^(?:- (" + "|".join(re.escape(x) for x in INCIDENT_LABELS
 
 
 def _index_append(row: dict) -> None:
-    with open(config.INCIDENT_INDEX, "a") as f:
-        f.write(json.dumps(row, sort_keys=True) + "\n")
+    storage.append(config.INCIDENT_INDEX, json.dumps(row, sort_keys=True) + "\n")
 
 
 FAULTS = config.ROOT / "monitor" / "faults.json"
@@ -46,8 +45,7 @@ def fault_lock_path() -> Path:
 @contextmanager
 def _fault_lock():
     """Serialize fault evidence RMW and dedupe, independently of project dispatch locks."""
-    FAULTS.parent.mkdir(parents=True, exist_ok=True)
-    with open(fault_lock_path(), "w") as handle:
+    with storage.runtime_lock(fault_lock_path()) as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -337,8 +335,9 @@ def _system_section(system: str) -> str:
 # ---- public issue: one sanitized GitHub issue per incident ---------------------------------------------------
 _CREDENTIAL = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b"
-    r"|-----BEGIN [\w ]*PRIVATE KEY-----(?:[\s\S]*?-----END [\w ]*PRIVATE KEY-----)?"
-    r"|\b(?:authorization\s*[:=]\s*(?:bearer|basic)\s+|(?:[\w-]*(?:token|password|secret|api[_-]?key))[\"']?\s*[:=]\s*[\"']?)"
+    r"|-----BEGIN [\w ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?"
+    r"(?:-----END [\w ]*PRIVATE KEY(?: BLOCK)?-----|(?=-----BEGIN )|\Z)"
+    r"|(?:\bauthorization\s*[:=]\s*(?:bearer|basic)\s+|(?:token|password|secret|api[_-]?key)[\"']?\s*[:=]\s*[\"']?(?:(?:bearer|basic)\s+)?)"
     r"(?!\[REDACTED\]|<REDACTED>)\S{4,}"
     r"|https?://[^\s/@:]+:[^\s/@]+@", re.I)
 _PRIVATE = re.compile(r"(?:/home/|/Users/|~/|\$HOME/|[A-Z]:\\Users\\)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b|\bincidents(?:/|\.jsonl\b)|"
@@ -399,9 +398,9 @@ def _redact_serials(text: str) -> str:
 _PATH_TAIL = r"(?:[/\\][^\s`'\"<>\[\]{}()]*)?"
 _REDACTIONS = (
     (re.compile(r"(?:~|\$HOME|/home/[^/\s]+|/Users/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)" + _PATH_TAIL), "[path]"),
-    (re.compile(r"[^\s`'\"<>\[\]{}()]*(?:\.altitude/|\bincidents(?:/|\.jsonl\b)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b)[^\s`'\"<>\[\]{}()]*"), "[path]"),
+    (re.compile(r"(?<![^\s`'\"<>\[\]{}()])[^\s`'\"<>\[\]{}()]*(?:\.altitude/|\bincidents(?:/|\.jsonl\b)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b)[^\s`'\"<>\[\]{}()]*"), "[path]"),
     (re.compile(r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b", re.I), "[file]"),
-    (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),
+    (re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),
     (_ADDRESS, lambda m: "[address]" if _private_address(m) else m.group(0)),
     (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "[id]"),
     (re.compile(r"\b[0-9a-f]{12,}\b", re.I), "[id]"),
@@ -492,9 +491,7 @@ def _gh(project: str, args: list[str], *, timeout: int, input: str | None = None
 def _incident_lock(project: str):
     """One publisher or amender per project across processes: a retry cannot race the daemon into a second
     issue, and an amendment never lands on a snapshot another writer has replaced."""
-    directory = config.project_dir(project) / "incidents"
-    directory.mkdir(parents=True, exist_ok=True)
-    with open(directory / ".lock", "w") as handle:
+    with storage.runtime_lock(config.project_dir(project) / "incidents" / ".lock") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -658,7 +655,7 @@ def _reserve_incident_file(directory: Path) -> tuple[str, Path]:
         iid = f"I-{stamp}" if n == 1 else f"I-{stamp}-{n}"
         path = directory / f"{iid}.md"
         try:
-            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            os.close(storage.open_runtime(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             return iid, path
         except FileExistsError:
             continue
@@ -688,9 +685,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
     fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, system=system,
                   what=_one_field(what), summary=_one_field(summary or ""),
                   evidence=_one_field(evidence), cause=_one_field(cause), status="watch", issue="")
-    d = config.project_dir(project) / "incidents"
-    d.mkdir(parents=True, exist_ok=True)
-    iid, path = _reserve_incident_file(d)
+    iid, path = _reserve_incident_file(config.project_dir(project) / "incidents")
     try:
         S.atomic_write(path, template.format(id=iid, **fields))
     except Exception:
@@ -698,8 +693,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
         raise
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
            "cause": cause.strip()[:200]}
-    with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
-        f.write(json.dumps(row, sort_keys=True) + "\n")
+    storage.append(config.project_dir(project) / "incidents.jsonl", json.dumps(row, sort_keys=True) + "\n")
     _index_append(row)
     if task:
         S.append_event(project, task, "incident", id=iid, tags=row["tags"], by=actor)

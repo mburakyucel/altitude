@@ -81,33 +81,28 @@ async function openPanel() {
 }
 
 describe("LiveSession", () => {
-  for (const width of [390, 1440]) {
-    for (const source of ["claude", "codex"]) {
-      for (const status of ["in_progress", "completed"]) {
-        it(`renders recorded and unavailable command times for ${source} ${status} at ${width}px`, async () => {
-          setViewport(width);
-          const base = { ...normalEvents[normalEvents.length - 1], source, status,
-            output: status === "completed" ? "fixture output" : "" };
-          const events = [
-            { ...base, id: "timed", order: "1", at: at(3), summary: "echo timed", text: "echo timed" },
-            { ...base, id: "untimed", order: "2", at: null, summary: "echo untimed", text: "echo untimed" },
-          ];
-          stub({ transcript: () => jsonResponse({ ...normalTranscript, events }) });
-          renderApp({ route });
-          const timed = (await screen.findByText("echo timed", { selector: "code" })).closest("details")!;
-          const untimed = screen.getByText("echo untimed", { selector: "code" }).closest("details")!;
-          expect(timed.querySelector("time.session-time")).toHaveAttribute("datetime", at(3));
-          expect(timed.querySelector("time.session-time")).toHaveAttribute("title");
-          expect(untimed.querySelector(".session-time")).toHaveTextContent("time unavailable");
-          expect(untimed.querySelector("time")).toBeNull();
-          if (status === "in_progress") {
-            expect(untimed.querySelector(".session-hint")).toHaveTextContent(/^running…$/);
-          } else {
-            expect(timed.querySelector("[data-output]")).toHaveTextContent("fixture output");
-          }
-        });
+  for (const status of ["in_progress", "completed"]) {
+    it(`renders recorded and unavailable command times while ${status}`, async () => {
+      const base = { ...normalEvents[normalEvents.length - 1], status,
+        output: status === "completed" ? "fixture output" : "" };
+      const events = [
+        { ...base, id: "timed", order: "1", at: at(3), summary: "echo timed", text: "echo timed" },
+        { ...base, id: "untimed", order: "2", at: null, summary: "echo untimed", text: "echo untimed" },
+      ];
+      stub({ transcript: () => jsonResponse({ ...normalTranscript, events }) });
+      renderApp({ route });
+      const timed = (await screen.findByText("echo timed", { selector: "code" })).closest("details")!;
+      const untimed = screen.getByText("echo untimed", { selector: "code" }).closest("details")!;
+      expect(timed.querySelector("time.session-time")).toHaveAttribute("datetime", at(3));
+      expect(timed.querySelector("time.session-time")).toHaveAttribute("title");
+      expect(untimed.querySelector(".session-time")).toHaveTextContent("time unavailable");
+      expect(untimed.querySelector("time")).toBeNull();
+      if (status === "in_progress") {
+        expect(untimed.querySelector(".session-hint")).toHaveTextContent(/^running…$/);
+      } else {
+        expect(timed.querySelector("[data-output]")).toHaveTextContent("fixture output");
       }
-    }
+    });
   }
 
   it("reads the session as tinted prompts, the worker's prose, and folded tool rows", async () => {

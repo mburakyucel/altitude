@@ -90,25 +90,12 @@ repair through L3; an unavailable safe repair remains an explicit task-local dep
 The configured runtime home may itself be a symlink; its resolved root anchors cleanup, while
 links below it are refused.
 
-Runtime-storage regressions use disposable real directories and task records for project lock
-contention, leaf/ancestor replacement, startup aliases, descriptor failure cleanup, full UTF-8 briefs
-and live/archive selection. Normal, Raw and record transcript reads exercise fixed-brief refusal;
-invocation and native-source regression coverage does not establish their physical containment.
-The Linux execute-only case requires a non-root runner, denied directory listing and successful
-full brief reads and lock acquisition. No provider, private-place or native sandbox probe runs.
-Fixtures may select another service backend while using the runner's real filesystem; directory
-search flags follow the interpreter's native platform constants in both cases.
-Invocation-reader fixtures use fictional registered projects and worker records. They cover
-refusal of malformed task and worker names before any directory or record is opened,
-activity's earlier identity refusal, live and archived selection with missing,
-ordinary-file and linked live parents and archive entries, historical headers,
-current activity, normal/Raw/record reads, complete
-UTF-8 and partial lines, replacement of JSON and stdout between discovery and consumption,
-late regular-file replacement before publication, unavailable discovery followed by creation,
-closed refusal without outside-marker disclosure, unchanged transcript index on refusal,
-quiet polls without a full stdout read, and descriptor cleanup. They establish application
-behavior through the runtime reader; external native provenance, in-place writer mutation,
-earlier status and registry reads, and worker runtime writability remain separate boundaries.
+Runtime files a test writes (monitor, incident ledgers and worker jobs) live under `self.runtime_tmp`,
+inside the test runtime root, because runtime writes refuse paths outside it.
+`tests/test_runtime_storage.py` plants leaf links, hard links and linked folders under every runtime
+writer and reader and checks that nothing outside the root changes or leaks.
+`tests/test_invocation_reader.py` checks that malformed task and worker names are refused before any
+directory or record is opened.
 
 On macOS the suite runs natively with Homebrew's `python@3.12`, `node@24`, `openssl@3`, `ffmpeg`,
 `lcms2`, `webp` (Homebrew's `ffmpeg` decodes WebP but cannot encode it, so the image fixtures use

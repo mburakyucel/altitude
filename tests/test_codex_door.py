@@ -59,7 +59,7 @@ class TestCodexAdapter(AltitudeCase):
         super().setUp()
         make_repo(self.repo)
         self.worktree = add_worktree(self.repo, "wt")
-        self.job_root = self.tmp / "jobs"
+        self.job_root = self.runtime_tmp / "jobs"
 
     def test_sandbox_roots_are_the_worktree_both_git_dirs_and_altitude_home(self):
         # Codex leaves a linked worktree's own metadata read-only unless it is a root of its own, which blocked

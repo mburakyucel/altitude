@@ -85,6 +85,23 @@ class TestPublication(IncidentIssueCase):
                                    "for [project]\n[REDACTED]\nat [path]")
             with self.assertRaisesRegex(ValueError, "operator's name"):
                 incidents.check_public("Ada Fixture")
+        # A key matches at its keyword, so its prefix stays; a Bearer or Basic scheme is skipped to the value.
+        for flag, redacted in (("--password=hunter22", "--[REDACTED]"), ("-token=abcd1234", "-[REDACTED]"),
+                               ("--api-key=abcd1234", "--[REDACTED]"),
+                               ("X-Auth-Token: Bearer abcd1234", "X-Auth-[REDACTED]"),
+                               ('access_token="Basic abcd1234"', "access_[REDACTED]")):
+            with self.subTest(flag=flag):
+                self.assertEqual(incidents.sanitize(f"ran tool {flag} then"), f"ran tool {redacted} then")
+                with self.assertRaisesRegex(ValueError, "credential"):
+                    incidents.check_public(f"ran tool {flag}")
+        # A key block ends at its END line, else at the next BEGIN or the end of the text.
+        self.assertEqual(incidents.sanitize("-----BEGIN PRIVATE KEY-----\nAAAA\n-----BEGIN PRIVATE KEY-----\nBBBB\n"
+                                            "-----END PRIVATE KEY-----\nafter\n-----BEGIN PRIVATE KEY-----\nCCCC"),
+                         "[REDACTED][REDACTED]\nafter\n[REDACTED]")
+        self.assertEqual(incidents.sanitize("-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOY\n-----END PGP PRIVATE KEY BLOCK-----\n"),
+                         "[REDACTED]\n")
+        self.assertEqual(incidents.sanitize("mail (fixture.name@example.org), see repo:.altitude/state.json"),
+                         "mail ([email]), see [path]")
 
     def test_a_fault_detail_with_its_own_bullet_line_stays_one_field(self):
         incident, result = self.file(what="output was\n- issue: private log line\n- status: closed")

@@ -3,6 +3,7 @@ import http.client
 import json
 import os
 import plistlib
+import shutil
 import socket
 import ssl
 import threading
@@ -37,6 +38,15 @@ class TestHTTPSServer(AltitudeCase):
         broker.assert_not_called()
         worker.assert_not_called()
         self.assertIn("HTTPS startup refused", server.log.call_args.args[0])
+
+    def test_startup_removes_the_voice_runtime_from_the_worker_writable_home_first(self):
+        planted = config.ROOT / "speech" / "runtime-earlier"
+        planted.mkdir(parents=True)
+        (planted / "complete.json").write_text("{}")
+        self.addCleanup(shutil.rmtree, config.ROOT / "speech", True)
+        with mock.patch.object(server, "ThreadingHTTPServer"), self.assertRaises(SystemExit):
+            server.main()
+        self.assertFalse((config.ROOT / "speech").exists())
 
     def test_binding_needs_no_reverse_lookup_of_the_address(self):
         # A Mac without a network held http.server's getfqdn in mDNS past the installation's health deadline.

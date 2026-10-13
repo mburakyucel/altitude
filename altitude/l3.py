@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, engines, images as image_store, platform, route, state as S, transcript
+from . import config, engines, images as image_store, platform, route, state as S, storage, transcript
 
 _locks: dict[str, threading.Lock] = {}
 _active: dict[str, dict] = {}
@@ -227,8 +227,7 @@ def save_info(project: str, data: dict) -> None:
 def _chat_write(project: str):
     """Serialize appends with a group's atomic history replacement, including CLI writers."""
     path = config.project_dir(project) / "chat.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path.with_suffix(".lock"), "a") as guard:
+    with storage.runtime_lock(path.with_suffix(".lock")) as guard:
         fcntl.flock(guard, fcntl.LOCK_EX)
         try:
             yield path
@@ -239,10 +238,7 @@ def _chat_write(project: str):
 def chat_log(project: str, role: str, text: str, **meta) -> dict:
     row = {"at": S.now(), "role": role, "text": text, **meta}
     with _chat_write(project) as path:
-        with open(path, "a") as stream:
-            stream.write(json.dumps(row, sort_keys=True) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
+        storage.append(path, json.dumps(row, sort_keys=True) + "\n", sync=True)
     return row
 
 

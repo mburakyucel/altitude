@@ -89,7 +89,11 @@ def task_file(project: str, reference: str) -> dict:
     outside = "Only text documents directly in this project's task folders can open here."
     unsupported = "Only regular UTF-8 .md or .txt documents up to 1 MiB can open here."
     unavailable = "This document is missing or cannot be read."
-    if not config.is_managed(project) or any(ord(c) < 32 for c in reference):
+    try:
+        managed = config.is_managed(project)
+    except OSError:  # the registry lock refuses an unreadable or replaced runtime root
+        raise TaskFileError(unavailable, 404) from None
+    if not managed or any(ord(c) < 32 for c in reference):
         raise TaskFileError(outside)
     path = reference
     if reference.startswith("file:"):
@@ -1667,9 +1671,8 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         captured, files = None, {}
         if show is not None:
             if (actor != "l2" or expected_attempt is None or task.get("state") != "running"
-                    or (questions is not None and len(_validate_questions(questions)) != 1)
                     or (updates or {}).get("fault") or task.get("fault")):
-                raise TransitionError("showing files on a question requires the current L2 and one question")
+                raise TransitionError("showing files on a question requires the current L2")
             captured, files = capture_shown(project, task, show)
         _supersede_resume(task)
         nudged = task.pop("nudged", None)  # an owner block, a Stop or a fault, like a report, ends the nudge
@@ -2165,6 +2168,17 @@ def _validate_questions(payload: dict) -> list[dict]:
     return normalized
 
 
+def shown_question(payload: dict) -> dict:
+    """The member a block's shown files go to: a proposal, marked as one, or a lone unmarked question."""
+    items = _validate_questions(payload)
+    marked = [item for item in items if item["review"] == "proposal"]
+    if len(items) == 1 and items[0]["review"] is None:
+        return items[0]
+    if len(marked) != 1:
+        raise TransitionError('--show goes to one proposal: mark exactly one question "review": "proposal"')
+    return marked[0]
+
+
 def _audience(block: str, previous: dict | None, text: str) -> str:
     """A member follows the audience of the block that publishes it. Re-parking an unchanged operator question keeps
     it the operator's, so an escalation is never parked away; a reworded one, such as a wait on L3 or an external
@@ -2245,6 +2259,7 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
 def _publish_questions(task: dict, payload: dict, actor: str, reason: str, audience: str, *,
                        shown: dict | None = None) -> list[dict]:
     inputs = _validate_questions(payload)
+    showing = shown_question(payload)["question"] if shown is not None else None
     groups = _store_groups(task)
     group = groups[-1] if groups else None
     if not group or not any(q["status"] == "open" for q in _group_members(task, group)):
@@ -2274,7 +2289,8 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, audie
         _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
                           force_revision=bool(previous and previous.get("response")),
                           options=options, recommended_key=recommended, why=why,
-                          shown=shown if shown is not None else _UNSET, review=item["review"],
+                          shown=_UNSET if shown is None else shown if item["question"] == showing else None,
+                          review=item["review"],
                           audience=_audience(audience, previous, item["question"]))
     group["reason"] = reason
     if len(task["questions"]) != before:

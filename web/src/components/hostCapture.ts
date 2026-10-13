@@ -17,7 +17,7 @@
  * the browser was paired again as another device. The words shown hold still until the replay catches up. After Stop, the capture waits two minutes
  * at most for the connection, then ends with the words shown.
  */
-import { ApiError, UNPAIRED_EVENT, cancelHostVoice, sendHostVoice, sendServiceVoice, startHostVoice } from "../data/api";
+import { ApiError, cancelHostVoice, sendHostVoice, sendServiceVoice, startHostVoice } from "../data/api";
 import { traceVoice, voiceError } from "./voiceTrace";
 
 const RATE = 16000;
@@ -170,7 +170,7 @@ export class HostCapture {
   private request: AbortController | null = null;
   private readonly selection: string;
 
-  constructor(stream: MediaStream, selection: string, readonly serviceOwner?: string) {
+  constructor(stream: MediaStream, selection: string, readonly service = false) {
     this.stream = stream;
     this.selection = selection;
   }
@@ -179,7 +179,6 @@ export class HostCapture {
     traceVoice("host.start", this);
     this.state = "recording";
     HostCapture.retained.add(this);
-    if (this.serviceOwner) window.addEventListener(UNPAIRED_EVENT, this.unpaired);
     for (const track of this.stream.getAudioTracks()) {
       // A call or a locked screen takes the microphone: what was recorded still lands.
       track.addEventListener("ended", () => {
@@ -208,7 +207,7 @@ export class HostCapture {
     if (this.state !== "recording" || this.stopping) return;
     this.stopping = true;
     this.release();
-    this.deadline = setTimeout(() => this.serviceOwner ? this.serviceFail("service_unavailable") : this.expire(), this.serviceOwner ? WAIT_MS * 2 : WAIT_MS);
+    this.deadline = setTimeout(() => this.service ? this.serviceFail("service_unavailable") : this.expire(), this.service ? WAIT_MS * 2 : WAIT_MS);
     this.pump();
   }
 
@@ -228,17 +227,17 @@ export class HostCapture {
       traceVoice("host.samples", this);
       this.onlistening?.();
     }
-    const take = this.serviceOwner ? chunk.subarray(0, Math.max(0, RATE * 600 - this.recorded)) : chunk;
+    const take = this.service ? chunk.subarray(0, Math.max(0, RATE * 600 - this.recorded)) : chunk;
     this.audio.push(take);
     this.recorded += take.length;
-    if (this.serviceOwner && this.recorded === RATE * 600) (this.oninterrupted ?? (() => this.stop()))();
+    if (this.service && this.recorded === RATE * 600) (this.oninterrupted ?? (() => this.stop()))();
     this.pump();
   }
 
   /** Open a host recording, or send the next chunk once enough is gathered, or the rest once stopping. */
   private pump() {
     if (this.request || this.retry || this.finished || this.state !== "recording") return;
-    if (this.serviceOwner) { if (this.stopping) void this.sendService(); return; }
+    if (this.service) { if (this.stopping) void this.sendService(); return; }
     if (!this.id) { void this.open(); return; }
     if (!this.inflight) {
       const waiting = this.recorded - this.covered;
@@ -249,11 +248,9 @@ export class HostCapture {
     void this.send(this.id, this.inflight);
   }
 
-  private unpaired = () => this.serviceFail("selection_changed");
-
-  /** A fresh Settings read invalidates retained service audio before it can use a new route or owner. */
-  checkServiceSelection(selection: string, owner?: string) {
-    if (this.serviceOwner && (selection !== this.selection || owner !== this.serviceOwner)) this.serviceFail("selection_changed");
+  /** A fresh Settings read invalidates retained service audio before it can use a new destination. */
+  checkServiceSelection(selection: string) {
+    if (this.service && selection !== this.selection) this.serviceFail("selection_changed");
   }
 
   private serviceFail(code: ServiceFailure) {
@@ -265,10 +262,9 @@ export class HostCapture {
   private async sendService() {
     const request = this.begin(WAIT_MS * 2);
     try {
-      const answer = await sendServiceVoice(this.selection, this.serviceOwner!, this.slice(0, this.recorded), request.signal);
+      const answer = await sendServiceVoice(this.selection, this.slice(0, this.recorded), request.signal);
       if (this.state === "inactive") return;
-      // The upload response already verifies owner and selection on the server.
-      // Local Settings and unpairing events invalidate this capture while it waits.
+      // The server forwards only to the destination this capture was recorded for.
       if (!answer.text.trim()) { this.serviceFail("service_empty"); return; }
       this.text = answer.text;
       this.finished = true;
@@ -425,7 +421,6 @@ export class HostCapture {
     this.audio = [];
     this.state = "inactive";
     HostCapture.retained.delete(this);
-    window.removeEventListener(UNPAIRED_EVENT, this.unpaired);
     this.watch("ok");
     this.onstop?.();
   }

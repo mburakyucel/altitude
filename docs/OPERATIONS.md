@@ -107,13 +107,13 @@ folder on a Mac or an external drive on Linux. Never commit it to a repository: 
 and evidence. Encrypt the file before it leaves storage you trust.
 
 ```sh
-(umask 077 && tar -czf ~/Backups/altitude-2026-10-10.tar.gz -C ~ --exclude=.altitude/speech .altitude)
+(umask 077 && tar -czf ~/Backups/altitude-2026-10-10.tar.gz -C ~ .altitude)
 tar -tzf ~/Backups/altitude-2026-10-10.tar.gz > /dev/null && echo complete
 ```
 
 The first command writes an archive only you can read; the second reads the whole archive and fails
-on a truncated or damaged file. Both assume the default `ALTITUDE_HOME`. The exclusion skips the
-voice runtime, which downloads again when needed. Records are replaced whole, so a copy taken while
+on a truncated or damaged file. Both assume the default `ALTITUDE_HOME`. The voice runtime lives beside it in
+`~/.altitude-speech` and downloads again when needed, so the copy leaves it out. Records are replaced whole, so a copy taken while
 Altitude runs holds intact files, but activity during the copy can leave one record without its
 counterpart, such as an incident index line without its incident. For an exact copy, take it while
 no task runs and the coordinator is idle. Task folders keep their check evidence, so
@@ -653,10 +653,11 @@ run keeps its choice and says why. First run offers the one-time download (**Set
 browser recognition instead** or **Skip**); after Skip, the microphone offers the download.
 
 The setting lands in the private `~/.altitude/settings.json` through the machine-settings request.
-**Settings → Voice input** edits the same setting: **This computer**, **Browser recognition**, and
-**Your speech service** use explicit Save/Cancel. Saving another choice removes saved service details;
-tapping a radio only changes the draft choice. Built-in setup/removal actions remain immediate and
-independent of saving the choice. A Settings read or save updates the next capture in that browser document. Other
+**Settings → Voice input** edits the same setting as three cards: **This computer**, **Browser
+recognition** and **Your speech service**. Each card's **Use …** button saves that choice at once;
+**This computer** can be chosen once its voice is ready. Leaving a saved speech service asks first,
+because switching removes its saved details. A speech service's fields save with **Use this service**
+or **Save**. Setup, update and removal actions are immediate and never change the choice. A Settings read or save updates the next capture in that browser document. Other
 documents and CLI changes are picked up when opening Settings, on reload or after a recording is
 refused for a changed setting. Recordings identify their backend and host runtime; changing either
 cannot silently reroute unfinished audio. Altitude keeps no recordings.
@@ -684,8 +685,9 @@ the local result but cannot recall audio already received by the service.
 
 Authentication errors link to Voice settings; check the saved key. For unavailable or timed-out
 services, check reachability from the Altitude computer and the complete endpoint address. For
-invalid or empty responses, check the model and compatible response format. Selection changes or
-re-pairing invalidate unfinished recordings; audio is never silently routed to a new destination.
+invalid or empty responses, check the model and compatible response format. Saving changed service
+details or another choice invalidates unfinished recordings; audio is never silently routed to a new
+destination. Saving unchanged details leaves them valid.
 Typing remains usable after every failure.
 Malformed saved service settings remain unavailable without choosing another backend. Re-enter
 the service details in Voice settings, or explicitly save a different voice choice.
@@ -703,17 +705,20 @@ alt machine set --voice host --reason 'Transcribe on this computer'
 ```
 
 Setup downloads the model from Hugging Face and its runtime (onnxruntime, numpy and the onnx-asr
-decoder) from PyPI, pinned by checksum in the Altitude release, into `~/.altitude/speech`. Nothing is
-installed elsewhere and Altitude's own Python stays standard-library only. Settings shows progress and
+decoder) from PyPI, pinned by checksum in the Altitude release, into `~/.altitude-speech`, beside
+Altitude's home and outside the folders task workers may write. Nothing is installed elsewhere and
+Altitude's own Python stays standard-library only. Settings shows progress and
 **Cancel setup**; a failed setup shows its reason and **Retry**. At startup after a release changes
 the runtime, Altitude makes one automatic update attempt for already-installed, selected host voice.
+A runtime that earlier releases kept in `~/.altitude/speech` is deleted at startup, not reused; when
+host voice is selected, it sets up again in `~/.altitude-speech`, one download of about 700 MB.
 Supported voice stays ready while Settings shows update progress. The update waits for recordings to
 finish, checks that the replacement model runs, then switches and removes superseded files. An unsafe
 or incompatible runtime cannot keep serving; Settings and the composer say that it needs an update.
 
-Unchanged model files are reused after checksum verification. Updates download the missing files
-(about 40 MB for a library-only update, up to about 700 MB) and temporarily need space for another
-runtime, including unpacked libraries. Cancel, failure, interrupted setup or switching to browser
+Unchanged model files are reused after checksum verification, without a second copy on disk. Updates
+download the missing files (about 40 MB for a library-only update, up to about 700 MB) and need free
+space for those files and their unpacked libraries. Cancel, failure, interrupted setup or switching to browser
 recognition leaves Retry to you, including after restart. `alt voice cancel` also cancels the update.
 First installation stays manual. Only the operator invokes setup, cancel and removal; agents cannot.
 Removing voice cancels any update, stops dictation and deletes its runtime files.
@@ -744,7 +749,7 @@ When a recording stops early for another reason (the speech process fails, this 
 recording, or the microphone gives no audio), the words already shown stay in the draft and the
 composer says "Voice stopped: <reason>. Typing works." A screen lock or call that takes the microphone
 stops the recording as Stop would, landing what was recorded. The speech process's own errors go to
-`~/.altitude/speech/worker.log`, and starts, stops and their reasons to altd's log.
+`~/.altitude-speech/worker.log`, and starts, stops and their reasons to altd's log.
 
 For a device check, dictate on the iPhone in Safari and as a Home Screen app, and on a desktop
 browser: a first capture, repeated Cancel and restart, Stop, Send, and a screen lock or call during a

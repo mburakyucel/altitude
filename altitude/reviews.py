@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import fcntl
 import hashlib
 import io
@@ -13,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
-from . import config, engines, state as S, tasks as T
+from . import config, engines, state as S, storage, tasks as T
 
 # Room for a long task's complete mandatory history plus selected evidence (I-20260927-193716), well
 # under the captured-input tool's 2 MiB file limit, while keeping a review's context finite.
@@ -80,7 +81,7 @@ def _find(task, identity):
 @contextmanager
 def merge_lock(project, slug, *, wait=True):
     """Request admission and the actual merge share a task-local lock, not a second hold field."""
-    with open(S.task_dir(project, slug) / ".review-merge.lock", "a") as lock:
+    with storage.runtime_lock(S.task_dir(project, slug) / ".review-merge.lock") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:
@@ -134,13 +135,24 @@ def _candidate_tree(root, base, head):
     return lines[0]
 
 
+def _document(path):
+    """A task's fixed document, read without following a link the worker could have planted."""
+    try:
+        return storage.read_text(path)
+    except FileNotFoundError:
+        return ""
+    except UnicodeDecodeError:
+        raise T.TransitionError(f"The task's {path.name} is not UTF-8 text.") from None
+    except (OSError, ValueError):
+        raise T.TransitionError(f"The task's {path.name} is not a regular file in its task folder.") from None
+
+
 def _context(project, task):
     rows = [{k: row.get(k) for k in ("id", "at", "role", "text", "images")}
             for row in T.task_messages(project, task["slug"])
             if row.get("role") in (T.OPERATOR_MESSAGE_ROLE, "l3", "l2") and not row.get("removed_at")]
     folder = S.task_dir(project, task["slug"])
-    return {"request": (folder / "request.md").read_text(),
-            "brief": (folder / "brief.md").read_text() if (folder / "brief.md").exists() else "",
+    return {"request": _document(folder / "request.md"), "brief": _document(folder / "brief.md"),
             "messages": rows, "decisions": [q.get("resolution") for q in task.get("questions", []) if q.get("resolution")]}
 
 
@@ -428,6 +440,8 @@ def _capture(project, task, review, context_ids, proposal_id=None, show=None):
             path = PurePosixPath(name.decode())
             if path.is_absolute() or ".." in path.parts or mode not in ("100644", "100755") or kind != "blob":
                 raise T.TransitionError("Review snapshots require ordinary tracked files; links and special entries are unavailable.")
+            if "\\" in str(path):
+                raise T.TransitionError(f"Review snapshots cannot hold a file name with a backslash: {str(path)!r}.")
             count += 1
             if int(size) > 2 * 1024 * 1024:
                 omitted[str(path)] = int(size)
@@ -473,51 +487,53 @@ def _capture(project, task, review, context_ids, proposal_id=None, show=None):
         raise T.TransitionError("The proposal exceeds 64 KiB. Publish a proposal of at most 64 KiB and name it with --proposal-message.")
     folder = S.task_dir(project, task["slug"]) / "reviews" / review["id"]
     snapshot = folder / "snapshot"
-    snapshot.mkdir(parents=True, exist_ok=False)
-    source = snapshot / "source"
-    source.mkdir()
-    # Blob reads preserve exact Git content even when export-ignore/export-subst attributes exist.
-    content = io.BytesIO(_git(Path(task["worktree"]), "cat-file", "--batch", binary=True,
-                             stdin="".join(oid + "\n" for _, oid in entries).encode()))
-    for path, oid in entries:
-        header = content.readline().decode().split()
-        if len(header) != 3 or header[:2] != [oid, "blob"]:
-            raise T.TransitionError("The captured Git blob is unavailable.")
-        data = content.read(int(header[2]))
-        if content.read(1) != b"\n":
-            raise T.TransitionError("The captured Git blob is incomplete.")
-        dest = source.joinpath(*path.parts)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
-    excluded = ("--", ".", *(f":(exclude,literal){path}" for path in sorted(omitted))) if omitted else ()
-    patch = b"" if proposal else _git(Path(task["worktree"]), "diff", "--no-ext-diff", "--no-textconv",
-                                      identity["base"], identity["tree"], *excluded, binary=True)
-    (snapshot / "changes.patch").write_bytes(patch)
-    (snapshot / "context.json").write_text(text)
-    (snapshot / "l1.md").write_text((config.PERSONAS / "l1.md").read_text())
-    inputs = {"tree": identity["tree"], "context": text, "patch": hashlib.sha256(patch).hexdigest()}
-    if proposal:
-        (snapshot / "proposal.md").write_bytes(proposal_text)
-        inputs["proposal"] = hashlib.sha256(proposal_text).hexdigest()
-        identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}
-    if design:
-        if spec:
-            (snapshot / "design.md").write_text(design_text)
-        if attach:
-            (snapshot / "design").mkdir()
-            for name, data in screens.items():
-                (snapshot / "design" / name).write_bytes(data)
-        inputs["design"] = design["id"]
-        # The receipt names the screenshots the reviewer was given; none when its engine cannot take images.
-        identity["design"] = {"id": design["id"], "title": captured["design"]["title"], "images": [
-            {"title": image["path"], "file": f"design/{image['name']}"} for image in design["images"] if attach]}
-    identity.update(context_ids=[r["id"] for r in context["messages"]], captured_at=S.now(),
-                    captured_context_hash=_hash(captured), selected_owner_evidence=context_ids is not None,
-                    limitations=context.get("limitations", []),
-                    omitted=[{"path": path, "size": size} for path, size in sorted(omitted.items())],
-                    input_hash=_hash(inputs))
-    runtime = folder / "runtime"
-    runtime.mkdir()
+    # The worker knows the review id, so every folder and file is created relative to the review folder: a link it
+    # plants while the snapshot fills makes the capture fail instead of writing outside the runtime root.
+    with storage.runtime_directory(storage.runtime_parts(folder), create=True) as review_folder:
+        os.mkdir("snapshot", 0o700, dir_fd=review_folder)
+        def write(parts, data):
+            storage.create(review_folder, ["snapshot", *parts], data)
+        with storage.directory(review_folder, ["snapshot", "source"], create=True, search=True):
+            pass
+        # Blob reads preserve exact Git content even when export-ignore/export-subst attributes exist.
+        content = io.BytesIO(_git(Path(task["worktree"]), "cat-file", "--batch", binary=True,
+                                 stdin="".join(oid + "\n" for _, oid in entries).encode()))
+        for path, oid in entries:
+            header = content.readline().decode().split()
+            if len(header) != 3 or header[:2] != [oid, "blob"]:
+                raise T.TransitionError("The captured Git blob is unavailable.")
+            data = content.read(int(header[2]))
+            if content.read(1) != b"\n":
+                raise T.TransitionError("The captured Git blob is incomplete.")
+            write(["source", *path.parts], data)
+        excluded = ("--", ".", *(f":(exclude,literal){path}" for path in sorted(omitted))) if omitted else ()
+        patch = b"" if proposal else _git(Path(task["worktree"]), "diff", "--no-ext-diff", "--no-textconv",
+                                          identity["base"], identity["tree"], *excluded, binary=True)
+        write(["changes.patch"], patch)
+        write(["context.json"], text.encode())
+        write(["l1.md"], (config.PERSONAS / "l1.md").read_bytes())
+        inputs = {"tree": identity["tree"], "context": text, "patch": hashlib.sha256(patch).hexdigest()}
+        if proposal:
+            write(["proposal.md"], proposal_text)
+            inputs["proposal"] = hashlib.sha256(proposal_text).hexdigest()
+            identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}
+        if design:
+            if spec:
+                write(["design.md"], design_text.encode())
+            if attach:
+                for name, data in screens.items():
+                    write(["design", name], data)
+            inputs["design"] = design["id"]
+            # The receipt names the screenshots the reviewer was given; none when its engine cannot take images.
+            identity["design"] = {"id": design["id"], "title": captured["design"]["title"], "images": [
+                {"title": image["path"], "file": f"design/{image['name']}"} for image in design["images"] if attach]}
+        identity.update(context_ids=[r["id"] for r in context["messages"]], captured_at=S.now(),
+                        captured_context_hash=_hash(captured), selected_owner_evidence=context_ids is not None,
+                        limitations=context.get("limitations", []),
+                        omitted=[{"path": path, "size": size} for path, size in sorted(omitted.items())],
+                        input_hash=_hash(inputs))
+        runtime = folder / "runtime"
+        os.mkdir("runtime", 0o700, dir_fd=review_folder)
     return identity, snapshot, runtime
 
 

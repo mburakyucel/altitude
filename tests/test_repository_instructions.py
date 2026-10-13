@@ -110,7 +110,7 @@ class TestRepositoryInstructions(AltitudeCase):
                             return proc
 
                         kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model=None,
-                                      settings=self.tmp / "settings.json", job_root=self.tmp / "jobs",
+                                      settings=self.tmp / "settings.json", job_root=self.runtime_tmp / "jobs",
                                       extra_env={"ALTITUDE_TASK": "fixture"})
                         with mock.patch.object(engines.claude, "claude_agents", return_value=[]), \
                              mock.patch.object(platform, "job_active", return_value=True), \

@@ -141,14 +141,14 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("combobox", { name: "New tasks engine", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: /^All projects 1 project · folder / })).toHaveAttribute("href", "/settings/projects");
       await expect(main.getByText(`${new URL(page.url()).origin} · HTTPS off`, { exact: true })).toBeVisible();
-      await expect(main.getByRole("radio")).toHaveCount(0);
+      await expect(main.getByRole("button", { name: /^Use / })).toHaveCount(0);
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
     } else if (route === "/settings/voice") {
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
-      await expect(main.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
-      await expect(main.getByRole("radio", { name: "Browser recognition", exact: true })).not.toBeChecked();
-      await expect(main.getByRole("radio", { name: "Your speech service", exact: true })).not.toBeChecked();
-      await expect(main.getByRole("radio")).toHaveCount(3);
+      await expect(main.getByRole("heading", { level: 3 })).toHaveText(["This computer", "Browser recognition", "Your speech service"]);
+      await expect(main.locator(".voice-option").filter({ has: page.getByRole("heading", { name: "This computer", exact: true }) }).getByText("In use", { exact: true })).toBeVisible();
+      await expect(main.getByRole("button", { name: "Use browser recognition", exact: true })).toBeVisible();
+      await expect(main.getByRole("button", { name: "Use your speech service", exact: true })).toBeVisible();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
       const host = (await (await request.get("/api/voice")).json()).host;
       if (host.state === "unavailable") await expect(main.getByText(`Not available on this computer: ${host.reason}.`, { exact: true })).toBeVisible();

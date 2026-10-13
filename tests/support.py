@@ -398,6 +398,10 @@ class AltitudeCase(unittest.TestCase):
         self.patch(platform, "local_names", return_value={"host": set(), "user": set()})
         self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        # Runtime writes never leave the runtime root, so a case's own runtime files live beneath it.
+        self.runtime_tmp = config.ROOT / "cases" / self.tmp.name
+        self.runtime_tmp.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, self.runtime_tmp, True)
         if self.host == "linux" and NATIVE_PLATFORM != "linux":
             self.linux_process_facts()
         self.repo = self.tmp / "repo"
@@ -483,11 +487,11 @@ class AltitudeCase(unittest.TestCase):
 
     def private_ledgers(self) -> None:
         """Point the home-wide files (monitor, incident index, faults, digest) at this case's directory."""
-        (self.tmp / "monitor").mkdir(exist_ok=True)
-        self.patch(config, "MONITOR_DIR", self.tmp / "monitor")
-        self.patch(config, "INCIDENT_INDEX", self.tmp / "incidents.jsonl")
-        self.patch(config, "DIGEST_FILE", self.tmp / "DIGEST.md")
-        self.patch(incidents, "FAULTS", self.tmp / "monitor" / "faults.json")
+        (self.runtime_tmp / "monitor").mkdir(exist_ok=True)
+        self.patch(config, "MONITOR_DIR", self.runtime_tmp / "monitor")
+        self.patch(config, "INCIDENT_INDEX", self.runtime_tmp / "incidents.jsonl")
+        self.patch(config, "DIGEST_FILE", self.runtime_tmp / "DIGEST.md")
+        self.patch(incidents, "FAULTS", self.runtime_tmp / "monitor" / "faults.json")
 
     def fake_gh(self) -> Path:
         """Install the gh shim first on PATH; returns the directory the test writes its answers into."""

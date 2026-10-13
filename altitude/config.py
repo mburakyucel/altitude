@@ -586,8 +586,7 @@ def restart_lock(*, exclusive: bool = False):
     Shared holders are dispatch, review admission, L3, validation and report handling. The exclusive requester
     checks quiet and records requested_at before another holder can enter, across processes.
     """
-    MONITOR_DIR.mkdir(parents=True, exist_ok=True)
-    with (MONITOR_DIR / "restart.lock").open("a") as handle:
+    with storage.runtime_lock(MONITOR_DIR / "restart.lock") as handle:
         try:
             fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -658,7 +657,7 @@ def ensure_root() -> None:
     for d in (ROOT, MONITOR_DIR, ROOT / "hooks"):
         d.mkdir(parents=True, exist_ok=True)
     if not PROJECTS_FILE.exists():
-        PROJECTS_FILE.write_text("{}\n")
+        storage.replace(PROJECTS_FILE, b"{}\n")
 
 
 def load_projects() -> dict:
@@ -670,7 +669,7 @@ def load_projects() -> dict:
 def projects_lock():
     """Serialize registry edits across projects without losing concurrent changes."""
     ensure_root()
-    with open(ROOT / ".projects.lock", "a") as lock:
+    with storage.runtime_lock(ROOT / ".projects.lock") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             yield
@@ -813,6 +812,12 @@ def project_path(name: str) -> Path:
 
 def project_dir(name: str) -> Path:
     return ROOT / require_project_name(name)
+
+
+def beside_root(name: str) -> Path:
+    """`~/.altitude-<name>`: beside Altitude's home rather than in it. Task workers can write the home, so what altd
+    runs, mounts or writes as its own must not sit at a path a worker could have replaced."""
+    return ROOT.with_name(f"{ROOT.name}-{name}")
 
 
 def discover_projects() -> list[dict]:

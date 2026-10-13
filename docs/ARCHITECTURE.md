@@ -1818,20 +1818,24 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
-Project serialization and activity locks open their fixed leaves without following links or
-truncating existing bytes, and verify opened regular files before locking. The activity fence keeps
-shared/exclusive nonblocking contention; serialization waits for the current writer. Both use the
-shared descriptor walk from the canonical runtime root selected at initialization, preserving the
-configured root's display spelling and legitimate startup aliases. Missing project directories are
-created relative to pinned parents. Search-only traversal supports execute-only ancestors; callers
-that create durable task documents use readable descriptors for directory fsync.
+Workers can write the runtime root, so the daemon never writes its records there through a link: a
+planted link would let a sandboxed worker have Altitude write outside its sandbox. Every record
+replacement, log append and lock in the runtime root, worker output and review snapshots go through
+`storage.py`. It walks from the runtime root fixed at startup without following a link at any
+component and opens a leaf only when it is one singly linked regular file, truncating only after
+that check. Record replacement writes a new file and renames it over the leaf, so a planted leaf link
+is replaced, never followed; a review snapshot creates every folder and file relative to its review
+folder and refuses anything already there. A refused file is an error, not a fallback. Locks never
+truncate; serialization waits for the current writer and the activity fence keeps shared/exclusive
+nonblocking contention. New folders and files are private to the operator.
 
-The same walk serves task documents and copies, and the non-resume transcript prompt's fixed
-`brief.md`. Brief reads retain complete UTF-8 text and universal newlines without the task-document
-size quota. An existing live task with no brief never borrows an archived brief. Linked ancestors,
-linked leaves and nonregular briefs are unavailable. This boundary does not cover ordinary task-view
-document reads, status/registry or invocation discovery, invocation output, native session selection
-or other runtime readers. It supplies no authority over regular records modified in place.
+Reads that reach another engine or the task record use the same walk: the task's `brief.md` and
+`request.md` for reviews and the transcript, task documents, invocation output and a failed worker's
+error tail. Brief reads keep complete UTF-8 text and universal newlines; a live task without a brief
+never borrows an archived one. Other runtime reads still open by path, image preparation still
+writes by path inside its fresh staging folder in the project's `images` folder, a reviewer receives
+its captured snapshot and working folder by path, and a worker can change the contents of any
+regular record it can write.
 
 ### Times
 
@@ -2957,7 +2961,7 @@ default.
 
 `/settings` shows a compact Voice input summary under This machine and read-only connection details
 (the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds three
-choices, This computer, Browser recognition and Your speech service, with explicit Save/Cancel. Project three-dot menus and the
+choices, This computer, Browser recognition and Your speech service, as cards whose Use buttons save at once; speech-service fields save explicitly. Project three-dot menus and the
 desktop operator row open Settings. `POST /api/voice` saves `{backend, selection}` and, for service,
 `url`, optional `key`/`model` and `remove_key`, from a paired same-origin page through the same
 durable request/apply path as the CLI, with no restart or provider probe; a selection that no longer
@@ -2979,20 +2983,19 @@ remains available without voice.
 #### Operator-supplied service
 
 Paired Settings reads expose URL/model/key-present, never the key. Machine output exposes the backend
-only. Before capturing service audio, the browser reads the current selection and paired owner;
-both are checked again before accepting and forwarding `POST /api/voice/service`, and before the
-server releases its result. Local settings and unpairing events also invalidate pending captures.
-Saving URL/model/key changes the service selection identity independently
-of the built-in installation identity. Re-pairing or selection changes invalidate unfinished work.
+only. A capture carries the selection its composer read; the server checks it against the saved
+choice when the upload starts and again before forwarding `POST /api/voice/service`, and a transcript
+the service has returned reaches the capture. A Settings read showing another selection invalidates pending captures.
+Saving a changed URL/model/key changes the service selection identity independently of the built-in
+installation identity; saving unchanged settings keeps it.
 
 The browser retains raw mono 16 kHz signed 16-bit PCM in page memory until Stop/Send, at most
 19,200,000 bytes per capture and two captures including a pending Send. The authenticated service
 route creates WAV/multipart framing and sends one request to the exact saved endpoint, without
 redirects, environment proxies, probes or retries. It accepts JSON text, limits the response to
 1 MiB, limits concurrent requests to two, and bounds upload and upstream response separately to
-120 seconds each. Each admitted outbound request runs in a disposable child process; its timeout
-kills and reaps that process, including stalled DNS or response reads. The key and audio travel on
-stdin, never command arguments or disk. HTTPS uses normal certificate verification.
+120 seconds each; the outbound request runs in the daemon and is cut off 120 seconds after it starts,
+apart from the system resolver's own name lookup limit. The key and audio never touch disk. HTTPS uses normal certificate verification.
 
 Stop appends text to its draft; Send carries text/images and completion to its original conversation.
 Cancellation and late results never alter another draft. Errors are sanitized and preserve typed
@@ -3004,7 +3007,14 @@ The existing document settings cache remains advisory, and no persistent browser
 #### Host voice
 
 With `host`, this computer transcribes: `altitude/speech.py` owns a pinned speech runtime and one
-speech worker, and the page streams samples to it. The model is NVIDIA Parakeet TDT 0.6B v2 (English,
+speech worker, and the page streams samples to it. The runtime lives in `~/.altitude-speech`, beside
+Altitude's home rather than in it (`config.beside_root`, which validation's storage also uses): task
+workers can write the home, and the speech worker imports the runtime's code outside any sandbox, so
+no worker's writable roots contain it. At daemon start, `speech.remove_home_runtime()` deletes what
+earlier releases kept in `~/.altitude/speech` without reusing or following any of it, leaving a
+registered project's state that shares the name in place, and nothing it fails to delete stops the start;
+when that folder held a finished runtime and host voice is selected, voice sets up again beside the home
+as a startup automatic attempt. The model is NVIDIA Parakeet TDT 0.6B v2 (English,
 CC-BY-4.0) as the int8 ONNX export `istupakov/parakeet-tdt-0.6b-v2-onnx` at a pinned revision, run on
 the CPU by the MIT `onnx-asr` decoder with onnxruntime and numpy. It always punctuates and capitalizes.
 
@@ -3017,7 +3027,7 @@ as an Intel Mac, reads as `unavailable` with its reason. `speech.status()` is `u
 
 Setup (`alt voice setup`, or Settings through `POST /api/voice/host` with `setup`) downloads the
 manifest in `speech.py`: five model files from Hugging Face and three wheels from PyPI, about 700 MB.
-Each file streams into `~/.altitude/speech/.staging` with a size cap and must match its pinned
+Each file streams into `~/.altitude-speech/.staging` with a size cap and must match its pinned
 SHA-256. The wheels are unpacked with the release installer's path rules (no absolute, parent,
 backslash or link entries, a total size cap) into `site/`, not installed with pip. A completion record
 naming the manifest digest is written last and the folder is moved to `runtime-<digest>` in one
@@ -3025,8 +3035,11 @@ rename. Before promotion, the actual isolated worker loads the model and perform
 the load deadline. Completed runtimes explicitly supported by this release keep serving during an
 update; unknown, incompatible or revoked runtimes read as `outdated` and cannot serve recordings.
 Support is an explicit per-platform/interpreter digest list, never inferred from age or a completion
-marker alone. Retained model files are copied only after matching the target size and SHA-256; wheel
-archives are downloaded and deleted after unpacking. There is no download cache.
+marker alone. Retained model files are hard-linked into the replacement and kept only after matching
+the target size and SHA-256; wheel archives are downloaded and deleted after unpacking. There is no
+download cache. Setup needs free disk space for the files it downloads plus the unpacked-library cap.
+Superseded runtimes are removed after promotion; one that cannot be removed then is removed by the
+next setup and never fails the finished update.
 
 The support set retains the preceding Linux onnxruntime 1.22 manifests for CPython 3.12 and 3.13;
 both load and warm up with the current worker and the exact pinned model. The supported-table test
@@ -3072,7 +3085,7 @@ share of physical memory on macOS); every recording shares it, and it exits afte
 reach it through a writer thread, so a worker that is loading or hung never holds up a request. A
 watchdog kills it when it takes more than 30 seconds to load, then 10 seconds to answer new audio or
 15 seconds to finish; every unfinished recording then fails with a plain reason, and the next recording
-starts a fresh worker. Its stderr goes to `~/.altitude/speech/worker.log`; altd's log records starts,
+starts a fresh worker. Its stderr goes to `~/.altitude-speech/worker.log`; altd's log records starts,
 stops and reasons, never text.
 
 The page's routes carry raw samples: `POST /api/voice/live` starts a recording for the current
@@ -3145,8 +3158,10 @@ The record on the reply row or question revision holds paths, content names, siz
 document's first heading and opening paragraph, and a hash of itself as its identity; it never holds
 the document text. A question showing identical files keeps its revision, changed files advance it,
 and the answer fence binds the files the operator saw. A question is a proposal approval when it
-shows files, so its card carries the proposal review, and a review whose captured `--show` set differs
-from the latest question's counts as covering an earlier version. `require_shown` refuses both the
+shows files, so its card carries the proposal review; in a group, `tasks.shown_question` gives the
+files to the one member marked as the proposal and the other listed members publish without them. A review
+whose captured `--show` set differs from the latest showing question's counts as covering an earlier
+version. `require_shown` refuses both the
 operator's answer and the owner's resolution while any copy is missing or altered, or for a question
 saved with a design preview before shown files existed; the card disables that question's answers.
 
@@ -3284,8 +3299,9 @@ order, so late events and updates to old commands merge into their correct posit
 shows one preview per source record. Full record opens an explicit 4,000-character chunk, with
 Show more for subsequent chunks; the complete redacted record remains accessible.
 Translated item notifications record their local UTC receipt time in the engine adapter; native
-session records retain their source timestamps. A folded command keeps its first event's time
-through output updates, history and reconnect. This is recorded event time, not elapsed duration
+session records retain their source timestamps. A folded command keeps its first recorded event
+time through output updates, history and reconnect; a command whose start is untimed takes its
+completion's recorded time. This is recorded event time, not elapsed duration
 or an exact OS process-start time. Records without timing evidence remain unavailable; launch,
 poll and file modification times never fill a command's missing timestamp.
 

@@ -20,6 +20,8 @@ import json
 import os
 import queue
 import shutil
+import socket
+import ssl
 import stat
 import subprocess
 import sys
@@ -35,7 +37,8 @@ from typing import Callable
 
 from . import config, platform, state as S
 
-ROOT = config.ROOT / "speech"
+# Beside Altitude's home: task workers can write the home, and this process imports the runtime's code.
+ROOT = config.beside_root("speech")
 WORKER = Path(__file__).resolve().parent / "speech_worker.py"
 
 SERVICE_PCM_LIMIT = 600 * 16000 * 2
@@ -62,41 +65,9 @@ class ServiceError(RuntimeError):
 
 
 def transcribe_service(setting: dict, pcm: bytes) -> str:
-    """A disposable child gives DNS, connect and response one hard deadline, then kills and reaps it.
-
-    Configuration and samples cross private pipes only. At most two admitted callers own these children.
-    """
+    """One direct, certificate-verified request: no proxy discovery, redirect, retry or audio file."""
     if not pcm or len(pcm) > SERVICE_PCM_LIMIT or len(pcm) % 2:
         raise ServiceError("service_response")
-    code = ("import sys; sys.path.insert(0, sys.argv[1]); "
-            "from altitude.speech import _service_worker; _service_worker()")
-    try:
-        result = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(Path(__file__).resolve().parent.parent)],
-                                input=json.dumps(setting).encode() + b"\n" + pcm,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                timeout=SERVICE_RESPONSE_SECONDS, check=False)
-        if result.returncode:
-            raise ServiceError("service_unavailable")
-        answer = json.loads(result.stdout)
-        if "error" in answer:
-            raise ServiceError(answer["error"])
-        return answer["text"]
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        raise ServiceError("service_unavailable") from None
-
-
-def _service_worker() -> None:
-    setting = json.loads(sys.stdin.buffer.readline())
-    pcm = sys.stdin.buffer.read(SERVICE_PCM_LIMIT + 1)
-    try:
-        answer = {"text": _service_request(setting, pcm)}
-    except ServiceError as exc:
-        answer = {"error": exc.code}
-    sys.stdout.write(json.dumps(answer))
-
-
-def _service_request(setting: dict, pcm: bytes) -> str:
-    """One direct, certificate-verified request: no proxy discovery, redirect, retry or audio file."""
     wav = io.BytesIO()
     with wave.open(wav, "wb") as audio:
         audio.setnchannels(1)
@@ -110,13 +81,33 @@ def _service_request(setting: dict, pcm: bytes) -> str:
             parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     parts.extend([f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="recording.wav"\r\n'
                   'Content-Type: audio/wav\r\n\r\n'.encode(), wav.getvalue(), f'\r\n--{boundary}--\r\n'.encode()])
-    parsed = urlsplit(setting["url"])
-    connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-    connection = connection_type(parsed.hostname, parsed.port, timeout=SERVICE_RESPONSE_SECONDS)
+    try:
+        parsed = urlsplit(setting["url"])
+        connection = (http.client.HTTPSConnection(parsed.hostname, parsed.port, timeout=SERVICE_RESPONSE_SECONDS,
+                                                  context=ssl.create_default_context())
+                      if parsed.scheme == "https" else
+                      http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=SERVICE_RESPONSE_SECONDS))
+    except ValueError:
+        raise ServiceError("service_unavailable") from None
+
+    expired = threading.Event()
+
+    def expire() -> None:
+        # The socket timeout bounds each read; this bounds a service that answers a little at a time.
+        expired.set()
+        try:
+            socket.socket.shutdown(connection.sock, socket.SHUT_RDWR)
+        except (OSError, TypeError):
+            pass  # Not connected yet, or already closed.
+    deadline = threading.Timer(SERVICE_RESPONSE_SECONDS, expire)
+    deadline.start()
     try:
         headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
         if setting.get("key"):
             headers["Authorization"] = "Bearer " + setting["key"]
+        connection.connect()
+        if expired.is_set():  # The deadline passed before there was a socket to close.
+            raise ServiceError("service_unavailable")
         connection.request("POST", parsed.path or "/", b"".join(parts), headers)
         response = connection.getresponse()
         if response.status in (401, 403):
@@ -138,9 +129,14 @@ def _service_request(setting: dict, pcm: bytes) -> str:
         if not text:
             raise ServiceError("service_empty")
         return text
+    except ServiceError:
+        if expired.is_set():
+            raise ServiceError("service_unavailable") from None
+        raise
     except (OSError, http.client.HTTPException, UnicodeError, ValueError):
         raise ServiceError("service_unavailable") from None
     finally:
+        deadline.cancel()
         connection.close()
 
 _MODEL = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/0bbb45a3365852604aef28b538a8f066f4ccaa85/"
@@ -302,6 +298,57 @@ def installation_id() -> str:
     return installed[0].name if installed else ""
 
 
+def remove_home_runtime() -> bool:
+    """Delete what voice kept in Altitude's home in earlier releases, where task workers could write it; nothing of
+    it is reused. Returns whether a finished runtime was there, so host voice is set up again beside the home.
+
+    A worker may still be writing there, so the folder is held open and never followed through a link, only voice's
+    own entries go (a project named `speech` keeps its state and lock), and no failure keeps the daemon from
+    starting: nothing reads what is left."""
+    names = {".staging", "installation.json", ".control", ".use", "worker.log", "verification.log"}
+    try:
+        if not any(name.lower() == "speech" for name in config.load_projects()):
+            names.add(".lock")
+    except Exception:  # noqa: BLE001 — workers can write the registry; an unreadable one keeps the lock
+        pass
+    try:
+        home = os.open(config.ROOT, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return False
+    finished = False
+    try:
+        folder = os.open("speech", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=home)
+        try:
+            for entry in list(os.scandir(folder)):
+                if not (entry.name.startswith("runtime-") or entry.name in names):
+                    continue
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name.startswith("runtime-") and not finished:
+                            try:
+                                runtime = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=folder)
+                                try:
+                                    complete = os.stat("complete.json", dir_fd=runtime, follow_symlinks=False)
+                                    finished = stat.S_ISREG(complete.st_mode)
+                                finally:
+                                    os.close(runtime)
+                            except OSError:
+                                pass
+                        shutil.rmtree(entry.name, dir_fd=folder, ignore_errors=True)
+                    else:
+                        os.unlink(entry.name, dir_fd=folder)
+                except OSError:
+                    pass
+        finally:
+            os.close(folder)
+        os.rmdir("speech", dir_fd=home)  # fails while a project's state shares it
+    except OSError:
+        pass
+    finally:
+        os.close(home)
+    return finished
+
+
 def _setting_up() -> bool:
     if not (ROOT / ".lock").exists():
         return False
@@ -365,14 +412,14 @@ class _Attempt:
             _write_state(state)
 
 
-def _begin(automatic: bool = False) -> _Attempt:
+def _begin(automatic: bool = False, reinstall: bool = False) -> _Attempt:
     files, reason = manifest()
     if files is None:
         raise SpeechError(f"Voice isn't available on this computer: {reason}.", 409)
     with _guard():
         state = _state()
         target = _digest(files)
-        if automatic and (state.get("removed") or not _installed()
+        if automatic and (state.get("removed") or not (reinstall or _installed())
                           or config.voice_setting()["backend"] != "host"
                           or state.get("update", {}).get("target") == target
                           or _complete(ROOT / f"runtime-{target}", target)):
@@ -464,7 +511,7 @@ def _verify(path: Path, cancel: _Attempt) -> None:
     """Load and warm the real model in isolation, bounded and cancellable, before promotion."""
     memory = platform.available_memory()
     if memory is not None and memory < MEMORY_NEEDED:
-        raise SpeechError("Voice needs 2.5 GB of free memory to check the update.")
+        raise SpeechError("Voice needs 2.5 GB of free memory to check the speech model.")
     with open(ROOT / "verification.log", "w") as errors:
         worker = subprocess.Popen([sys.executable, "-I", str(WORKER), str(path)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=errors, text=True, env=_environment())
@@ -501,10 +548,6 @@ def setup(lock=None, attempt: _Attempt | None = None) -> Path:
         shutil.rmtree(staging, ignore_errors=True)
         try:
             if not _complete(target, digest):
-                # Copying model bytes preserves the runtime serving recordings. Budget also includes wheels.
-                needed = sum(size for _, _, size, _ in files) + sum(UNPACKED_LIMIT for name, *_ in files if name.startswith("wheels/"))
-                if shutil.disk_usage(ROOT).free < needed:
-                    raise SpeechError(f"Voice needs {needed / 1e9:.1f} GB of free disk space to prepare the update.")
                 _stage(files, staging, digest, attempt)
                 attempt.progress("waiting")
                 with _lease(True, attempt):
@@ -549,12 +592,12 @@ def setup(lock=None, attempt: _Attempt | None = None) -> Path:
 
 def _finish_setup(target: Path) -> None:
     # Callers hold exclusive worker use and the control lock; no reader or remover can cross promotion.
+    # Leftovers that cannot be removed now go with the next setup; the update itself has finished.
     for old in _runtimes():
         if old != target:
-            try:
-                shutil.rmtree(old)
-            except OSError as exc:
-                raise SpeechError("Voice is updated, but old files could not be removed. Try again.") from exc
+            # Without its marker, a partly removed runtime never reads as installed.
+            (old / "complete.json").unlink(missing_ok=True)
+            shutil.rmtree(old, ignore_errors=True)
     state = _state()
     state.pop("update", None)
     _write_state(state)
@@ -566,24 +609,32 @@ def _stage(files, staging: Path, digest: str, cancel: _Attempt) -> None:
     missing = []
     for name, url, size, sha in files:
         cancel.check()
-        copied = False
+        reused = False
         if name.startswith("model/"):
+            # A second link keeps the serving runtime's file in place and costs no disk space.
             for old in _installed():
                 source = old / name
                 if not source.is_file() or source.is_symlink() or source.stat().st_size != size:
                     continue
+                try:
+                    os.link(source, staging / name)
+                except OSError:
+                    break  # This volume refuses hard links: download the file.
                 hashed = hashlib.sha256()
-                with source.open("rb") as inp, (staging / name).open("wb") as out:
+                with (staging / name).open("rb") as inp:
                     while block := inp.read(BLOCK):
                         cancel.check()
                         hashed.update(block)
-                        out.write(block)
                 if hashed.hexdigest() == sha:
-                    copied = True
+                    reused = True
                     break
-        if not copied:
+                (staging / name).unlink()
+        if not reused:
             missing.append((name, url, size, sha))
     total, done, reported = sum(size for _, _, size, _ in missing), 0, 0
+    needed = total + UNPACKED_LIMIT
+    if shutil.disk_usage(ROOT).free < needed:
+        raise SpeechError(f"Voice needs {needed / 1e9:.1f} GB of free disk space.")
 
     def advance(count: int) -> None:
         nonlocal done, reported
@@ -770,14 +821,14 @@ class Host:
 
     # --- setup and removal --------------------------------------------------------------------------------
 
-    def start_setup(self, automatic: bool = False) -> None:
+    def start_setup(self, automatic: bool = False, reinstall: bool = False) -> None:
         """Set up in the background; Settings follows `status()`."""
         with self.changed:
             if self.setup_attempt is not None:
                 raise SpeechError("Voice is already being set up.", 409)
             lock = _lock()  # held before answering, so Settings reads setting-up at once
             try:
-                attempt = _begin(automatic)
+                attempt = _begin(automatic, reinstall)
             except BaseException:
                 lock.close()
                 raise
@@ -797,15 +848,21 @@ class Host:
 
         threading.Thread(target=run, name="speech-setup", daemon=True).start()
 
-    def update_installed(self) -> None:
-        """One durable automatic attempt for this target, only at daemon startup."""
+    def update_installed(self, reinstall: bool = False) -> None:
+        """One durable automatic attempt for this target, only at daemon startup. `reinstall`: host voice was set up
+        in the folder `remove_home_runtime` deleted, so it is set up here again without an installed runtime."""
+        if not (reinstall or _installed()):
+            return
         try:
-            self.start_setup(automatic=True)
+            self.start_setup(automatic=True, reinstall=reinstall)
         except SpeechError as exc:
             if exc.status != 409:
                 self.log(f"voice: automatic update unavailable: {exc}")
+        except OSError as exc:  # the folder beside the home cannot be made; Settings still offers setup
+            self.log(f"voice: automatic update unavailable: {exc}")
         else:
-            self.log("voice: automatic runtime update started at release startup")
+            self.log("voice: setting up again beside Altitude's home" if reinstall
+                     else "voice: automatic runtime update started at release startup")
 
     def cancel_setup(self) -> None:
         cancel_setup()

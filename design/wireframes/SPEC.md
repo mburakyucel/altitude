@@ -1328,8 +1328,8 @@ remains (#902). Until then the existing review details, wait explanation and Mer
 remain; no generated approval card or operator-turn review label appears. Explicit operator
 questions keep their response surfaces independently.
 **Approve merge** checks its current PR, hold and readiness before sending the operator's own
-message "Approved: merge PR #N."; a stale card uses the existing Not sent/Retry state and sends
-nothing. The L2 merges
+message "Approved: merge PR #N."; a stale card sends nothing and gives way to the task's current
+state. The L2 merges
 with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
 unrelated question never hides that review. An open operator question about the PR supplies its single
 response surface instead: one its owner marks as the merge question, or an unmarked one that links or
@@ -1885,36 +1885,58 @@ Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
 
-The voice page offers This computer, Browser recognition and Your speech service with explicit
-Save/Cancel. A radio changes only the draft; switching away from a saved service uses **Save and remove
-service**, deleting its URL/key/model. Built-in setup/remove/cancel actions are immediate, independent
-of the draft choice; Cancel discards the form choice without cancelling a download. Setup does not
-automatically select the built-in backend.
-Descriptions state where audio goes and any setup. This computer shows its setup below the choice:
-"Needs a one-time download of about 698 MB, checked against this release." with **Set up voice**;
-while setting up, a progress bar, "Setting up… X MB of Y MB" and **Cancel setup**; when ready,
-"While you dictate, the speech process uses about 2 GB of memory." and **Remove voice** in a red
-outline; a failed setup shows its reason with **Retry**. Supported installed voice stays available while
-an automatic replacement shows "Preparing update…", "Updating voice · X MB of Y MB" with a progress
-bar, "The update will finish after dictation.", or "Checking update…" with an inline spinner.
-**Cancel update** sits beside **Remove voice**. Cancellation shows "Update cancelled." and an outlined
-**Retry update**; failure shows "Update did not finish. <reason>" and a filled **Retry update**.
-Failure stays muted when voice is ready, red when an update is required. Unsupported installed voice
-says "Voice needs an update."; its composer links **View update** while updating, **Update voice**
-otherwise. Ready composers retain normal dictation. Buttons disable during actions and show the
-pending action without shifting width; denied actions keep authoritative state and show the error.
-The model's credit line (NVIDIA Parakeet TDT 0.6B v2, CC-BY-4.0) stays visible. When
-this computer cannot run it, the choice is disabled and **Set up voice** reveals why on press, with an accessible description. A successful save updates only the
-next capture; a recording keeps the selection it started with and stops when it changes.
+The voice page shows three cards in a fixed order, This computer, Browser recognition and Your speech
+service, each with its title, a description stating where audio goes and any setup, and one action.
+The card in use shows a check and **In use** at the right of its title instead of an action. Every
+other card offers one outlined button: **Use this computer** (only while this computer's voice is
+ready, including while it updates), **Use browser recognition**, or **Use your speech service**,
+which opens that card's fields. Pressing **Use
+this computer** or **Use browser recognition** saves at once. While a save runs, the pressed button
+shows a spinner in place of its label without changing width (named Saving…) and the page's other
+buttons stay focusable with `aria-disabled`, ignoring presses; this computer's setup, update and
+removal buttons are disabled, and a running one locks the Use buttons the same way. Success moves
+**In use**, moves focus to that card's title and announces "Saved." to screen readers without
+visible text. A failure shows, under the pressed button in red,
+the server's explanation or "Could not save voice settings." followed by **Retry**; **In use** stays
+on the saved choice. A choice changed elsewhere shows "Voice settings changed." with **Reload
+settings** instead of Retry.
+
+While a speech service is in use, pressing another card's Use button replaces that button in place
+with "Switching removes your speech service’s address and key.", a filled **Remove service and
+switch** and **Keep service**, with focus on **Remove service and switch**. Nothing is saved until
+**Remove service and switch**, which deletes the service's URL, key and model. **Keep service**
+returns focus to the Use button and clears any failure from that switch.
+
+This computer's card shows its setup below the description, and setting up never selects it:
+"Needs a one-time download of about 698 MB, checked against this release." with a filled **Set up
+voice**; while setting up, a progress bar, "Setting up… X MB of Y MB" and **Cancel setup**; when
+ready, "While you dictate, the speech process uses about 2 GB of memory." and one button row with
+**Use this computer** (when not in use) and an outlined **Remove voice (698 MB)**; a failed setup
+shows its reason with **Retry**. Supported installed voice stays available while an update runs as
+one line: a progress bar and "Updating · X MB of Y MB" while downloading, otherwise a spinner with
+"Updating…", or "Updating · finishes after dictation" while it waits for dictation to end, each
+followed by an inline 44px **Cancel update** link. **Remove voice** is hidden while an update runs.
+A cancelled update shows no text, only an outlined **Update voice** beside **Remove voice**. A failed
+update shows muted "Update did not finish. <reason>" with an outlined **Retry update** beside **Remove
+voice**; a server reason's closing "Try again." is dropped beside that button. Unsupported installed
+voice says "Voice needs an update." (above the update line while one runs); a failed required update
+says, in red, "Voice needs an update. <reason>", and **Update voice** is filled. Its composer links
+**View update** while updating, **Update voice** otherwise. Ready composers retain normal dictation.
+Setup and update buttons disable during actions and show the pending action without shifting width;
+denied actions keep authoritative state and show the error. The model's credit line (NVIDIA
+Parakeet TDT 0.6B v2, CC-BY-4.0) stays visible. When this computer cannot run voice, its card offers
+no Use button and **Set up voice** reveals why on press, with an accessible description. A
+successful save updates only the next capture; a recording keeps the selection it started with and
+stops when it changes.
 
 | State | What appears and what actions do |
 | --- | --- |
-| Loading | A spinner named Loading settings…; no selected default or editable controls. |
+| Loading | A spinner named Loading settings…; no In use mark or Use buttons. |
 | Read failed | Could not load settings and Retry; typing elsewhere is unaffected. |
-| Saved browser | Chosen radio and a check named Saved. |
-| Saved host | Chosen radio, a check named Saved. and the setup panel in its current state; while setting up, progress refreshes every second. The overview reads This computer, with " · not set up" until ready. |
-| Saving | A spinner named Saving… and disabled choices until the request answers. |
-| Failed/denied save | Server explanation and Retry; the saved choice is preserved. A choice changed elsewhere offers Reload settings. |
+| Saved browser | **In use** on Browser recognition; Use buttons on the other cards. |
+| Saved host | **In use** on This computer and its setup panel in its current state; while setting up, progress refreshes every second. The overview reads This computer, with " · not set up" until ready. |
+| Saving | The pressed button's spinner named Saving…; other Use buttons aria-disabled until the request answers. |
+| Failed/denied save | Explanation and Retry in the pressed card; **In use** stays on the saved choice. A choice changed elsewhere offers Reload settings. |
 
 Model and effort save as one engine-scoped pair. Changing one field preserves the other, and
 other engines remain unchanged. During a save both controls are guarded with aria-disabled while
@@ -1946,19 +1968,20 @@ Listening is not a state of these controls. Phone/desktop walkthroughs cover bot
 save/success/error/denied/conflict, custom/native/inherited values, unavailable access and resets.
 Boards: SettingsStates, ModelsStates and ProjectSettings.
 **Your speech service** says “Words appear after you stop. Audio passes through this computer to
-the service you choose. Its privacy policy and charges apply.” It shows **Transcription URL**, a full
-endpoint input, and “Use a compatible audio transcription endpoint reachable from the computer
-running Altitude.” **How to run one** links to setup guidance. **Key or model (optional)** expands an
-API key password field and Model. Saved keys are not returned: the placeholder says “Key saved —
-leave blank to keep”, with a 44px **Remove saved key** label. Changing the address clears the key
-association and shows a muted key hint, “Enter a key for the new address, if needed.” HTTP endpoints
-show “This connection is unencrypted. Audio and any key travel over HTTP.” before saving.
+the service you choose. Its privacy policy and charges apply.” **Use your speech service** opens its
+fields in that card, focusing **Transcription URL**, a full endpoint input whose placeholder shows
+the endpoint shape. **Key or model (optional)** expands an API key password field and Model. **How to
+run one** links to setup guidance. Saved keys are not returned: the placeholder says “Key saved —
+leave blank to keep”, with a 44px **Remove saved key** label; changing the address clears the typed
+key and the saved-key association. HTTP endpoints show, muted, “This connection is unencrypted.
+Audio and any key travel over HTTP.” before saving.
 
-First save is **Save and use service**, later edits **Save changes**, alongside **Cancel**. Invalid
-URLs show “Enter a complete http:// or https:// transcription URL.” The form says once, “If
-transcription fails, record again. Recordings are not kept.” Phone fields fill the card and scroll
-naturally; desktop keeps the 680px maximum. Controls have 44px targets. Hints associate with their
-fields; errors announce without moving focus. No endpoint probing or autosave occurs.
+A new service shows a filled **Use this service** and **Cancel**, which closes the fields unsaved.
+While the service is in use, its fields show the saved values and no buttons until one changes;
+then **Save** and **Cancel** appear, and leave after saving or cancelling. Invalid URLs show “Enter a
+complete http:// or https:// transcription URL.” Phone fields fill the card and scroll naturally;
+desktop keeps the 680px maximum. Controls have 44px targets. Hints associate with their fields;
+errors announce without moving focus. No endpoint probing or autosave occurs.
 
 The service composer keeps microphone/image and recording controls. A 44px underlined destination
 link shows **Voice: speech.example.test**, wrapping the hostname/port without exposing a path or key.
@@ -2289,7 +2312,7 @@ retain phone/desktop state verification and accessible review evidence.
 | Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |
 | Task page | `GET /api/task/<project>/<slug>` (questions and messages), transcript on demand | `POST /api/l2/message`, `POST /api/decide`, `POST /api/task/action` |
 | Report view | `GET /api/task/<project>/<slug>` (structured report, report notes and digest) | none |
-| Host voice | `POST /api/voice/host` (setup, cancel, remove), `POST /api/voice/live`, `/api/voice/live/<id>/audio`, `/cancel` | the speech model under `~/.altitude/speech`; audio stays in memory for the recording only |
+| Host voice | `POST /api/voice/host` (setup, cancel, remove), `POST /api/voice/live`, `/api/voice/live/<id>/audio`, `/cancel` | the speech model under `~/.altitude-speech`; audio stays in memory for the recording only |
 | Monitor | `GET /api/monitor` | none |
 
 The shell's one `GET /api/changes` stream refetches the mounted overview, monitor, project and task reads

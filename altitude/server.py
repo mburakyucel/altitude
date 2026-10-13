@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -302,11 +302,9 @@ def voice_view(device: str | None = None) -> dict:
     view = {"backend": setting["backend"], "selection": _voice_selection(setting), "host": speech.status()}
     if setting.get("error"):
         view["error"] = setting["error"]
-    if device is not None:
-        view["owner"] = access.voice_owner(device)
-        if setting["backend"] == "service" and not setting.get("error"):
-            view["service"] = {"url": setting["url"], "model": setting.get("model", ""),
-                               "key_present": bool(setting.get("key"))}
+    if device is not None and setting["backend"] == "service" and not setting.get("error"):
+        view["service"] = {"url": setting["url"], "model": setting.get("model", ""),
+                           "key_present": bool(setting.get("key"))}
     return view
 
 
@@ -339,6 +337,10 @@ def save_voice(body: dict) -> dict:
         value = backend
     else:
         raise ValueError("Choose this computer or browser recognition.")
+    # An unchanged save keeps the selection that pending recordings carry.
+    if (value == {**current, "selection": value["selection"]} if isinstance(value, dict)
+            else current == {"backend": value}):
+        return voice_view()
     # Apply checks the nonce under its projects lock too, including after a daemon crash/replay.
     expected = config.voice_expected(saved)
     dispatch.request_setting(None, "voice", value, "Voice input settings", actor=config.OPERATOR_ACTOR,
@@ -381,9 +383,8 @@ def require_image_capability(project: str, slug: str | None = None) -> None:
 def log(msg: str) -> None:
     line = f"{S.now()} {msg}\n"
     try:
-        with open(LOG, "a") as f:
-            f.write(line)
-    except OSError:
+        storage.append(LOG, line)
+    except (OSError, ValueError):
         pass
     print(line, end="", flush=True)
 
@@ -1624,7 +1625,7 @@ class Handler(BaseHTTPRequestHandler):
             self._head = False
             self.wfile = wfile
 
-    def _json(self, obj, code: int = 200, compress: bool = False, *, deadline: float | None = None) -> None:
+    def _json(self, obj, code: int = 200, compress: bool = False) -> None:
         """A JSON reply. `compress` is for the large read-only views of a task, project or session, which
         carry no credentials; replies that can carry a pairing code or key never do (docs/ARCHITECTURE.md#web-delivery)."""
         body = json.dumps(obj, default=str).encode()
@@ -1633,12 +1634,6 @@ class Handler(BaseHTTPRequestHandler):
             body = gzip.compress(body, compresslevel=6, mtime=0)
         if self._keep_open:  # an HTTP/1.1 reply with its length keeps the connection in every browser
             self.protocol_version = "HTTP/1.1"
-        def budget():
-            if deadline is not None:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("response deadline")
-                self.connection.settimeout(remaining)
         try:
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1649,16 +1644,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Encoding", "gzip")
             if compress:
                 self.send_header("Vary", "Accept-Encoding")
-            budget()
             self.end_headers()
-            budget()
             self.wfile.write(body)
             if self._keep_open:
                 self.close_connection = False
-        except TimeoutError:
-            if deadline is None:
-                raise
-            self.close_connection = True
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as exc:
             # Error replies run inside exception handlers, outside the route's disconnect catcher.
             self.close_connection = True
@@ -1974,25 +1963,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, exc.status)
 
     def _service_voice(self) -> None:
-        """Bound one capture to the saved service and paired device, through upload and completion."""
-        deadline = time.monotonic() + speech.SERVICE_UPLOAD_SECONDS + speech.SERVICE_RESPONSE_SECONDS
+        """Forward one finished capture to the saved service it was recorded for."""
         denied = self._page_denied(json_body=False, subject="Voice")
         if denied or not self._device:
             self.close_connection = True
-            return self._json({"error": denied or "Pair this device to use your speech service."}, 403,
-                              deadline=deadline)
-        device = self._device["id"]
-        selection = self.headers.get("X-Voice-Selection")
-        owner = self.headers.get("X-Voice-Owner")
-        def current():
+            return self._json({"error": denied or "Pair this device to use your speech service."}, 403)
+        acquired = False
+
+        def current() -> dict:
             setting = config.voice_setting()
-            if (not access.known(device) or owner != access.voice_owner(device)
-                    or setting["backend"] != "service" or setting["selection"] != selection):
+            if setting["backend"] != "service" or setting["selection"] != self.headers.get("X-Voice-Selection"):
                 raise speech.ServiceError("selection_changed")
             if setting.get("error"):
                 raise speech.ServiceError("service_response")
             return setting
-        acquired = False
         try:
             current()
             try:
@@ -2004,8 +1988,8 @@ class Handler(BaseHTTPRequestHandler):
             acquired = speech.SERVICE_SLOTS.acquire(blocking=False)
             if not acquired:
                 raise speech.ServiceError("service_unavailable")
-            # read1 plus an absolute deadline prevents a slow trickle from renewing the upload lease.
-            until = deadline - speech.SERVICE_RESPONSE_SECONDS
+            # read1 plus an absolute deadline prevents a slow trickle from holding a service slot.
+            until = time.monotonic() + speech.SERVICE_UPLOAD_SECONDS
             pcm = bytearray()
             while len(pcm) < length:
                 remaining = until - time.monotonic()
@@ -2016,18 +2000,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not chunk:
                     raise speech.ServiceError("service_unavailable")
                 pcm.extend(chunk)
-            setting = current()
-            text = speech.transcribe_service(setting, bytes(pcm))
-            current()
-            return self._json({"text": text}, deadline=deadline)
+            # Settings saved during the upload refuse it before anything is forwarded.
+            answer, code = {"text": speech.transcribe_service(current(), bytes(pcm))}, 200
         except (TimeoutError, OSError):
             error = speech.ServiceError("service_unavailable")
+            answer, code = {"error": str(error), "code": error.code}, 502
             self.close_connection = True
-            return self._json({"error": str(error), "code": error.code}, 502, deadline=deadline)
         except speech.ServiceError as exc:
+            answer, code = {"error": str(exc), "code": exc.code}, 409 if exc.code == "selection_changed" else 502
             self.close_connection = True
-            return self._json({"error": str(exc), "code": exc.code},
-                              409 if exc.code == "selection_changed" else 502, deadline=deadline)
         finally:
             if acquired:
                 speech.SERVICE_SLOTS.release()
@@ -2035,6 +2016,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.connection.settimeout(None)
             except OSError:
                 pass
+        return self._json(answer, code)
 
     def _cross_site(self) -> bool:
         """Whether another site or page, not Altitude's own page, sent this request. A client that is no page
@@ -4006,6 +3988,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     global TRUST
     config.ensure_root()
     dispatch.forget_speech_service()
+    reinstall_voice = speech.remove_home_runtime()
     if os.environ.get("ALTITUDE_SERVICE"):  # only the service instance clears the restart-pending flag
         try:
             git_policy.activate_source()
@@ -4053,7 +4036,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     if os.environ.get("ALTITUDE_SERVICE") and config.RELEASE is None:
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
-        SPEECH.update_installed()
+        SPEECH.update_installed(reinstall_voice)
         restart_notice()
         settle_interrupted_machine_commands()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()

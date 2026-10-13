@@ -803,8 +803,8 @@ or provider call. The overview stays compact; the nested voice page contains bac
 credentials. Back returns to Settings without saving unfinished endpoint edits. Successful saves
 change the next capture in the document. An upload carries its capture's backend/destination identity;
 if it no longer matches the saved choice, transcription is refused before forwarding and the typed
-draft is preserved. A transcription already forwarded uses its captured settings, but a changed
-service selection or paired owner invalidates its result. Cancellation cannot recall forwarded audio.
+draft is preserved. A transcription already forwarded uses its captured settings and its result
+reaches the capture. Cancellation cannot recall forwarded audio.
 
 Message acceptance is separate from the answer or wake succeeding. A saved L2 message receipt,
 L3 turn ID or queue receipt keeps the composer cleared, including after a broken stream or failed
@@ -1576,7 +1576,7 @@ its output folded under it; task boundaries (queued → running, stopped, resume
 Every prompt, reply, tool row and boundary shows its recorded time ("14:05", dated when not today, exact on
 hover) or **time unavailable**; a call without a result while the worker runs shows how long it has waited
 ("running · 4 min"). A folded command keeps its first recorded event time through completion,
-history and reconnect. Translated item notifications receive their local UTC receipt time in the
+history and reconnect; an untimed start takes its completion's recorded time. Translated item notifications receive their local UTC receipt time in the
 adapter; native session messages retain
 their own timestamps. This time is not a duration or an exact OS process-start time. Untimed
 records remain unavailable, including older saved events; launch, poll and file times do not fill them.
