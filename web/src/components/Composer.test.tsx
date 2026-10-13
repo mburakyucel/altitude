@@ -1191,6 +1191,16 @@ describe("Composer", () => {
     expect(getUserMedia).not.toHaveBeenCalled();
   });
 
+  it("keeps typing and settings reachable when a saved service host cannot be parsed by this browser", async () => {
+    installVoiceBrowser({ backend: "service" });
+    updateVoiceSettings({ backend: "service", selection: "s", owner: "device", service: { url: "https://bad|host/transcribe", key_present: false }, host: { state: "absent", download_bytes: 0 } });
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    await user.type(screen.getByRole("textbox"), "Typing works");
+    expect(screen.getByRole("textbox")).toHaveValue("Typing works");
+    expect(screen.getByRole("link", { name: "Voice settings: your speech service" })).toHaveAttribute("href", "/settings/voice");
+  });
+
   /** The host's answers: each chunk is answered with how many samples it has heard. */
   function stubHost(options: { refuse?: string } = {}) {
     let heard = 0;

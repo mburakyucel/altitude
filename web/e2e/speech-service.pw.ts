@@ -53,7 +53,7 @@ test("speech service settings: explicit save, key privacy, new address and remov
   await service.click();
   await walk.state("service-settings-01-empty", { visible: [url, page.getByRole("button", { name: "Save and use service", exact: true })], hidden: [page.getByRole("alert")] });
   expect((await voice(request)).backend).toBe("host");
-  await url.fill("http://speech.example.test/v1/audio/transcriptions");
+  await url.fill("HTTP://speech.example.test/v1/audio/transcriptions");
   await walk.state("service-settings-02-http", { visible: [page.getByText("This connection is unencrypted. Audio and any key travel over HTTP.", { exact: true })], hidden: [] });
   await url.fill(endpoint);
   await page.getByText("Key or model (optional)", { exact: true }).click();
@@ -95,6 +95,7 @@ test("speech service settings: invalid URL, failed save and conflict preserve de
   await url.fill("https://speech.example.test/transcriptions?secret=invalid");
   await save.click();
   await walk.state("service-settings-invalid-url", { visible: [page.getByText("Enter a complete http:// or https:// transcription URL.", { exact: true })], hidden: [] });
+  await expect(url).toHaveAccessibleDescription(/Enter a complete http:\/\/ or https:\/\/ transcription URL\./);
   expect((await voice(request)).backend).toBe("host");
   await url.fill(endpoint);
   await page.getByText("Key or model (optional)", { exact: true }).click();
@@ -104,7 +105,7 @@ test("speech service settings: invalid URL, failed save and conflict preserve de
   await page.route("**/api/voice", route => route.request().method() === "POST" && refuse
     ? route.fulfill({ status: 503, json: { error: "Fixture unavailable" } }) : route.continue());
   await save.click();
-  await walk.state("service-settings-save-failure", { visible: [page.getByRole("alert").filter({ hasText: "Could not save voice settings." }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
+  await walk.state("service-settings-save-failure", { visible: [page.getByRole("alert").filter({ hasText: "Fixture unavailable" }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
   await expect(key).toHaveValue("fictional-private-draft");
   await expect(url).toHaveValue(endpoint);
   expect((await voice(request)).backend).toBe("host");

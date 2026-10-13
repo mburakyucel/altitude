@@ -1058,6 +1058,10 @@ export default function Composer({
   }
 
   const serviceError = typeof hintText === "string" && (hintText === INVALID_SERVICE || Object.values(serviceFailures).some((text) => text === hintText));
+  let serviceDestination = "your speech service";
+  if (voice?.service) {
+    try { serviceDestination = new URL(voice.service.url).host; } catch { /* Keep settings and typing reachable for a URL this browser cannot parse. */ }
+  }
   if (serviceError) hintText = <>{String(hintText).replace(/ in Voice settings\./, ".")} <Link className="composer-destination" to="/settings/voice">Voice settings</Link></>;
   const quietProgress = (transcribing || listening) && !servicePending && connection !== "lost" && !recoveryUnavailable;
   const hiddenReason = ["insecure", "unrecognized", "host"].includes(unavailable ?? "") && !showVoiceReason && !hintRole && !recoveryUnavailable;
@@ -1157,7 +1161,7 @@ export default function Composer({
         </div>
       </div>
       {phase === "idle" ? feedback : null}
-      {voice?.backend === "service" && voice.service && !serviceError ? <Link className="composer-destination" to="/settings/voice" aria-label={`Voice settings: ${new URL(voice.service.url).host}`}>Voice: {new URL(voice.service.url).host}</Link> : null}
+      {voice?.backend === "service" && voice.service && !serviceError ? <Link className="composer-destination" to="/settings/voice" aria-label={`Voice settings: ${serviceDestination}`}>Voice: {serviceDestination}</Link> : null}
     </div>
   );
 }

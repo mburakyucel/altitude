@@ -127,7 +127,7 @@ test("Voice settings loading, denied save and retry keep the persisted selection
     await expect(browser).toBeDisabled();
     await expect(host).toBeDisabled();
     releaseSave();
-    await walk.state("04-denied-keeps-saved-choice", { visible: [page.getByRole("alert").filter({ hasText: "Could not save voice settings." }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [page.getByRole("status", { name: "Saving…", exact: true })] });
+    await walk.state("04-denied-keeps-saved-choice", { visible: [page.getByRole("alert").filter({ hasText: "Fixture settings update denied" }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [page.getByRole("status", { name: "Saving…", exact: true })] });
     expect((await savedVoice(request)).backend).toBe("host");
     failSave = false;
     await page.getByRole("button", { name: "Retry", exact: true }).click();

@@ -180,10 +180,10 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
           {backend === "host" && (choice === "host" || host.state !== "absent") ? <HostVoicePanel host={host} onChange={hostChanged} /> : null}
           {backend === "service" && choice === "service" ? <div className="choice-fields service-fields">
             <label htmlFor="voice-url">Transcription URL</label>
-            <input id="voice-url" type="url" autoComplete="off" value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" aria-invalid={invalid || undefined} aria-describedby="voice-url-help" onChange={(event) => { dirty.current = true; setUrl(event.target.value); setKey(""); setRemoveKey(false); setSave({ status: "idle" }); }} />
+            <input id="voice-url" type="url" autoComplete="off" value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" aria-invalid={invalid || undefined} aria-describedby={invalid ? "voice-url-help voice-url-error" : "voice-url-help"} onChange={(event) => { dirty.current = true; setUrl(event.target.value); setKey(""); setRemoveKey(false); setSave({ status: "idle" }); }} />
             <p id="voice-url-help" className="text-meta text-muted">Use a compatible audio transcription endpoint reachable from the computer running Altitude.</p>
-            {invalid ? <p role="alert" className="text-meta text-danger">Enter a complete http:// or https:// transcription URL.</p> : null}
-            {url.trim().startsWith("http:") ? <p className="text-meta text-danger">This connection is unencrypted. Audio and any key travel over HTTP.</p> : null}
+            {invalid ? <p id="voice-url-error" role="alert" className="text-meta text-danger">Enter a complete http:// or https:// transcription URL.</p> : null}
+            {url.trim().toLowerCase().startsWith("http:") ? <p className="text-meta text-danger">This connection is unencrypted. Audio and any key travel over HTTP.</p> : null}
             <details><summary>Key or model (optional)</summary>
               <label htmlFor="voice-key">API key</label>
               <input id="voice-key" type="password" autoComplete="new-password" value={key} aria-describedby="voice-key-help" placeholder={baseline.service?.key_present && url.trim() === baseline.service.url ? "Key saved — leave blank to keep" : undefined} onChange={(event) => { dirty.current = true; setKey(event.target.value); setRemoveKey(false); }} />
@@ -199,7 +199,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
           <button type="button" className="btn" onClick={() => { committed.current = saved; reset(saved); setSave({ status: "idle" }); }}>Cancel</button></div>
       </fieldset>
       {save.status === "saved" ? <StatusMark busy={false} label="Saved." /> : null}
-      {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{stale ? "Voice settings changed. Reload settings and try again." : "Could not save voice settings."}{" "}
+      {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{stale ? "Voice settings changed. Reload settings and try again." : save.error instanceof ApiError && save.error.message && !/^HTTP \d/.test(save.error.message) ? save.error.message : "Could not save voice settings."}{" "}
         <button type="button" className="link" onClick={() => stale ? reload() : saveDraft()}>{stale ? "Reload settings" : "Retry"}</button>
       </p> : null}
     </form>
