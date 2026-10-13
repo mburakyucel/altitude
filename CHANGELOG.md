@@ -49,9 +49,8 @@ trusted installer's `--recover`; code recovery does not roll back data.
 
 Known limits: native Mac confirmation of the coordinator repair (#896), helper notifications
 (#873), transfers (#877), host voice updates (#872) and speech-service cleanup (#884) remains
-open. Physical iPhone voice and failure recovery (#884, #894), broader native Mac checks
-(#225, #818) and the container browser lane's final acceptance (#883)
-stay on their issues. Desktop WebKit emulation is not physical iPhone acceptance. Release tests
+open. Physical iPhone voice and failure recovery (#884, #894) and broader native Mac checks
+(#225, #818) stay on their issues. Desktop WebKit emulation is not physical iPhone acceptance. Release tests
 use fixture engines; live-provider compatibility remains unverified.
 
 Release files are built by the task owner; this publication path provides no hosted build attestation.
