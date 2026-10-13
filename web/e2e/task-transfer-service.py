@@ -52,9 +52,12 @@ def main():
         T.message(project, slug, "l2", "Saved work is ready for the next engine.")
         if mode in {"question", "quota-question"}:
             T.block(project, slug, "Keep the bounded validation scope?", actor="l2",
-                    updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE})
+                    updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE,
+                             **({"usage_limit": {"scope": "engine", "until": None,
+                                                 "why": "Engine allowance exhausted."}}
+                                if mode == "quota-question" else {})})
             fake.workers[agent].update(state="done", status="exited")
-        if mode in {"quota", "quota-question"}:
+        if mode == "quota":
             fake.workers[agent].update(state="failed", status="exited")
             T.block(project, slug, "Engine allowance exhausted.", actor="altd",
                     updates={"usage_limit": {"scope": "engine", "until": None,
