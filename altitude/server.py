@@ -20,7 +20,7 @@ import threading
 import time
 import traceback
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
@@ -138,53 +138,75 @@ def _gzipped(path: Path, stream) -> bytes:
 def _static_path(root: int, base: Path, path: Path, places: tuple[str, ...], anchors: tuple[Path, ...]):
     """Normalize within a pinned namespace; links never cause an unchecked target lookup."""
     flags = platform.directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW
-    with ExitStack() as opened:
-        def frame(name, fd, info):
-            lifetime = ExitStack()
-            opened.callback(lifetime.close)
-            if fd is not None:
-                lifetime.callback(os.close, fd)
-            return name, fd, info, lifetime
+    frames = [("", os.dup(root), None)]
+    unchecked = object()
+    active, completed = {}, {}
+    pending = deque(path.parts)
 
-        initial = frame("", os.dup(root), None)
-        frames = [(initial[0], initial[1], os.fstat(initial[1]), initial[3])]
-        pending = list(path.parts)
-        active = set()
+    def pop():
+        _, fd, _ = frames.pop()
+        if fd is not None:
+            os.close(fd)
+
+    def identity(info):
+        return info.st_dev, info.st_ino, info.st_mode
+
+    try:
+        frames[0] = ("", frames[0][1], os.fstat(frames[0][1]))
         while pending:
-            part = pending.pop(0)
+            part = pending.popleft()
+            expected = unchecked
             if isinstance(part, tuple):
-                active.remove(part)
-                continue
+                if len(part) == 3:  # A completion marker ends this link's active expansion.
+                    completed[part] = active.pop(part), tuple((name, info) for name, _, info in frames[1:])
+                    continue
+                part, expected = part  # A reused address still requires fresh lookup/identity checks.
             if part in ("", "."):
                 continue
             if part == "..":
                 if len(frames) == 1:
                     raise ValueError("website path leaves its root")
-                frames.pop()[3].close()
+                pop()
                 continue
             candidate = base.joinpath(*(f[0] for f in frames[1:]), part)
             if platform.private_prefix(candidate, places):
                 raise ValueError("private website path")
             parent = frames[-1][1]
             if parent is None:
-                frames.append(frame(part, None, None))
+                if expected is not unchecked and expected is not None:
+                    raise ValueError("website target changed")
+                frames.append((part, None, None))
                 continue
             try:
                 info = os.stat(part, dir_fd=parent, follow_symlinks=False)
             except FileNotFoundError:
-                frames.append(frame(part, None, None))
+                if expected is not unchecked and expected is not None:
+                    raise ValueError("website target changed") from None
+                frames.append((part, None, None))
                 continue
+            if expected is not unchecked and (expected is None or identity(info) != identity(expected)):
+                raise ValueError("website target changed")
             if stat.S_ISLNK(info.st_mode):
                 parent_info = frames[-1][2]
                 key = parent_info.st_dev, parent_info.st_ino, part
                 if key in active:
                     raise ValueError("cyclic website link")
+                signature = info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns
+                saved = completed.get(key)
+                if saved is not None:
+                    if saved[0] != signature:
+                        raise ValueError("website link changed")
+                    # Request-local verified addresses are rewalked through the same pinned root.
+                    # They contain no links; each component keeps private/no-follow/identity checks.
+                    while len(frames) > 1:
+                        pop()
+                    pending.extendleft(reversed(saved[1]))
+                    continue
                 target = Path(os.readlink(part, dir_fd=parent))
                 after = os.stat(part, dir_fd=parent, follow_symlinks=False)
-                if (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns) != (
-                        after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns):
+                if signature != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns):
                     raise ValueError("website link changed")
-                active.add(key)
+                active[key] = signature
                 if target.is_absolute():
                     # Known spellings address the held root, never a mutable alias rewalk.
                     parts = ("/", *target.parts[1:])
@@ -192,27 +214,30 @@ def _static_path(root: int, base: Path, path: Path, places: tuple[str, ...], anc
                                    if parts[:len(a.parts)] == a.parts), None)
                     if anchor is None:
                         raise ValueError("website link leaves its root")
-                    for entry in reversed(frames[1:]):
-                        entry[3].close()
-                    del frames[1:]
+                    while len(frames) > 1:
+                        pop()
                     target_parts = parts[len(anchor.parts):]
                 else:
                     target_parts = target.parts
-                pending = [*target_parts, key, *pending]
+                pending.extendleft(reversed((*target_parts, key)))
                 continue
             if stat.S_ISDIR(info.st_mode):
                 child = os.open(part, flags, dir_fd=parent)
-                entry = frame(part, child, info)
-                actual = os.fstat(child)
-                if (actual.st_dev, actual.st_ino, actual.st_mode) != (info.st_dev, info.st_ino, info.st_mode):
+                frames.append((part, child, info))
+                if identity(os.fstat(child)) != identity(info):
                     raise ValueError("website directory changed")
-                frames.append(entry)
             elif stat.S_ISREG(info.st_mode):
-                frames.append(frame(part, None, info))
+                frames.append((part, None, info))
             else:
                 raise ValueError("not a regular website path")
         relative = Path(*(f[0] for f in frames[1:]))
         yield frames[-2][1] if len(frames) > 1 else root, relative, frames[-1][1], frames[-1][2]
+    finally:
+        # Keep only live frames. ExitStack completes all closes even if one close raises.
+        with ExitStack() as closing:
+            for _, fd, _ in frames:
+                if fd is not None:
+                    closing.callback(os.close, fd)
 
 
 @contextmanager

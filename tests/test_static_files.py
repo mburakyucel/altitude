@@ -228,6 +228,54 @@ class StaticFiles(AltitudeCase):
                     self.assertEqual(headers.get("Content-Encoding"), "gzip" if immutable and encoded else None)
                     self.assertEqual(headers["Content-Security-Policy"], "frame-ancestors 'none'")
 
+    def test_branching_acyclic_links_reuse_verified_addresses_with_bounded_work(self):
+        (self.dist / "l0").symlink_to("assets", target_is_directory=True)
+        depth = 8
+        for n in range(1, depth + 1):
+            (self.dist / f"l{n}").symlink_to(f"l{n - 1}/../l{n - 1}", target_is_directory=True)
+        expected = self.request("/assets/app.js", True)
+        with self.no_forbidden_lookups(), \
+             mock.patch.object(os, "stat", wraps=os.stat) as observed, \
+             mock.patch.object(os, "readlink", wraps=os.readlink) as links:
+            self.assertEqual(self.request(f"/l{depth}/app.js", True), expected)
+        # Each alias text is expanded once; completed visits recheck verified addresses.
+        self.assertEqual(links.call_count, depth + 1)
+        self.assertLess(observed.call_count, 12 * (depth + 1))
+
+    def test_reused_addresses_refuse_changed_links_and_target_nodes(self):
+        alias = self.dist / "alias"
+        alias.symlink_to("assets", target_is_directory=True)
+        original = os.stat
+        for change in ("alias", "directory"):
+            for encoded in (False, True):
+                seen = []
+                replacement_call = 3 if change == "alias" else 2
+                saved = self.dist / "saved-assets"
+                def observed(name, *args, **kwargs):
+                    if name == change.replace("directory", "assets"):
+                        seen.append(name)
+                        if len(seen) == replacement_call:
+                            if change == "alias":
+                                alias.unlink()
+                                alias.symlink_to(self.outside, target_is_directory=True)
+                            else:
+                                self.assets.rename(saved)
+                                self.assets.mkdir()
+                                (self.assets / "app.js").write_bytes(b"changed target")
+                    return original(name, *args, **kwargs)
+                try:
+                    with mock.patch.object(os, "stat", side_effect=observed), self.no_forbidden_lookups():
+                        self.assertEqual(self.request("/alias/../alias/app.js", encoded)[0], 404)
+                    self.assertEqual(len(seen), replacement_call)
+                finally:
+                    if change == "alias":
+                        alias.unlink()
+                        alias.symlink_to("assets", target_is_directory=True)
+                    else:
+                        (self.assets / "app.js").unlink()
+                        self.assets.rmdir()
+                        saved.rename(self.assets)
+
     def test_index_links_keep_root_and_spa_html_and_direct_target_classification(self):
         self.index.unlink()
         self.index.symlink_to(self.asset)
