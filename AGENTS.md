@@ -1,8 +1,9 @@
 # Working in Altitude
 
-Read `README.md` for the public introduction and `docs/ARCHITECTURE.md` for the active system
-description before changing behavior. Follow the relevant lifecycle, setup and operations links
-there; Git history is the archive.
+Read `README.md` for the public introduction and `docs/OVERVIEW.md` before changing behavior. The
+overview summarizes the system and links every section of `docs/ARCHITECTURE.md`, the detailed
+reference, and of the lifecycle, setup and operations documents; read the sections a change touches.
+Git history is the archive.
 
 `AGENTS.md` is the authoritative project rule source for both engines; `CLAUDE.md` imports it.
 Current system behavior and useful rationale live in the linked documentation. Ask the operator
@@ -87,6 +88,7 @@ development/admin exposure grants no new privilege model, generic flag framework
 - Ship the docs with the change: update the linked system documentation wherever it describes
   changed behavior, including architecture, session lifecycle, setup and operations as applicable.
   Update `README.md` when its public introduction, workflow or getting-started guidance changes.
+  A new documentation section also gets its link in `docs/OVERVIEW.md`, which stays one short read.
   Keep these updates in the same PR and in present tense.
 - Major UX changes, cost-accruing infrastructure, identity, or security changes hold for operator review.
   A hold report explains the strategy and decisions made. Explicit task authorization governs the hold.

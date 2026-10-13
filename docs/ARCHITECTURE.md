@@ -2095,8 +2095,8 @@ runs headlessly with a temporary profile and its browser sandbox disabled inside
 worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation, commands,
 timings and candidate identity; [operations](OPERATIONS.md) covers service activation and mobile access.
 
-The sandbox-disabled configuration belongs only to Altitude's fictional UI harness. Fresh and
-resumed owners receive the distinction between the approved Mac validation exception and Linux
+The sandbox-disabled configuration belongs only to Altitude's fictional UI harness. The L2 persona
+gives owners the distinction between the approved Mac validation exception and Linux
 dual-protection checks. `make ui-validate` repeats dependencies/build, finite full-Chromium preflight
 and named phone/desktop journeys with exact launch evidence in disposable storage. The daemon
 receipt identifies the tested tree and actual run profile; native context and cleanup evidence remain

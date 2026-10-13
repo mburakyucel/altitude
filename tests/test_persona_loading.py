@@ -151,11 +151,14 @@ class PersonaLoading(AltitudeCase):
             else:
                 self.assertTrue(process.prompt.startswith(text + "\n\n"), "fresh threads get the current persona")
 
-    def assert_helper_reference(self, process, repo):
+    def assert_helper_reference(self, process, repo, resumed=False):
         path = self.personas / "l1.md"
         self.assertEqual(process.prompt.count(str(path)), 1)
-        self.assertIn(f'You are an L1 helper. Read `{path}` before working.', process.prompt)
-        self.assertIn(f'Your assigned repository is `{repo.resolve()}`.', process.prompt)
+        if resumed:  # A resume names the current helper persona path; the launch instruction stays in the session.
+            self.assertIn(f"native helper assignments now name `{path}`", process.prompt)
+        else:
+            self.assertIn(f'You are an L1 helper. Read `{path}` before working.', process.prompt)
+            self.assertIn(f'Your assigned repository is `{repo.resolve()}`.', process.prompt)
         self.assertNotIn(path.read_text(), process.prompt, "only the helper needs the shared persona contents")
         self.assertNotIn(path.read_text(), process.persona or "")
 
@@ -180,7 +183,7 @@ class PersonaLoading(AltitudeCase):
                 dispatch.resume(self.project, slug)
                 resumed = self.processes[-1]
                 self.assert_persona(resumed, engine, "l2", updated, resumed=True)
-                self.assert_helper_reference(resumed, Path(S.load_task(self.project, slug)["worktree"]))
+                self.assert_helper_reference(resumed, Path(S.load_task(self.project, slug)["worktree"]), resumed=True)
                 self.assertEqual(resumed.session, initial.session)
                 self.assertIn("Continue the existing task with this sourced context.", resumed.prompt)
                 self.assertEqual(S.load_task(self.project, slug)["attempt"], 1)

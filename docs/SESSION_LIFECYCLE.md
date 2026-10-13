@@ -127,8 +127,10 @@ Altitude-specific rules. No session rotation or extra engine policy is needed fo
 The [L2](../personas/l2.md) and [L3](../personas/l3.md) personas own role judgment and essential
 operating guidance; the [CLI reference](CLI.md) owns detailed command contracts. Global personas
 do not depend on a managed project containing Altitude's reference docs. Project rules are
-referenced each turn; personas come from the activated committed installation export, supplied
-per invocation or at fresh session creation through the existing engine loading path.
+referenced each turn: a launch asks the owner to read them, and a resume adds one line naming the
+current rules, persona and helper-persona paths to consult as needed instead of a full reread.
+Personas come from the activated committed installation export, supplied per invocation or at fresh
+session creation through the existing engine loading path.
 A native resume can retain an earlier persona, so a merged persona edit alone does not establish that
 an existing session has loaded it. The per-invocation adapter receives the current persona file on
 fresh and resumed turns; the fresh-thread adapter embeds the current contents when starting a new
@@ -163,9 +165,9 @@ keys the edit-count telemetry across worker replacements.
 ## Native helper instructions
 
 The shared [L1 persona](../personas/l1.md) describes bounded helper work and return evidence. Each
-L2 launch and resume supplies an absolute path from the activated installation's `personas/l1.md`,
-alongside the assigned worktree. L2 puts that explicit read instruction in the native helper's
-assignment and adds only task-specific context, allowed actions, exclusions and expected evidence.
+L2 launch and resume supplies an absolute path from the activated installation's `personas/l1.md`;
+a launch also names the assigned worktree, and the L2 persona holds the instruction's wording. L2 puts
+that explicit read instruction in the native helper's assignment and adds only task-specific context, allowed actions, exclusions and expected evidence.
 The helper reads the persona and repository rules before working; missing instructions go back to
 the parent. L2 verifies the result and retains decisions, publication, lifecycle and final reporting.
 The persona contents are not copied into the owner prompt or repository instruction files.
@@ -1078,7 +1080,7 @@ report handoff. Existing restart adoption and merge activation observe the conti
 
 ## Engine containment
 
-Every fresh and resumed owner receives the same browser capability instruction. Worker admission does
+The [L2 persona](../personas/l2.md) carries the browser capability instruction. Worker admission does
 not certify browser isolation, so verification that needs the browser's own sandbox runs through
 `alt task validate`, in a disposable container where Playwright's Chromium keeps it with
 `chromiumSandbox: true`. If the runner is unavailable or the browser refuses its sandbox there, the
@@ -1096,8 +1098,10 @@ Its current standing VM-policy grant is checked at admission and revocation stop
 confirms the recorded VM process lifetime ended and removes its disk before releasing the runner.
 That lane's Linux preflight establishes the required container and Chromium protections; it does
 not expand the fictional Mac Seatbelt harness's scope.
-The instruction takes effect on launches/resumes after normal source
-activation; running turns retain their delivered instructions. Deterministic launch fixtures prove
+The instruction takes effect as any persona change does, after normal source activation; running
+turns retain their delivered instructions. A Codex thread holds the persona from its first message, so
+each resume line directs the owner to reread the browser rules before a browser check when they are
+no longer in context. Deterministic fixtures prove the persona text and its
 delivery, not provider adherence or live browser isolation. See
 [browser verification](DEVELOPMENT.md#browser-verification).
 
