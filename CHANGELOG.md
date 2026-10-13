@@ -3,13 +3,59 @@
 Release notes describe user-visible behavior, compatibility and recovery. The project is an early
 preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is not a published release.
 
-## Unreleased
+## v0.5.0 — 2026-10-13
+
+Feature release of the early preview, led by a repair to coordinator conversations. A coordinator
+whose engine compacts its own context keeps the same conversation; current context comes from its
+newest request, rather than cumulative processed input. Explicit resets still start a fresh conversation.
+
+Updating: copies on `v0.1.2` through `v0.4.0` install this release automatically at a quiet point,
+or offer it in the app and through `alt update` when automatic updates are off. Copies on `v0.1.0`
+or `v0.1.1` need one manual update. Configuration, TLS identity and data are kept.
+
+- Improvement suggestions have a section in the Altitude project's settings: agree to what is
+  sent, use Get suggestions now, or turn on Weekly for Monday mornings. Past suggestions shows
+  which suggestions became tasks or were dismissed, with a link to the latest card. Existing
+  chat requests also require agreement in settings; Weekly starts off.
+- The coordinator answers on another available engine when its preferred engine reaches a usage
+  limit, with one line explaining the change or why the message waits. Its model choice remains
+  its preference; the separate Only L3 setting is removed and stored values are ignored. Task
+  engine restrictions remain strict.
+- The operator or coordinator can request a running task's engine transfer through the CLI. The
+  owner first records progress, or the requester can transfer immediately using saved context.
+  Work, questions and merge holds stay with the task. Task-page transfer controls follow separately.
+- Voice input settings offer Your speech service with an explicit Save. Audio goes to that
+  selected service on Stop or Send, stays in memory and is discarded after a failure. Previously
+  removed service settings and keys must be entered again.
+- Supported host voice remains usable while its replacement runtime is prepared. An automatic
+  attempt runs once for installed, selected host voice; Cancel, interruption or failure leaves Retry.
+- A document whose formatting cannot load still shows its exact source text and saved images,
+  with an explicit Reload page action. A shared conversation draft stays intact until reload.
+- Native helper notifications stay with their owner thread, keeping another helper's completion
+  from ending the owner's wait or redirecting its messages.
 
 - Repair or Check again pressed in project setup just as a previous check finishes now runs at once,
   instead of waiting up to half a minute for the next scheduled pass.
 - A task with a long session opens faster: its activity records are redacted once per read instead of
   twice.
 - Voice input in a Linux WebKit browser no longer freezes the page when the machine is busy.
+
+The README and walkthrough illustrate each feature. Candidate validation also restores the
+confined container browser lane from an Apple silicon Mac and extends the macOS VM lane's
+privacy and published-release update checks.
+
+Recovery: a failed packaged activation restores the preceding application version and service,
+keeping configuration, TLS identity and data. Interrupted recovery uses `alt recover` or the
+trusted installer's `--recover`; code recovery does not roll back data.
+
+Known limits: native Mac confirmation of the coordinator repair (#896), helper notifications
+(#873), transfers (#877), host voice updates (#872) and speech-service cleanup (#884) remains
+open. Physical iPhone voice and failure recovery (#884, #894), notification preferences (#829),
+broader native Mac checks (#225, #818) and the container browser lane's final acceptance (#883)
+stay on their issues. Desktop WebKit emulation is not physical iPhone acceptance. Release tests
+use fixture engines; live-provider compatibility remains unverified.
+
+Release files are built by the task owner; this publication path provides no hosted build attestation.
 
 ## v0.4.0 — 2026-10-12
 
