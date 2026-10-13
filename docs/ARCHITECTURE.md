@@ -1833,8 +1833,9 @@ Reads that reach another engine or the task record use the same walk: the task's
 `request.md` for reviews and the transcript, task documents, invocation output and a failed worker's
 error tail. Brief reads keep complete UTF-8 text and universal newlines; a live task without a brief
 never borrows an archived one. Other runtime reads still open by path, image preparation still
-writes by path inside its fresh staging folder in the project's `images` folder, and a worker can
-change the contents of any regular record it can write.
+writes by path inside its fresh staging folder in the project's `images` folder, a reviewer receives
+its captured snapshot and working folder by path, and a worker can change the contents of any
+regular record it can write.
 
 ### Times
 

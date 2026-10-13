@@ -521,6 +521,13 @@ class TestReviews(AltitudeCase):
         self.assertIn("links", result["error"])
         self.engine.assert_not_called()
 
+    def test_a_backslash_file_name_fails_the_review_with_its_name(self):
+        self.commit("odd\\name.txt", "fixture\n")  # one POSIX file name containing a backslash
+        result = self.run_review()
+        self.assertEqual(result["state"], "failed")
+        self.assertIn("backslash", result["error"])
+        self.engine.assert_not_called()
+
     def test_conflict_with_current_main_names_paths_and_records_no_request(self):
         def move_main(text):
             (self.repo / "value.py").write_text(text)

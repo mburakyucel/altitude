@@ -141,6 +141,8 @@ def _document(path):
         return storage.read_text(path)
     except FileNotFoundError:
         return ""
+    except UnicodeDecodeError:
+        raise T.TransitionError(f"The task's {path.name} is not UTF-8 text.") from None
     except (OSError, ValueError):
         raise T.TransitionError(f"The task's {path.name} is not a regular file in its task folder.") from None
 
@@ -438,6 +440,8 @@ def _capture(project, task, review, context_ids, proposal_id=None, show=None):
             path = PurePosixPath(name.decode())
             if path.is_absolute() or ".." in path.parts or mode not in ("100644", "100755") or kind != "blob":
                 raise T.TransitionError("Review snapshots require ordinary tracked files; links and special entries are unavailable.")
+            if "\\" in str(path):
+                raise T.TransitionError(f"Review snapshots cannot hold a file name with a backslash: {str(path)!r}.")
             count += 1
             if int(size) > 2 * 1024 * 1024:
                 omitted[str(path)] = int(size)

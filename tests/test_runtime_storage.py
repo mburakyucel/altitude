@@ -271,6 +271,12 @@ class RuntimeStorage(AltitudeCase):
         with self.assertRaises(reviews.T.TransitionError):
             reviews._context(self.project, {"slug": "demo"})
         (folder / "brief.md").unlink()
+        (folder / "brief.md").write_bytes("Acceptance: café\r\nDone\r".encode())
+        self.assertEqual(reviews._context(self.project, {"slug": "demo"})["brief"], "Acceptance: café\nDone\n")
+        (folder / "brief.md").write_bytes(b"\xff")
+        with self.assertRaisesRegex(reviews.T.TransitionError, "not UTF-8"):
+            reviews._context(self.project, {"slug": "demo"})
+        (folder / "brief.md").unlink()
         self.assertEqual(reviews._context(self.project, {"slug": "demo"})["brief"], "")
         jobs = folder / "l2-engine"
         jobs.mkdir()
