@@ -172,6 +172,57 @@ describe("Host voice settings", () => {
 });
 
 describe("Voice settings", () => {
+  it("an untouched form reflects a fresh key-only change without relying on another render", async () => {
+    const service = { url: "https://speech.example.test/transcribe", model: "small", key_present: true };
+    fixture({ ...saved, backend: "service", service });
+    const { user, queryClient } = renderApp({ route: "/settings/voice" });
+    await screen.findByRole("radio", { name: "Your speech service" });
+    await user.click(screen.getByText("Key or model (optional)"));
+    expect(screen.getByLabelText("API key")).toHaveAttribute("placeholder", "Key saved — leave blank to keep");
+    act(() => queryClient.setQueryData(["voice-settings"], { ...saved, backend: "service", selection: "key-removed", service: { ...service, key_present: false } }));
+    await waitFor(() => expect(screen.getByLabelText("API key")).not.toHaveAttribute("placeholder"));
+    expect(screen.queryByLabelText("Remove saved key")).toBeNull();
+  });
+  it("host action refreshes runtime status without granting a dirty service edit a changed selection or key", async () => {
+    const originalUrl = "https://speech.example.test/v1/audio/transcriptions";
+    const calls = fixture({ ...saved, backend: "service", service: { url: originalUrl, model: "small", key_present: true } });
+    const original = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === "/api/voice/host" ? json({ ...saved, backend: "service", selection: "other-selection",
+        service: { url: "https://other.example.test/transcribe", model: "other", key_present: false },
+        host: { state: "absent", download_bytes: 698435338 } }) : original(input, init)));
+    const { user } = renderApp({ route: "/settings/voice" });
+    await screen.findByRole("radio", { name: "Your speech service" });
+    await user.click(screen.getByText("Key or model (optional)"));
+    await user.clear(screen.getByLabelText("Model"));
+    await user.type(screen.getByLabelText("Model"), "edited");
+    await user.click(screen.getByRole("button", { name: "Remove voice" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove voice" })).toBeNull());
+    expect(screen.getByLabelText("Transcription URL")).toHaveValue(originalUrl);
+    expect(screen.getByLabelText("API key")).toHaveAttribute("placeholder", "Key saved — leave blank to keep");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Saved.");
+    expect(calls).toEqual([{ backend: "service", selection: "host-one", url: originalUrl, model: "edited", key: "", remove_key: false }]);
+  });
+
+  it("a denied form save preserves the draft choice and service fields", async () => {
+    fixture();
+    const original = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === "/api/voice" && init?.method === "POST" ? json({ error: "Action denied." }, 403) : original(input, init)));
+    const { user } = renderApp({ route: "/settings/voice" });
+    await user.click(await screen.findByRole("radio", { name: "Your speech service" }));
+    await user.type(screen.getByLabelText("Transcription URL"), "https://speech.example.test/transcribe");
+    await user.click(screen.getByText("Key or model (optional)"));
+    await user.type(screen.getByLabelText("API key"), "fictional-key");
+    await user.type(screen.getByLabelText("Model"), "small");
+    await user.click(screen.getByRole("button", { name: "Save and use service" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save voice settings.");
+    expect(screen.getByRole("radio", { name: "Your speech service" })).toBeChecked();
+    expect(screen.getByLabelText("Transcription URL")).toHaveValue("https://speech.example.test/transcribe");
+    expect(screen.getByLabelText("API key")).toHaveValue("fictional-key");
+    expect(screen.getByLabelText("Model")).toHaveValue("small");
+  });
   it("fresh settings replace an untouched cached form but preserve an edit's original selection", async () => {
     const calls = fixture();
     const { user, queryClient } = renderApp({ route: "/settings/voice" });

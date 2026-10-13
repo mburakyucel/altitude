@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -111,25 +111,24 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const [key, setKey] = useState("");
   const [removeKey, setRemoveKey] = useState(false);
   const [invalid, setInvalid] = useState(false);
-  const reset = (value: VoiceSettings) => {
+  const reset = useCallback((value: VoiceSettings) => {
     dirty.current = false;
     setChoice(value.backend); setUrl(value.service?.url ?? ""); setModel(value.service?.model ?? "");
     setKey(""); setRemoveKey(false); setInvalid(false);
-  };
-  useEffect(() => {
-    // A new reading of host voice's setup state never resets a choice being saved.
-    if (saved === committed.current) return;
-    const unchanged = saved.backend === committed.current.backend && saved.selection === committed.current.selection;
-    setHost(saved.host);
+  }, []);
+  const synchronize = useCallback((value: VoiceSettings) => {
+    const unchanged = value.backend === committed.current.backend && value.selection === committed.current.selection;
+    setHost(value.host);
     // Preserve the edit's expected selection. A concurrent backend change must conflict at Save,
     // rather than silently replacing the draft or granting it the new destination's saved key.
     if (unchanged || !dirty.current) {
-      committed.current = saved;
-      if (!unchanged) reset(saved);
+      committed.current = value;
+      if (!unchanged) reset(value);
     }
-  }, [saved]);
+  }, [reset]);
+  useEffect(() => synchronize(saved), [saved, synchronize]);
   const [save, setSave] = useState<SaveState>({ status: "idle" });
-  const baseline = committed.current;
+  const baseline = dirty.current ? committed.current : saved;
   const submit = async (update: VoiceUpdate) => {
     setSave({ status: "saving" });
     try {
@@ -142,7 +141,6 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
       reset(value);
       setSave({ status: "saved" });
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) setChoice(committed.current.backend);
       setSave({ status: "failed", value: update, error: error as Error });
     }
   };
@@ -164,8 +162,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   };
   const stale = save.status === "failed" && save.error instanceof ApiError && save.error.status === 409;
   const hostChanged = (value: VoiceSettings) => {
-    committed.current = client.setQueryData<VoiceSettings>(queryKey, value)!;
-    setHost(committed.current.host);
+    synchronize(client.setQueryData<VoiceSettings>(queryKey, value)!);
     updateVoiceSettings(value);
   };
   return <>
