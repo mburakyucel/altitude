@@ -36,6 +36,7 @@ def _linked(directory: int, name: str) -> bool:
 @contextmanager
 def job_directory(project: str, slug: str):
     """Select the logical live or archive invocation, holding its task and job directories."""
+    storage._component(slug)
     with ExitStack() as stack:
         try:
             root = stack.enter_context(storage.runtime_directory([project], search=False))
