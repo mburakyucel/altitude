@@ -5,71 +5,15 @@ import { StatusMark, BusyLabel } from "../components/StatusMark";
 import { ApiError, forgetProject, overviewQuery, useOverview, useProject, useProjectDefaults, useProjectRemove, useSetDefault } from "../data/api";
 import type { Overview, ProjectDefaults } from "../data/api";
 import { ImprovementSection } from "../components/ImprovementSettings";
-import { ModelsDialog, choiceLabel, closedLabel } from "../components/Models";
+import { EnginePreference } from "../components/Models";
 import { Overlay } from "../shell/Overlay";
 import { managedProjects } from "../shell/projects";
 import { useViewport } from "../shell/breakpoints";
 import { useSetupReading } from "./Setup";
 import "./settings.css";
 
-type Engine = ProjectDefaults["roles"][number]["engines"][number];
-type Save = ReturnType<typeof useSetDefault>;
-
-const roleTitle = { l2: "Tasks", l3: "L3" } as const;
-
-function SaveStatus({ save, retry }: { save: Save; retry: () => void }) {
-  if (save.isError) return <p className="text-meta text-danger" role="alert">
-    {save.error.message} <button type="button" className="link" onClick={retry}>Retry save</button>
-  </p>;
-  return save.isPending || save.isSuccess ? <StatusMark busy={save.isPending} label={save.isPending ? "Saving…" : "Saved."} /> : null;
-}
-
-/** Free text with suggestions: Enter or leaving the field saves, Escape restores, empty means Default. */
-function ModelField({ name, engine }: { name: string; engine: Engine }) {
-  const field = engine.model;
-  const save = useSetDefault(name);
-  const [draft, setDraft] = useState<string | null>(null);
-  const saved = field.value ?? "";
-  // Retire the draft once the saved value renders, so the field never flashes the previous one.
-  useEffect(() => { setDraft((current) => current !== null && current.trim() === saved ? null : current); }, [saved]);
-  const commit = () => {
-    const value = draft?.trim() ?? saved;
-    if (value !== saved) save.mutate({ setting: field.setting, value: value || null });
-    else setDraft(null);
-  };
-  const list = field.choices.length ? `${field.setting}-choices` : undefined;
-  return <div className="default-field">
-    <input aria-label="Model" value={draft ?? saved} placeholder={`Default: ${field.default}`} list={list} disabled={save.isPending}
-      spellCheck={false} autoCapitalize="off"
-      onChange={(event) => { setDraft(event.target.value); save.reset(); }} onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") { event.preventDefault(); commit(); }
-        if (event.key === "Escape") { setDraft(null); save.reset(); }
-      }} />
-    {list ? <datalist id={list}>{field.choices.map((choice) => <option key={choice} value={choice} />)}</datalist> : null}
-    <SaveStatus save={save} retry={() => save.variables && save.mutate(save.variables)} />
-  </div>;
-}
-
-function EffortField({ name, engine }: { name: string; engine: Engine }) {
-  const field = engine.effort;
-  const save = useSetDefault(name);
-  const shown = save.isPending ? save.variables.value as string | null : field.value;
-  return <div className="default-field">
-    <select aria-label="Effort" value={shown ?? ""} disabled={save.isPending}
-      onChange={(event) => save.mutate({ setting: field.setting, value: event.target.value || null })}>
-      <option value="">Default ({field.default})</option>
-      {field.choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
-    </select>
-    <SaveStatus save={save} retry={() => save.variables && save.mutate(save.variables)} />
-  </div>;
-}
-
-/** The L3 choice: the same value as the message box's button, with Back to Auto and Change…. */
+/** The L3 choice shares its saved value with the message box and Settings overview. */
 function L3Section({ name, data }: { name: string; data: ProjectDefaults }) {
-  const [open, setOpen] = useState(false);
-  const save = useSetDefault(name);
-  const client = useQueryClient();
   const project = useProject(name);
   const l3 = project.data?.l3 ?? {};
   const text = (key: string) => typeof l3[key] === "string" ? l3[key] as string : "";
@@ -77,47 +21,12 @@ function L3Section({ name, data }: { name: string; data: ProjectDefaults }) {
   const last = !text("engine_last") ? "L3 has not replied yet"
     : `last reply reported ${[text("engine_model") || "no model", text("engine_reasoning_effort") ? effort(text("engine_reasoning_effort")) : "no effort"].join(" · ")}`;
   return <section className="settings-section" aria-labelledby="settings-l3">
-    <div><h2 id="settings-l3">L3</h2><p className="text-meta text-muted">Who answers in this project's chat. The same choice as the button under the message box; it comes before routing.</p></div>
-    <div className="settings-group">
-      <div className="settings-row">
-        <span><strong>{closedLabel(data.l3_choice, data.l3_unavailable, data, data.engines)}</strong>{" "}
-          <small>{last}</small>
-          {data.l3_unavailable && data.l3_choice ? <small>{data.l3_unavailable}</small> : null}
-          {save.isError ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
-        </span>
-        <span className="settings-actions">
-          {data.l3_choice ? <button type="button" className="link" disabled={save.isPending}
-            onClick={() => save.mutate({ setting: "l3_choice", value: null, expected: data.l3_choice },
-              { onError: () => void client.invalidateQueries({ queryKey: ["defaults", name] }) })}><BusyLabel busy={save.isPending} label="Back to Auto" working="Saving…" /></button> : null}
-          <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>Change…</button>
-        </span>
-      </div>
-    </div>
-    {open ? <ModelsDialog project={name} tab="l3" onClose={() => setOpen(false)} /> : null}
-  </section>;
-}
-
-/** Model and effort per role and engine, used under Auto and as the fallback. */
-function DefaultsSection({ name, data }: { name: string; data: ProjectDefaults }) {
-  const overview = useOverview();
-  const tasks = overview.data?.new_tasks;
-  const rows = [...data.roles].sort((a, b) => (a.role === "l2" ? -1 : 1) - (b.role === "l2" ? -1 : 1));
-  return <section className="settings-section" aria-labelledby="settings-defaults">
-    <div><h2 id="settings-defaults">Auto defaults</h2><p className="text-meta text-muted">
-      Used under Auto and as the fallback.{tasks?.value ? ` Tasks now start on New tasks: ${choiceLabel(tasks.value, tasks, overview.data?.engines)}.` : ""}
-      {" "}Started tasks keep their model and effort; L3 uses a change from its next reply.</p></div>
-    <div className="settings-group defaults-table">
-      <div className="defaults-head" aria-hidden><span /><span>Model</span><span>Effort</span></div>
-      {rows.flatMap((row) => row.engines.map((engine) => {
-        const label = `${roleTitle[row.role]} · ${engine.label}`;
-        return <div key={`${row.role}-${engine.engine}`} className="defaults-row" role="group" aria-label={label}>
-          <span className="defaults-label">{label}</span>
-          <ModelField name={name} engine={engine} />
-          <EffortField name={name} engine={engine} />
-        </div>;
-      }))}
-    </div>
-    <p className="text-meta text-muted">These request a model and effort; the task and chat show what the engine reported. Higher effort can use more time and tokens.</p>
+    <div><h2 id="settings-l3">L3</h2><p className="text-meta text-muted">Who answers in this project's chat.</p></div>
+    <div className="settings-group"><div className="settings-model-row"><EnginePreference project={name} />
+      <p className="text-meta text-muted">{last}</p>
+      {text("engine_model") && data.l3_choice?.model && text("engine_model") !== data.l3_choice.model
+        ? <p className="text-meta text-muted">Last reply requested: {text("launch_model") || "engine default"}.</p> : null}
+    </div></div>
   </section>;
 }
 
@@ -264,13 +173,13 @@ export default function ProjectSettings() {
     {phone ? <header className="phone-header settings-header">{back}<h1>{name}</h1></header> : null}
     <div className="page settings-page">
       {!phone ? <>{back}<h1>{name}</h1></> : null}
-      <p className="text-meta text-muted">Applies to this project only. A model or effort L3 sets for one task wins over these.</p>
+      <p className="text-meta text-muted">Engine routing applies to this project.</p>
       {defaults.isPending ? <p><StatusMark label="Loading settings…" /></p>
         : defaults.isError ? <p role="alert" className="text-danger">Could not load settings. <button className="link" onClick={() => void defaults.refetch()}>Retry</button></p>
           : <>
             <L3Section name={name} data={defaults.data} />
-            <DefaultsSection name={name} data={defaults.data} />
             <RoutingSection name={name} data={defaults.data} />
+            <Link to="/settings#models" state={location.state}>Models and effort · All projects</Link>
           </>}
       {managed ? <ImprovementSection name={name} /> : null}
       {/* Removal does not depend on reading the model settings. */}

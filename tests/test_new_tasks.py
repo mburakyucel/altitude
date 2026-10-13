@@ -42,7 +42,9 @@ class TestNewTasks(AltitudeCase):
         view = server.new_tasks_view()
         self.assertEqual((view["value"], view["unavailable"], view["only"]), (None, None, []))
         self.assertTrue(view["models"]); self.assertEqual(list(view["efforts"]), list(config.ENGINES))
-        choice = {"engine": config.ENGINES[0], "model": "chosen", "effort": "high"}
+        shortcut = next(model for model in view["models"] if model["label"] == "6.1 Sol")
+        self.assertEqual(shortcut, {"engine": "codex", "model": "gpt-6.1-sol", "label": "6.1 Sol"})
+        choice = {"engine": shortcut["engine"], "model": shortcut["model"], "effort": "high"}
         status, out = self._call("POST", "/api/new-tasks", {"value": choice, "expected": None})
         self.assertEqual((status, out["value"]), (200, choice))
         self.assertEqual(config.machine_settings()["new_tasks"], choice)

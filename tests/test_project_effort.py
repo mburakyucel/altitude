@@ -194,9 +194,10 @@ class TestProjectEffortHTTP(AltitudeCase):
         self.assertEqual([row["role"] for row in view["roles"]], ["l3", "l2"])
         self.assertEqual(field(view, "l2", "claude", "effort")["value"], "medium")
         self.assertEqual(field(view, "l3", "claude", "model"), {"setting": "l3_model", "value": None, "default": "fable",
-                                                               "choices": list(config.MODEL_ALIASES)})
+                                                               "note": ""})
         self.assertEqual(field(view, "l2", "codex", "model"), {"setting": "l2_codex_model", "value": None,
-                                                              "default": "CLI default", "choices": []})
+                                                              "default": "Codex's own default",
+                                                              "note": "Tasks use Codex settings outside Altitude; L3 uses its built-in default. The model is reported after it runs."})
         self.assertEqual(field(view, "l2", "codex", "effort")["default"], "High")
         self.assertEqual([c["value"] for c in field(view, "l3", "claude", "effort")["choices"]], list(config.ENGINE_EFFORTS["claude"]))
         self.assertEqual([c["value"] for c in field(view, "l3", "codex", "effort")["choices"]], list(config.TASK_EFFORTS))

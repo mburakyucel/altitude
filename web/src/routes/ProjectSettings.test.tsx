@@ -1,5 +1,4 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
-import { defaultScheduler, notifyManager } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 
@@ -57,88 +56,13 @@ function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null 
   return { posts, saved, removeNow: () => { managed = false; } };
 }
 
-const group = (name: string) => screen.findByRole("group", { name });
 
 describe("Project settings", () => {
-  it("saves each role and engine default independently and restores Default", async () => {
-    const { posts } = fixture();
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const l3Alpha = await group("L3 · Alpha");
-    expect(within(l3Alpha).getByLabelText("Model")).toHaveAttribute("placeholder", "Default: alpha-default");
-    expect(within(await group("Tasks · Beta")).getByLabelText("Effort")).toHaveDisplayValue("Default (High)");
-    await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "low");
-    await within(l3Alpha).findByText("Saved.");
-    expect(posts).toEqual([{ project: "example", setting: "l3_alpha_effort", value: "low" }]);
-    for (const other of ["L3 · Beta", "Tasks · Alpha", "Tasks · Beta"]) {
-      expect(within(await group(other)).getByLabelText("Effort")).toHaveValue("");
-      expect(within(await group(other)).queryByText("Saved.")).toBeNull();
-    }
-    await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "");
-    await waitFor(() => expect(posts.at(-1)).toEqual({ project: "example", setting: "l3_alpha_effort", value: null }));
-    await waitFor(() => expect(within(l3Alpha).getByLabelText("Effort")).toHaveDisplayValue("Default (Native)"));
-  });
-
-  it("saves a typed model on Enter or leaving the field, restores on Escape, and clears to Default", async () => {
-    const { posts } = fixture();
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const model = within(await group("Tasks · Beta")).getByLabelText("Model");
-    expect(model).toHaveAttribute("placeholder", "Default: CLI default");
-    await user.type(model, "  beta-model {Enter}");
-    await within(await group("Tasks · Beta")).findByText("Saved.");
-    expect(posts).toEqual([{ project: "example", setting: "l2_beta_model", value: "beta-model" }]);
-    expect(model).toHaveValue("beta-model");
-    await user.type(model, "-draft{Escape}");
-    expect(model).toHaveValue("beta-model");
-    await user.clear(model);
-    await user.tab();
-    await waitFor(() => expect(posts.at(-1)).toEqual({ project: "example", setting: "l2_beta_model", value: null }));
-    await waitFor(() => expect(model).toHaveValue(""));
-    await user.click(model);
-    await user.tab();
-    expect(posts).toHaveLength(2);
-  });
-
-  it("keeps the saved model visible while cache notifications wait", async () => {
-    fixture();
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const model = within(await group("L3 · Alpha")).getByLabelText("Model");
-    const pending: (() => void)[] = [];
-    notifyManager.setScheduler((callback) => pending.push(callback));
-    try {
-      await user.type(model, "deep{Enter}");
-      await act(async () => { while (pending.length) pending.shift()!(); });
-      expect(model).toHaveValue("deep");
-    } finally {
-      notifyManager.setScheduler(defaultScheduler);
-      await act(async () => { while (pending.length) pending.shift()!(); });
-    }
-  });
-
-  it("keeps a later save of another field when an earlier save's response arrives last", async () => {
-    let release!: () => void;
-    const { posts } = fixture({ hold: { setting: "l3_alpha_effort", until: new Promise<void>((resolve) => { release = resolve; }) } });
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const l3Alpha = await group("L3 · Alpha");
-    const model = within(await group("Tasks · Beta")).getByLabelText("Model");
-    await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "low");
-    await user.type(model, "beta-model{Enter}");
-    await within(await group("Tasks · Beta")).findByText("Saved.");
-    release();
-    await within(l3Alpha).findByText("Saved.");
-    expect(posts.map((post) => post.setting)).toEqual(["l3_alpha_effort", "l2_beta_model"]);
-    expect(model).toHaveValue("beta-model");
-    expect(within(l3Alpha).getByLabelText("Effort")).toHaveValue("low");
-  });
-
-  it("keeps the saved choice and offers Retry save when the server refuses", async () => {
-    const { posts } = fixture({ refuse: "l3_alpha_effort" });
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const l3Alpha = await group("L3 · Alpha");
-    await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "low");
-    expect(await within(l3Alpha).findByRole("alert")).toHaveTextContent("does not support reasoning effort low");
-    expect(within(l3Alpha).getByLabelText("Effort")).toHaveValue("");
-    await user.click(within(l3Alpha).getByRole("button", { name: "Retry save" }));
-    await waitFor(() => expect(posts).toHaveLength(2));
+  it("links global model and effort settings instead of project editors", async () => {
+    fixture(); renderApp({ route: "/settings/projects/example" });
+    expect(await screen.findByRole("link", { name: "Models and effort · All projects" })).toHaveAttribute("href", "/settings#models");
+    expect(screen.queryByRole("region", { name: "Auto defaults" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
   });
 
   it("routes tasks Auto, Prefer or Only an engine, sending the value each page showed, and has no L3 routing", async () => {
@@ -174,22 +98,19 @@ describe("Project settings", () => {
     expect(await within(routing).findByRole("alert")).toHaveTextContent("Changed in another window.");
   });
 
-  it("shows L3's choice with the last reply, Back to Auto and Change… opening Models on L3", async () => {
+  it("shows L3's requested choice separately from its last reply and selects Auto directly", async () => {
     const { posts } = fixture({ initial: { l3_choice: { engine: "alpha", model: "deep", effort: "high" } },
       l3: { engine_last: "alpha", engine_model: "alpha-deep-2", launch_effort: "high", engine_reasoning_effort: "low" } });
     const { user } = renderApp({ route: "/settings/projects/example" });
     const section = await screen.findByRole("region", { name: "L3" });
-    await within(section).findByText("Deep · High");
+    const model = within(section).getByRole("combobox", { name: "Coordinator engine" });
+    expect(model).toHaveDisplayValue("Prefer Alpha");
     expect(section).toHaveTextContent("last reply reported alpha-deep-2 · Low");
-    await user.click(within(section).getByRole("button", { name: "Change…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Models · L3 · example only" });
-    expect(within(dialog).getByRole("tab", { name: /L3/ })).toHaveAttribute("aria-selected", "true");
-    await user.keyboard("{Escape}");
-    await user.click(within(section).getByRole("button", { name: "Back to Auto" }));
-    await within(section).findByText("Auto");
+    await user.selectOptions(model, "");
+    await waitFor(() => expect(model).toHaveDisplayValue("Auto"));
     expect(posts).toEqual([{ project: "example", setting: "l3_choice", value: null, expected: { engine: "alpha", model: "deep", effort: "high" } }]);
     expect(within(section).queryByRole("button", { name: "Back to Auto" })).toBeNull();
-    expect(section).toHaveTextContent("Auto last reply reported");
+    expect(section).toHaveTextContent("last reply reported alpha-deep-2");
   });
 
   it("says when L3 has not replied and shows Retry when the settings cannot load", async () => {
@@ -277,7 +198,7 @@ describe("Settings overview", () => {
   it("groups settings by destination and shows This project only when opened from one", async () => {
     fixture();
     const { router, user } = renderApp({ route: "/settings" });
-    for (const name of ["Models", "Projects", "Voice", "Devices and access", "Coding agents"])
+    for (const name of ["Models and effort · All projects", "Engines", "Projects", "Voice", "Devices and access", "Coding agents"])
       expect(await screen.findByRole("region", { name })).toBeVisible();
     expect(screen.queryByRole("region", { name: "This project" })).toBeNull();
     await user.click(within(screen.getByRole("region", { name: "Projects" })).getByRole("link", { name: /All projects/ }));
@@ -286,7 +207,7 @@ describe("Settings overview", () => {
     expect(screen.getByRole("link", { name: /Projects folder/ })).toHaveAttribute("href", "/settings/projects-folder");
     await act(() => router.navigate("/settings", { state: { settingsFrom: "/projects/example?tab=work" } }));
     const current = await screen.findByRole("region", { name: "This project" });
-    expect(await within(current).findByRole("link", { name: /example L3: Auto · routing Auto/ })).toBeVisible();
+    expect(await within(current).findByRole("link", { name: /example routing Auto/ })).toBeVisible();
     await user.click(within(current).getByRole("link", { name: /example/ }));
     await user.click(await screen.findByRole("link", { name: "‹ Settings" }));
     expect(await screen.findByRole("region", { name: "This project" })).toBeVisible();

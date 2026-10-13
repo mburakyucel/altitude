@@ -579,7 +579,7 @@ IMAGE_SEND_NOW = "Messages with images arrive at the owner's next turn."
 
 
 MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check",
-                    "update_automatic", "new_tasks")
+                    "update_automatic", "new_tasks", *config.MODEL_DEFAULT_SETTINGS)
 
 
 UNSET = object()
@@ -613,6 +613,11 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_incident_repository(value)
         elif setting in ("terminal", "update_check", "update_automatic") and not isinstance(value, bool):
             raise ValueError(f"the {setting.replace('_', ' ')} setting is on or off")
+        elif setting in config.MODEL_DEFAULT_SETTINGS:
+            config.validate_model_pair(config.MODEL_DEFAULT_SETTINGS[setting], value)
+        elif setting in config.ROLE_OVERRIDE_SETTINGS:
+            if value is not None:
+                raise ValueError("stored project model and effort overrides can only be cleared together")
         elif setting in config.DEFAULT_SETTINGS:
             config.validate_project_default(setting, value)
         elif setting == "l2_preference":
@@ -633,7 +638,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
         previous = S.read_json(path, {})
         same = (previous.get(setting), previous.get("reason"), previous.get("actor")) == (value, reason, actor)
         if same and (previous.get("status") == "pending" or previous.get("status") == "done"
-                     and previous.get(f"result_{setting}") == entry.get(setting)):
+                     and previous.get(f"result_{setting}") == config.setting_value(entry, setting)):
             return {"idempotent": True, "request": previous}
         if previous.get("status") == "pending":
             raise T.TransitionError(f"{scope} set already pending in altd")
@@ -675,13 +680,17 @@ def _run_setting(project: str | None, setting: str) -> dict:
         if entry is None:
             request.update(status="refused", note="project is not registered")
         elif ("expected" in request and request["status"] == "pending"
-              and (config.voice_expected(entry.get(setting)) if setting == "voice" else entry.get(setting))
+              and (config.voice_expected(entry.get(setting)) if setting == "voice" else config.setting_value(entry, setting))
               != request["expected"]
               and not (setting == "voice" and isinstance(request[setting], dict)
                        and entry.get(setting) == request[setting])):
             request.update(status="refused", note="the stored value changed after it was read", changed=True)
         elif request["status"] == "pending":
-            if request[setting] is None:
+            if setting in config.ROLE_OVERRIDE_SETTINGS:
+                role, engine = config.ROLE_OVERRIDE_SETTINGS[setting]
+                for kind in ("model", "effort"):
+                    entry.pop(config.role_setting(role, engine, kind), None)
+            elif request[setting] is None:
                 entry.pop(setting, None)
             else:
                 entry[setting] = request[setting]
@@ -698,7 +707,8 @@ def _run_setting(project: str | None, setting: str) -> dict:
                      setting: config.voice_receipt(request[setting]) if setting == "voice" else request[setting],
                      "status": request["status"], "note": request.get("note")}
             S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
-        request.update({f"result_{setting}": entry.get(setting) if entry else None, "completed_at": S.now()})
+        request.update({f"result_{setting}": config.setting_value(entry, setting) if entry is not None else None,
+                        "completed_at": S.now()})
         if setting == "voice":
             for field in ("voice", "result_voice", "expected"):
                 if field in request:

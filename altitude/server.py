@@ -2376,6 +2376,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(improve.settings(parts[2]))
                 except KeyError:
                     return self._json({"error": "Project is not managed."}, 404)
+            if parts == ["api", "model-defaults"]:
+                return self._json(config.model_defaults_view())
             if api == "defaults" and len(parts) == 3:
                 try:
                     return self._json(config.defaults_view(parts[2]))
@@ -2596,6 +2598,14 @@ class Handler(BaseHTTPRequestHandler):
                     if l3.queue_path(o["project"]).exists():
                         request_l3_drain(o["project"])  # a message waiting for an engine tries the changed choice now
                     return self._json(config.defaults_view(o["project"]))
+                except (ValueError, KeyError, T.TransitionError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts in (["api", "model-defaults"], ["api", "model-defaults", "reset"]):
+                try:
+                    result = save_model_defaults(o, reset=len(parts) == 3)
+                    if result.get("changed"):
+                        return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
+                    return self._json(config.model_defaults_view())
                 except (ValueError, KeyError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "new-tasks"]:
@@ -3070,6 +3080,37 @@ def overview() -> dict:
 
 
 CHANGED_ELSEWHERE = "Changed in another window."
+
+
+def save_model_defaults(body: dict, *, reset: bool = False) -> dict:
+    if "expected" not in body:
+        raise ValueError("the previously read model and effort are required")
+    project = None
+    if reset:
+        row = next((row for row in config.model_defaults_view()["overrides"] if row["id"] == body.get("id")), None)
+        if row is None:
+            return {"changed": True}
+        if not row["editable"]:
+            raise ValueError("Explicit routing models are edited with the project routing setting.")
+        project, setting = json.loads(row["id"])
+        value = ({"engine": row["expected"]["engine"]} if row["expected"].get("engine") else None)
+        if setting in config.ROLE_OVERRIDE_SETTINGS:
+            value = None
+    else:
+        if body.get("engine") not in config.ENGINES:
+            raise ValueError("unknown engine")
+        setting, value = f"model_defaults_{body['engine']}", body.get("value")
+    dispatch.request_setting(project, setting, value, "Settings", actor=config.OPERATOR_ACTOR,
+                             expected=body["expected"])
+    result = dispatch._run_setting(project, setting)
+    if result.get("changed"):
+        return result
+    if result.get("status") != "done":
+        raise ValueError(result.get("note") or "Setting was not saved.")
+    for name in ([project] if project else config.load_projects()):
+        if l3.queue_path(name).exists():
+            request_l3_drain(name)
+    return result
 
 
 def new_tasks_view() -> dict:

@@ -69,6 +69,13 @@ class TestReviews(AltitudeCase):
         return {"base_sha": git("rev-parse", "origin/main", cwd=self.worktree).strip(),
                 "head_sha": git("rev-parse", "HEAD", cwd=self.worktree).strip()}
 
+    def test_review_launch_passes_and_records_resolved_engine_effort(self):
+        self.choice["effort"] = "ultra"
+        review = self.run_review()
+        self.assertEqual(self.engine.call_args.kwargs["effort"], "ultra")
+        saved = next(row for row in S.load_task(self.project, self.slug)["reviews"] if row["id"] == review["id"])
+        self.assertEqual(saved["effort"], "ultra")
+
     def test_failed_process_diagnostics_stay_on_owning_review_and_survive_retry(self):
         self.engine.side_effect = run_engine_review
         self.patch(engines, "review_capability", return_value={"available": True})
