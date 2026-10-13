@@ -3988,6 +3988,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     global TRUST
     config.ensure_root()
     dispatch.forget_speech_service()
+    reinstall_voice = speech.remove_home_runtime()
     if os.environ.get("ALTITUDE_SERVICE"):  # only the service instance clears the restart-pending flag
         try:
             git_policy.activate_source()
@@ -4035,7 +4036,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     if os.environ.get("ALTITUDE_SERVICE") and config.RELEASE is None:
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
-        SPEECH.update_installed()
+        SPEECH.update_installed(reinstall_voice)
         restart_notice()
         settle_interrupted_machine_commands()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()

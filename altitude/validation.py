@@ -87,9 +87,9 @@ def set_enabled(on: bool) -> None:
 
 
 def home() -> Path:
-    """Beside Altitude's home rather than in it: workers can write Altitude's home, and a path a worker replaced
-    must not become a container mount or a place the unit writes."""
-    return config.ROOT.with_name(config.ROOT.name + "-validation")
+    """Beside Altitude's home: a path a worker replaced must not become a container mount or a place the unit
+    writes."""
+    return config.beside_root("validation")
 
 
 def containerfile() -> Path:
