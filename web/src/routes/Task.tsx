@@ -24,6 +24,8 @@ import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
 import { SteeringControls, SteeringNotice, useTaskSteering } from "../components/TaskSteering";
 import type { Steering } from "../components/TaskSteering";
+import { TransferCard, TransferDialog, TransferModelButton, useTaskTransfer } from "../components/TaskTransfer";
+import type { Transfer } from "../components/TaskTransfer";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import { ShownFiles } from "../components/Shown";
@@ -72,6 +74,7 @@ type Tone = "ok" | "held" | "danger" | undefined;
 
 interface Chip {
   text: string;
+  busy?: boolean;
   tone?: Tone;
   href?: string;
 }
@@ -98,6 +101,7 @@ interface Facts {
   canMessage: boolean;
   canStop: boolean;
   canResume: boolean;
+  resumeHeld: boolean;
   canReject: boolean;
   /** A held review-ready PR waiting for the operator (#419), and where the PR lives. */
   review: Decision | null;
@@ -133,7 +137,7 @@ function modelFacts(task: TaskView, engineLabel: string): ModelFacts {
     ...(str(task["routing"]) ? [["Routing", sentence(str(task["routing"]))] as [string, string]] : []),
   ];
   const differs = Boolean(reportedEffort && launchEffort && reportedEffort !== launchEffort);
-  return { chip, rows, note: `${differs ? "The engine reported a different level. " : ""}Messages and resumes keep this model and effort; to redo the work on another one, ask L3.` };
+  return { chip, rows, note: `${differs ? "The engine reported a different level. " : ""}Messages and resumes keep the current model and effort.` };
 }
 
 export function taskFacts(task: TaskView, overview: Overview | undefined, project: string, repository?: string | null): Facts {
@@ -209,9 +213,10 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     engineLabel,
     selection,
     finished,
-    canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question))),
+    canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question) || task.transfer?.request?.status === "done")),
     canStop: state === "running",
     canResume: (state === "blocked" || task["can_continue"] === true) && (!task.steering || task.steering.state === "idle") && task.question?.status !== "open",
+    resumeHeld: Boolean(task.transfer?.resume_hold),
     canReject: ["queued", "running", "blocked", "reported"].includes(state),
     review: turnRows.find((row) => row.kind === "review") ?? null,
     repository,
@@ -230,12 +235,13 @@ function CaptureLink({ project, slug, message }: { project: string; slug: string
   </a>;
 }
 
-function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, steering, active, denied, setDenied, questionVisit, selection, onEscapeOwnership, reviewControls }: {
+function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, steering, active, denied, setDenied, questionVisit, selection, onEscapeOwnership, reviewControls, transfer }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
   draft: string; setDraft: (value: string) => void;
   steering: Steering; active: boolean; denied: boolean; setDenied: (denied: boolean) => void; questionVisit: number;
   selection: RefObject<{ start: number; end: number } | null>; onEscapeOwnership: (owned: boolean) => void;
   reviewControls: ReviewControls;
+  transfer: Transfer;
 }) {
   const queryClient = useQueryClient();
   const location = useLocation();
@@ -609,9 +615,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             <ReviewDecision decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
           </div> : null}
           {/* What the task waits on ends the chat, after any card, under the header's state; L3's open question already says it (SPEC.md §3.10). */}
-          {facts.explanation && !(answering && !task["fault"]) ? <p className="conversation-status" data-tone={task["fault"] ? "danger" : undefined} role="status">
+          {facts.explanation && !(transfer.quotaOffer && !readOnly && !denied) && !(answering && !task["fault"]) ? <p className="conversation-status" data-tone={task["fault"] ? "danger" : undefined} role="status">
             <span className="dot" data-state={facts.dot} aria-hidden />{facts.explanation}
           </p> : null}
+          <TransferCard transfer={transfer} />
           {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
             {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><Stamp at={event["at"]} className="event-time" /> · <InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
@@ -621,16 +628,17 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </div>
       {(latest || (current && questionOffscreen)) ? <div className="conversation-jumps">
         {current && questionOffscreen && turn.length ? <button type="button" className="btn conversation-pill" aria-label={count} onClick={() => jumpTo(current)}>{turn.length} question{turn.length === 1 ? "" : "s"} ↓</button> : null}
-        {latest && !(current && questionOffscreen && turn.length && questionAtLatest) ? <button type="button" className="btn" aria-label="Latest messages" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest ↓</button> : null}
+        {latest && (transfer.controls || !(current && questionOffscreen && turn.length && questionAtLatest)) ? <button type="button" className="btn" aria-label={transfer.controls ? "Switch controls" : "Latest messages"} onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>{transfer.controls ? "Switch controls ↓" : "Latest ↓"}</button> : null}
       </div> : null}
       </div>
       {facts.canMessage ? <div className="convo-dock">
         <Composer active={active} conversation={conversation} value={draft} onChange={setDraft} onSubmit={(text, accepted, images, copy) => prepareSend()(text, accepted, images, copy)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
+        pill={<TransferModelButton transfer={transfer} />}
         shows={shownCopy}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
-        sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}
-        hint={task.state === "blocked" && steering.state === "idle" ? "Sending resumes the L2 with your message." : ""} />
+        sendDisabled={transfer.stopping || (task.state === "queued" && task.transfer?.request?.status === "done") || ["stopping", "stop_unconfirmed"].includes(steering.state)}
+        hint={task.state === "blocked" && steering.state === "idle" && !task.transfer?.resume_hold ? "Sending resumes the L2 with your message." : ""} />
         {steering.state === "stopped" ? <p className="text-meta text-muted">Send a correction to continue this session.</p>
           : null}
       </div> : null}
@@ -674,7 +682,7 @@ function ActionButtons({ facts, actions }: { facts: Facts; actions: ReturnType<t
   if (!facts.canStop && !facts.canReject) return null;
   return (
     <>
-      {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending} onClick={actions.resume}><BusyLabel busy={actions.pending} label="Resume" working="Resuming…" /></button> : null}
+      {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending || facts.resumeHeld} title={facts.resumeHeld ? "Waiting for engine availability" : undefined} onClick={actions.resume}><BusyLabel busy={actions.pending} label="Resume" working="Resuming…" /></button> : null}
       {facts.canReject ? (
         <button type="button" className="btn btn-ghost task-action" onClick={() => actions.open("reject")}>
           Reject
@@ -730,6 +738,7 @@ function Chips({ chips }: { chips: Chip[] }) {
     <div className="task-chips">
       {chips.map((chip) => (
         <span key={chip.text} className="chip" data-tone={chip.tone}>
+          {chip.busy ? <span className="spinner" aria-hidden /> : null}
           <ChipText chip={chip} />
         </span>
       ))}
@@ -796,6 +805,11 @@ function TaskPage({
   const selection = useRef<{ start: number; end: number } | null>(null);
   const [voiceOwnsEscape, setVoiceOwnsEscape] = useState(false);
   const steering = useTaskSteering(project, task, refresh);
+  const transfer = useTaskTransfer(project, task, refresh, readOnly || checking || denied, () => setDenied(true), closeDetails);
+  if (transfer.label) {
+    facts.label = transfer.label;
+    facts.chips[0] = { text: transfer.label, busy: transfer.active };
+  }
   const actions = useTaskActions(project, task.slug);
   const reviewControls = useTaskReview(project, task, refresh, readOnly || checking, closeDetails);
   const resumeError = facts.canResume && actions.error && !actions.confirm
@@ -846,7 +860,7 @@ function TaskPage({
     const onKey = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       if (event.key !== "Escape" || event.repeat || event.isComposing || event.defaultPrevented ||
-          target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])") ||
+          target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=false]), .transfer-card") ||
           document.querySelector('[role="dialog"], [role="menu"], [aria-haspopup][aria-expanded="true"], .overlay')) return;
       event.preventDefault();
       steering.stop();
@@ -864,7 +878,7 @@ function TaskPage({
   });
   // The phone tab row stays above the sliding views; the terminal on screen places its × there.
   const [tabSlot, setTabSlot] = useState<HTMLDivElement | null>(null);
-  const control = <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />;
+  const control = <SteeringControls steering={steering} disabled={readOnly || denied || transfer.stopping || Boolean(steering.state === "stopped" && (task.transfer?.resume_hold || (transfer.request?.phase === "stopping" && !task.steering?.stop_id)))} escape={!phone} />;
 
   // A drag that reveals Live session starts its transcript, so the incoming view loads while it slides in.
   const panelSwitch = terminalOffered ? <nav className="panel-switch" aria-label="Panel view">
@@ -903,14 +917,14 @@ function TaskPage({
   const reader = shown ? <ShownReader key={`${shown.id}/${shown.revision ?? ""}`} project={project} slug={task.slug} shownId={shown.id} revision={shown.revision}
     known={known ?? undefined} panel={!phone && panelInline} /> : null;
   const screenReader = reader && (phone || !panelInline);
-  const conversation = <ProseScope project={project} repository={task.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} steering={steering} active={!phone || view === 0} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseTerminal></ProseScope>;
+  const conversation = <ProseScope project={project} repository={task.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} steering={steering} active={!phone || view === 0} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} transfer={transfer} /></ProseTerminal></ProseScope>;
 
   if (phone) {
     const idleUnless = (index: number) => view !== index && !swipe.dragging ? idle : undefined;
     return (
       <>
       <PhoneHeader overview={overview} onTitleClick={() => setDetailsOpen(true)} titleExpanded={detailsOpen} status={
-        <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden /><span data-tone={facts.dot === "danger" ? "danger" : undefined}>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span>
+        <span className="task-state-line" role="status"><span className={transfer.active ? "spinner" : "dot"} data-state={facts.dot} aria-hidden /><span data-tone={facts.dot === "danger" ? "danger" : undefined}>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span>
       }>{control}</PhoneHeader>
       <div className="task-page" data-phone inert={Boolean(screenReader)}>
         <SteeringNotice steering={steering} />
@@ -929,6 +943,7 @@ function TaskPage({
         {details}
       </div>
       {reader}
+      <TransferDialog transfer={transfer} />
       </>
     );
   }
@@ -986,6 +1001,7 @@ function TaskPage({
       {details}
     </div>
     {screenReader ? reader : null}
+    <TransferDialog transfer={transfer} />
     </>
   );
 }

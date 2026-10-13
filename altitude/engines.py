@@ -958,7 +958,10 @@ class _CodexDriver(_Driver):
         elif method in ("item/started", "item/completed"):
             item = _codex_item(params.get("item") or {})
             if item:
-                self.emit({"type": method.replace("/", "."), "item": item})
+                # The notification has no wall clock. Record its receipt here, once, rather
+                # than assigning a poll/launch time when a viewer reads the saved event.
+                self.emit({"type": method.replace("/", "."), "item": item,
+                           "timestamp": datetime.now(timezone.utc).isoformat()})
         elif method == "thread/tokenUsage/updated":
             self.usage = _camel_keys((params.get("tokenUsage") or {}).get("total") or {})
         elif method == "error" and not params.get("willRetry"):

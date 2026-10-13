@@ -107,8 +107,8 @@ class TestPrClose(AltitudeCase):
         tasks = {}
         for title, prs in (("Held port", [41, 42]), ("Earlier port", [42, 43])):
             task = T.new(self.project, title, "Port it.", actor="burak", hold_merge="Operator review before merge")
-            task.update(state="blocked", waiting_on="l3", prs=prs, delivery={"number": prs[-1], "head": "a" * 40,
-                                                                              "at": S.now()})
+            task.update(state="blocked", prs=prs, delivery={"number": prs[-1], "head": "a" * 40,
+                                                           "at": S.now()})
             S.save_task(self.project, task)
             tasks[title] = task["slug"]
         self.assertEqual(sorted(row["pr"] for row in T.decisions(self.project)), [42, 43])

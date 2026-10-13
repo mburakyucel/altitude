@@ -157,8 +157,15 @@ request as idempotent while the terminal receipt still matches; an intervening l
 identity-fenced request before altd relaunches, stops, or removes a worker.
 `alt task handoff <slug> --engine <engine> --attempt <N> --reason '…'` uses this same coordinator
 transport and daemon request for a running owner, an operator/L3-stopped owner, or one blocked by
-worker death or a recognized usage limit. The running owner receives a native instruction to refresh
+worker death or a recognized usage limit, or an unanswered question whose owner has exited without a recovery fault.
+The running owner receives a native instruction to refresh
 `progress.md` and write a request/attempt/worker-bound readiness file; no updated owner CLI is required.
+The task page invokes that same request from its composer chooser or a quota-stop action, with an atomic fence
+on the observed attempt, worker/session and block. A conversation card exposes now/cancel while
+preparing. Confirmation retains the observed identity even if polling sees a replacement; uncertain
+responses require a status read, not a duplicate mutation. Task polling derives target eligibility
+from the routing seam, and concise conversation outcomes retain full native checkpoint instructions
+for the old worker. No browser storage or parallel transfer lifecycle is added.
 The daemon waits without a timeout. Confirmed exit, a recorded usage limit, existing Stop or explicit
 `--now` permits transfer using saved context. `--request <id> --cancel` keeps the current owner until
 the stopping phase commits. Neither silence nor network failure forces a switch. The entire worker
@@ -169,7 +176,11 @@ engine's configured options and is consumed when dispatch binds the fresh attemp
 availability are checked again before execution and launch. `route.pick_task` supplies the same
 target-aware availability and pin explanation to dispatch and the queue. A fresh attempt clears current
 verification while retaining prior reports and delivery history. Handoff ignores new-task model choices
-and reports whether a fresh handoff note was obtained. Ordinary resume remains unchanged.
+and reports whether a fresh handoff note was obtained. The task composer extends this same receipt
+with an explicit model/effort selection, including same-engine changes. Admission checks the displayed
+default resolution and rejects an unchanged effective tuple. Requeue retains that selection for one
+attempt; dispatch consumes it without turning it into a permanent policy pin. Explicit task/project
+pins and unavailable targets still refuse. Ordinary resume remains unchanged.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 resolve a dilemma against its source message, and land only its own task.
 
@@ -537,8 +548,13 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | L3 journal reading | `journalctl` shim | not available; L3 reads service status through the broker | Isolation and landing |
 | Incident system facts | `os-release` name, kernel release, DMI vendor and product family (product name when the family is a placeholder) | macOS version, Darwin release, `hw.model` identifier | [Incident issues](CLI.md#incident-issues) |
 
-Case-insensitive project names are refused on both hosts, because macOS disks are case-insensitive by
-default and runtime folders are named after projects.
+Project identifiers are single folder names on both hosts. The shared path resolver validates them
+before project storage or locks are accessed; registration validates before resolving a repository
+folder, and monitor session keys use the same check. Empty names, `.` and `..`, path separators and
+NUL are refused. Flat names retain their case, spaces, Unicode, dots and underscores. Validation does
+not require registration, so initialization and detached project archives use the same resolver.
+Names differing only by case are refused at registration on both hosts, because macOS disks are
+case-insensitive by default and runtime folders are named after projects.
 
 ### Project setup
 
@@ -3167,8 +3183,11 @@ without one, with an image count when it carries images. Its Show opens the comp
 images in place; the task record, the L2's inbox and authority checks keep every word, and the summary
 is stored beside the text as display metadata only. Then come the open question group at the end of the conversation (closed groups
 at their recorded message anchor), a held review card when one waits, no open operator question is about its PR (marked as its merge question, or
-unmarked and linking or naming it) and the PR is not already
-approved since its hold, and the composer
+unmarked and linking or naming it), all active reviews are completed and assessed with no open findings,
+no L3 question or L3 wait remains, and the PR is not already
+approved since its hold. The generated approval submits its PR and hold identity through the message
+endpoint, which rechecks this readiness under the task lock before writing. Explicit operator
+questions retain their existing response surfaces. The composer appears
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
 concise explanation with its complete reason in details. Task rows and pages share a read-only
@@ -3204,6 +3223,11 @@ results fold on the server before paging; stable row identities are distinct fro
 order, so late events and updates to old commands merge into their correct positions. Raw events
 shows one preview per source record. Full record opens an explicit 4,000-character chunk, with
 Show more for subsequent chunks; the complete redacted record remains accessible.
+Translated item notifications record their local UTC receipt time in the engine adapter; native
+session records retain their source timestamps. A folded command keeps its first event's time
+through output updates, history and reconnect. This is recorded event time, not elapsed duration
+or an exact OS process-start time. Records without timing evidence remain unavailable; launch,
+poll and file modification times never fill a command's missing timestamp.
 
 Transcript polling sends a scoped epoch/version cursor and the oldest loaded order boundary.
 The server retains only row signatures, order and change versions for active/recent viewer scopes.

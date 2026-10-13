@@ -759,6 +759,7 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             question_id: str | None = None, revision: int | None = None,
             group_id: str | None = None, group_revision: int | None = None,
             stop_id: str | None = None,
+            review_number: int | None = None, review_hold_id: str | None = None,
             uploads: list[dict] | None = None, image_ids: list[str] | None = None,
             request_id: str | None = None, request_digest: str | None = None,
             summary: str | None = None, capture_run: int | None = None, to_l3: bool = False,
@@ -779,6 +780,12 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         raise TransitionError(f"task message summary exceeds {SUMMARY_LIMIT} characters")
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if review_number is not None:
+            # #902: a generated approval card can become stale while the operator reads it.
+            if (role != OPERATOR_MESSAGE_ROLE or type(review_number) is not int or review_number <= 0
+                    or review_pr(project, task) != review_number
+                    or task.get("hold_merge_id") != review_hold_id):
+                raise TransitionError("This PR is not ready for automatic merge approval. Refresh the task.")
         if request_id:
             previous = next((row for row in task.get("image_messages", []) if row["id"] == request_id), None)
             if previous:
@@ -961,18 +968,21 @@ def steering_view(task: dict, events: list[dict], *, job_root=None) -> dict:
     stop_id = task.get("stop_id")
     current_stop = request.get("operation") == "stop" and request.get("id") == stop_id
     active_request = request.get("status") in ("pending", "executing")
+    handoff_stop = (request.get("operation") == "handoff" and request.get("phase") == "stopping"
+                    and request.get("status") in ("pending", "executing", "refused", "failed")
+                    and all(request.get(key) == task.get(key) for key in ("attempt", "agent_id", "session_id")))
     confirmed = stop_id and any(e.get("kind") == "stopped" and e.get("stop_id") == stop_id for e in events)
-    if stop_id and not confirmed and not active_request and job_root is not None:
+    if (stop_id or handoff_stop) and not confirmed and not active_request and job_root is not None:
         from . import engines
         confirmed = engines.worker_termination(task, job_root=job_root) is True
     state = "running" if task.get("state") == "running" else "idle"
-    if stop_id and task.get("state") in ("running", "blocked"):
-        if current_stop and active_request:
+    if (stop_id or handoff_stop) and task.get("state") in ("running", "blocked"):
+        if (current_stop or handoff_stop) and active_request:
             state = "stopping"
         elif task.get("resume_after") or (request.get("operation") == "resume" and active_request):
             state = "resuming"
         elif confirmed:
-            state = "stopped"
+            state = "idle" if handoff_stop and not stop_id and task.get("state") == "blocked" else "stopped"
         else:
             state = "stop_unconfirmed"
     elif task.get("state") == "blocked" and task.get("resume_after"):
@@ -1555,6 +1565,7 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
 def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, agent_id: str | None,
              worktree: str | None, branch: str | None, l2_engine: str = "claude",
              engine_model: str | None = None, routing: str | None = None, actor: str = "altd",
+             launch_model: str | None = None, launch_effort: str | None = None, routing_pinned: bool = False,
              messages: list[dict] | None = None, input_delivered: bool = False) -> dict:
     if not session_id or not agent_id:
         raise TransitionError(f"{slug}: dispatch requires a concrete worker and session")
@@ -1568,8 +1579,11 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
         usage.remember(task)
         task.update({"attempt": attempt, "session_id": session_id, "agent_id": agent_id, "worktree": worktree,
                      "branch": branch, "blocked_reason": None, "l2_engine": l2_engine, "engine_model": engine_model,
+                     "launch_model": launch_model, "launch_effort": launch_effort,
+                     "engine_reasoning_effort": None, "routing_pinned": routing_pinned,
                      "routing": routing, "dispatched": S.now()})
         task.pop("next_engine", None)
+        task.pop("next_selection", None)
         ids = {row["id"] for row in (messages or [])} if input_delivered else set()
         for message_id in ids:
             task.setdefault("message_deliveries", {})[message_id] = {
@@ -1731,6 +1745,7 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
 
 
 def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None = None,
+            selection: dict | None = None,
             clear_worker: bool = False, expected_daemon_request: str | None = None,
             expected_agent_id: object = _UNSET, expected_session_id: object = _UNSET,
             expected_block_id: object = _UNSET, **ev) -> dict:
@@ -1750,8 +1765,12 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
         usage.capture(project, task)
         task.pop("verified", None)  # A fresh attempt must establish its own current verification.
         task.pop("nudged", None)  # and its session gets its own nudge
-        task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None,
+        task.update({"agent_id": None, "session_id": None, "engine_model": None,
                      "next_engine": engine or task.get("next_engine"), "routing": None})
+        if selection is not None:
+            task["next_selection"] = dict(selection)
+        elif engine is not None:
+            task.pop("next_selection", None)
         _clear_block(project, task)
         return _move(project, task, "queued", actor, **ev)
 
@@ -2739,13 +2758,21 @@ def review_pr(project: str, task: dict) -> int | None:
     An open question about the PR supplies its single response surface, with quick choices or a freeform
     field. Its submitted response stays there until the owner resolves the question.
     The question does not supply merge authority; recorded approval keeps its separate rules (#451).
-    A PR observed closed without merging asks for no review (#575)."""
+    A PR observed closed without merging asks for no review (#575). Active review work and L3
+    prerequisites keep the automatic approval away without suppressing authored operator questions (#902)."""
+    from . import reviews
     number = _held_pr(task, S.read_events(project, task["slug"]))
     if (number and (task.get("delivery") or task.get("adopted_pr"))
             and task.get("state") in ("blocked", "reported") and not any(
                 task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))
+            and task.get("waiting_on") != "l3"
+            and not any(q["status"] == "open" and q["audience"] == "l3" for q in task.get("questions", []))
             and not any(_references_held_pr(task, q) for q in task.get("questions", []) if q["status"] == "open")
             and not approved_pr(project, task)):
+        try:
+            reviews.require_resolved(task)
+        except TransitionError:
+            return None
         return number
     return None
 
@@ -2815,6 +2842,7 @@ def review_row(project: str, task: dict) -> dict | None:
     delivery = task.get("delivery") or {}
     at = delivery.get("at") or task.get("updated")
     return {"project": project, "slug": task["slug"], "title": task.get("title"), "kind": "review", "pr": number,
+            "review_hold_id": task.get("hold_merge_id"),
             "question": f"Review PR #{number} before merge", "detail": task["hold_merge"],
             "review": reviews.status(project, task, "changes"), "recommendation": None, "asked": at, "since": at}
 

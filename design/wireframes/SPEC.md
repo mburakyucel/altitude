@@ -66,8 +66,11 @@ guides future iterations as the visual direction evolves.
 
 In the cross-engine design review of every UI proposal and the [phone and desktop walkthrough](../../AGENTS.md#ui), check that:
 
-- Visual hierarchy makes the primary action clear; navigation and plain labels show where people
-  are, where they can go, and what an action does.
+- Before styling, evaluate user priorities, frequency and importance in the surrounding experience.
+  Common work and current status lead; infrequent actions remain discoverable lower in the hierarchy.
+  Exceptional prominence needs a current user need, not the novelty of a feature. Visual hierarchy
+  makes the primary action clear; navigation and plain labels show where people are, where they can
+  go, and what an action does.
 - Every clickable control reads as clickable at rest. The only or primary action in an area is a
   bordered or filled button; a borderless ghost button sits only beside a visible bordered or
   filled action; a text link is underlined. Plain text beside muted meta lines is not a control.
@@ -1124,6 +1127,33 @@ unavailable.** with **Retry capture**, and recovery removes the error.
 
 ### 3.10 Task page
 
+**Task model.** The composer has a model pill matching the L3 control, with a downward chevron
+and an actual 44px minimum phone hit area. It shows the launched model and effort; pending choices
+never appear as already applied. Task details retains read-only launch facts, with no separate idle
+transfer card. The pill opens **This task’s model**, bottom sheet on phone and centered on desktop:
+current selection, then labeled Engine, Model and Effort selectors. Models and efforts come from the
+engine seam. **Default · {resolved model}** previews the concrete choice; changed defaults require
+refresh and an unchanged effective tuple cannot start another attempt. Only this task is affected.
+
+One concise confirmation block says **Waits for a handoff note, then starts a fresh session. Some
+context may be lost; rebuilding it uses extra tokens. Saved work, questions and holds stay.** Its
+first sentence becomes **Starts a fresh session from saved context.** after confirmed quota exhaustion
+or worker exit. **Cancel** and **Prepare change** (or **Start fresh session**) complete the chooser.
+Unknown model facts stay explicitly unknown; unavailable/pinned choices give a reason and disable
+submission. Editing fields alone never changes the task. Read-only/denied views remove mutation controls.
+
+After admission, a shared review-style card shows **Preparing change**, the requested model/effort,
+**Switch now** and **Cancel switch**. It follows unanswered questions and merge actions, before activity
+evidence. A current quota offer uses secondary **Change model…** and no duplicate explanation.
+Preparation has no timeout. Switch now confirms stopping pending work without a note; now/cancel
+vanish once stopping commits. Stop stays in its existing location. **Switch controls ↓** leads back
+from history; return to Conversation from Live session/Terminal to use the chooser. Opening the model
+pill during preparation shows the fixed request and controls, not editable selectors. Uncertain
+responses offer **Check status**, never a duplicate mutation. Outcomes become conversation messages.
+Draft, selection, recording and view survive; polling never steals focus. Escape closes the active
+dialog first. Activity/warning/terminal cues accompany explicit state text and respect reduced motion.
+No browser cache or persistent client-side transfer state is added.
+
 The [maintained task states](TaskStates.html) describe activity and steering. Task actions stay
 directly accessible in the compact header, with one consistent button treatment.
 
@@ -1286,8 +1316,14 @@ when newer messages are below the reader. If both lead to the bottom, show only 
 Each hides when its destination is visible. These labeled, keyboard-accessible 44px buttons occupy
 the conversation's lower corner without reducing its viewport. Shown files stay in the question
 and Needs you; View question stays in task details, useful from Live session. A held review-ready PR whose owner has stopped
-(#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
-**Approve merge** sends the operator's own message "Approved: merge PR #N." and the L2 merges
+(#419) shows **Your turn · review before merge** at the end of the chat and in Needs you once all
+active reviews are completed and assessed with no open findings and no L3 question or L3 wait
+remains (#902). Until then the existing review details, wait explanation and Merge held status
+remain; no generated approval card or operator-turn review label appears. Explicit operator
+questions keep their response surfaces independently.
+**Approve merge** checks its current PR, hold and readiness before sending the operator's own
+message "Approved: merge PR #N."; a stale card uses the existing Not sent/Retry state and sends
+nothing. The L2 merges
 with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
 unrelated question never hides that review. An open operator question about the PR supplies its single
 response surface instead: one its owner marks as the merge question, or an unmarked one that links or

@@ -392,6 +392,19 @@ const route = "/projects/altitude/tasks/fix-timer";
 afterEach(() => setViewport(1024));
 
 describe("Task on desktop", () => {
+  it.each([true, false])("keeps single-engine quota recovery visible, current hold=%s", async (heldNow) => {
+    stub({ ...stuck, usage_limit: { kind: "weekly" }, transfer: {
+      current_engine: "first", current_label: "Engine A", eligible: false, preparation: false, quota_limited: true,
+      current_model: null, current_model_label: null, current_effort: null, current_effort_label: "Native",
+      resume_hold: heldNow ? "usage limit" : null, targets: [], request: null,
+      observed: { attempt: 1, agent_id: "worker", session_id: "session", block_id: null },
+    } });
+    const { user } = renderApp({ route });
+    const resume = await screen.findByRole("button", { name: "Resume" });
+    if (heldNow) expect(resume).toBeDisabled();
+    else { expect(resume).toBeEnabled(); await user.click(resume); }
+    expect(screen.queryByRole("button", { name: "Switch engine…" })).not.toBeInTheDocument();
+  });
   it("folds a long L3 coordination message to its summary line and opens its original in place", async () => {
     setViewport(1440);
     const text = "Grant recorded for the fictional sandbox run. Keep it through landing.\n\nSee [the guide](https://example.com/guide).";
@@ -807,7 +820,8 @@ describe("Task on desktop", () => {
       expect(approve).toHaveAttribute("aria-disabled", "true");
       const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
       expect(sent).toHaveLength(1);
-      expect(JSON.parse(String(sent[0]![1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Approved: merge PR #204." });
+      expect(JSON.parse(String(sent[0]![1]?.body))).toEqual({ project: "altitude", slug: "fix-timer",
+        text: "Approved: merge PR #204.", review_pr: 204, review_hold_id: null });
     });
 
     it("turns Approve merge into a red Retry with Not sent when the send fails", async () => {

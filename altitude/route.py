@@ -335,6 +335,17 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
             if not any(tiers):
                 raise ValueError("handoff target is not in the project's configured routing options")
             project = {**project, "routing": [tier for tier in tiers if tier]}
+            selection = task.get("next_selection")
+            if selection is not None:
+                if (not isinstance(selection, dict) or set(selection) != {"model", "effort"}
+                        or not selection["model"]):
+                    raise ValueError("handoff requires a resolved model and effort")
+                config.validate_choice({"engine": task["next_engine"], **selection})
+                choice = pick_engine("l2", forced=task["next_engine"], model=selection["model"],
+                                     effort=selection["effort"] or "native", project=project,
+                                     excluded=excluded, steer=False)
+                # A confirmed attempt selection is not a permanent task/project policy pin.
+                return {**choice, "pinned": False}
         except ValueError as exc:
             return {"engine": None, "model": None, "why": str(exc)}
     return pick_engine("l2", forced=task.get("engine"), model=task.get("model"),

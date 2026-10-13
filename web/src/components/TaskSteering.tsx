@@ -53,7 +53,8 @@ export function SteeringControls({ steering, disabled = false, escape = false }:
   if (state === "idle" && !error) return null;
   const checking = state === "stop_unconfirmed" || Boolean(error);
   const pending = state === "stopping" || state === "resuming";
-  return <button type="button" className="btn task-steering" disabled={pending || (!checking && disabled)}
+  return <button key={checking ? "check" : state === "stopped" || state === "resuming" ? "resume" : "stop"}
+    type="button" className="btn task-steering" disabled={pending || (!checking && disabled)}
     onClick={checking ? () => void steering.recheck() : state === "stopped" ? steering.resume : steering.stop}
     aria-keyshortcuts={escape && state === "running" ? "Escape" : undefined}>
     <BusyLabel busy={pending} label={checking ? "Check status" : state === "stopped" || state === "resuming" ? "Continue" : "Stop"} working={state === "resuming" ? "Resuming…" : "Stopping…"} />

@@ -149,6 +149,47 @@ class TestChatIsolation(AltitudeCase):
                 with self.assertRaises(transcript.TranscriptAccessError):
                     transcript.view(project, slug, engine=engine, session_id=f"{engine}-{other}", attempt=1)
 
+    def test_command_times_reach_http_without_borrowing_missing_evidence(self):
+        started, ended = "2026-09-03T10:00:01+00:00", "2026-09-03T10:00:05+00:00"
+        for engine in ("claude", "codex"):
+            for timestamp in (started, None):
+                with self.subTest(engine=engine, timestamp=timestamp):
+                    task = T.new(self.project, f"Command time {engine} {timestamp is None}", "Observe")
+                    sid, slug = f"time-{engine}-{timestamp is None}", task["slug"]
+                    task.update(state="running", attempt=1, l2_engine=engine, session_id=sid)
+                    S.save_task(self.project, task)
+                    if engine == "codex":
+                        root = dispatch.l2_job_root(self.project, slug)
+                        S.write_json(root / "worker.json", {"session_id": sid, "started_at": S.now()})
+                        path = root / "worker.stdout.jsonl"
+                        rows = [{"type": "item.started", "timestamp": timestamp, "item": {
+                            "type": "command_execution", "id": "call", "command": "echo fixture", "status": "in_progress"}},
+                            {"type": "item.completed", "timestamp": ended, "item": {
+                                "type": "command_execution", "id": "call", "command": "echo fixture",
+                                "status": "completed", "aggregated_output": "fixture"}}]
+                    else:
+                        path = config.HOME / ".claude" / "projects" / "fictional" / f"{sid}.jsonl"
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        self.addCleanup(path.unlink, True)
+                        rows = [{"type": "assistant", "timestamp": timestamp, "message": {"content": [
+                            {"type": "tool_use", "id": "call", "name": "Bash", "input": {"command": "echo fixture"}}]}},
+                            {"type": "user", "timestamp": ended, "message": {"content": [
+                                {"type": "tool_result", "tool_use_id": "call", "content": "fixture"}]}}]
+                    url = f"/api/transcript/{self.project}/{slug}?engine={engine}&session_id={sid}&attempt=1"
+                    path.write_text(json.dumps(rows[0]) + "\n")
+                    first = json.loads(self.request(url))
+                    command, = [row for row in first["events"] if row["kind"] == "command"]
+                    self.assertEqual(command["at"], timestamp)
+                    with path.open("a") as stream:
+                        stream.write(json.dumps(rows[1]) + "\n")
+                    delta = json.loads(self.request(url + f"&mode=delta&cursor={first['cursor']}"))
+                    updated, = delta["events"]
+                    self.assertEqual((updated["id"], updated["at"], updated["status"], updated["output"]),
+                                     (command["id"], timestamp, "completed", "fixture"))
+                    reconnect = json.loads(self.request(url))
+                    command, = [row for row in reconnect["events"] if row["kind"] == "command"]
+                    self.assertEqual(command["at"], timestamp)
+
 
 if __name__ == "__main__":
     unittest.main()

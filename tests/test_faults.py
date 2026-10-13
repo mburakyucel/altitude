@@ -237,8 +237,9 @@ class TestSystemFault(AltitudeCase):
 
     def test_project_and_kind_delimiters_cannot_share_a_fault_record(self):
         self.register("demo")
-        self.register("demo/child")
-        for project, kind in (("demo", "child/tick"), ("demo/child", "tick")):
+        self.register('demo", "child')
+        # Both names are flat components; embedded JSON delimiters still cannot merge their tuple keys.
+        for project, kind in (("demo", 'child", "tick'), ('demo", "child', "tick")):
             filed = incidents.system_fault(kind, "checkout refused", project=project)
             self.assertIsNotNone(filed)
             self.assertEqual(len(self.queued(project)), 1)

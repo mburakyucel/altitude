@@ -161,6 +161,11 @@ finish: the design itself makes clear where to click and where to go, and anythi
 immediately recognisable as clickable. Apply the concise [design review expectations](design/wireframes/SPEC.md#11-standing-design-tenet)
 alongside the interaction-state walkthrough below.
 
+Design and proposal review evaluate user priorities, frequency and importance in the surrounding
+experience before styling. Common work and current status lead; infrequent actions remain
+discoverable lower in the hierarchy. Exceptional prominence needs a current user need, not merely
+the fact that a feature is new or under review.
+
 Keep wireframes lean: maintain the current approved design in the spec and useful boards, folding
 accepted changes into them instead of accumulating per-PR galleries. Review-only before/after
 comparisons, proposal captures, implementation screenshot galleries, and routine test renderings stay
