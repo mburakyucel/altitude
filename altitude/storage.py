@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import stat
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from . import platform
@@ -16,6 +16,10 @@ class StorageRefused(OSError):
 
 class NotRegularFile(StorageRefused):
     pass
+
+
+class OrdinaryNonDirectory(NotADirectoryError):
+    """An ordinary file occupies a directory component used by a directory predicate."""
 
 
 def _component(name: str) -> None:
@@ -44,7 +48,13 @@ def directory(root: Path | int, parts: list[str], *, create: bool = False, searc
                 else:
                     if not search:
                         os.fsync(fd)
-            child = os.open(part, flags, dir_fd=fd)
+            try:
+                child = os.open(part, flags, dir_fd=fd)
+            except NotADirectoryError as exc:
+                info = os.stat(part, dir_fd=fd, follow_symlinks=False)
+                if stat.S_ISREG(info.st_mode):
+                    raise OrdinaryNonDirectory(exc.errno, exc.strerror, exc.filename) from exc
+                raise StorageRefused("runtime directory component refused") from exc
             parent, fd = fd, child
             os.close(parent)
         yield fd
@@ -57,7 +67,12 @@ def runtime_directory(parts: list[str], *, create: bool = False, search: bool = 
                       mode: int = 0o700):
     """Use the canonical startup anchor while keeping configured paths for identity and display."""
     from . import config
-    with directory(Path("/"), list(config.RUNTIME_ROOT.parts[1:]), create=create, search=True, mode=mode) as root:
+    with ExitStack() as stack:
+        try:
+            root = stack.enter_context(directory(Path("/"), list(config.RUNTIME_ROOT.parts[1:]),
+                                                 create=create, search=True, mode=mode))
+        except OrdinaryNonDirectory as exc:
+            raise StorageRefused("runtime root anchor refused") from exc
         with directory(root, parts, create=create, search=True, mode=mode) as held:
             if search:
                 yield held
@@ -144,7 +159,7 @@ def runtime_exists(path: Path, *, kind: str = "file") -> bool:
     try:
         with runtime_parent(path) as (parent, name):
             return exists(parent, name, kind=kind)
-    except FileNotFoundError:
+    except (FileNotFoundError, OrdinaryNonDirectory):
         return False
 
 
@@ -156,7 +171,7 @@ def runtime_entry_exists(path: Path) -> bool:
             if stat.S_ISLNK(info.st_mode):
                 raise StorageRefused("runtime link refused")
             return True
-    except FileNotFoundError:
+    except (FileNotFoundError, OrdinaryNonDirectory):
         return False
 
 

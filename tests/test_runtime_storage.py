@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, installation, platform, server, state as S, storage, transcript
+from altitude import config, installation, platform, server, state as S, storage, tasks as T, transcript
 
 
 class RuntimeStorage(AltitudeCase):
@@ -180,6 +180,28 @@ class RuntimeStorage(AltitudeCase):
         (live / "status.json").unlink()
         live.rmdir()
         self.assertEqual(S.task_dir(self.project, "fictional-task"), archived)
+
+    def test_ordinary_file_tasks_parent_keeps_archive_selection_and_archive_noop(self):
+        self.directory.mkdir()
+        tasks_parent = S.tasks_dir(self.project)
+        tasks_parent.write_text("ordinary parent")
+        archived = S.archive_dir(self.project) / "fictional-task"
+        archived.mkdir(parents=True)
+        S.write_runtime_json(archived / "status.json", {"slug": "fictional-task", "state": "done"})
+        self.assertEqual(S.task_dir(self.project, "fictional-task"), archived)
+        with self.assertRaises(NotADirectoryError):
+            S.load_task(self.project, "fictional-task")
+        T._archive(self.project, "fictional-task")
+        self.assertEqual(tasks_parent.read_text(), "ordinary parent")
+        self.assertTrue((archived / "status.json").is_file())
+        self.assertFalse((S.tasks_dir(self.project) / "fictional-task").exists())
+        tasks_parent.unlink()
+        tasks_parent.symlink_to(self.outside, target_is_directory=True)
+        with self.assertRaises(OSError):
+            S.task_dir(self.project, "fictional-task")
+        with self.assertRaises(OSError):
+            T._archive(self.project, "fictional-task")
+        self.assertTrue((archived / "status.json").is_file())
 
     def test_task_selector_surfaces_corrupt_decode_link_and_special_status(self):
         live = S.tasks_dir(self.project) / "fictional-task"
