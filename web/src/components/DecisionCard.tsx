@@ -234,14 +234,19 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const refresh = () => {
+    for (const queryKey of [["overview"], ["project", decision.project], ["task", decision.project, decision.slug]]) void queryClient.invalidateQueries({ queryKey });
+  };
   const approve = useMutation({
     mutationFn: () => sendL2Message({ project: decision.project, slug: decision.slug,
       text: `Approved: merge PR #${decision.pr}.`, review_pr: decision.pr ?? undefined,
       review_hold_id: decision.review_hold_id ?? null }),
     onSuccess: () => {
-      for (const queryKey of [["overview"], ["project", decision.project], ["task", decision.project, decision.slug]]) void queryClient.invalidateQueries({ queryKey });
+      refresh();
       if (!chat) toast.show({ message: "Approval sent to L2" });
     },
+    // A refused stale card is replaced by the task's current state instead of offering a Retry that cannot pass.
+    onError: (error) => { if (error instanceof ApiError && error.status === 409) refresh(); },
   });
   const denied = approve.error instanceof ApiError && [401, 403].includes(approve.error.status);
   // Approve merge changes in place (SPEC.md §3.8.2): it spins while sending and then waits to be read.

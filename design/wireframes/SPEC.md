@@ -1328,8 +1328,8 @@ remains (#902). Until then the existing review details, wait explanation and Mer
 remain; no generated approval card or operator-turn review label appears. Explicit operator
 questions keep their response surfaces independently.
 **Approve merge** checks its current PR, hold and readiness before sending the operator's own
-message "Approved: merge PR #N."; a stale card uses the existing Not sent/Retry state and sends
-nothing. The L2 merges
+message "Approved: merge PR #N."; a stale card sends nothing and gives way to the task's current
+state. The L2 merges
 with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
 unrelated question never hides that review. An open operator question about the PR supplies its single
 response surface instead: one its owner marks as the merge question, or an unmarked one that links or
