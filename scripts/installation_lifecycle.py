@@ -1053,9 +1053,11 @@ class MacLifecycle(Lifecycle):
                         "with config.add_project('fictional',path=Path(sys.argv[2])): pass\n")
             self.run("address-fictional-registration", sys.executable, "-B", "-c", register,
                      self.prefix / "current", self.home / "Projects/fictional")
+            registration = digest(registry)
             self.native_address_recovery(before)
             # Address changes intentionally reissue the leaf under the same retained CA and server key.
             retained[self.tls / "server.crt"] = digest(self.tls / "server.crt")
+            initial = self.healthy("address-baseline-before-update", before)
             status = self.offered("current", None)
             assert status["automatic"], status
 
@@ -1134,6 +1136,7 @@ class MacLifecycle(Lifecycle):
                                                                           "downloads": downloads})
             assert (self.prefix / "versions" / broken).is_dir()
             self.native_cache_retry(server, made[cache_retry], cache_retry, made[third]["release"])
+            assert digest(registry) == registration, "Native lifecycle lost the original project registration"
             # Remove only the registration fixture after preservation is proven; uninstall can exercise full removal.
             registry.write_bytes(original_registry)
             assert all(digest(path) == value for path, value in retained.items()), "Update/recovery changed retained data"
