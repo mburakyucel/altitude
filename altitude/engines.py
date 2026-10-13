@@ -2236,6 +2236,43 @@ def _codex_session_model(session_id: str | None, started_at: str, home: Path) ->
     return {}
 
 
+def _codex_session_context(session_id: str | None, started_at: str, home: Path) -> dict | None:
+    """Newest own request in this invocation; a turn aggregate is never context occupancy."""
+    if not session_id or not re.fullmatch(r"[A-Za-z0-9-]+", session_id):
+        return None
+    latest, window = None, None
+    try:
+        for path in home.glob(f"sessions/*/*/*/rollout-*-{session_id}.jsonl"):
+            with path.open() as rollout:
+                for line in rollout:
+                    if not line.endswith("\n") or not any(kind in line for kind in ('"token_usage_record"', '"token_count"')):
+                        continue
+                    try:
+                        event = json.loads(line)
+                        if datetime.fromisoformat(event["timestamp"]) < datetime.fromisoformat(started_at):
+                            continue
+                        payload = event.get("payload") or {}
+                        usage = None
+                        if event.get("type") == "token_usage_record" and payload.get("thread_id") == session_id:
+                            usage = payload.get("usage")
+                        elif event.get("type") == "event_msg" and payload.get("type") == "token_count":
+                            info = payload.get("info") or {}
+                            value = info.get("model_context_window")
+                            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                                window = value
+                            usage = info.get("last_token_usage")
+                        if isinstance(usage, dict) and not _token_numbers(usage, "codex")["incomplete"]:
+                            candidate = {"tokens": usage["input_tokens"], "observed_at": event["timestamp"]}
+                            if latest is None or candidate["observed_at"] >= latest["observed_at"]:
+                                latest = candidate
+                    except (ValueError, KeyError, TypeError, AttributeError):
+                        continue
+    except OSError:
+        return None
+    return {**latest, "window": window,
+            "percent": round(100.0 * latest["tokens"] / window, 1) if window else None} if latest else None
+
+
 def _codex_home(env: dict) -> Path:
     return Path(env.get("CODEX_HOME") or Path(env.get("HOME") or config.HOME) / ".codex")
 
@@ -2803,8 +2840,11 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     if not metadata:
         observe(stdout)
     events = _codex_parse(stdout or "")
-    return _codex_outcome(events, proc.returncode, stdout, stderr, text=(_agent_messages(events) or [""])[-1],
-                          resume=resume, model=model, metadata=metadata)
+    result = _codex_outcome(events, proc.returncode, stdout, stderr, text=(_agent_messages(events) or [""])[-1],
+                            resume=resume, model=model, metadata=metadata)
+    result["context"] = _codex_session_context(result.get("reported_session_id"), started_at,
+                                              _codex_home(codex_env(extra_env)))
+    return result
 
 
 def _review_env() -> dict:
@@ -3378,6 +3418,19 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
 
 def context_percent(context_tokens: int, engine: str = "claude") -> float:
     return round(100.0 * context_tokens / config.CONTEXT_LINES[engine][2], 1)
+
+
+def context_rotation_due(pct: float | None, engine: str) -> bool:
+    """Only Claude needs Altitude's context rotation; Codex compacts its own conversation."""
+    return engine == "claude" and pct is not None and pct >= config.CONTEXT_LINES[engine][1] * 100
+
+
+def session_rotation_due(session: dict, engine: str) -> bool:
+    """An explicit reset is independent of an engine's automatic context rotation."""
+    pct = session.get("context_percent")
+    automatic_reason = f"context {pct}% ≥ act line {int(config.CONTEXT_LINES[engine][1] * 100)}%"
+    requested = session.get("rotate_next") and session.get("rotate_reason") != automatic_reason
+    return bool(requested or context_rotation_due(pct, engine))
 
 
 def context_state(pct: float | None, engine: str = "claude") -> str:
