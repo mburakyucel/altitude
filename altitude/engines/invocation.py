@@ -39,20 +39,37 @@ def job_directory(project: str, slug: str):
     with ExitStack() as stack:
         try:
             root = stack.enter_context(storage.runtime_directory([project], search=False))
-            live_parent = stack.enter_context(storage.directory(root, ["tasks"], search=False))
         except OSError as exc:
             raise InvocationRefused("invocation ancestry refused") from exc
         try:
-            entry = os.stat(slug, dir_fd=live_parent, follow_symlinks=False)
+            live_entry = os.stat("tasks", dir_fd=root, follow_symlinks=False)
         except FileNotFoundError:
-            entry = None
+            live_entry = None
+        except OSError as exc:
+            raise InvocationRefused("live tasks entry refused") from exc
+        if live_entry and stat.S_ISLNK(live_entry.st_mode):
+            raise InvocationRefused("linked tasks entry")
+        live_parent = None
+        entry = None
+        if live_entry and stat.S_ISDIR(live_entry.st_mode):
+            try:
+                live_parent = stack.enter_context(storage.directory(root, ["tasks"], search=False))
+                if _identity(os.fstat(live_parent)) != _identity(live_entry):
+                    raise InvocationRefused("live tasks directory replaced")
+                try:
+                    entry = os.stat(slug, dir_fd=live_parent, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+            except OSError as exc:
+                raise InvocationRefused("live tasks directory refused") from exc
         if entry and stat.S_ISLNK(entry.st_mode):
             raise InvocationRefused("linked task entry")
         location = "tasks" if entry and stat.S_ISDIR(entry.st_mode) else "archive"
         display = config.project_dir(project) / location / slug / "l2-engine"
-        parent = None
+        parent = live_parent if location == "tasks" else None
         try:
-            parent = stack.enter_context(storage.directory(root, [location], search=False))
+            if parent is None:
+                parent = stack.enter_context(storage.directory(root, [location], search=False))
             task = stack.enter_context(storage.directory(parent, [slug], search=False))
             if location == "tasks" and entry is not None and _identity(os.fstat(task)) != _identity(entry):
                 raise InvocationRefused("live task directory replaced")

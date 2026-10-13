@@ -3261,8 +3261,9 @@ Indexes expire after 60 idle seconds, checked on access, without evicting other 
 it retains no transcript bodies. Unchanged source fingerprints
 avoid parsing and return a small response. Changed inputs rebuild the canonical projection.
 Task-owned invocation records and stdout use a request-local reader in the engine seam.
-It selects the registered project's live task directory, or its archive when the live task entry
-is absent or an ordinary non-directory, and pins the selected job directory. Historical discovery
+It selects the registered project's live task directory, or its archive when the live `tasks`
+parent or task entry is absent or an ordinary non-directory; linked entries refuse selection.
+It pins the selected job directory. Historical discovery
 parses each regular JSON record once and scans stdout incrementally through the initialization
 header; current activity uses the validated worker identity without a header selection rule.
 Projection and activity read complete stdout bytes through a regular no-follow descriptor relative

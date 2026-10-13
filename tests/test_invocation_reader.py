@@ -8,7 +8,7 @@ from unittest import mock
 
 from tests.test_live_transcript import _CodexTranscriptCase
 from altitude import config, state as S, storage, transcript
-from altitude.engines import invocation
+from altitude.engines import codex, invocation
 
 
 class TestInvocationReader(_CodexTranscriptCase):
@@ -224,6 +224,68 @@ class TestInvocationReader(_CodexTranscriptCase):
         with self.assertRaises(invocation.InvocationRefused):
             with invocation.job_directory(self.project, self.slug):
                 pass
+
+    def _archive_without_live_tasks_directory(self, replacement):
+        self.old.write_text(json.dumps({"type": "item.completed", "item": {
+            "id": "archive", "type": "agent_message", "text": "archived invocation"}}) + "\n")
+        task_dir = self.root.parent
+        tasks_dir = task_dir.parent
+        archive = tasks_dir.parent / "archive" / self.slug
+        archive.parent.mkdir(exist_ok=True)
+        task_dir.rename(archive)
+        tasks_dir.rmdir()
+        if replacement == "file":
+            tasks_dir.write_text("ordinary entry")
+        elif replacement == "link":
+            outside = self.tmp / "outside-tasks"
+            (outside / self.slug / "l2-engine").mkdir(parents=True)
+            (outside / self.slug / "l2-engine" / "w1.json").write_text('{"marker":"outside marker"}')
+            tasks_dir.symlink_to(outside, target_is_directory=True)
+        return archive
+
+    def test_missing_live_tasks_parent_selects_archive_and_closes_job(self):
+        archive = self._archive_without_live_tasks_directory("missing")
+        with invocation.job_directory(self.project, self.slug) as (job, display):
+            self.assertIsNotNone(job)
+            self.assertEqual(display, archive / "l2-engine")
+            source = invocation.invocation(job, display, "w1")
+            source.discover_stdout(header=True)
+            self.assertIn(b"archived invocation", source.read()[0])
+            self.assertEqual([turn.worker for turn in codex.codex_turns(job, display, "thread-1")], ["w1"])
+        with self.assertRaises(OSError):
+            os.fstat(job)
+        self.assertIn("archived invocation", json.dumps(self._view()))
+        self.assertIn("archived invocation", json.dumps(self._view(raw=True)))
+
+    def test_ordinary_file_live_tasks_parent_selects_archive_and_closes_job(self):
+        archive = self._archive_without_live_tasks_directory("file")
+        with invocation.job_directory(self.project, self.slug) as (job, display):
+            self.assertIsNotNone(job)
+            self.assertEqual(display, archive / "l2-engine")
+            source = invocation.invocation(job, display, "w1")
+            source.discover_stdout(header=True)
+            self.assertIn(b"archived invocation", source.read()[0])
+            self.assertEqual([turn.worker for turn in codex.codex_turns(job, display, "thread-1")], ["w1"])
+        with self.assertRaises(OSError):
+            os.fstat(job)
+
+    def test_linked_live_tasks_parent_refuses_archive_without_outside_read(self):
+        self._archive_without_live_tasks_directory("link")
+        directory = storage.runtime_directory
+        held = []
+        @contextmanager
+        def tracked(*args, **kwargs):
+            with directory(*args, **kwargs) as fd:
+                held.append(fd)
+                yield fd
+        with mock.patch.object(storage, "runtime_directory", tracked), \
+             mock.patch.object(storage, "regular_reader", side_effect=AssertionError("outside read")):
+            with self.assertRaises(invocation.InvocationRefused):
+                with invocation.job_directory(self.project, self.slug):
+                    self.fail("linked parent selected an invocation")
+        self.assertEqual(len(held), 1)
+        with self.assertRaises(OSError):
+            os.fstat(held[0])
 
     def test_linked_job_directory_refuses_without_reading_outside(self):
         held = self.root.with_name("held-engine")
