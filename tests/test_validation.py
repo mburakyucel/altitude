@@ -854,6 +854,171 @@ class MacRunnerCase(RunnerCase):
         self.patch(platform, "XCODE_SELECT", str(select))
 
 
+class TestGuestBrowserValidation(MacRunnerCase):
+    """Fixed admission, captured candidate, trusted controller and cleanup; no guest or browser launches."""
+
+    def setUp(self):
+        super().setUp()
+        self.platform_admission = platform.validation_container_browser_unavailable
+        self.patch(platform, "validation_container_browser_unavailable", return_value=None)
+        self.source = self.tmp / "deployed"
+        (self.source / "scripts").mkdir(parents=True)
+        self.policy = "The fictional VM approval (`fixture-vm-approval`) permits one bounded disposable guest."
+        document = "# Rules\n\n### VM lane runs on this Mac\n\n" + self.policy + "\n"
+        (self.source / "AGENTS.md").write_text(document)
+        (self.repo / "AGENTS.md").write_text(document)
+        subprocess.run(["git", "-C", str(self.repo), "add", "AGENTS.md"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "Fictional VM policy"], check=True)
+        self.head = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+                                   text=True, check=True).stdout.strip()
+        self.patch(config, "SOURCE", self.source)
+        self.patch(config, "REPO", self.repo)
+        self.controller = self.source / "scripts/container_browser_vm.py"
+        self.controller.write_text('''import json, pathlib, sys
+args = sys.argv[1:]
+area = pathlib.Path(args[args.index('--area') + 1])
+results = area / 'results'
+results.mkdir(exist_ok=True)
+if args[0] == 'cleanup':
+    (results / 'cleanup.json').write_text(json.dumps({'vm_stopped': True, 'work_removed': True}))
+else:
+    (results / 'controller.json').write_text(json.dumps({'argv': args, 'candidate': (area / 'work/AGENTS.md').read_text()}))
+    print('fictional trusted controller')
+''')
+        task = S.load_task(self.project, self.slug)
+        task["grant"] = {"id": "fixture-grant", "attempt": 1, "source": "project", "actor": "l3",
+                         "approval": "fixture-vm-approval", "purpose": self.policy,
+                         "policy": {"file": "AGENTS.md", "heading": "VM lane runs on this Mac",
+                                    "commit": self.head, "text": self.policy}}
+        S.save_task(self.project, task)
+
+    def test_only_fixed_lane_options_are_admitted(self):
+        for options in ({"kvm": True}, {"publish": 19448}, {"simulator": True}, {"capture": True}):
+            with self.subTest(options=options):
+                self.assertIn("takes no command", self.validate([], container_browser=True, status=400, **options)["error"])
+        self.assertIn("takes no command", self.validate(["true"], container_browser=True, status=400)["error"])
+        self.assertEqual(self.rows() if self.ledger().exists() else [], [])
+
+    def test_missing_stale_and_altered_policy_grants_refuse(self):
+        task = S.load_task(self.project, self.slug)
+        original = task["grant"]
+        for grant in (None, {**original, "attempt": 0}, {**original, "source": "task"},
+                      {**original, "policy": {**original["policy"], "heading": "another purpose"}},
+                      {**original, "policy": {**original["policy"], "text": self.policy + " arbitrary code"}},
+                      {**original, "policy": {**original["policy"], "commit": "0" * 40}}):
+            with self.subTest(grant=grant):
+                task["grant"] = grant
+                S.save_task(self.project, task)
+                self.assertIn("current standing VM policy", self.validate([], container_browser=True, status=403)["error"])
+
+    def test_trusted_controller_receives_capture_and_cleanup_precedes_delivery(self):
+        (self.repo / "uncommitted").write_text("excluded")
+        result = self.validate([], container_browser=True)
+        self.assertEqual((result["exit"], result["cleanup"], result["commit"]), (0, None, self.head))
+        self.assertTrue(result["isolation"].startswith("guest:rootless-container;controller-sha256:"))
+        self.assertFalse(self.profile.exists(), "candidate Mac Seatbelt execution is not this lane")
+        evidence = Path(result["results"])
+        receipt = json.loads((evidence / "controller.json").read_text())
+        self.assertEqual(receipt["candidate"], (self.source / "AGENTS.md").read_text())
+        self.assertEqual(receipt["argv"][::2], ["--area", "--cache", "--run-id", "--commit", "--tree", "--port"])
+        self.assertEqual(json.loads((evidence / "cleanup.json").read_text()), {"vm_stopped": True, "work_removed": True})
+        self.assertEqual(self.rows()[0]["granted"], "fixture-grant")
+        self.assertEqual(self.rows()[0]["command"], "alt task validate --container-browser")
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+
+    def test_deployed_policy_change_refuses_the_pinned_grant(self):
+        (self.source / "AGENTS.md").write_text("### VM lane runs on this Mac\n\nA different approved purpose.\n")
+        self.assertIn("current standing VM policy", self.validate([], container_browser=True, status=403)["error"])
+
+    def test_another_project_cannot_borrow_the_same_policy(self):
+        with mock.patch.object(config, "REPO", self.tmp / "another-project"):
+            self.assertIn("only available for the Altitude source project",
+                          self.validate([], container_browser=True, status=403)["error"])
+
+    def test_cleanup_failure_retains_guest_area_and_recovery_uses_trusted_cleanup(self):
+        with mock.patch.object(validation, "browser_cleanup", return_value="guest stop unconfirmed"):
+            result = self.validate([], container_browser=True)
+        self.assertEqual((result["ended"], result["cleanup"]), ("cleanup failed", "guest stop unconfirmed"))
+        [area] = list((validation.home() / "runs").iterdir())
+        self.assertFalse(validation._ready.is_set())
+        with mock.patch.object(validation, "browser_cleanup", wraps=validation.browser_cleanup) as clean:
+            validation.reconcile()
+        clean.assert_called_once_with(area)
+        self.assertTrue(validation._ready.is_set())
+        self.assertFalse(area.exists())
+
+    def test_cli_sends_the_fixed_lane_without_an_owner_command(self):
+        self.serving(self.httpd.server_address[1])
+        env = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug,
+               "ALTITUDE_ATTEMPT": "1"}
+        result = self.alt("task", "validate", "--container-browser", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("fictional trusted controller", result.stdout)
+        for args in (("--", "true"), ("--simulator",), ("--kvm",), ("--publish", "19448"), ("--capture",)):
+            with self.subTest(args=args):
+                refused = self.alt("task", "validate", "--container-browser", *args, env=env)
+                self.assertEqual(refused.returncode, 2)
+                self.assertIn("takes no command", refused.stderr)
+
+    def test_capture_cannot_consume_the_hour_reserved_for_guest_cleanup(self):
+        with mock.patch.object(validation, "TIMEOUT", 120):
+            result = self.validate([], container_browser=True, status=400)
+        self.assertIn("no time remains", result["error"])
+        row = self.rows()[0]
+        self.assertEqual((row["ended"], row["cleanup"]), ("failed", None))
+        evidence = Path(row["results"])
+        self.assertTrue((evidence / "cleanup.json").exists())
+        self.assertFalse((evidence / "controller.json").exists())
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+
+    def test_revocation_stops_and_records_the_admitted_run(self):
+        started = threading.Event()
+        original_job = validation._job
+
+        def job(name, script, folder, timeout, limits):
+            if "-clean-" in name:
+                return original_job(name, script, folder, timeout, limits)
+            started.set()
+            wait_for(lambda: bool(validation._active.get("stopped")), "grant revocation to stop the run")
+            return {"exit": 125, "timed_out": False, "started": S.now(), "finished": S.now(),
+                    "error": None, "output": "", "output_truncated": False}
+
+        answers = []
+        with mock.patch.object(validation, "_job", side_effect=job):
+            thread = threading.Thread(target=lambda: answers.append(self.validate([], container_browser=True)))
+            thread.start()
+            try:
+                self.assertTrue(started.wait(10))
+                task = S.load_task(self.project, self.slug)
+                task["grant"] = None
+                S.save_task(self.project, task)
+            finally:
+                thread.join(15)
+        self.assertFalse(thread.is_alive())
+        self.assertIn("grant was revoked", answers[0]["error"])
+        self.assertEqual(answers[0]["cleanup"], None)
+
+    def test_platform_admits_only_apple_silicon_mac(self):
+        with mock.patch.object(platform, "validation_unavailable", return_value=None):
+            for host, architecture, accepted in (("darwin", "arm64", True), ("darwin", "x86_64", False),
+                                                   ("linux", "arm64", False), ("linux", "x86_64", False)):
+                with self.subTest(host=host, architecture=architecture), \
+                        mock.patch.object(platform.sys, "platform", host), \
+                        mock.patch.object(platform.host_platform, "machine", return_value=architecture):
+                    self.assertEqual(self.platform_admission() is None, accepted)
+
+    def test_guest_resources_use_the_fixed_host_seam(self):
+        for cpus, expected in ((None, 1), (2, 1), (6, 3), (8, 4), (20, 4)):
+            with self.subTest(cpus=cpus), mock.patch.object(platform.os, "cpu_count", return_value=cpus):
+                self.assertEqual(platform.validation_guest_cpus(), expected)
+        for host, architecture in (("darwin", "arm64"), ("darwin", "x86_64"), ("linux", "arm64")):
+            with self.subTest(host=host, architecture=architecture), \
+                    mock.patch.object(platform.sys, "platform", host), \
+                    mock.patch.object(platform.host_platform, "machine", return_value=architecture):
+                expected = Path.home() / ".cache/altitude-installation-vm" if (host, architecture) == ("darwin", "arm64") else None
+                self.assertEqual(platform.validation_guest_seed_cache(), expected)
+
+
 class TestMacValidationRunner(ClientStop, MacRunnerCase):
     def test_a_run_uses_the_committed_head_under_the_validation_profile_with_its_own_environment(self):
         (self.repo / "uncommitted.txt").write_text("not tested\n")

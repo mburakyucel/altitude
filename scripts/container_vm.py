@@ -26,13 +26,16 @@ import time
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-if sys.platform == 'darwin':
+from altitude import platform as host
+if not host.validation_in_container():
     from scripts import linux_vm_mac as vm
 else:
     from scripts import installation_vm as vm
 
 
 def run(results, cache, *, image_workflow=False, native_binary=None, browser=False, logout=False):
+    if browser and not host.validation_in_container():
+        raise RuntimeError('Mac browser verification uses alt task validate --container-browser')
     results = results.resolve()
     results.mkdir()
     record = {'passed': False, 'scope': 'fictional Ubuntu VM committed Altitude container launcher and image lifecycle in disposable Linux VM'}

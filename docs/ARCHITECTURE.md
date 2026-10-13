@@ -2,6 +2,17 @@
 
 ## Container deployment boundary
 
+The Mac actual-image browser validation entrypoint is the fixed `alt task validate --container-browser`
+lane. The deployed controller owns a bounded throwaway Ubuntu guest under the task's standing VM
+policy grant; candidate host commands are never accepted. Provisioning is separate from offline
+candidate execution. A non-root rootless browser container has no network interface or guest
+administration credentials: bounded local fixture-control IPC and a fixed raw HTTPS socket relay
+connect it to fictional application containers. Physical guest NAT cutoff, inspected container
+configuration and a finite Chromium sandbox preflight establish the execution boundary. Validation's
+existing queue, hour limit, disconnect/replacement cleanup and activation fence own that entire
+lifetime. [Container browser validation](CONTAINERS.md#container-browser-validation) defines its
+resource, identity and native evidence requirements. The Linux KVM browser route remains separate.
+
 The host launcher checks that Podman's runtime bus resolves to the local user's owned bus socket.
 Disposable fixture runtimes retain private storage/process metadata and link only that same user
 bus into their runtime directory. The host controller selects cgroupfs and distribution crun;

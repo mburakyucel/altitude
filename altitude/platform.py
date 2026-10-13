@@ -2446,6 +2446,25 @@ def validation_in_container() -> bool:
     return not _darwin()
 
 
+def validation_container_browser_unavailable() -> str | None:
+    """The fixed guest browser validation lane is supported only on Apple silicon Macs."""
+    if not _darwin() or host_platform.machine() != "arm64":
+        return "--container-browser needs macOS on Apple silicon"
+    return validation_unavailable()
+
+
+def validation_guest_cpus() -> int:
+    """A bounded guest uses at most four cores and half the host's known CPUs."""
+    return min(4, max(1, (os.cpu_count() or 2) // 2))
+
+
+def validation_guest_seed_cache() -> Path | None:
+    """Only the eligible Mac's existing VM lane cache seeds the protected validation cache."""
+    if _darwin() and host_platform.machine() == "arm64":
+        return Path.home() / ".cache" / "altitude-installation-vm"
+    return None
+
+
 def directory_search_access() -> int:
     """Look up names without reading hidden ancestors on Mac (#625); keep Linux directory access."""
     return os.O_SEARCH if _darwin() else os.O_RDONLY

@@ -45,6 +45,8 @@ One engine is enough, and each integration is
 - **Validation runs.** Owners check their changes in
   [disposable runs](docs/DEVELOPMENT.md#validation-runner) before merging: a Linux container, a
   confined run on a Mac or an iOS Simulator iPhone.
+  The [actual-image container browser lane](docs/CONTAINERS.md#container-browser-validation) on an
+  Apple silicon Mac uses a disposable Linux guest with a sandboxed browser container.
 
 ## Get started
 

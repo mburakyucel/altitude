@@ -13,11 +13,15 @@ from scripts import container, container_acceptance
 ROOT=Path.home()/'input/browser-runtime'
 STATE=Path.home()/'input/browser-state.json'
 ARCHIVE=Path.home()/'input/altitude-v0.1.0-rc.2.tar.gz'
+BASES=Path.home()/'input/browser-base-images.json'
 
 
-def fixture_image(archive, suffix):
+def fixture_image(archive, suffix, base=None):
     command=platform.container_command
-    image=container.build(archive,hashlib.sha256(archive.read_bytes()).hexdigest(),'localhost/altitude:browser-base-'+suffix)
+    image=(json.loads(command(['image','inspect',base]))[0] if base else
+           container.build(archive,hashlib.sha256(archive.read_bytes()).hexdigest(),'localhost/altitude:browser-base-'+suffix))
+    if base and image['Id'] != base:
+        raise RuntimeError('Captured production image identity differs')
     ident=container.start(image['Id'],'fixture-browser-build','browser-build-home','browser-build-projects',
         '127.0.0.1','localhost',19448,new_volumes=True)
     command(['exec',ident,'mkdir','-p','/opt/fixture','/etc/systemd/user/altitude.service.d'])
@@ -35,13 +39,32 @@ def fixture_image(archive, suffix):
     return fixture,image['Id']
 
 
-def run(action, value):
+def prepare_bases():
+    """Online build phase: no fixture code runs or production container boots."""
+    ROOT.mkdir(exist_ok=True)
+    with container_acceptance.environment(ROOT,reuse=True):
+        images={}
+        for suffix,archive in [('old',ARCHIVE),('new',ARCHIVE.with_name('altitude-v0.1.0-rc.3.tar.gz'))]:
+            checksum=hashlib.sha256(archive.read_bytes()).hexdigest()
+            image=container.build(archive,checksum,'localhost/altitude:browser-base-'+suffix)
+            images[suffix]={'id':image['Id'],'archive_sha256':checksum}
+        BASES.write_text(json.dumps(images))
+        return images
+
+
+def run(action, value, *, captured_bases=False):
     ROOT.mkdir(exist_ok=True)
     with container_acceptance.environment(ROOT,reuse=True):
         command=platform.container_command
         if action=='prepare':
-            fixture,base=fixture_image(ARCHIVE,'old')
-            upgraded,new=fixture_image(ARCHIVE.with_name('altitude-v0.1.0-rc.3.tar.gz'),'new')
+            bases=json.loads(BASES.read_text()) if captured_bases else {}
+            if captured_bases:
+                for suffix,archive in [('old',ARCHIVE),('new',ARCHIVE.with_name('altitude-v0.1.0-rc.3.tar.gz'))]:
+                    image=bases[suffix]
+                    if not isinstance(image['id'],str) or not image['id'] or image['archive_sha256']!=hashlib.sha256(archive.read_bytes()).hexdigest():
+                        raise RuntimeError('Captured production image/archive identity differs')
+            fixture,base=fixture_image(ARCHIVE,'old',bases['old']['id'] if captured_bases else None)
+            upgraded,new=fixture_image(ARCHIVE.with_name('altitude-v0.1.0-rc.3.tar.gz'),'new',bases['new']['id'] if captured_bases else None)
             STATE.write_text(json.dumps({'image':fixture,'upgrade':upgraded,'instances':[]}))
             return {'image':fixture,'source_image':base,'upgrade':upgraded,'upgrade_source_image':new,
                     'version_scope':'Two fixture release versions from the same application schema; no arbitrary migration claim'}
