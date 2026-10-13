@@ -320,7 +320,7 @@ def resume_hold(engine: str, model: str | None) -> str | None:
     installed = engines.installation(engine)
     if installed["available"] is False:
         return installed["why"]
-    option = {"engine": engine, "model": model or config.default_model("l2", engine), "role": "l2"}
+    option = {"engine": engine, "model": model, "role": "l2"}
     return (_hold(option, _readings()) or {}).get("why")
 
 
@@ -364,6 +364,7 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
             if not capability.get("available"):
                 return {**empty, "why": "The selected reviewer is unavailable: " + (capability.get("why") or choice["why"])}
             same_engine = choice["engine"] == owner
+            choice.update(_review_effort(choice["engine"]))
             return {**choice, "label": config.ENGINE_LABELS[choice["engine"]],
                     "allowance_known": all(value is not None for value in _usage()[choice["engine"]]),
                     "same_engine": same_engine, "fallback_reason": "Selected for this review." if same_engine else ""}
@@ -382,6 +383,7 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
                     break
                 capability = engines.review_capability(choice["engine"])
                 if capability["available"]:
+                    choice.update(_review_effort(choice["engine"]))
                     return {**choice, "label": config.ENGINE_LABELS[choice["engine"]],
                             "allowance_known": all(value is not None for value in _usage()[choice["engine"]]),
                             "same_engine": same_engine, "fallback_reason": fallback_reason}
@@ -392,6 +394,12 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
         return {**empty, "why": "No reviewer is available. " + why, "fallback_reason": fallback_reason}
     except ValueError as exc:
         return {**empty, "why": str(exc)}
+
+
+def _review_effort(engine: str) -> dict:
+    requested = config.model_default_pair(engine)["effort"]
+    # Reviews keep their native default; owner/project task effort never leaks into the independent invocation.
+    return {"requested_effort": requested, "effort": config.task_effort(engine, requested, role="l3")}
 
 
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,

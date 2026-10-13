@@ -125,6 +125,17 @@ class ReviewEngineTests(AltitudeCase):
             self.assertNotIn("resume", command)
             self.assertNotIn("altitude-l3", " ".join(command))
 
+    def test_requested_review_effort_reaches_native_command_without_changing_confinement(self):
+        self.patch(engines, "_review_native", return_value=(True, (), True))
+        first = engines._review_command("claude", self.snapshot, self.runtime, "selected", effort="max")
+        self.assertEqual(first[first.index("--effort") + 1], "max")
+        second = engines._review_command("codex", self.snapshot, self.runtime, "selected", effort="ultra")
+        self.assertIn('model_reasoning_effort="ultra"', second)
+        for engine in config.ENGINES:
+            native = engines._review_command(engine, self.snapshot, self.runtime, "selected")
+            self.assertNotIn("--effort", native)
+            self.assertFalse(any(value.startswith("model_reasoning_effort=") for value in native))
+
     def test_design_screenshots_attach_natively_in_order_for_both_engines(self):
         from tests.test_shown_files import JPEG, png
         (self.snapshot / "design").mkdir()

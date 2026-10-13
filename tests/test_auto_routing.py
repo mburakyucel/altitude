@@ -164,6 +164,57 @@ class TestAutoIntegration(AltitudeCase):
         self.assertEqual((saved["l2_engine"], saved["session_id"], saved["launch_model"], saved["attempt"]),
                          ("claude", "conversation", "opus", 1))
 
+    def test_global_pair_applies_at_dispatch_and_never_reinterprets_null_resume(self):
+        original = config.machine_settings()
+        for name in ("events.jsonl", "model_defaults_codex-request.json"):
+            path = config.ROOT / name
+            if path.exists():
+                self.addCleanup(path.write_bytes, path.read_bytes())
+            else:
+                self.addCleanup(path.unlink, missing_ok=True)
+        settings_path = config.ROOT / "settings.json"
+        if settings_path.exists():
+            self.addCleanup(S.write_json, settings_path, original)
+        else:
+            self.addCleanup(settings_path.unlink, missing_ok=True)
+        self.policy("codex")
+        S.write_json(config.ROOT / "settings.json", {"model_defaults_codex": {"model": None, "effort": "native"}})
+        task = self.task()
+        with mock.patch.object(engines, "start_l2", side_effect=self.launched) as launch:
+            dispatch.run(self.project, task["slug"])
+        self.assertEqual((launch.call_args.kwargs["model"], launch.call_args.kwargs["effort"]), (None, None))
+        T.block(self.project, task["slug"], "Waiting for requested input")
+        queued = self.task()
+        server.save_model_defaults({"engine": "codex", "value": {"model": "gpt-6.1-sol", "effort": "ultra"},
+                                    "expected": {"model": None, "effort": "native"}})
+        with mock.patch.object(engines, "resume_l2", return_value={"returncode": 0, "agent": {
+                "id": "resumed", "sessionId": "conversation", "state": "working"}}) as resume:
+            dispatch.resume(self.project, task["slug"])
+        self.assertEqual((resume.call_args.kwargs["model"], resume.call_args.kwargs["effort"]), (None, None))
+        with mock.patch.object(engines, "start_l2", side_effect=self.launched) as launch:
+            dispatch.run(self.project, queued["slug"])
+        self.assertEqual((launch.call_args.kwargs["model"], launch.call_args.kwargs["effort"]), ("gpt-6.1-sol", "ultra"))
+
+    def test_named_choice_applies_to_queued_tasks_but_preserves_bound_sessions(self):
+        self.policy("claude:opus")
+        task = self.task()
+        # Choosing after queueing still applies at the first launch.
+        choice = {"engine": "codex", "model": "gpt-6.1-sol"}
+        self.patch(config, "machine_settings", return_value={"new_tasks": choice})
+        with mock.patch.object(engines, "start_l2", side_effect=self.launched) as launch:
+            dispatch.run(self.project, task["slug"])
+        self.assertEqual((launch.call_args.args[0], launch.call_args.kwargs["model"]),
+                         ("codex", "gpt-6.1-sol"))
+        T.block(self.project, task["slug"], "Waiting for requested input")
+        choice["model"] = "another-model"
+        with mock.patch.object(engines, "resume_l2", return_value={"returncode": 0,
+                               "agent": {"id": "resumed-worker", "sessionId": "conversation", "state": "working"}}) as resume:
+            dispatch.resume(self.project, task["slug"])
+        self.assertEqual((resume.call_args.args[0], resume.call_args.args[2], resume.call_args.kwargs["model"]),
+                         ("codex", "conversation", "gpt-6.1-sol"))
+        saved = S.load_task(self.project, task["slug"])
+        self.assertEqual((saved["launch_model"], saved["attempt"]), ("gpt-6.1-sol", 1))
+
     def test_quota_refresh_changes_fresh_dispatch_without_changing_running_or_resumed_sessions(self):
         self.policy("codex,claude:opus")
         self.quota.side_effect, self.other_quota.side_effect = self.read_quota, self.read_other_quota

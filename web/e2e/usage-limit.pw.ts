@@ -83,13 +83,14 @@ test("with no other engine the message waits under one line with the reset", asy
   await expect(v.notice).toHaveCount(1);
 
   const other = await otherModel(request, "harbor");
-  const dialog = page.getByRole("dialog", { name: "Models · L3 · harbor only", exact: true });
-  await page.getByRole("main").getByRole("button", { name: /^L3 model: / }).click();
-  await dialog.getByRole("radio", { name: new RegExp(`^${other.label}`) }).check();
-  await walk.state("03-another-l3-choice-sends-it", {
-    action: () => dialog.getByRole("button", { name: "Use for L3 in harbor", exact: true }).click(),
+  await page.goto("/settings/projects/harbor");
+  const selector = page.getByRole("combobox", { name: "Coordinator engine", exact: true });
+  await selector.selectOption(other.engine);
+  await expect.poll(async () => (await (await request.get("/api/defaults/harbor")).json()).l3_choice).toEqual({ engine: other.engine });
+  await page.goto("/projects/harbor");
+  await walk.state("03-another-engine-preference-sends-it", {
     visible: [message, v.convo.getByText("The release is waiting for the next quiet point.")],
-    hidden: [dialog, sendNow, v.convo.getByText("L3 could not answer this turn.")],
+    hidden: [sendNow, v.convo.getByText("L3 could not answer this turn.")],
   });
   await expect(v.notice).toHaveCount(1);
 });

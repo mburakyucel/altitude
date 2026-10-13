@@ -1699,20 +1699,19 @@ describe("Conversation", () => {
     await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", text: "Ship it", request_id: sendId }));
   });
 
-  it("opens Models on L3 from the message box and saves a choice for this project", async () => {
-    const fetchMock = mockFetch();
-    const { user } = renderApp({ route: "/projects/altitude" });
-    await conversation();
-    const button = await screen.findByRole("button", { name: "L3 model: Auto" });
-    await user.click(button);
-    const dialog = screen.getByRole("dialog", { name: "Models · L3 · altitude only" });
-    expect(within(dialog).getByRole("radio", { name: /^Auto/ })).toHaveFocus();
-    await user.click(within(dialog).getByRole("radio", { name: /^Deep/ }));
-    await user.click(within(dialog).getByRole("radio", { name: "High" }));
-    await user.click(within(dialog).getByRole("button", { name: "Use for L3 in altitude" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(posted(fetchMock, "/api/defaults")).toEqual({ project: "altitude", setting: "l3_choice", value: { engine: "alpha", model: "deep", effort: "high" }, expected: null });
-    expect(await screen.findByRole("button", { name: "L3 model: Deep · High" })).toHaveFocus();
+  it("opens global model settings from chat and returns with the draft intact", async () => {
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    mockFetch();
+    const { user, router } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const textbox = within(region).getByRole("textbox");
+    await user.type(textbox, "Keep this draft");
+    const links = await within(region).findAllByRole("link", { name: "Model settings" });
+    await user.click(links[0]!);
+    expect(router.state.location.pathname).toBe("/settings");
+    expect(router.state.location.hash).toBe("#models");
+    await user.click(screen.getByRole("button", { name: "‹ Back" }));
+    expect(await within(await conversation()).findByRole("textbox")).toHaveValue("Keep this draft");
   });
 
   it("shows the project name once on the phone, above the conversation", async () => {
