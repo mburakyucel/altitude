@@ -98,6 +98,8 @@ class TestPublication(IncidentIssueCase):
         self.assertEqual(incidents.sanitize("-----BEGIN PRIVATE KEY-----\nAAAA\n-----BEGIN PRIVATE KEY-----\nBBBB\n"
                                             "-----END PRIVATE KEY-----\nafter\n-----BEGIN PRIVATE KEY-----\nCCCC"),
                          "[REDACTED][REDACTED]\nafter\n[REDACTED]")
+        self.assertEqual(incidents.sanitize("-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOY\n-----END PGP PRIVATE KEY BLOCK-----\n"),
+                         "[REDACTED]\n")
         self.assertEqual(incidents.sanitize("mail (fixture.name@example.org), see repo:.altitude/state.json"),
                          "mail ([email]), see [path]")
 

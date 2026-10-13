@@ -335,7 +335,8 @@ def _system_section(system: str) -> str:
 # ---- public issue: one sanitized GitHub issue per incident ---------------------------------------------------
 _CREDENTIAL = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b"
-    r"|-----BEGIN [\w ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?(?:-----END [\w ]*PRIVATE KEY-----|(?=-----BEGIN )|\Z)"
+    r"|-----BEGIN [\w ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?"
+    r"(?:-----END [\w ]*PRIVATE KEY(?: BLOCK)?-----|(?=-----BEGIN )|\Z)"
     r"|(?:\bauthorization\s*[:=]\s*(?:bearer|basic)\s+|(?:token|password|secret|api[_-]?key)[\"']?\s*[:=]\s*[\"']?(?:(?:bearer|basic)\s+)?)"
     r"(?!\[REDACTED\]|<REDACTED>)\S{4,}"
     r"|https?://[^\s/@:]+:[^\s/@]+@", re.I)

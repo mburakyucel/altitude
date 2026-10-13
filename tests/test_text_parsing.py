@@ -86,7 +86,10 @@ elif kind == 'redaction':
     assert path.search('x' * size + '/.altitude/state.json')
     assert not email.search('a' * size) and not email.search('a.' * size)
     assert email.search('a.' * size + 'a@example.org')
-    assert incidents.sanitize('-----BEGIN PRIVATE KEY-----' * (size // 27)).count('[REDACTED]') == size // 27
+    headers = size * 4 // 27  # quadratic before: about a second at a quarter of this
+    assert incidents.sanitize('-----BEGIN PRIVATE KEY-----' * headers).count('[REDACTED]') == headers
+    for text in ('-----BEGIN PRIVATE KEY-----' + '-' * size, ('-----BEGIN PRIVATE KEY-----\\n' + 'Q' * 64 + '\\n') * (size // 92)):
+        assert incidents._CREDENTIAL.search(text) and 'QQQQ' not in incidents.sanitize(text)
 """
         root = Path(__file__).resolve().parent.parent
         for kind in ("labels", "inline", "recommendation", "serial", "failure", "redaction"):
