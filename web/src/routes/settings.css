@@ -50,14 +50,7 @@
 .voice-diagnostics p, .voice-diagnostics .onboarding-nav { margin-bottom: 12px; }
 .voice-diagnostics label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .voice-diagnostics textarea { width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--page); color: var(--text-primary); font-size: 16px; }
-.default-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.default-field input, .default-field select { min-width: 0; width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); font-size: var(--text-body); }
-.default-field :disabled { opacity: .6; }
-.default-field [aria-disabled="true"] { opacity: .6; }
 .settings-model-row { padding: 16px; display: grid; gap: 12px; min-width: 0; }
-.settings-model-row > .settings-row { padding: 0; border: 0; }
-.model-other-fields { display: grid; gap: 10px; min-width: 0; }
-.model-other-fields label { display: grid; gap: 4px; min-width: 0; }
 .model-detail { overflow-wrap: anywhere; }
 .settings-switch-row:hover { border-color: var(--border); background: var(--surface); }
 .settings-switch-row label { min-width: 0; cursor: pointer; }
@@ -109,15 +102,6 @@ button.settings-row:disabled { cursor: default; opacity: .7; }
 .settings-row > span:first-child { min-width: 0; }
 .settings-row small + small { margin-top: 2px; }
 .settings-select { min-height: 44px; min-width: 10rem; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); font-size: var(--text-body); flex: none; }
-.defaults-table { display: grid; grid-template-columns: 9rem 1fr 1fr; }
-.defaults-head, .defaults-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; gap: 12px; align-items: start; padding: 8px 16px; }
-.defaults-head { font-size: var(--text-meta); color: var(--text-muted); }
-.defaults-label { padding-top: 11px; }
-.phone-field-label { display: none; }
-.shell[data-phone] .phone-field-label { display: block; }
-.shell[data-phone] .defaults-table { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-.shell[data-phone] .defaults-head { display: none; }
-.shell[data-phone] .defaults-label { grid-column: 1 / -1; padding-top: 4px; font-weight: 600; }
 .shell[data-phone] .settings-row:has(.settings-select) { flex-wrap: wrap; }
 .shell[data-phone] .settings-select { width: 100%; }
 .shell[data-phone] .settings-row:has(.settings-actions) { flex-wrap: wrap; }

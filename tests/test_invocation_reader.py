@@ -12,6 +12,26 @@ from altitude.engines import codex, invocation
 
 
 class TestInvocationReader(_CodexTranscriptCase):
+    def test_invalid_names_refuse_before_any_directory_access(self):
+        invalid = ("", ".", "..", "../outside", "alias/marker", "/outside", "task\\name")
+        for slug in invalid:
+            with self.subTest(slug=slug), \
+                 mock.patch.object(storage, "runtime_directory", side_effect=AssertionError("opened before refusal")):
+                with self.assertRaises(invocation.InvocationRefused):
+                    with invocation.job_directory(self.project, slug):
+                        self.fail("malformed task name selected a job")
+        with invocation.job_directory(self.project, self.slug) as (job, root):
+            for worker in ("", ".", "../w2"):
+                with self.subTest(worker=worker), \
+                     mock.patch.object(storage, "regular_reader", side_effect=AssertionError("opened before refusal")):
+                    with self.assertRaises(invocation.InvocationRefused):
+                        invocation.invocation(job, root, worker)
+
+    def test_activity_rejects_malformed_identity_before_reader_entry(self):
+        with mock.patch.object(invocation, "job_directory", side_effect=AssertionError("reader entered")):
+            with self.assertRaises(transcript.TranscriptAccessError):
+                transcript.activity(self.project, "../outside")
+
     def test_runtime_consumers_never_reopen_display_paths(self):
         record = self.root / "w2.json"
         current = S.read_json(record)
@@ -281,6 +301,45 @@ class TestInvocationReader(_CodexTranscriptCase):
             self.assertEqual([turn.worker for turn in codex.codex_turns(job, display, "thread-1")], ["w1"])
         with self.assertRaises(OSError):
             os.fstat(job)
+
+    def test_archive_parent_and_task_entries_preserve_refusal_and_close_directories(self):
+        archive = self._archive_without_live_tasks_directory("missing")
+        outside = self.tmp / "outside-archive"
+        outside.mkdir()
+        directory = storage.directory
+        for entry in (archive, archive.parent):
+            for kind in ("missing", "file", "link"):
+                with self.subTest(entry=entry.name, kind=kind):
+                    held = entry.with_name("held-archive-entry")
+                    entry.rename(held)
+                    if kind == "file":
+                        entry.write_text("ordinary entry")
+                    elif kind == "link":
+                        entry.symlink_to(outside, target_is_directory=True)
+                    descriptors = []
+                    @contextmanager
+                    def tracked(*args, **kwargs):
+                        with directory(*args, **kwargs) as fd:
+                            descriptors.append(fd)
+                            yield fd
+                    try:
+                        with mock.patch.object(storage, "directory", tracked), \
+                             mock.patch.object(storage, "regular_reader", side_effect=AssertionError("outside read")):
+                            if kind == "link":
+                                with self.assertRaises(invocation.InvocationRefused):
+                                    with invocation.job_directory(self.project, self.slug):
+                                        self.fail("linked archive selected")
+                            else:
+                                with invocation.job_directory(self.project, self.slug) as (job, _):
+                                    self.assertIsNone(job)
+                        self.assertTrue(descriptors)
+                        for fd in descriptors:
+                            with self.assertRaises(OSError):
+                                os.fstat(fd)
+                    finally:
+                        if kind != "missing":
+                            entry.unlink()
+                        held.rename(entry)
 
     def test_linked_live_tasks_parent_refuses_archive_without_outside_read(self):
         self._archive_without_live_tasks_directory("link")

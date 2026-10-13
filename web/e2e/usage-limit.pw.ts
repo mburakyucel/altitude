@@ -6,7 +6,7 @@ import { walkthrough } from "./walkthrough";
  * A used-up usage window in project chat (docs/SESSION_LIFECYCLE.md, automatic routing): real coordinator turns
  * against a reading that puts the engine L3 would use at its limit. The operator sees one plain line naming the
  * engine, its reset in local time and either the engine answering instead or that the message waits until then.
- * A waiting message stays queued when sent now and goes out on the L3 choice the operator picks meanwhile.
+ * A waiting message stays queued when sent now and goes out on the coordinator model the operator picks meanwhile.
  */
 
 test.use({ serviceScript: "usage-limit-service.py" });
@@ -53,11 +53,11 @@ test("a used-up window answers on the other engine and says so once", async ({ p
   await expect(v.notice).toHaveCount(1);
 });
 
-/** The first listed option of the engine the fixture leaves runnable, as the Models dialog labels it. */
+/** The first listed model of the engine the fixture leaves runnable, as the coordinator's model panel labels it. */
 async function otherModel(request: APIRequestContext, project: string) {
   const view = await (await request.get(`/api/defaults/${project}`)).json() as {
     engines: { value: string }[]; models: { engine: string; model: string | null; label: string }[] };
-  return view.models.find((row) => row.engine === view.engines[1]!.value)!;
+  return view.models.find((row) => row.engine === view.engines[1]!.value && row.model)!;
 }
 
 test("with no other engine the message waits under one line with the reset", async ({ page, request }, info) => {
@@ -83,12 +83,13 @@ test("with no other engine the message waits under one line with the reset", asy
   await expect(v.notice).toHaveCount(1);
 
   const other = await otherModel(request, "harbor");
-  await page.goto("/settings/projects/harbor");
-  const selector = page.getByRole("combobox", { name: "Coordinator engine", exact: true });
-  await selector.selectOption(other.engine);
-  await expect.poll(async () => (await (await request.get("/api/defaults/harbor")).json()).l3_choice).toEqual({ engine: other.engine });
-  await page.goto("/projects/harbor");
-  await walk.state("03-another-engine-preference-sends-it", {
+  // The coordinator's model button under the message box picks a model on the other engine; the waiting message goes out on it.
+  await page.getByRole("button", { name: /^Coordinator model and effort:/ }).click();
+  const models = page.getByRole("menu", { name: "Coordinator model and effort for harbor" }).getByRole("group", { name: "Model", exact: true });
+  await models.getByRole("menuitemradio", { name: new RegExp(`^${other.label}\\b`) }).first().click();
+  await expect.poll(async () => (await (await request.get("/api/defaults/harbor")).json()).l3_choice).toEqual({ engine: other.engine, model: other.model });
+  await page.keyboard.press("Escape");
+  await walk.state("03-another-engine-choice-sends-it", {
     visible: [message, v.convo.getByText("The release is waiting for the next quiet point.")],
     hidden: [sendNow, v.convo.getByText("L3 could not answer this turn.")],
   });

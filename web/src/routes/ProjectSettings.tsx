@@ -5,24 +5,23 @@ import { StatusMark, BusyLabel } from "../components/StatusMark";
 import { ApiError, forgetProject, overviewQuery, useOverview, useProject, useProjectDefaults, useProjectRemove, useSetDefault } from "../data/api";
 import type { Overview, ProjectDefaults } from "../data/api";
 import { ImprovementSection } from "../components/ImprovementSettings";
-import { EnginePreference } from "../components/Models";
 import { Overlay } from "../shell/Overlay";
 import { managedProjects } from "../shell/projects";
 import { useViewport } from "../shell/breakpoints";
 import { useSetupReading } from "./Setup";
 import "./settings.css";
 
-/** The L3 choice shares its saved value with the message box and Settings overview. */
+/** What the coordinator last reported; its model and effort button sits under the project chat's message box. */
 function L3Section({ name, data }: { name: string; data: ProjectDefaults }) {
   const project = useProject(name);
   const l3 = project.data?.l3 ?? {};
   const text = (key: string) => typeof l3[key] === "string" ? l3[key] as string : "";
   const effort = (value: string) => Object.values(data.efforts).flat().find((e) => e.value === value)?.label ?? value;
-  const last = !text("engine_last") ? "L3 has not replied yet"
-    : `last reply reported ${[text("engine_model") || "no model", text("engine_reasoning_effort") ? effort(text("engine_reasoning_effort")) : "no effort"].join(" · ")}`;
+  const last = !text("engine_last") ? "L3 has not replied yet."
+    : `Last reply reported ${[text("engine_model") || "no model", text("engine_reasoning_effort") ? effort(text("engine_reasoning_effort")) : "no effort"].join(" · ")}.`;
   return <section className="settings-section" aria-labelledby="settings-l3">
-    <div><h2 id="settings-l3">L3</h2><p className="text-meta text-muted">Who answers in this project's chat.</p></div>
-    <div className="settings-group"><div className="settings-model-row"><EnginePreference project={name} />
+    <div><h2 id="settings-l3">L3</h2><p className="text-meta text-muted">Who answers in this project's chat. Its model and effort are under the chat's message box.</p></div>
+    <div className="settings-group"><div className="settings-model-row">
       <p className="text-meta text-muted">{last}</p>
       {text("engine_model") && data.l3_choice?.model && text("engine_model") !== data.l3_choice.model
         ? <p className="text-meta text-muted">Last reply requested: {text("launch_model") || "engine default"}.</p> : null}
@@ -179,7 +178,6 @@ export default function ProjectSettings() {
           : <>
             <L3Section name={name} data={defaults.data} />
             <RoutingSection name={name} data={defaults.data} />
-            <Link to="/settings#models" state={location.state}>Models and effort · All projects</Link>
           </>}
       {managed ? <ImprovementSection name={name} /> : null}
       {/* Removal does not depend on reading the model settings. */}

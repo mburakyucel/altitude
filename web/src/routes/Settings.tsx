@@ -7,7 +7,7 @@ import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
 import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateAutomatic, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, startUpdate, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, PhoneShare, ProjectDefaults, Update } from "../data/api";
-import { GlobalModelSettings, EnginePreference } from "../components/Models";
+import { ProjectModelSettingsSection } from "../components/Models";
 import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { INVALID_SERVICE, updateVoiceSettings } from "../components/voiceBackend";
@@ -307,11 +307,6 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
     <h2>{title}</h2>
     <div className="settings-group">{children}</div>
   </section>;
-}
-
-/** New tasks as direct Settings fields, sharing the rail's saved preference. */
-function NewTasksRow() {
-  return <EnginePreference />;
 }
 
 /** The projects folder: First run offers the folders directly inside it. */
@@ -761,12 +756,6 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   useEffect(() => {
     if (settings.data) updateVoiceSettings(settings.data);
   }, [settings.data]);
-  useEffect(() => {
-    if (location.hash === "#models") {
-      document.getElementById("models")?.scrollIntoView();
-      document.getElementById("models-heading")?.focus({ preventScroll: true });
-    }
-  }, [location.hash]);
   const title = page ? titles[page] : "Settings";
   const back = page ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
     : <button type="button" className="btn settings-back" onClick={() => navigate(state?.settingsFrom || "/projects", { replace: true })}>‹ Back</button>;
@@ -776,9 +765,9 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
         <span><strong>Voice input</strong>{" "}<small>{voiceSummary(settings.data)}</small></span><span aria-hidden>›</span>
       </Link>;
   return <>
-    {phone ? <header className="phone-header settings-header">{back}<h1>{title}</h1></header> : null}
+    {phone ? <header className="phone-header settings-header">{back}<h1 tabIndex={-1}>{title}</h1></header> : null}
     <div className="page settings-page" data-overview={!page || undefined}>
-      {!phone ? <>{page || state?.settingsFrom ? back : null}<h1>{title}</h1></> : null}
+      {!phone ? <>{page || state?.settingsFrom ? back : null}<h1 tabIndex={-1}>{title}</h1></> : null}
       {page === "name" || page === "prerequisites" || page === "incident-reports" ? <MachinePage key={page} page={page} />
         : page === "devices" ? <DevicesPage />
         : page === "projects" ? <ProjectsPage state={state} />
@@ -798,7 +787,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
             </Link>
           </div>
           {current ? <ThisProject name={current} state={state} /> : null}
-          <GlobalModelSettings /><Group title="Engines"><NewTasksRow /></Group>
+          <ProjectModelSettingsSection />
           <Group title="Projects">
             <Link className="settings-row" to="/settings/projects" state={state}>
               <span><strong>All projects</strong>{" "}<small>{overview.data ? `${managed.length} project${managed.length === 1 ? "" : "s"} · folder ${roots.join(" and ") || "not set"}` : "Loading…"}</small></span><span aria-hidden>›</span>

@@ -1012,18 +1012,11 @@ def _on_l2_finished(project: str, item: dict) -> None:
         log(f"[{project}/{slug}] no-code completion finalized after the L2 worker exited")
         return
     if item.get("rejection"):
-        engine = dispatch.l2_engine(t)
-        option = {"engine": engine, "model": dispatch.launched(t)[0]}
-        route.note_rejection(option, item["rejection"])
-        why = item["rejection"]["why"] + ". Check engine authentication/model access or change Auto routing."
-        block_snapshot(why)
-        pinned = t.get("routing_pinned") or config.pinned_option("l2", config.project(project), engine=t.get("engine"), model=t.get("model"))
-        switch = route.pick_engine("l2", project=config.project(project)) if not pinned else {"engine": None}
-        if switch.get("engine") and item.get("safe_to_retry") and not (item.get("agent") or {}).get("resumed"):
-            engines.remove_l2_worker(engine, t.get("agent_id"), job_root=dispatch.l2_job_root(project, slug))
-            T.requeue(project, slug, clear_worker=True, reason=why + " Fresh Auto attempt from saved progress.")
-        else:
-            T.fyi(project, slug, why + " The existing attempt and conversation are retained.", actor="altd")
+        # A refusal stops the task where it is; only the operator's Change model… moves it to another engine.
+        route.note_rejection({"engine": dispatch.l2_engine(t), "model": dispatch.launched(t)[0]}, item["rejection"])
+        why = item["rejection"]["why"] + ". Check engine authentication/model access, or change this task's model."
+        block_snapshot(why, updates={"engine_refusal": item["rejection"]["why"]})
+        T.fyi(project, slug, why + " The existing attempt and conversation are retained.", actor="altd")
         return
     if item.get("capacity"):
         # Provider capacity is local to this task/model, unlike an exhausted subscription window or a system fault.
@@ -1047,32 +1040,11 @@ def _on_l2_finished(project: str, item: dict) -> None:
         until, engine = limit["until"], dispatch.l2_engine(t)
         why = "usage limit: " + limit["why"]
         try:
-            blocked = block_snapshot(why, updates={"resume_after": until, "usage_limit": limit})
+            block_snapshot(why, updates={"resume_after": until, "usage_limit": limit})
         except T.TransitionError:
             log(f"[{project}/{slug}] usage-limit result lost a concurrent lifecycle race; ignored")
             return
         engines.record_usage_limit(engine, limit, f"L2 {t.get('agent_id', '')} of {slug}")
-        pinned = t.get("routing_pinned") or config.pinned_option("l2", config.project(project), engine=t.get("engine"), model=t.get("model"))
-        switch = route.pick_engine("l2", project=config.project(project)) if not pinned else {"engine": None}
-        if switch.get("engine"):
-            other = switch["engine"]
-            try:
-                with S.project_lock(project):
-                    live = S.load_task(project, slug)
-                    fence = {"expected_agent_id": t.get("agent_id"), "expected_session_id": t.get("session_id"),
-                             "expected_block_id": blocked.get("block_id")}
-                    T._require_daemon_fence(live, slug, **fence)
-                    if live.get("resume_claim") or live.get("dispatching"):
-                        raise T.TransitionError("a launch/resume already owns this task")
-                    engines.remove_l2_worker(engine, t.get("agent_id"), job_root=dispatch.l2_job_root(project, slug))
-                T.requeue(project, slug, clear_worker=True, **fence,
-                          reason=f"{why}; fresh attempt on {other} from saved progress")
-            except T.TransitionError:
-                log(f"[{project}/{slug}] usage-limit recovery superseded by a lifecycle change")
-                return
-            T.fyi(project, slug, f"{why}. {slug} continues as a fresh attempt on {other} from saved progress.", actor="altd")
-            log(f"[{project}/{slug}] L2 hit the usage limit → requeued for {other}")
-            return
         waiting = f"This L2 resumes after {until}." if until else "No automatic resume is scheduled; L3 must arrange recovery."
         T.fyi(project, slug, f"{why}. {waiting}", actor="altd")
         log(f"[{project}/{slug}] {why} → blocked")
@@ -2557,8 +2529,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(improve.settings(parts[2]))
                 except KeyError:
                     return self._json({"error": "Project is not managed."}, 404)
-            if parts == ["api", "model-defaults"]:
-                return self._json(config.model_defaults_view())
+            if parts == ["api", "project-model-settings"]:
+                return self._json({"rows": config.project_model_settings()})
             if api == "defaults" and len(parts) == 3:
                 try:
                     return self._json(config.defaults_view(parts[2]))
@@ -2784,12 +2756,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(config.defaults_view(o["project"]))
                 except (ValueError, KeyError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
-            if parts in (["api", "model-defaults"], ["api", "model-defaults", "reset"]):
+            if parts == ["api", "project-model-settings", "reset"]:
                 try:
-                    result = save_model_defaults(o, reset=len(parts) == 3)
+                    result = reset_project_model_setting(o)
                     if result.get("changed"):
                         return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
-                    return self._json(config.model_defaults_view())
+                    return self._json({"rows": config.project_model_settings()})
                 except (ValueError, KeyError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "new-tasks"]:
@@ -3281,34 +3253,24 @@ def overview() -> dict:
 CHANGED_ELSEWHERE = "Changed in another window."
 
 
-def save_model_defaults(body: dict, *, reset: bool = False) -> dict:
+def reset_project_model_setting(body: dict) -> dict:
+    """Clear one project's own model and effort for a role and engine, as Settings' Reset asks."""
     if "expected" not in body:
         raise ValueError("the previously read model and effort are required")
-    project = None
-    if reset:
-        row = next((row for row in config.model_defaults_view()["overrides"] if row["id"] == body.get("id")), None)
-        if row is None:
-            return {"changed": True}
-        if not row["editable"]:
-            raise ValueError("Explicit routing models are edited with the project routing setting.")
-        project, setting = json.loads(row["id"])
-        value = ({"engine": row["expected"]["engine"]} if row["expected"].get("engine") else None)
-        if setting in config.ROLE_OVERRIDE_SETTINGS:
-            value = None
-    else:
-        if body.get("engine") not in config.ENGINES:
-            raise ValueError("unknown engine")
-        setting, value = f"model_defaults_{body['engine']}", body.get("value")
-    dispatch.request_setting(project, setting, value, "Settings", actor=config.OPERATOR_ACTOR,
-                             expected=body["expected"])
+    row = next((row for row in config.project_model_settings() if row["id"] == body.get("id")), None)
+    if row is None:
+        return {"changed": True}
+    if not row["editable"]:
+        raise ValueError("Explicit routing models are edited with the project routing setting.")
+    project, setting = json.loads(row["id"])
+    dispatch.request_setting(project, setting, None, "Settings", actor=config.OPERATOR_ACTOR, expected=body["expected"])
     result = dispatch._run_setting(project, setting)
     if result.get("changed"):
         return result
     if result.get("status") != "done":
         raise ValueError(result.get("note") or "Setting was not saved.")
-    for name in ([project] if project else config.load_projects()):
-        if l3.queue_path(name).exists():
-            request_l3_drain(name)
+    if l3.queue_path(project).exists():
+        request_l3_drain(project)
     return result
 
 
@@ -3944,7 +3906,7 @@ def task_transfer_view(project: str, task: dict) -> dict:
                                     for value in config.ENGINE_EFFORTS[engine]]})
     eligible = any(target["available"] for target in targets)
     preparation = False
-    if configured and not task.get("usage_limit") and T.stopped_by(task) not in dispatch.DAEMON_REQUEST_ACTORS:
+    if configured and not dispatch.engine_stopped(task) and T.stopped_by(task) not in dispatch.DAEMON_REQUEST_ACTORS:
         worker = engines.worker(dispatch.l2_engine(task), task, job_root=dispatch.l2_job_root(project, task["slug"]))
         preparation = not (worker and worker.get("state") in ("done", "failed", "stopped"))
     transfer = None
@@ -3960,7 +3922,8 @@ def task_transfer_view(project: str, task: dict) -> dict:
             "current_effort": current_effort, "current_effort_label": config.effort_label(current_effort or "native"),
             "targets": targets, "eligible": eligible,
             "reason": None if eligible else (targets[0]["reason"] if targets else "No other engine is configured."),
-            "quota_limited": bool(task.get("usage_limit")), "preparation": bool(preparation), "request": transfer,
+            "quota_limited": bool(task.get("usage_limit")),
+            "refused": task.get("engine_refusal") if task.get("state") == "blocked" else None, "preparation": bool(preparation), "request": transfer,
             "resume_hold": (dispatch.resume_engine_hold(task)
                             if task.get("state") == "blocked" and task.get("usage_limit") else None),
             "observed": {key: task.get(key) for key in ("attempt", "agent_id", "session_id", "block_id")}}

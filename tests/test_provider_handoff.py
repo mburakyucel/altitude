@@ -378,6 +378,17 @@ class TestProviderHandoff(AltitudeCase):
         queued = self.execute(task)
         self.assertEqual(queued["daemon_request"]["checkpoint"], "not refreshed")
 
+    def test_restart_pending_holds_the_request_then_it_runs(self):
+        task = self.running_owner()
+        self.request(task)
+        self.engine.workers[task["agent_id"]].update(state="done", status="exited")
+        with mock.patch.object(config, "restart_in_progress", return_value=True):
+            held = dispatch.run_task_operation(self.project, task["slug"])
+        self.assertTrue(held["pending"], held)
+        self.assertIn("restarting", held["held"])
+        self.assertEqual(S.load_task(self.project, task["slug"])["daemon_request"]["status"], "executing")
+        self.assertEqual(self.execute(task)["state"], "queued")
+
     def test_explicit_stop_by_each_actor_qualifies(self):
         for actor in ("l3", config.OPERATOR_ACTOR):
             task = self.running_owner("Stopped by " + actor)
@@ -635,6 +646,28 @@ class TestProviderHandoff(AltitudeCase):
                             dispatch.run(self.project, task["slug"])
                         self.assertEqual(S.load_task(self.project, task["slug"])["next_engine"], "codex")
                     self.assertEqual(len(self.engine.calls), launched)
+
+    def test_a_refused_task_stops_on_its_engine_until_a_switch_is_asked_for(self):
+        # Operator decision 2026-10-13: an engine's refusal never moves a task to another engine by itself.
+        task = T.new(self.project, "Refused owner", "Finish the change.", paths=["README.md"])
+        dispatch.run(self.project, task["slug"])
+        running = S.load_task(self.project, task["slug"])
+        with mock.patch.object(engines, "remove_l2_worker") as remove:
+            server.on_l2_finished(self.project, {"task": running, "rejection": {"scope": "model", "why": "model access rejected"},
+                                                 "safe_to_retry": True, "agent": {"id": running["agent_id"], "state": "failed"}})
+        remove.assert_not_called()
+        stopped = S.load_task(self.project, task["slug"])
+        self.assertEqual((stopped["state"], stopped["l2_engine"], stopped["session_id"], stopped["engine_refusal"]),
+                         ("blocked", running["l2_engine"], running["session_id"], "model access rejected"))
+        self.assertEqual(len(self.engine.calls), 1)
+        view = server.task_transfer_view(self.project, stopped)
+        self.assertEqual(view["refused"], "model access rejected")
+        self.assertTrue(view["eligible"], view)
+        self.engine.workers[stopped["agent_id"]].update(state="failed", status="exited")
+        self.request(stopped)
+        moved = self.execute(stopped)
+        self.assertEqual((moved["state"], moved["next_engine"]), ("queued", "codex"))
+        self.assertNotIn("engine_refusal", moved)
 
     def test_rejected_target_models_never_fall_back_to_an_unrequested_engine(self):
         task = self.owner()

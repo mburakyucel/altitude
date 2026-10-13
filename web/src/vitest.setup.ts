@@ -23,6 +23,9 @@ class SilentEventSource extends EventTarget {
   }
 }
 
+// jsdom does no layout, so it has no scrollIntoView; menus scroll their checked row into view.
+Element.prototype.scrollIntoView ??= () => undefined;
+
 beforeEach(() => {
   vi.stubGlobal("EventSource", SilentEventSource);
   // Composers read the installation's voice backend once; tests name it instead (host voice by default).

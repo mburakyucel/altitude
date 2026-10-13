@@ -296,7 +296,7 @@ def _require_handoff(project: str, task: dict, engine: str, attempt: int,
             or any(review.get("state") == "running" for review in task.get("reviews", []))):
         raise T.TransitionError("handoff requires the expected running or stopped/exit/limit-blocked attempt, with no active claim")
     if (task["state"] == "blocked" and task.get("fault") != "l2-died"
-            and not task.get("usage_limit") and T.stopped_by(task) not in DAEMON_REQUEST_ACTORS):
+            and not engine_stopped(task) and T.stopped_by(task) not in DAEMON_REQUEST_ACTORS):
         if task.get("fault") or not any(q.get("status") == "open" for q in task.get("questions", [])):
             raise T.TransitionError("handoff cannot release this recovery or dependency wait")
         worker = engines.worker(l2_engine(task), task, job_root=l2_job_root(project, task["slug"]))
@@ -317,7 +317,8 @@ def _require_handoff(project: str, task: dict, engine: str, attempt: int,
 def handoff(project: str, slug: str, request: dict) -> dict:
     with config.restart_lock() as ready, S.project_lock(project):
         if not ready or config.restart_in_progress():
-            raise T.TransitionError("Altitude is restarting; retry shortly")
+            # A restart is a pause, not an answer: the request waits, as resume does, and runs on the next tick.
+            return {"pending": True, "request": request, "held": "Altitude is restarting; retry shortly"}
         task = S.load_task(project, slug)
         fence = {"expected_daemon_request": request["id"], "expected_agent_id": request.get("agent_id"),
                  "expected_session_id": request.get("session_id"), "expected_block_id": request.get("block_id")}
@@ -330,7 +331,7 @@ def handoff(project: str, slug: str, request: dict) -> dict:
         ended = worker and worker.get("state") in ("done", "failed", "stopped")
         if task["state"] == "running" and ended and T.report_current(task, S.task_dir(project, slug) / "report.json"):
             raise T.TransitionError("owner finished its report; verify that delivery instead of transferring it")
-        exhausted = bool(task.get("usage_limit"))
+        exhausted = engine_stopped(task)
         stopped = T.stopped_by(task) in DAEMON_REQUEST_ACTORS
         if not (ready or ended or exhausted or stopped or request.get("now") or request.get("phase") == "stopping"):
             _send_handoff_checkpoint(project, task, request, job_root)
@@ -523,6 +524,8 @@ def _request_task_operation(project: str, slug: str, operation: str, reason: str
     if actor not in DAEMON_REQUEST_ACTORS:
         raise T.TransitionError(f"task {operation} is available only to L3 or the operator")
     contract = DAEMON_TASK_OPERATIONS[operation]
+    if isinstance(selection, dict) and selection.get("effort") == "native":
+        selection = {**selection, "effort": None}  # one spelling for "no override", so retries stay idempotent
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if operation == "handoff" and handoff_observed is not None:
@@ -657,7 +660,7 @@ IMAGE_SEND_NOW = "Messages with images arrive at the owner's next turn."
 
 
 MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check",
-                    "update_automatic", "new_tasks", *config.MODEL_DEFAULT_SETTINGS)
+                    "update_automatic", "new_tasks")
 
 
 UNSET = object()
@@ -691,8 +694,6 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_incident_repository(value)
         elif setting in ("terminal", "update_check", "update_automatic") and not isinstance(value, bool):
             raise ValueError(f"the {setting.replace('_', ' ')} setting is on or off")
-        elif setting in config.MODEL_DEFAULT_SETTINGS:
-            config.validate_model_pair(config.MODEL_DEFAULT_SETTINGS[setting], value)
         elif setting in config.ROLE_OVERRIDE_SETTINGS:
             if value is not None:
                 raise ValueError("stored project model and effort overrides can only be cleared together")
@@ -1550,6 +1551,12 @@ def stop(project: str, slug: str, *, by: str = config.OPERATOR_ACTOR, reason: st
     S.append_event(project, slug, "stopped", agent_id=task.get("agent_id"), stop_id=task.get("stop_id"),
                    by=by, reason=reason, note=str(note or "")[:200])
     return S.load_task(project, slug)
+
+
+def engine_stopped(task: dict) -> bool:
+    """The engine stopped this attempt: a usage limit or a refusal. It waits for the operator's model choice
+    (or, for a limit, its reset) and never moves engines by itself."""
+    return bool(task.get("usage_limit") or task.get("engine_refusal"))
 
 
 def resume_engine_hold(task: dict) -> str | None:

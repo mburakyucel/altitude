@@ -10,24 +10,7 @@
 .overlay[data-side="center"]:has(.transfer-dialog) .overlay-panel { width: min(440px, 100%); }
 .transfer-dialog { padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-wrap: anywhere; }
 .transfer-dialog h2 { margin: 0; font-size: 20px; }
-.transfer-warning { padding: 12px; border-radius: 8px; background: var(--accent-tint); border: 1px solid var(--accent-tint-border); }
-.transfer-dialog fieldset { display: flex; flex-direction: column; gap: 12px; border: 0; padding: 0; margin: 0; }
-.transfer-dialog label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 44px; }
-.transfer-dialog input { accent-color: var(--accent); }
 .transfer-dialog .transfer-actions { margin-top: 0; }
 .models-pill.task-model-pill, .shell[data-phone] .models-pill.task-model-pill { min-height: 44px; min-width: 44px; }
 .shell[data-phone] .composer:is([data-phase="listening"], [data-phase="starting"], [data-phase="transcribing"]) .composer-row:has(.task-model-pill) { flex-wrap: wrap; }
 .shell[data-phone] .composer:is([data-phase="listening"], [data-phase="starting"], [data-phase="transcribing"]) .composer-pill:has(.task-model-pill) { display: inline-flex; flex-basis: 100%; }
-.task-model-fields { display: grid; gap: 12px; border: 0; margin: 0; padding: 0; }
-.task-model-fields label { display: grid; gap: 6px; font-size: 13px; color: var(--text-secondary); }
-.task-model-fields select { width: 100%; min-width: 0; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font-size: 16px; }
-.task-models { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px 20px; }
-.task-models .models-head { display: flex; align-items: center; justify-content: space-between; }
-.task-models .models-head h2 { font-size: var(--text-card-title); font-weight: 600; }
-.task-models .models-in-use { font-size: var(--text-meta); color: var(--text-secondary); }
-.task-models .models-in-use strong { color: var(--text-primary); }
-.task-models .models-note { font-size: var(--text-meta); padding: 8px 12px; border-radius: 8px; background: var(--card); }
-.task-models .models-actions { display: flex; gap: 10px; }
-.task-models .models-actions .btn { flex: 1; min-height: 44px; }
-.overlay:has(.task-models) .overlay-panel { width: min(440px, 100%); }
-.shell[data-phone] .overlay:has(.task-models) .overlay-panel { width: 100%; }

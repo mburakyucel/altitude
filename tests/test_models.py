@@ -31,7 +31,7 @@ class TestModels(AltitudeCase):
                                        "reported": "gpt-6-astra · Medium"}, "the chip names what the engine reports")
         claude = server.task_model_view({"l2_engine": "claude", "launch_model": "opus", "launch_effort": None,
                                          "engine_model": "claude-opus-5-5", "engine_reasoning_effort": None})
-        self.assertEqual((claude["model"], claude["effort"]), ("Opus 5.5", "Native"))
+        self.assertEqual((claude["model"], claude["effort"]), ("Opus 5.5", "Default"))
 
     def test_task_carries_explicit_model_only(self):
         t = T.new(self.project, "plain", "r", actor="burak")

@@ -4,14 +4,14 @@ import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "task-model-service.py" });
 
-const pill = (page: Page) => page.getByRole("button", { name: /^Task model:/ });
+const pill = (page: Page) => page.getByRole("button", { name: /^Task model and effort:/ });
 const details = (page: Page) => page.getByRole("dialog", { name: "Task details", exact: true });
 
 // Every owner launched through real routing with nothing configured, so each runs on Altitude's resolved default.
 const owners = [
   { slug: "codex-launched", chip: "6.1 Sol on Codex · High", button: "6.1 Sol · High" },
   { slug: "codex-confirmed", chip: "6.1 Sol on Codex · High", button: "6.1 Sol · High" },
-  { slug: "claude-confirmed", chip: "Opus 5.5 on Claude · Native", button: "Opus · Native" },
+  { slug: "claude-confirmed", chip: "Opus 5.5 on Claude · Default", button: "Opus · Default" },
   { slug: "codex-finished", chip: "6.1 Sol on Codex · High", button: null },
 ];
 
@@ -29,7 +29,7 @@ test("the task page names the engine, model and effort each owner runs with", as
       hidden: [scope.getByText(/engine default|Settings unknown/)],
     });
     if (phone) await page.keyboard.press("Escape");
-    if (owner.button) await expect(pill(page)).toHaveAttribute("aria-label", `Task model: ${owner.button}`);
+    if (owner.button) await expect(pill(page)).toHaveAttribute("aria-label", `Task model and effort: ${owner.button}`);
     else await expect(pill(page)).toHaveCount(0);
   }
   // Details name the launch and the engine's report in the chooser's words; before a report, that row says so.
