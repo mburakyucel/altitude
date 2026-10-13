@@ -5,9 +5,19 @@ from unittest import mock
 
 from tests.support import AltitudeCase
 from scripts import container_browser_vm as controller
+from scripts import container_vm
 
 
 class ContainerBrowserControllerTests(AltitudeCase):
+    def test_mac_refuses_outer_linux_browser_route_before_guest_or_tools(self):
+        results = self.tmp / 'results'
+        with mock.patch.object(container_vm.host, 'validation_in_container', return_value=False), \
+                mock.patch.object(container_vm.vm, 'Machine') as guest:
+            with self.assertRaisesRegex(RuntimeError, 'alt task validate --container-browser'):
+                container_vm.run(results, self.tmp / 'cache', browser=True)
+        guest.assert_not_called()
+        self.assertFalse(results.exists())
+
     def test_combined_downloads_stop_before_limit_and_counter_reset_refuses(self):
         budget = controller.Budget(self.tmp)
         machine = mock.Mock()
