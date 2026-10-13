@@ -1168,7 +1168,14 @@ unchanged members queues nothing new. Faults keep their existing separate incide
 
 ### Planned tasks
 
-Create decided short-term work with a written brief on stdin and one wait:
+Use a planned task for decided short-term work whose verified prerequisite prevents useful
+authorized progress. Under the [coordinator guidance](../personas/l3.md#authority-and-coordination),
+check supplied reference locations within existing read access before declaring evidence missing;
+an incomplete checkout search is insufficient. Pass evidence and unresolved investigation to the
+owner and create actionable work without `--wait` or `--after`. An inaccessible indispensable input
+still warrants a wait naming what was checked, who acts next and the release trigger.
+
+Create prerequisite-bound work with a written brief on stdin and one wait:
 
 ```sh
 alt task new --title "Enable the merge CI gate" --wait "PR #376 and the browser fix to land" -
