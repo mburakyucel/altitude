@@ -77,7 +77,7 @@ def main():
     row.update(delivery={"number": 42, "head": git("rev-parse", "HEAD", cwd=worktree).strip(), "at": S.now()}, prs=[42])
     S.save_task("atlas", row)
     review(pagination, "changes", [finding("expiry", "Expired cursors restart pagination")],
-           [{"finding_id": "expiry", "disposition": "open", "reason": "Needs the API owner's decision."}])
+           [{"finding_id": "expiry", "disposition": "fixed", "reason": "Expired cursors preserve pagination."}])
     S.write_json(S.task_dir("atlas", pagination) / "report.json", {
         "landed": {"prs": [{"number": 42, "merged": False}], "main_runs": [], "deploy": "not-applicable"},
         "review": [], "blocked": ""})

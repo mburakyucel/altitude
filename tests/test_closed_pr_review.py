@@ -47,8 +47,18 @@ class TestClosedPrReview(AltitudeCase):
     def closures(self) -> list[dict]:
         return [e for e in S.read_events(self.project, self.slug) if e["kind"] == "pr-closed"]
 
+    def coordinator_finished(self):
+        task = S.load_task(self.project, self.slug)
+        for question in task.get("questions", []):
+            if question["status"] == "open" and question["audience"] == "l3":
+                T.resolve_question(self.project, self.slug, question["id"], question["revision"], None,
+                                   disposition="withdrawn", reason="The fictional push prerequisite is satisfied.",
+                                   expected_attempt=1)
+
     def test_owner_stop_after_closure_retires_the_card_and_keeps_history_hold_and_questions(self):
         self.owner_block("--reason", "Waiting on the Mac agent's push.")
+        self.assertEqual((self.kinds(), self.label()), ([], "waiting on L3"), "#902: the push still belongs to L3")
+        self.coordinator_finished()
         self.assertEqual(self.kinds(), ["review"], "an open held PR still asks for review")
         self.assertEqual(self.label(), f"{self.name}'s turn · review PR #42")
 
@@ -81,6 +91,8 @@ class TestClosedPrReview(AltitudeCase):
         S.append_event(self.project, self.slug, "delivery", **task["delivery"])
         self.pr(43, "OPEN")
         self.owner_block("--reason", "Waiting on the Mac agent's push.")
+        self.assertEqual(self.kinds(), [], "replacement delivery also waits for its prerequisite")
+        self.coordinator_finished()
         self.assertEqual([row.get("pr") for row in T.decisions(self.project)], [43])
 
     def test_a_reopened_or_relanded_pr_asks_again(self):
@@ -95,6 +107,7 @@ class TestClosedPrReview(AltitudeCase):
                     S.append_event(self.project, self.slug, "delivery", **S.load_task(self.project, self.slug)["delivery"])
                     self.assertEqual(self.kinds(), [], "a running owner is not waiting for review")
                 self.owner_block("--reason", "Waiting on the Mac agent's push.")
+                self.coordinator_finished()
                 self.assertEqual(self.kinds(), ["review"])
                 T.resume(self.project, self.slug)
         self.assertEqual([e["kind"] for e in S.read_events(self.project, self.slug) if e["kind"].startswith("pr-")],
@@ -116,6 +129,7 @@ class TestClosedPrReview(AltitudeCase):
                 out = self.owner_block("--reason", "Waiting on the Mac agent's push.")
                 self.assertIn("PR #42 state unavailable", out.stderr)
                 self.assertEqual(S.load_task(self.project, self.slug)["state"], "blocked", "the block itself lands")
+                self.coordinator_finished()
                 self.assertEqual((self.kinds(), self.closures()), (["review"], []), "no closure is invented")
                 T.resume(self.project, self.slug)
         self.assertTrue(all(args[3:5] == ["--repo", "team/project"] for args in self.gh_log()), self.gh_log())

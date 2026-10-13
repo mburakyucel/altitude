@@ -196,11 +196,12 @@ class TestMergeApprovalJourney(AltitudeCase):
     def approve_from_review_card(self, content):
         initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
             "Publish the story", "Review the story before merging", content)
-        T.block(self.project, slug, "Waiting for the release checkout.", actor="l2", updates={"waiting_on": "l3"})
+        T.block(self.project, slug, "Ready for operator review.")
         self.assertEqual([(r["kind"], r.get("pr")) for r in T.decisions(self.project)], [("review", 101)])
         self.tick()
         approval = self.request("/api/l2/message", {"project": self.project, "slug": slug,
-                                                    "text": "Approved: merge PR #101."})["message"]
+            "text": "Approved: merge PR #101.", "review_pr": 101,
+            "review_hold_id": S.load_task(self.project, slug)["hold_merge_id"]})["message"]
         self.wait_state(slug, "running")
         T.take_inbox(self.project, slug)
         return slug, worktree, gh, prepared, pull, approval["id"]
@@ -257,7 +258,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         T.take_inbox(self.project, slug)
         self.tick()
         T.block(self.project, slug, "Waiting for the legal review.", actor="l2", updates={"waiting_on": "l3"})
-        self.assertEqual([r["kind"] for r in T.decisions(self.project)], ["review"], "a later condition asks again")
+        self.assertEqual(T.decisions(self.project), [], "the legal-review prerequisite stays with L3")
         self.tick()
         T.resume(self.project, slug)
         T.take_inbox(self.project, slug)
@@ -300,6 +301,26 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual((recovered["state"], recovered["agent_id"], recovered["session_id"], recovered["attempt"]),
                          ("running", "a-agent", "a-session", 1))
         self.assertEqual((recovered.get("fault"), recovered["hold_merge"]), (None, "Export review"))
+
+    def test_direct_approval_cannot_merge_or_release_hold_with_an_open_finding(self):
+        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+            "Review unfinished feature", "Operator reviews the finished feature", "Fictional feature.\n")
+        self.tick()
+        approval = self.request("/api/l2/message", {"project": self.project, "slug": slug,
+            "text": "Approved: merge PR #101."})["message"]
+        self.wait_state(slug, "running")
+        task = S.load_task(self.project, slug)
+        task["reviews"] = [{"id": "fixture-open-review", "state": "completed", "subject": "changes",
+            "reconciled": {"head": prepared["head"]},
+            "dispositions": [{"finding_id": "F1", "disposition": "open", "reason": "Shared API work remains."}],
+            "message": {"id": "fixture-review-message", "at": self.at, "role": "system", "text": "Review unfinished."}}]
+        S.save_task(self.project, task)
+        with self.assertRaisesRegex(land.LandError, "unresolved findings: F1"):
+            land.land("test: unresolved review refuses approval", cwd=worktree, merge=True, wait=0,
+                      approval=approval["id"])
+        self.assertEqual(S.load_task(self.project, slug)["hold_merge"], task["hold_merge"])
+        self.assertFalse(any(e["kind"] == "release-merge" for e in S.read_events(self.project, slug)))
+        self.assertEqual(S.load_task(self.project, slug)["reviews"], task["reviews"])
 
     def test_ui_escalation_reaffirmation_fault_recovery_and_normal_land(self):
         # I-20260909-074919: a UI choice after L3 escalation is original operator evidence.

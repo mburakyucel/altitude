@@ -235,7 +235,9 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
   const queryClient = useQueryClient();
   const toast = useToast();
   const approve = useMutation({
-    mutationFn: () => sendL2Message({ project: decision.project, slug: decision.slug, text: `Approved: merge PR #${decision.pr}.` }),
+    mutationFn: () => sendL2Message({ project: decision.project, slug: decision.slug,
+      text: `Approved: merge PR #${decision.pr}.`, review_pr: decision.pr ?? undefined,
+      review_hold_id: decision.review_hold_id ?? null }),
     onSuccess: () => {
       for (const queryKey of [["overview"], ["project", decision.project], ["task", decision.project, decision.slug]]) void queryClient.invalidateQueries({ queryKey });
       if (!chat) toast.show({ message: "Approval sent to L2" });
