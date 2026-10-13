@@ -768,7 +768,7 @@ export const TaskViewSchema = z
     transfer: z.object({
       current_engine: z.string().nullable(), current_label: z.string().nullable(), eligible: z.boolean(), reason: z.string().nullish(),
       current_model: z.string().nullable(), current_model_label: z.string().nullable(), current_effort: z.string().nullable(), current_effort_label: z.string(),
-      quota_limited: z.boolean(), resume_hold: z.string().nullish(), preparation: z.boolean(),
+      quota_limited: z.boolean(), refused: z.string().nullish(), resume_hold: z.string().nullish(), preparation: z.boolean(),
       targets: z.array(z.object({ engine: z.string(), label: z.string(), available: z.boolean(), reason: z.string().nullish(),
         default_effort: z.string().nullable(), efforts: z.array(z.object({ value: z.string(), label: z.string() })),
         models: z.array(z.object({ value: z.string(), model: z.string(), label: z.string(), available: z.boolean(), reason: z.string().nullish() })),
@@ -1690,48 +1690,26 @@ export function useSaveNewTasks() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: async (input: { value: Choice; expected: Choice }) => NewTasksSchema.parse(await post("/api/new-tasks", input)),
-    onSuccess: (result) => { client.setQueryData<Overview>(["overview"], (old) => old && { ...old, new_tasks: result }); void client.invalidateQueries({ queryKey: ["model-defaults"] }); },
+    onSuccess: (result) => client.setQueryData<Overview>(["overview"], (old) => old && { ...old, new_tasks: result }),
   });
 }
 
 
-const ModelPairSchema = z.object({ model: z.string().nullable(), effort: z.string().nullable() });
-const ModelDefaultsSchema = z.object({
-  engines: z.array(z.object({ engine: z.string(), label: z.string(), value: ModelPairSchema,
-    models: z.array(z.object({ value: z.string(), label: z.string() })),
-    efforts: z.array(z.object({ value: z.string(), label: z.string() })),
-    default_model: z.string(), default_effort: z.string(), native_effort: z.string(), unavailable: z.string().nullable(),
-  })),
-  overrides: z.array(z.object({ id: z.string(), project: z.string().nullable(), label: z.string(),
-    engine: z.string().nullable(), model: z.string().nullable(), effort: z.string().nullable(), expected: z.unknown(), editable: z.boolean() })),
+/** config.project_model_settings(): each project's own model and effort per role and engine, and its routing models. */
+const ProjectModelSettingsSchema = z.object({
+  rows: z.array(z.object({ id: z.string(), project: z.string(), label: z.string(), detail: z.string(), expected: z.unknown(), editable: z.boolean() })),
 });
-export type ModelDefaults = z.infer<typeof ModelDefaultsSchema>;
-export type ModelPair = z.infer<typeof ModelPairSchema>;
-export function useModelDefaults() {
-  return useQuery({ queryKey: ["model-defaults"], queryFn: async () => ModelDefaultsSchema.parse(await api("/api/model-defaults")), retry: false, refetchOnMount: "always" });
+export type ProjectModelSettings = z.infer<typeof ProjectModelSettingsSchema>;
+export function useProjectModelSettings() {
+  return useQuery({ queryKey: ["project-model-settings"], queryFn: async () => ProjectModelSettingsSchema.parse(await api("/api/project-model-settings")), retry: false, refetchOnMount: "always" });
 }
-export function useSaveModelDefaults() {
+export function useResetProjectModelSetting() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { engine: string; value: ModelPair; expected: ModelPair }) => ModelDefaultsSchema.parse(await post("/api/model-defaults", input)),
-    onMutate: () => client.cancelQueries({ queryKey: ["model-defaults"] }),
-    onSuccess: (result, input) => {
-      // A slower response from another engine must not roll back its independently saved pair.
-      client.setQueryData<ModelDefaults>(["model-defaults"], (old) => old ? { ...old,
-        engines: old.engines.map((row) => row.engine === input.engine ? result.engines.find((item) => item.engine === input.engine)! : row),
-      } : result);
+    mutationFn: async (input: { id: string; expected: unknown }) => ProjectModelSettingsSchema.parse(await post("/api/project-model-settings/reset", input)),
+    onSuccess: (result) => {
+      client.setQueryData(["project-model-settings"], result);
       void client.invalidateQueries({ queryKey: ["defaults"] });
-    },
-  });
-}
-export function useResetModelOverride() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { id: string; expected: unknown }) => ModelDefaultsSchema.parse(await post("/api/model-defaults/reset", input)),
-    onSuccess: (_result, input) => {
-      client.setQueryData<ModelDefaults>(["model-defaults"], (old) => old && { ...old, overrides: old.overrides.filter((row) => row.id !== input.id) });
-      void client.invalidateQueries({ queryKey: ["defaults"] });
-      void client.invalidateQueries({ queryKey: ["overview"] });
     },
   });
 }
@@ -1768,7 +1746,7 @@ export function useProjectDefaults(project: string) {
   });
 }
 
-/** The project settings a page or dialog saves whole, outside the per-engine model/effort table. */
+/** The project settings a page or button saves whole, apart from the per-engine model and effort. */
 const PROJECT_FIELDS = ["l2_preference", "l2_engine", "l3_choice"] as const;
 
 /**
@@ -1784,7 +1762,7 @@ export function useSetDefault(project: string) {
     // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
     onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
       if (!old) return result;
-      if (setting === "l3_choice") { void client.invalidateQueries({ queryKey: ["model-defaults"] }); return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable }; }
+      if (setting === "l3_choice") return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable };
       if ((PROJECT_FIELDS as readonly string[]).includes(setting)) return { ...old, [setting]: result[setting as typeof PROJECT_FIELDS[number]] };
       const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
       return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({

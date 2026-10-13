@@ -210,7 +210,7 @@ def _push(root: Path, branch: str, recorded_tip: str | None,
           *, source_branch: str | None = None) -> list[str]:
     """Push normally; only ordinary task branches may retry against the recorded remote-tip lease."""
     refspec = f"refs/heads/{source_branch}:refs/heads/{branch}" if source_branch else branch
-    p = _git(root, "push", "-u", "origin", refspec, timeout=300)
+    p = _git(root, "push", "origin", refspec, timeout=300)
     if p.returncode == 0:
         return []
     err = (p.stderr or "") + (p.stdout or "")
@@ -245,7 +245,7 @@ def _push(root: Path, branch: str, recorded_tip: str | None,
     _note(f"push rejected (non-fast-forward) — retrying once with a lease on {recorded_tip}; "
           f"recorded remote-only commits (up to 10): {' | '.join(replaced) or '(none)'}")
     lease = f"--force-with-lease={branch}:{recorded_tip}"
-    p2 = _git(root, "push", "-u", lease, "origin", branch, timeout=300)
+    p2 = _git(root, "push", lease, "origin", branch, timeout=300)
     if p2.returncode != 0:
         try:
             current_tip = _fetch_remote_tip(root, branch)

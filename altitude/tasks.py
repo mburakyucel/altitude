@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-from . import capture as C, config, github_intake, images as image_store, platform, state as S, storage, usage
+from . import capture as C, config, git_policy, github_intake, images as image_store, platform, state as S, storage, usage
 
 def short_reason(reason: str, limit: int = 200) -> str:
     """The first sentence of a block reason, for the card; the whole reason stays in detail."""
@@ -275,11 +275,10 @@ def capture_shown(project: str, task: dict, paths: object) -> tuple[dict, dict[s
     """Copy exactly the owner's named worktree files and the document's own local images; nothing else is read."""
     if not isinstance(paths, list) or not paths or any(not isinstance(path, str) for path in paths):
         raise TransitionError("--show names files in this task's worktree")
-    root = config.project_path(project).resolve()
-    worktree = Path(task.get("worktree") or root).absolute()
-    if not worktree.is_relative_to(root) or worktree == root or worktree.name != task["slug"]:
+    if not task.get("worktree"):
         raise TransitionError("showing files requires this task's registered worktree")
-    relative_worktree = worktree.relative_to(root)
+    root = config.project_path(project).resolve()
+    relative_worktree = config.WORKTREE_ROOT / task["slug"]
     files, total = {}, 0
 
     def kind(path: str) -> str:
@@ -1359,7 +1358,7 @@ def _clear_block(project: str, task: dict) -> None:
     _ensure_question(project, task)
     task["blocked_reason"] = None
     _recover_send_now(project, task)
-    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id", "turn_released"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "engine_refusal", "stop_id", "turn_released"):
         task.pop(key, None)
 
 
@@ -1778,19 +1777,23 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
         return _move(project, task, "queued", actor, **ev)
 
 
-def _require_no_code_change(task: dict) -> None:
+def _require_no_code_change(project: str, task: dict) -> None:
     """A proposal/research task may close directly; code delivery must use the verified report path."""
     if task.get("prs") or task.get("delivery"):
         raise TransitionError("task has code delivery evidence; use the verified report path")
-    worktree = task.get("worktree")
-    if not worktree:
+    if not task.get("worktree"):
         raise TransitionError("L2 direct completion requires its task worktree")
+    worktree = config.task_worktree(project, task["slug"])
+    try:
+        env = git_policy.task_git(worktree)
+    except git_policy.GitPolicyError as exc:
+        raise TransitionError(f"cannot inspect the task worktree: {exc}") from exc
     status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=worktree,
-                            capture_output=True, text=True, timeout=30)
+                            capture_output=True, text=True, timeout=30, env=env)
     if status.returncode != 0 or (status.stdout or "").strip():
         raise TransitionError("task worktree has uncommitted changes; code work must be landed and reported")
     diff = subprocess.run(["git", "diff", "--quiet", "origin/main...HEAD"], cwd=worktree,
-                          capture_output=True, text=True, timeout=30)
+                          capture_output=True, text=True, timeout=30, env=env)
     if diff.returncode != 0:
         if diff.returncode == 1:
             raise TransitionError("task branch contains code changes; use alt land and the verified report path")
@@ -1830,7 +1833,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
                 raise TransitionError(f"{slug}: coordination records where open review findings are tracked")
             if task.get("state") != "running":
                 raise TransitionError(f"{slug}: L2 can complete only its running task")
-            _require_no_code_change(task)
+            _require_no_code_change(project, task)
             task["completion_requested"] = {"at": S.now(), "digest": digest}
             S.save_task(project, task)
             S.append_event(project, slug, "completion-requested", by=actor)
@@ -1893,7 +1896,7 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
         if _messages_wait(project, task):
             continue_report(project, task, actor=actor, reason="Follow-up messages await the owner", check_pr=False)
             raise TransitionError(f"{slug}: pending messages require continuation before completion")
-        _require_no_code_change(task)
+        _require_no_code_change(project, task)
         _remove_tool_cache(project, slug)
         digest = str(request.get("digest") or "")
         d = S.task_dir(project, slug)
@@ -3011,11 +3014,12 @@ def _standing_policy(project: str, heading: str, approval: str) -> dict:
     """Capture one approved purpose from main, never a task's editable policy."""
     root = config.project_path(project)
     try:
+        env = git_policy.git_env(root)
         commit = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main^{commit}"], cwd=root,
-                                check=True, capture_output=True, text=True, timeout=30).stdout.strip()
+                                check=True, capture_output=True, text=True, timeout=30, env=env).stdout.strip()
         document = subprocess.run(["git", "show", f"{commit}:AGENTS.md"], cwd=root,
-                                  check=True, capture_output=True, text=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError) as exc:
+                                  check=True, capture_output=True, text=True, timeout=30, env=env).stdout
+    except (OSError, subprocess.SubprocessError, git_policy.GitPolicyError) as exc:
         raise ValueError("standing policy requires AGENTS.md committed on the registered project's main") from exc
     headings = list(re.finditer(r"^#{1,6} ([^\n]+)$", document, re.MULTILINE))
     matches = [i for i, match in enumerate(headings) if match.group(1) == heading]

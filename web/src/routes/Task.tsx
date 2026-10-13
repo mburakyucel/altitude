@@ -24,7 +24,8 @@ import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
 import { SteeringControls, SteeringNotice, useTaskSteering } from "../components/TaskSteering";
 import type { Steering } from "../components/TaskSteering";
-import { TransferCard, TransferDialog, TransferModelButton, useTaskTransfer } from "../components/TaskTransfer";
+import { TransferCard, TransferDialog, useTaskTransfer } from "../components/TaskTransfer";
+import { TaskModelButton } from "../components/ModelMenu";
 import type { Transfer } from "../components/TaskTransfer";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
@@ -602,7 +603,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             <ReviewDecision key={`${facts.review.pr}:${facts.review.review_hold_id ?? ""}`} decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
           </div> : null}
           {/* What the task waits on ends the chat, after any card, under the header's state; L3's open question already says it (SPEC.md §3.10). */}
-          {facts.explanation && !(transfer.quotaOffer && !readOnly && !denied) && !(answering && !task["fault"]) ? <p className="conversation-status" data-tone={task["fault"] ? "danger" : undefined} role="status">
+          {facts.explanation && !(transfer.engineOffer && !readOnly && !denied) && !(answering && !task["fault"]) ? <p className="conversation-status" data-tone={task["fault"] ? "danger" : undefined} role="status">
             <span className="dot" data-state={facts.dot} aria-hidden />{facts.explanation}
           </p> : null}
           <TransferCard transfer={transfer} />
@@ -620,7 +621,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </div>
       {facts.canMessage ? <div className="convo-dock">
         <Composer active={active} conversation={conversation} value={draft} onChange={setDraft} onSubmit={(text, accepted, images, copy) => prepareSend()(text, accepted, images, copy)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
-        pill={<TransferModelButton transfer={transfer} />}
+        pill={<TaskModelButton transfer={transfer} />}
         shows={shownCopy}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}

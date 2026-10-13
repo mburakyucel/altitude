@@ -128,12 +128,14 @@ OPERATOR = os.environ.get("ALTITUDE_OPERATOR")
 OPERATOR_ACTOR = "burak"
 PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
 # Ordered tiers; order within a tie settles unknown/equal weekly headroom. An option without a model uses the
-# project's default model for that engine, then its global pair and built-in role default. The lower tier keeps Opus,
+# project's default model for that engine, then the built-in role default. The lower tier keeps Opus,
 # the generally available Claude model, below a rejected role default; a tier never repeats an option resolved above it.
 AUTO_ROUTING = [[{"engine": engine, "model": None} for engine in sorted(ENGINES, key=lambda e: e != PRIMARY_DEFAULT_ENGINE)],
                 [{"engine": "claude", "model": "opus"}]]
 TASK_EFFORTS = ("native", "low", "medium", "high", "xhigh", "max", "ultra")
-ENGINE_EFFORTS = {"claude": TASK_EFFORTS[:-1], "codex": TASK_EFFORTS}
+# The levels each engine offers. Native (no Altitude override) is offered only where it differs from a level:
+# Codex launches it as Medium. Every engine still accepts native as "no override".
+ENGINE_EFFORTS = {"claude": TASK_EFFORTS[:-1], "codex": TASK_EFFORTS[1:]}
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 NAMED_MODELS = {"claude": [(alias, alias.title()) for alias in MODEL_ALIASES],
                 "codex": [("gpt-6.1-sol", "6.1 Sol")]}
@@ -164,7 +166,6 @@ DEFAULT_SETTINGS = {role_setting(role, engine, kind): (role, engine, kind)
                     for role in ROLES for engine in ENGINES for kind in ("model", "effort")}
 #: A model choice tried ahead of a role's routing: New tasks for every project's L2, and each project's L3 choice.
 CHOICE_SETTINGS = {"l2": "new_tasks", "l3": "l3_choice"}
-MODEL_DEFAULT_SETTINGS = {f"model_defaults_{engine}": engine for engine in ENGINES}
 ROLE_OVERRIDE_SETTINGS = {f"model_override_{role}_{engine}": (role, engine) for role in ROLES for engine in ENGINES}
 PROJECT_SETTINGS = ("routing", "l2_preference", "l2_engine", "l3_choice", *DEFAULT_SETTINGS, *ROLE_OVERRIDE_SETTINGS)
 WIP_PER_MACHINE = 80
@@ -185,7 +186,7 @@ def task_effort(engine: str | None, effort: str | None, *, role: str = "l2") -> 
     """Resolve intent; native model support and managed caps remain provider decisions."""
     if effort is not None and effort not in TASK_EFFORTS:
         raise ValueError(f"effort must be one of {', '.join(TASK_EFFORTS)}")
-    if effort is not None and engine is not None and effort not in ENGINE_EFFORTS.get(engine, ()):
+    if effort not in (None, "native") and engine is not None and effort not in ENGINE_EFFORTS.get(engine, ()):
         raise ValueError(f"{ENGINE_LABELS.get(engine, engine)} does not support reasoning effort {effort}; choose a supported level or Native")
     built_in = EFFORTS.get(engine, {})
     return built_in.get("native") if effort == "native" else effort or built_in.get(role)
@@ -204,7 +205,7 @@ def valid_model(value) -> bool:
     return isinstance(value, str) and bool(value) and not any(c.isspace() for c in value)
 
 
-EFFORT_LABELS = {"native": "Native", "xhigh": "Extra High"}
+EFFORT_LABELS = {"native": "Default", "xhigh": "Extra High"}
 
 
 def effort_label(value: str | None) -> str:
@@ -452,7 +453,11 @@ def validate_choice(value) -> None:
         raise ValueError(f"engine must be one of {', '.join(ENGINES)}")
     if model is not None and (not engine or not valid_model(model)):
         raise ValueError("a chosen model is one alias or model id without spaces, on a named engine")
-    if effort is not None and effort not in ENGINE_EFFORTS.get(engine, TASK_EFFORTS):
+    # A maintained name belongs to its own engine; any other id still passes to the engine to accept or reject.
+    owner = next((e for e, rows in NAMED_MODELS.items() if model in dict(rows)), engine)
+    if owner != engine:
+        raise ValueError(f"{dict(NAMED_MODELS[owner])[model]} is a {ENGINE_LABELS[owner]} model, not {ENGINE_LABELS.get(engine, engine)}")
+    if effort not in (None, "native") and effort not in ENGINE_EFFORTS.get(engine, TASK_EFFORTS):
         raise ValueError(f"{ENGINE_LABELS.get(engine, 'Altitude')} does not support reasoning effort {effort}")
 
 
@@ -488,78 +493,44 @@ def role_routing(role: str, project: dict) -> list[list[dict]]:
 
 
 def default_model(role: str, engine: str, project: dict | None = None) -> str | None:
-    """Explicit project value, installation engine pair, then the built-in role default."""
-    return ((project or {}).get(role_setting(role, engine, "model")) or model_default_pair(engine)["model"]
-            or MODELS[engine][role])
+    """The project's own model for this role and engine, else the built-in role default."""
+    return (project or {}).get(role_setting(role, engine, "model")) or MODELS[engine][role]
 
 
 def default_effort(role: str, engine: str, project: dict | None = None) -> str | None:
-    """Explicit project effort, then its global engine pair; None keeps built-in role behavior."""
-    return (project or {}).get(role_setting(role, engine, "effort")) or model_default_pair(engine)["effort"]
-
-
-def model_default_pair(engine: str) -> dict:
-    value = machine_settings().get(f"model_defaults_{engine}") or {}
-    return {kind: value.get(kind) for kind in ("model", "effort")}
+    """The project's own effort for this role and engine; None keeps built-in role behavior."""
+    return (project or {}).get(role_setting(role, engine, "effort"))
 
 
 def setting_value(entry: dict, setting: str):
-    """The queue's comparison unit is one engine pair, including inherited fields."""
-    if setting in MODEL_DEFAULT_SETTINGS:
-        return {kind: (entry.get(setting) or {}).get(kind) for kind in ("model", "effort")}
+    """A stored project model and effort compare as one pair."""
     if setting in ROLE_OVERRIDE_SETTINGS:
         role, engine = ROLE_OVERRIDE_SETTINGS[setting]
         return {kind: entry.get(role_setting(role, engine, kind)) for kind in ("model", "effort")}
     return entry.get(setting)
 
 
-def validate_model_pair(engine: str, value) -> None:
-    if not isinstance(value, dict) or set(value) != {"model", "effort"}:
-        raise ValueError("a model default has a model and an effort")
-    if value["model"] is not None and not valid_model(value["model"]):
-        raise ValueError("a default model is one alias or model id without spaces")
-    task_effort(engine, value["effort"])
-
-
-def _built_in(labels: dict, tasks: str, chat: str) -> str:
-    """One engine's built-in role defaults in the words the Models dialog shows."""
-    return f"{labels['l2']} for all roles" if labels["l2"] == labels["l3"] else f"{tasks}: {labels['l2']} · {chat}: {labels['l3']}"
-
-
-def model_defaults_view() -> dict:
-    from . import route
-    settings, overrides = machine_settings(), []
-    def choice_override(project_name, setting, value, label):
-        if value and (value.get("model") or value.get("effort")):
-            overrides.append({"id": json.dumps([project_name, setting]), "project": project_name,
-                              "label": label, "engine": value.get("engine"), "model": value.get("model"),
-                              "effort": value.get("effort"), "expected": value, "editable": True})
-    choice_override(None, "new_tasks", settings.get("new_tasks"), "New tasks · All projects")
+def project_model_settings() -> list[dict]:
+    """Each project's own per-engine model and effort and its routing's explicit models, which apply only where a
+    model button says Default or Auto. Settings lists them with Reset; routing models are edited with routing."""
+    def detail(engine: str, model: str | None, effort: str | None) -> str:
+        return " · ".join([ENGINE_LABELS.get(engine, engine), *([model_name(engine, model)] if model else []),
+                           *([effort_label(effort)] if effort else [])])
+    rows = []
     for name, entry in sorted(load_projects().items()):
-        choice_override(name, "l3_choice", entry.get("l3_choice"), f"{name} · Coordinator")
         for setting, (role, engine) in ROLE_OVERRIDE_SETTINGS.items():
             value = setting_value(entry, setting)
             if any(value.values()):
-                overrides.append({"id": json.dumps([name, setting]), "project": name,
-                                  "label": f"{name} · {'Coordinator' if role == 'l3' else 'Tasks'}",
-                                  "engine": engine, **value, "expected": value, "editable": True})
+                rows.append({"id": json.dumps([name, setting]), "project": name,
+                             "label": f"{name} · {'Coordinator' if role == 'l3' else 'Tasks'}",
+                             "detail": detail(engine, value["model"], value["effort"]), "expected": value, "editable": True})
         for ti, tier in enumerate(entry.get("routing", [])):
             for oi, option in enumerate(tier):
                 if option.get("model"):
-                    overrides.append({"id": json.dumps([name, "routing", ti, oi]), "project": name,
-                                      "label": f"{name} · Routing", "engine": option["engine"],
-                                      "model": option["model"], "effort": None, "expected": None, "editable": False})
-    return {"engines": [{"engine": engine, "label": ENGINE_LABELS[engine], "value": model_default_pair(engine),
-                         "models": [{"value": value, "label": label} for value, label in NAMED_MODELS[engine]],
-                         "efforts": [{"value": value, "label": effort_label(value)} for value in ENGINE_EFFORTS[engine]],
-                         "default_model": _built_in({role: dict(NAMED_MODELS[engine]).get(MODELS[engine][role])
-                                                     for role in ROLES}, "Tasks/reviews", "Chat"),
-                         "default_effort": _built_in({role: effort_label(task_effort(engine, None, role=role))
-                                                      for role in ROLES}, "Tasks", "Chat/reviews"),
-                         "native_effort": (f"Altitude sends {effort_label(native)}" if (native := task_effort(engine, "native"))
-                                           else "Provider chooses effort"),
-                         "unavailable": route.choice_unavailable("l2", {"engine": engine, **model_default_pair(engine)})}
-                        for engine in ENGINES], "overrides": overrides}
+                    rows.append({"id": json.dumps([name, "routing", ti, oi]), "project": name,
+                                 "label": f"{name} · Routing", "detail": detail(option["engine"], option["model"], None),
+                                 "expected": None, "editable": False})
+    return rows
 
 
 def pinned_option(role: str, project: dict, *, engine: str | None = None,
@@ -810,6 +781,11 @@ def project_path(name: str) -> Path:
     return Path(project(name)["path"]).expanduser()
 
 
+def task_worktree(name: str, slug: str) -> Path:
+    """A task's checkout, from Altitude's layout rather than its record, which the task's worker can rewrite."""
+    return project_path(name) / WORKTREE_ROOT / slug
+
+
 def project_dir(name: str) -> Path:
     return ROOT / require_project_name(name)
 
@@ -818,6 +794,11 @@ def beside_root(name: str) -> Path:
     """`~/.altitude-<name>`: beside Altitude's home rather than in it. Task workers can write the home, so what altd
     runs, mounts or writes as its own must not sit at a path a worker could have replaced."""
     return ROOT.with_name(f"{ROOT.name}-{name}")
+
+
+# A source install's own copy of Altitude's repository (bare), the only Git store Altitude trusts for its own code:
+# task workers write the checkout's shared Git store, never this one.
+SOURCE_COPY = beside_root("repository")
 
 
 def discover_projects() -> list[dict]:

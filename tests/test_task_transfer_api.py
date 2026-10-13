@@ -167,6 +167,23 @@ class TestTaskTransferAPI(AltitudeCase):
         self.assertEqual(self.view()["request"]["selection"], {"model": selected, "effort": "medium"})
         self.assertEqual(config.project(self.project), before)
 
+    def test_a_switch_names_a_model_of_its_engine_and_spells_no_override_once(self):
+        view = self.view()
+        target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])
+        other = next(engine for engine, rows in config.NAMED_MODELS.items() if engine != target["engine"] and rows)
+        foreign = config.NAMED_MODELS[other][0][0]
+        refused = self.action(engine=target["engine"], selection={"model": foreign, "effort": None},
+                              observed=view["observed"], status=409)
+        self.assertIn(f"is a {config.ENGINE_LABELS[other]} model", refused["error"])
+        self.assertNotIn("daemon_request", S.load_task(self.project, self.task["slug"]))
+        selected = target["models"][0]["model"]
+        self.action(engine=target["engine"], selection={"model": selected, "effort": "native"}, observed=view["observed"])
+        first = self.view()["request"]
+        self.assertEqual(first["selection"], {"model": selected, "effort": None})
+        # Either spelling is the same request: the retry is accepted and queues nothing new.
+        self.action(engine=target["engine"], selection={"model": selected, "effort": None}, observed=view["observed"])
+        self.assertEqual(self.view()["request"]["id"], first["id"])
+
     def test_default_configured_target_catalog_launches_exact_named_choice(self):
         self.register(self.project, routing=config.parse_routing("claude > codex"))
         before = config.project(self.project)

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import config, engines, platform, state as S, storage, tasks as T
+from . import config, engines, git_policy, platform, state as S, storage, tasks as T
 
 STATUSES = ("open", "watch", "closed")
 ISSUE_LABEL = "incident"
@@ -603,7 +603,7 @@ def _notify_development(project: str, incident: str, url: str) -> None:
                 return
             checkout = config.project_path(target)
             origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, timeout=10, env=git_policy.git_env(checkout))
             repository = repository_url(origin.stdout) if origin.returncode == 0 else None
             if repository and repository.lower() == url.lower().rsplit("/issues/", 1)[0]:
                 l3.queue_upstream_issue(target, url, checkout=checkout)

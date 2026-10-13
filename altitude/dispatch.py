@@ -190,7 +190,8 @@ def run_ci_recheck(project: str, slug: str) -> None:
         return
     try:
         origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(project),
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=10,
+                                env=git_policy.git_env(config.project_path(project)))
         url = server.repository_url(origin.stdout) if origin.returncode == 0 else None
         if not url:
             raise ValueError("CI recheck requires a GitHub project origin")
@@ -295,7 +296,7 @@ def _require_handoff(project: str, task: dict, engine: str, attempt: int,
             or any(review.get("state") == "running" for review in task.get("reviews", []))):
         raise T.TransitionError("handoff requires the expected running or stopped/exit/limit-blocked attempt, with no active claim")
     if (task["state"] == "blocked" and task.get("fault") != "l2-died"
-            and not task.get("usage_limit") and T.stopped_by(task) not in DAEMON_REQUEST_ACTORS):
+            and not engine_stopped(task) and T.stopped_by(task) not in DAEMON_REQUEST_ACTORS):
         if task.get("fault") or not any(q.get("status") == "open" for q in task.get("questions", [])):
             raise T.TransitionError("handoff cannot release this recovery or dependency wait")
         worker = engines.worker(l2_engine(task), task, job_root=l2_job_root(project, task["slug"]))
@@ -316,7 +317,8 @@ def _require_handoff(project: str, task: dict, engine: str, attempt: int,
 def handoff(project: str, slug: str, request: dict) -> dict:
     with config.restart_lock() as ready, S.project_lock(project):
         if not ready or config.restart_in_progress():
-            raise T.TransitionError("Altitude is restarting; retry shortly")
+            # A restart is a pause, not an answer: the request waits, as resume does, and runs on the next tick.
+            return {"pending": True, "request": request, "held": "Altitude is restarting; retry shortly"}
         task = S.load_task(project, slug)
         fence = {"expected_daemon_request": request["id"], "expected_agent_id": request.get("agent_id"),
                  "expected_session_id": request.get("session_id"), "expected_block_id": request.get("block_id")}
@@ -329,7 +331,7 @@ def handoff(project: str, slug: str, request: dict) -> dict:
         ended = worker and worker.get("state") in ("done", "failed", "stopped")
         if task["state"] == "running" and ended and T.report_current(task, S.task_dir(project, slug) / "report.json"):
             raise T.TransitionError("owner finished its report; verify that delivery instead of transferring it")
-        exhausted = bool(task.get("usage_limit"))
+        exhausted = engine_stopped(task)
         stopped = T.stopped_by(task) in DAEMON_REQUEST_ACTORS
         if not (ready or ended or exhausted or stopped or request.get("now") or request.get("phase") == "stopping"):
             _send_handoff_checkpoint(project, task, request, job_root)
@@ -522,6 +524,8 @@ def _request_task_operation(project: str, slug: str, operation: str, reason: str
     if actor not in DAEMON_REQUEST_ACTORS:
         raise T.TransitionError(f"task {operation} is available only to L3 or the operator")
     contract = DAEMON_TASK_OPERATIONS[operation]
+    if isinstance(selection, dict) and selection.get("effort") == "native":
+        selection = {**selection, "effort": None}  # one spelling for "no override", so retries stay idempotent
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if operation == "handoff" and handoff_observed is not None:
@@ -656,7 +660,7 @@ IMAGE_SEND_NOW = "Messages with images arrive at the owner's next turn."
 
 
 MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check",
-                    "update_automatic", "new_tasks", *config.MODEL_DEFAULT_SETTINGS)
+                    "update_automatic", "new_tasks")
 
 
 UNSET = object()
@@ -690,8 +694,6 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_incident_repository(value)
         elif setting in ("terminal", "update_check", "update_automatic") and not isinstance(value, bool):
             raise ValueError(f"the {setting.replace('_', ' ')} setting is on or off")
-        elif setting in config.MODEL_DEFAULT_SETTINGS:
-            config.validate_model_pair(config.MODEL_DEFAULT_SETTINGS[setting], value)
         elif setting in config.ROLE_OVERRIDE_SETTINGS:
             if value is not None:
                 raise ValueError("stored project model and effort overrides can only be cleared together")
@@ -1001,11 +1003,12 @@ def preserve_checkout(project: str, slug: str, request: dict) -> str:
 
 
 def _git_branch(worktree: str | Path) -> str | None:
-    """The branch git reports for `worktree`, or None if it is absent, detached or git failed."""
+    """The branch git reports for the task worktree, or None if it is absent, detached or git failed."""
     import subprocess
     try:
-        r = subprocess.run(["git", "-C", str(worktree), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=15)
-    except (subprocess.SubprocessError, OSError):
+        r = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(worktree), capture_output=True,
+                           text=True, timeout=15, env=git_policy.task_git(worktree))
+    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError):
         return None
     b = (r.stdout or "").strip()
     return b if r.returncode == 0 and b and b != "HEAD" else None
@@ -1022,10 +1025,11 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
     import subprocess
 
     expected_branch = f"worktree-{slug}"
-    worktree = repo / config.WORKTREE_ROOT / slug
+    worktree = config.task_worktree(project, slug)
 
     def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120)
+        return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120,
+                              env=git_policy.git_env(repo))
 
     branch_exists = git("show-ref", "--verify", "--quiet", f"refs/heads/{expected_branch}").returncode == 0
     if not worktree.exists():
@@ -1041,22 +1045,22 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
         return worktree
 
     task = S.load_task(project, slug)
-    _validate_task_worktree(repo, project, slug, worktree, restore_branch=True,
+    _validate_task_worktree(project, slug, restore_branch=True,
                            require_clean=not bool(task.get("attempt") and task.get("worktree") == str(worktree)))
     return worktree
 
 
-def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
-                            *, require_clean: bool, restore_branch: bool = False) -> None:
+def _validate_task_worktree(project: str, slug: str, *, require_clean: bool, restore_branch: bool = False) -> None:
     """Validate an already-created L2 checkout before either a fresh launch or a resume.
 
     With `restore_branch`, a clean checkout left on another branch returns to its task branch first.
     """
     import subprocess
 
-    expected_path = (repo / config.WORKTREE_ROOT / slug).resolve()
-    if worktree.resolve() != expected_path or not worktree.is_dir():
-        raise T.TransitionError(f"task worktree for {project}/{slug} must be {expected_path}, got {worktree}")
+    worktree = config.task_worktree(project, slug)
+    if not worktree.is_dir():
+        raise T.TransitionError(f"task worktree for {project}/{slug} is missing: {worktree}")
+    env = git_policy.task_git(worktree)
     expected_branch = f"worktree-{slug}"
     actual = _git_branch(worktree)
     if actual and actual != expected_branch and restore_branch:
@@ -1074,14 +1078,14 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
     if adopted_head := (task.get("adopted_pr") or {}).get("head"):
         ancestry = subprocess.run(
             ["git", "-C", str(worktree), "merge-base", "--is-ancestor", adopted_head, "HEAD"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=60, env=env,
         )
         if ancestry.returncode != 0:
             raise T.TransitionError("adopted PR head is not an ancestor of HEAD; preserve its history")
     if require_clean:
         dirty = subprocess.run(
             ["git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=all"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=60, env=env,
         )
         if dirty.returncode != 0 or (dirty.stdout or "").strip():
             detail = (dirty.stderr or "").strip()[:200]
@@ -1095,8 +1099,10 @@ def _restore_task_branch(project: str, slug: str, worktree: Path, actual: str, e
     """#524: switch a clean checkout back to its task branch; the branch it leaves keeps its commits."""
     import subprocess
 
+    env = git_policy.task_git(worktree)
+
     def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(worktree), *args], capture_output=True, text=True, timeout=60)
+        return subprocess.run(["git", "-C", str(worktree), *args], capture_output=True, text=True, timeout=60, env=env)
 
     where = f"task worktree {worktree} is on {actual}, expected {expected!r}"
     if git("show-ref", "--verify", "--quiet", f"refs/heads/{expected}").returncode != 0:
@@ -1141,7 +1147,7 @@ def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
         request += ("\n\nThe previous owner's handoff note was "
                     + ("refreshed" if transfer.get("checkpoint") == "ready" else "not refreshed")
                     + ". Treat saved context as a checkpoint, not current verification; inspect unfinished work.\n")
-    worktree = config.project_path(project) / config.WORKTREE_ROOT / slug
+    worktree = config.task_worktree(project, slug)
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         engine=engine,
@@ -1406,9 +1412,9 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None,
             return {"already_resuming": True}
         raise T.TransitionError(f"{slug}: could not claim blocked task for resume")
     task = S.load_task(project, slug)
-    cwd = Path(task.get("worktree") or "")
+    cwd = config.task_worktree(project, slug)
     if not task.get("worktree") or not cwd.is_dir():
-        error = T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
+        error = T.TransitionError(f"worktree missing for {slug} ({cwd}); dispatch again")
         raise record_resume_failure(project, slug, claim["id"], error) from error
     try:
         repo = config.project_path(project)
@@ -1434,7 +1440,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None,
     try:
         # A resume continues owned work, including edits, without needing a fresh remote base. Branch
         # restoration waits for the stopped worker so the checkout never changes underneath it.
-        _validate_task_worktree(repo, project, slug, cwd, require_clean=False, restore_branch=True)
+        _validate_task_worktree(project, slug, require_clean=False, restore_branch=True)
     except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
         raise record_resume_failure(project, slug, claim["id"], exc, kind="task-git-provenance") from exc
     except Exception as exc:  # noqa: BLE001 — no post-claim infrastructure fault may strand the durable fence
@@ -1545,6 +1551,12 @@ def stop(project: str, slug: str, *, by: str = config.OPERATOR_ACTOR, reason: st
     S.append_event(project, slug, "stopped", agent_id=task.get("agent_id"), stop_id=task.get("stop_id"),
                    by=by, reason=reason, note=str(note or "")[:200])
     return S.load_task(project, slug)
+
+
+def engine_stopped(task: dict) -> bool:
+    """The engine stopped this attempt: a usage limit or a refusal. It waits for the operator's model choice
+    (or, for a limit, its reset) and never moves engines by itself."""
+    return bool(task.get("usage_limit") or task.get("engine_refusal"))
 
 
 def resume_engine_hold(task: dict) -> str | None:
@@ -1920,18 +1932,26 @@ def _self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str
     if not proj.get("self_deploy", project == "altitude"):
         return []
     repo = config.project_path(project)
-    branch = config.SOURCE_BRANCH if repo.resolve() == config.REPO.resolve() else "main"
+    own = repo.resolve() == config.REPO.resolve()
+    branch = config.SOURCE_BRANCH if own else "main"
     origin_sha = git_policy.fetch_origin(repo, branch)
-    state = git_policy.service_preflight(repo, branch)   # clean, on the branch, neither ahead nor diverged
-    if not state.behind:
-        return []
-    head = state.head
-    pull = subprocess.run(["git", "merge", "-q", "--ff-only", f"origin/{branch}"], cwd=str(repo), capture_output=True, text=True, timeout=120)
-    if pull.returncode != 0:
-        raise git_policy.GitPolicyError(
-            f"fast-forward failed: {(pull.stderr or pull.stdout).strip()[:300] or f'exit {pull.returncode}'}"
-        )
-    files = subprocess.run(["git", "diff", "--name-only", head, origin_sha], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
+    if own:  # Altitude's own code comes through its copy of its repository, never the checkout's shared Git store
+        head, origin_sha, files = git_policy.deploy_source(repo, branch)
+        if head == origin_sha:
+            return []
+    else:
+        state = git_policy.service_preflight(repo, branch)   # clean, on the branch, neither ahead nor diverged
+        if not state.behind:
+            return []
+        head = state.head
+        pull = subprocess.run(["git", "merge", "-q", "--ff-only", f"origin/{branch}"], cwd=str(repo), capture_output=True, text=True, timeout=120,
+                              env=git_policy.git_env(repo))
+        if pull.returncode != 0:
+            raise git_policy.GitPolicyError(
+                f"fast-forward failed: {(pull.stderr or pull.stdout).strip()[:300] or f'exit {pull.returncode}'}"
+            )
+        files = subprocess.run(["git", "diff", "--name-only", head, origin_sha], cwd=str(repo), capture_output=True, text=True, timeout=30,
+                               env=git_policy.git_env(repo)).stdout.split()
     changed = [f for f in files if activation_component(f)]
     notes = [f"self-deploy: {branch} {head[:7]} → {origin_sha[:7]} ({len(files)} files)"]
     if changed and config.RELEASE is None:
@@ -2035,11 +2055,13 @@ def cleanup_task(project: str, task: dict) -> list[str]:
     here stays, with its reason recorded. A running worker or a failed fetch defers to a later pass; any other
     refusal is a recorded note, never a fault. `pull_after_done` follows a done task in every case."""
     repo = config.project_path(project)
-    slug, wt, branch = task.get("slug") or "", task.get("worktree"), task.get("branch")
+    slug, branch = task.get("slug") or "", task.get("branch")
+    wt = str(config.task_worktree(project, slug)) if slug else None
     notes: list[str] = []
 
     def git(*args: str, cwd: Path = repo) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=120)
+        return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=120,
+                              env=git_policy.git_env(cwd))
 
     def finish() -> list[str]:
         return notes + (pull_after_done(project, task) if task.get("state") == "done" else [])

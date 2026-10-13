@@ -78,7 +78,7 @@ function views(page: Page, info: TestInfo) {
     stop: main.getByRole("button", { name: "Stop voice input", exact: true }),
     cancel: main.getByRole("button", { name: "Cancel voice input", exact: true }),
     hint: main.locator(".composer-hint"),
-    pill: main.getByRole("link", { name: "Model settings", exact: true }),
+    pill: main.getByRole("button", { name: /^Coordinator model and effort:/ }),
     loading: convo.getByLabel("Loading", { exact: true }),
     lines: convo.locator(".sys-line"),
     bubble: (text: string) => convo.locator(".bubble", { hasText: text }),
@@ -572,20 +572,18 @@ test("busy: the arrow queues, the queued row with Remove, the typing indicator, 
   expect(removed).toEqual(["ui-q1"]);
 });
 
-test("the model shortcut opens global Settings and Back preserves the chat draft", async ({ page, request }, info) => {
+test("the coordinator's model button opens in place and keeps the chat draft", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await walk.open(project.path);
   await v.field.fill("Keep this unsent model question");
-  await walk.state("01-model-settings-shortcut", { visible: [v.pill, v.field], hidden: [page.getByRole("dialog")] });
   await v.pill.click();
-  const heading = page.getByRole("heading", { name: "Models and effort · All projects", exact: true });
-  await walk.state("02-global-settings", { visible: [heading], hidden: [page.getByRole("dialog")] });
-  await expect(page).toHaveURL(/\/settings#models$/);
-  await expect(heading).toBeFocused();
-  await page.goBack();
-  await walk.state("03-back-to-unsent-draft", { visible: [v.pill, v.field], hidden: [heading] });
+  const panel = page.getByRole("menu", { name: `Coordinator model and effort for ${project.name}`, exact: true });
+  await walk.state("01-model-panel-over-draft", { visible: [panel, v.field], hidden: [page.getByRole("dialog")] });
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(v.pill).toBeFocused();
   await expect(v.field).toHaveValue("Keep this unsent model question");
 });
 

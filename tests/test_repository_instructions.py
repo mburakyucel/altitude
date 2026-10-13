@@ -7,7 +7,7 @@ import json
 import unittest
 from unittest import mock
 
-from tests.support import AltitudeCase, REPO, git
+from tests.support import AltitudeCase, REPO, make_repo
 from altitude import config, dispatch, engines, l3, platform
 
 
@@ -22,18 +22,19 @@ class TestRepositoryInstructions(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
-        git("init", "-q", cwd=self.repo)
+        make_repo(self.repo)
         self.patch(engines.common, "_worker_processes", {})
 
-    def layout(self, kind):
+    def layout(self, kind, root=None):
+        root = root or self.repo
         for name in ("AGENTS.md", "CLAUDE.md"):
-            (self.repo / name).unlink(missing_ok=True)
+            (root / name).unlink(missing_ok=True)
         name = "CLAUDE.md" if kind == "legacy" else "AGENTS.md"
         if kind != "absent":
-            (self.repo / name).write_text("# Fictional project\n- Never publish fixture records.\n")
+            (root / name).write_text("# Fictional project\n- Never publish fixture records.\n")
         if kind == "shared":
-            (self.repo / "CLAUDE.md").write_text("@AGENTS.md\n")
-        return self.repo / name if kind != "absent" else None
+            (root / "CLAUDE.md").write_text("@AGENTS.md\n")
+        return root / name if kind != "absent" else None
 
     def assert_rules(self, prompt, rules):
         if rules:
@@ -88,9 +89,10 @@ class TestRepositoryInstructions(AltitudeCase):
             self.assertIn(requirement, persona)
 
     def test_l2_fresh_and_resume_pass_rules_to_both_native_clis(self):
+        worktree = self.task_worktree("fixture")
         for kind in ("shared", "agents-only", "legacy", "absent"):
-            rules = self.layout(kind)
-            before = {p.name: p.read_bytes() for p in self.repo.iterdir() if p.is_file()}
+            rules = self.layout(kind, worktree)
+            before = {p.name: p.read_bytes() for p in worktree.iterdir() if p.is_file()}
             for engine in config.ENGINES:
                 for resume in (False, True):
                     with self.subTest(kind=kind, engine=engine, resume=resume):
@@ -106,10 +108,10 @@ class TestRepositoryInstructions(AltitudeCase):
                             proc = mock.Mock(pid=4242, stdin=_Input())
                             proc.poll.return_value = None
                             processes.append(proc)
-                            self.assertEqual(kwargs["cwd"], str(self.repo))
+                            self.assertEqual(kwargs["cwd"], str(worktree))
                             return proc
 
-                        kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model=None,
+                        kwargs = dict(cwd=worktree, persona=config.PERSONAS / "l2.md", model=None,
                                       settings=self.tmp / "settings.json", job_root=self.runtime_tmp / "jobs",
                                       extra_env={"ALTITUDE_TASK": "fixture"})
                         with mock.patch.object(engines.claude, "claude_agents", return_value=[]), \
@@ -122,7 +124,7 @@ class TestRepositoryInstructions(AltitudeCase):
                         self.assertEqual(result["returncode"], 0, result)
                         self.assertEqual(result["agent"]["sessionId"], "session")
                         spec = json.loads(processes[0].stdin.getvalue())
-                        self.assertEqual((spec["engine"], spec["cwd"]), (engine, str(self.repo)))
+                        self.assertEqual((spec["engine"], spec["cwd"]), (engine, str(worktree)))
                         prompt = spec["input"][0]["text"]
                         if resume:
                             self.assert_resume(prompt, rules)
@@ -130,7 +132,7 @@ class TestRepositoryInstructions(AltitudeCase):
                             self.assert_rules(prompt, rules)
                             self.assertIn(f'You are an L1 helper. Read `{config.PERSONAS / "l1.md"}`', prompt)
                         self.assertTrue(prompt.endswith("Continue task." if resume else "Start task."))
-            self.assertEqual(before, {p.name: p.read_bytes() for p in self.repo.iterdir() if p.is_file()})
+            self.assertEqual(before, {p.name: p.read_bytes() for p in worktree.iterdir() if p.is_file()})
 
     def test_l3_fresh_and_resume_read_checkout_rules_from_scratch_for_both_engines(self):
         for kind in ("shared", "agents-only", "legacy", "absent"):

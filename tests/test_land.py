@@ -712,7 +712,7 @@ class TestLand(AltitudeCase):
         pushes = [a for a in commands if a[:2] == ["git", "push"]]
         branch_fetches = [a for a in commands if a[:4] == ["git", "fetch", "-q", "origin"]
                           and a[-1].endswith(":refs/remotes/origin/worktree-fix-x")]
-        self.assertEqual(pushes, [["git", "push", "-u", "origin", "worktree-fix-x"]])
+        self.assertEqual(pushes, [["git", "push", "origin", "worktree-fix-x"]])
         self.assertEqual(branch_fetches, [["git", "fetch", "-q", "origin",
                                            "+refs/heads/worktree-fix-x:refs/remotes/origin/worktree-fix-x"]])
         self.assertEqual(res["head"], self.git("rev-parse", "origin/worktree-fix-x").strip())
@@ -731,7 +731,7 @@ class TestLand(AltitudeCase):
         commands = self.record_commands(answer)
         res = land.land("fix: first push", cwd=self.repo, wait=0)
         self.assertEqual([a for a in commands if a[:2] == ["git", "push"]],
-                         [["git", "push", "-u", "origin", "worktree-fix-x"]])
+                         [["git", "push", "origin", "worktree-fix-x"]])
         self.assertIn(["git", "ls-remote", "--exit-code", "--heads", "origin", "worktree-fix-x"], commands)
         self.assertEqual(res["head"], self.git("rev-parse", "origin/worktree-fix-x").strip())
         self.assertEqual(res["replaced"], [])

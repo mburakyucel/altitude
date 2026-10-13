@@ -355,7 +355,7 @@ class TestOfflineJourneys(AltitudeCase):
                     self.assertEqual(T.pending(self.project, slug), [])
                 T.reject(self.project, slug, "Fixture complete")
 
-    def test_exhausted_model_falls_back_from_saved_dirty_work_without_a_reset_or_fault(self):
+    def test_exhausted_model_stops_in_place_then_an_explicit_switch_continues_saved_dirty_work(self):
         self.register(self.project, routing=config.parse_routing("claude:fable>codex"))
         task = self.launch(self.queue("Continue saved work after allowance exhaustion"))
         slug, worktree = task["slug"], Path(task["worktree"])
@@ -368,10 +368,15 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual(len(finished), 1)
         self.assertEqual((finished[0]["limited"]["model"], finished[0]["limited"]["until"]), ("fable", None))
         server.on_l2_finished(self.project, finished[0])
-        queued = S.load_task(self.project, slug)
-        self.assertEqual(queued["state"], "queued")
-        self.assertFalse(queued.get("resume_after") or queued.get("fault") or queued.get("engine"))
+        # Operator decision 2026-10-13: a usage limit stops the task on its engine; nothing moves it by itself.
+        stopped = S.load_task(self.project, slug)
+        self.assertEqual((stopped["state"], stopped["l2_engine"], stopped["session_id"]), ("blocked", "claude", task["session_id"]))
+        self.assertFalse(stopped.get("resume_after") or stopped.get("fault"))
         self.assertFalse(engines.usage_limit_path().exists())
+        self.assertEqual(len(self.engine.calls), 1)
+        dispatch.request_task_operation(self.project, slug, "handoff", "Continue on the other engine.",
+                                        actor=config.OPERATOR_ACTOR, engine="codex", expected_attempt=stopped["attempt"])
+        self.assertEqual(dispatch.run_task_operation(self.project, slug)["request"]["status"], "done")
         dispatch.run(self.project, slug)
         fresh = S.load_task(self.project, slug)
         self.assertEqual((fresh["state"], fresh["attempt"], fresh["l2_engine"]), ("running", 2, "codex"))

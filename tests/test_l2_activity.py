@@ -404,6 +404,7 @@ class TestInputHandoff(AltitudeCase):
                 return 0
 
         self.patch(engines.common, "_worker_processes", {})
+        worktree = self.task_worktree("fixture")
         for engine in ("claude", "codex"):
             for failure in (None, "write", "close", "short"):
                 with self.subTest(engine=engine, failure=failure), \
@@ -412,7 +413,7 @@ class TestInputHandoff(AltitudeCase):
                      mock.patch.object(platform, "job_active", return_value=False), \
                      mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                      mock.patch.object(engines.common.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
-                    result = engines.common._start_worker(engine, "fixture", "Exact input", cwd=self.repo,
+                    result = engines.common._start_worker(engine, "fixture", "Exact input", cwd=worktree,
                                                    settings=self.tmp / "settings.json", job_root=self.runtime_tmp / "jobs")
                     self.assertEqual(result["returncode"], 1 if failure else 0)
                     self.assertEqual(result["agent"]["input_delivered"], failure is None)
@@ -440,6 +441,7 @@ class TestInputHandoff(AltitudeCase):
                 return 0
 
         self.patch(engines.common, "_worker_processes", {})
+        worktree = self.task_worktree("fixture")
         for engine in ("claude", "codex"):
             for session in (None, "wrong-session"):
                 with self.subTest(engine=engine, session=session), \
@@ -448,7 +450,7 @@ class TestInputHandoff(AltitudeCase):
                      mock.patch.object(platform, "job_active", return_value=False), \
                      mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                      mock.patch.object(engines.common.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
-                    result = engines.common._start_worker(engine, "fixture", "Exact resume input", cwd=self.repo,
+                    result = engines.common._start_worker(engine, "fixture", "Exact resume input", cwd=worktree,
                                                    settings=self.tmp / "settings.json", job_root=self.runtime_tmp / "jobs",
                                                    resume="original-session", start_timeout=0)
                 self.assertEqual(result["returncode"], 1)

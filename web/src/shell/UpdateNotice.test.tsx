@@ -27,7 +27,7 @@ function fixture(initial: Update | null = available) {
       return json({ ...machine, update_automatic: automatic, update });
     }
     if (path === "/api/machine") return json(machine);
-    if (path === "/api/model-defaults") return json({ engines: [], overrides: [] });
+    if (path === "/api/project-model-settings") return json({ rows: [] });
     if (path === "/api/voice") return json({ backend: "host", selection: "fixture", host: { state: "ready", download_bytes: 698435338 } });
     if (path === "/api/overview") return json({ projects: [], queue: [], engines: [], update,
       wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });

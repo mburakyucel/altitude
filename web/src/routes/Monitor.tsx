@@ -3,7 +3,7 @@ import { useMonitor, useOverview } from "../data/api";
 import type { EngineReadout, MonitorSeat, RoutingRow, Session } from "../data/api";
 import { TokenUsage } from "../components/TokenUsage";
 import { RestartDetails } from "../shell/RestartBanner";
-import { NewTasksButton } from "../components/Models";
+import { RoleModelButton } from "../components/ModelMenu";
 import { useViewport } from "../shell/breakpoints";
 import { age, agoText, exactTime, localTimes, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, stampText, when } from "../data/observed";
 
@@ -325,7 +325,7 @@ export default function Monitor() {
   return (
     <div className="page">
       <h1 className="text-page-title font-semibold">Monitor</h1>
-      {phone ? <NewTasksButton overview={overview.data} wide /> : null}
+      {phone ? <RoleModelButton variant="row" /> : null}
       <section className="monitor-section" aria-labelledby="monitor-update">
         <h2 id="monitor-update" className="monitor-head">Altitude update</h2>
         {overview.isPending ? <p><StatusMark label="Loading update status…" /></p> : overview.isError ?

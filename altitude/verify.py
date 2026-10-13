@@ -6,7 +6,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from . import config, engines, state as S
+from . import config, engines, git_policy, state as S
 
 
 class VerifierFault(RuntimeError):
@@ -117,7 +117,7 @@ def _verify(project: str, slug: str) -> dict:
                 if info.get("headRefOid") != delivery.get("head"):
                     out["problems"].append(f"PR #{n}: GitHub head differs from the current delivery; run alt land again")
                 out["problems"].extend(_worktree_problems(
-                    task, delivery, (info.get("mergeCommit") or {}).get("oid") if merged else None))
+                    project, task, delivery, (info.get("mergeCommit") or {}).get("oid") if merged else None))
             if merged and not _same_commit(pr.get("merge_sha"), (info.get("mergeCommit") or {}).get("oid")):
                 out["problems"].append(f"PR #{n}: reported merge SHA differs from GitHub")
         if pr.get("merged") and not merged:
@@ -157,16 +157,16 @@ def _same_commit(reported: str | None, actual: str | None) -> bool:
     return bool(reported and actual and len(reported) >= 7 and actual.startswith(reported))
 
 
-def _worktree_problems(task: dict, delivery: dict, merge_sha: str | None) -> list[str]:
-    worktree = task.get("worktree")
-    if not worktree or not Path(worktree).is_dir():
+def _worktree_problems(project: str, task: dict, delivery: dict, merge_sha: str | None) -> list[str]:
+    worktree = config.task_worktree(project, task["slug"])
+    if not task.get("worktree") or not worktree.is_dir():
         return ["task worktree unavailable; cannot verify current delivery"]
 
     def git(args):
         try:
             return subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True,
-                                  timeout=60, env=engines.clean_env())
-        except (subprocess.SubprocessError, OSError) as e:
+                                  timeout=60, env=git_policy.task_git(worktree, engines.clean_env()))
+        except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
             raise VerifierFault(f"cannot inspect task worktree: {e}") from e
 
     problems = []

@@ -90,8 +90,7 @@ class TestAdoption(AltitudeCase):
         self.assertEqual(task["adoption_history"], [first])
         self.assertEqual(task["prs"], [101, 102])
         self.assertEqual(second["previous_merge"], self.git("rev-parse", "origin/main").strip())
-        dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                        require_clean=True)
+        dispatch._validate_task_worktree("demo", "fix-x", require_clean=True)
         land.land("retry second proposal", cwd=self.repo, wait=0, **next_pr)
         self.assertEqual(self.receipt(), second)
         events = [e for e in S.read_events("demo", "fix-x") if e["kind"] == "pr-adopted"]
@@ -146,7 +145,7 @@ class TestAdoption(AltitudeCase):
             land.land("merge next", cwd=self.repo, wait=0, merge=True)
         head = self.commit("src/later.py", "Reviewed later update")
         self.assertEqual(land.land("next", cwd=self.repo, wait=0)["pr"], 102)
-        dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo, require_clean=True)
+        dispatch._validate_task_worktree("demo", "fix-x", require_clean=True)
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
         with self.assertRaisesRegex(land.LandError, "merge hold"):
             land.land("merge next", cwd=self.repo, wait=0, merge=True)
@@ -225,8 +224,7 @@ class TestAdoption(AltitudeCase):
         self.assertEqual(result["branch"], "worktree-fix-x")
         self.assertEqual(self.git("log", "-1", "--format=%B").strip(), "docs: reconcile proposal")
         self.assertEqual(self.git("show", "-s", "--format=%B", self.original).strip(), "Original external proposal")
-        dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                        require_clean=True)
+        dispatch._validate_task_worktree("demo", "fix-x", require_clean=True)
         self.adopt()  # replay cannot change the assignment or write a second adoption event
         self.assertEqual(self.receipt(), receipt)
         self.assertEqual(len([e for e in S.read_events("demo", "fix-x") if e["kind"] == "pr-adopted"]), 1)
@@ -312,8 +310,7 @@ class TestAdoption(AltitudeCase):
                 head = self.commit(f"src/later-{index}.py", "Reviewed reconciliation", trailer)
                 message = self.git("show", "-s", "--format=%B", head)
                 land.land("reconcile", cwd=self.repo, wait=0)
-                dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                                require_clean=False)
+                dispatch._validate_task_worktree("demo", "fix-x", require_clean=False)
                 self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
                 self.assertEqual(git("show", "-s", "--format=%B", head, cwd=self.remote), message)
 
@@ -327,8 +324,7 @@ class TestAdoption(AltitudeCase):
         with self.assertRaisesRegex(land.LandError, "not an ancestor"):
             land.land("reconcile", cwd=self.repo, wait=0)
         with self.assertRaisesRegex(T.TransitionError, "not an ancestor"):
-            dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                            require_clean=True)
+            dispatch._validate_task_worktree("demo", "fix-x", require_clean=True)
 
     def test_adoption_and_selected_additions_do_not_require_predicted_paths(self):
         task = S.load_task("demo", "fix-x")

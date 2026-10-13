@@ -22,7 +22,7 @@ class TestAutoIntegration(AltitudeCase):
         self.quota = self.patch(monitor, "quota", return_value={"known": False})
         self.other_quota = self.patch(route, "quota_codex", return_value={"known": False})
         self.patch(dispatch.git_policy, "fetch_origin", return_value="a" * 40)
-        self.patch(dispatch, "_task_worktree", return_value=self.repo)
+        self.patch(dispatch, "_task_worktree", side_effect=self.task_worktree)
         self.patch(dispatch, "_validate_task_worktree")
         self.patch(engines, "worker_live", return_value=False)
         self.patch(engines, "stop_l2_worker")
@@ -165,29 +165,15 @@ class TestAutoIntegration(AltitudeCase):
         self.assertEqual((saved["l2_engine"], saved["session_id"], saved["launch_model"], saved["attempt"]),
                          ("claude", "conversation", "opus", 1))
 
-    def test_global_pair_applies_at_dispatch_and_never_reinterprets_a_saved_resume(self):
-        original = config.machine_settings()
-        for name in ("events.jsonl", "model_defaults_codex-request.json"):
-            path = config.ROOT / name
-            if path.exists():
-                self.addCleanup(path.write_bytes, path.read_bytes())
-            else:
-                self.addCleanup(path.unlink, missing_ok=True)
-        settings_path = config.ROOT / "settings.json"
-        if settings_path.exists():
-            self.addCleanup(S.write_json, settings_path, original)
-        else:
-            self.addCleanup(settings_path.unlink, missing_ok=True)
-        self.policy("codex")
-        S.write_json(config.ROOT / "settings.json", {"model_defaults_codex": {"model": None, "effort": "native"}})
+    def test_project_effort_applies_at_dispatch_and_never_reinterprets_a_saved_resume(self):
+        self.policy("codex", l2_codex_effort="native")
         task = self.task()
         with mock.patch.object(engines, "start_l2", side_effect=self.launched) as launch:
             dispatch.run(self.project, task["slug"])
         self.assertEqual((launch.call_args.kwargs["model"], launch.call_args.kwargs["effort"]), ("gpt-6.1-sol", "medium"))
         T.block(self.project, task["slug"], "Waiting for requested input")
         queued = self.task()
-        server.save_model_defaults({"engine": "codex", "value": {"model": "gpt-6.1-sol", "effort": "ultra"},
-                                    "expected": {"model": None, "effort": "native"}})
+        self.policy("codex", l2_codex_effort="ultra")
         with mock.patch.object(engines, "resume_l2", return_value={"returncode": 0, "agent": {
                 "id": "resumed", "sessionId": "conversation", "state": "working"}}) as resume:
             dispatch.resume(self.project, task["slug"])
@@ -375,41 +361,6 @@ class TestAutoIntegration(AltitudeCase):
             self.assertEqual(saved["session_id"], "session")
             self.assertIn("reset time unknown", saved["blocked_reason"])
             self.assertFalse(engines.usage_limit_path().exists())
-
-    def test_limit_fallback_preserves_a_racing_resume_claim_and_its_messages(self):
-        for phase in ("before-retirement", "before-requeue"):
-            with self.subTest(phase=phase):
-                self.policy("claude:fable > codex")
-                task = self.task()
-                running = {**task, "state": "running", "attempt": 1, "l2_engine": "claude", "agent_id": "worker",
-                           "session_id": "session", "launch_model": "fable"}
-                S.save_task(self.project, running)
-                limit = engines.usage_limit_in("You've reached your Fable limit. Switch to another model.")
-                claimed = {}
-                def claim():
-                    message = T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Preserve this new instruction")
-                    claimed.update(claim=T.claim_resume(self.project, task["slug"]), message=message)
-                record = engines.record_usage_limit
-                requeue = T.requeue
-                def observe(*args):
-                    record(*args)
-                    if phase == "before-retirement":
-                        claim()
-                def move(*args, **kwargs):
-                    if phase == "before-requeue":
-                        claim()
-                    return requeue(*args, **kwargs)
-                with mock.patch.object(engines, "record_usage_limit", side_effect=observe), \
-                     mock.patch.object(T, "requeue", side_effect=move), \
-                     mock.patch.object(engines, "remove_l2_worker") as remove:
-                    server.on_l2_finished(self.project, {"task": running, "limited": limit})
-                saved = S.load_task(self.project, task["slug"])
-                self.assertEqual(saved["state"], "blocked")
-                self.assertEqual(saved["resume_claim"]["id"], claimed["claim"]["id"])
-                self.assertEqual([row["id"] for row in saved["resume_claim"]["messages"]], [claimed["message"]["id"]])
-                self.assertEqual((saved["agent_id"], saved["session_id"]), ("worker", "session"))
-                if phase == "before-retirement":
-                    remove.assert_not_called()
 
     def test_l3_one_off_model_pin_stays_strict_and_keeps_error_in_conversation(self):
         self.policy("claude:fable > claude:opus")

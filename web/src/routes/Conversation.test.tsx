@@ -1699,21 +1699,6 @@ describe("Conversation", () => {
     await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", text: "Ship it", request_id: sendId }));
   });
 
-  it("opens global model settings from chat and returns with the draft intact", async () => {
-    HTMLElement.prototype.scrollIntoView = vi.fn();
-    mockFetch();
-    const { user, router } = renderApp({ route: "/projects/altitude" });
-    const region = await conversation();
-    const textbox = within(region).getByRole("textbox");
-    await user.type(textbox, "Keep this draft");
-    const links = await within(region).findAllByRole("link", { name: "Model settings" });
-    await user.click(links[0]!);
-    expect(router.state.location.pathname).toBe("/settings");
-    expect(router.state.location.hash).toBe("#models");
-    await user.click(screen.getByRole("button", { name: "‹ Back" }));
-    expect(await within(await conversation()).findByRole("textbox")).toHaveValue("Keep this draft");
-  });
-
   it("shows the project name once on the phone, above the conversation", async () => {
     mockFetch();
     setViewport(390);

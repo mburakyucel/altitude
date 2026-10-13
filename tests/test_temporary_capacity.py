@@ -65,23 +65,19 @@ class TestTemporaryCapacity(AltitudeCase):
                 mock.patch.object(engines, "note_usage_limit") as global_hold, \
                 mock.patch.object(engines, "remove_l2_worker", return_value="removed") as removed:
             server.on_l2_finished(self.project, out[0])
-        switched = S.load_task(self.project, task["slug"])
-        self.assertEqual(switched["state"], "queued", "a fresh attempt on the other engine, from saved progress")
-        self.assertEqual((switched["l2_engine"], switched["engine_model"], switched["agent_id"], switched["session_id"]),
-                         (task["l2_engine"], None, None, None))
-        self.assertEqual((switched["launch_model"], switched["launch_effort"], switched["attempt"]),
-                         (task["launch_model"], task["launch_effort"], task["attempt"]))
-        # Applied facts describe the last successful launch, not the next routing decision.
-        self.assertIsNone(switched.get("next_engine"))
-        self.assertIsNone(switched.get("next_selection"))
-        choice = route.pick_task(config.project(self.project), switched)
-        self.assertIsNotNone(choice["engine"], choice)
-        self.assertNotEqual(choice["engine"], task["l2_engine"])
-        self.assertNotIn("resume_after", switched)
-        removed.assert_called_once_with("codex", task["agent_id"],
-                                        job_root=dispatch.l2_job_root(self.project, task["slug"]))
+        # The other engine is free, yet the unpinned task stops on its own engine and session (operator decision
+        # 2026-10-13): only the operator's Change model… moves it.
+        held = S.load_task(self.project, task["slug"])
+        self.assertEqual(held["state"], "blocked")
+        self.assertEqual((held["l2_engine"], held["engine_model"], held["agent_id"], held["session_id"]),
+                         (task["l2_engine"], task["engine_model"], task["agent_id"], task["session_id"]))
+        self.assertEqual(held["resume_after"], out[0]["limited"]["until"])
+        removed.assert_not_called()
         global_hold.assert_not_called()
         fault.assert_not_called()
+        view = server.task_transfer_view(self.project, held)
+        self.assertTrue(view["quota_limited"])
+        self.assertTrue(any(target["engine"] != "codex" and target["available"] for target in view["targets"]), view)
 
     def test_pinned_engine_parks_until_its_window_reopens(self):
         task = self._task("codex-quota-pinned")
@@ -140,7 +136,7 @@ class TestTemporaryCapacity(AltitudeCase):
         verify.assert_not_called()
 
         second["resume_after"] = "1970-01-01T00:00:00+00:00"
-        second["worktree"] = str(self.repo)
+        second["worktree"] = str(self.task_worktree(task["slug"]))
         S.save_task(self.project, second)
         seen = {}
 

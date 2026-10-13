@@ -154,6 +154,7 @@ class LaunchSource(AltitudeCase):
         git("update-ref", "refs/heads/main", head, cwd=self.installation.parent / "origin.git")
         git("fetch", "-q", "origin", "main", cwd=self.installation)
         git("update-ref", "refs/heads/main", head, cwd=self.installation)
+        git_policy.deploy_source(self.installation, "main")   # Altitude's copy fetches the new commit
         git_policy.activate_source()
         self.assertNotEqual(config.SOURCE, first)
         self.assertTrue(first.is_dir())
@@ -277,6 +278,7 @@ class LaunchSource(AltitudeCase):
             git("update-ref", "refs/heads/main", head, cwd=self.installation.parent / "origin.git")
             git("fetch", "-q", "origin", "main", cwd=self.installation)
             git("update-ref", "refs/heads/main", head, cwd=self.installation)
+            git_policy.deploy_source(self.installation, "main")
             if version == "second":
                 with mock.patch.object(git_policy, "_run", side_effect=miss_project), \
                         mock.patch("altitude.incidents.system_fault") as fault:

@@ -57,7 +57,7 @@ Codex launch, fresh or resumed, owner, coordinator or reviewer, names its model 
 Codex CLI's own defaults and the operator's Codex configuration never choose silently. Auto excludes engines that cannot accept an explicit level;
 unsupported pins refuse. Model compatibility and provider effort caps are separate from the
 configured intent. Messages and resumes keep saved `launch_effort`, `launch_model`, attempt and
-conversation even when global model/effort defaults, project overrides, routing or native configuration change.
+conversation even when role choices, project overrides, routing or native configuration change.
 A session saved before every launch named its model and effort resumes on the built-in task defaults. Provider effort failures remain launch/turn failures without an
 application downgrade or engine switch. Observations never become requested settings and start
 unknown on each resumed turn.
@@ -330,7 +330,8 @@ intermediate content.
 
 Deployment staged, working and untracked content remains untouched by dispatch and resume.
 Task CLI code, personas, hooks, templates and schemas come from the activated committed installation
-export outside worker writable roots; fresh project work starts from fetched `origin/main`.
+export outside worker writable roots, taken from Altitude's own copy of its repository; fresh project work
+starts from fetched `origin/main`.
 Deployment and activation errors remain visible independently of isolated task progress.
 
 An archive installation pins these inputs to its immutable application version; it needs no
@@ -862,7 +863,7 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
    systemd's `inactive` result with exit code 4 confirms a collected transient unit has ended.
    Unknown or unavailable status refuses the launch and preserves the claimed inbox for recovery;
 4. the attempt's original engine, provider conversation and recorded `launch_model` are resumed with the
-   inbox text (or "Continue from your progress file."); changed Auto preferences, global model/effort defaults and project overrides do not
+   inbox text (or "Continue from your progress file."); changed Auto preferences, role choices and project overrides do not
    alter that attempt. The replacement worker is bound atomically; a superseded bind stops the unowned
    worker and keeps the newer question. Launch failures and uncertain worker ownership retain incident
    evidence without changing a newer question's wait. A genuine
@@ -925,28 +926,29 @@ notification moves no evidence and creates, reuses, resumes, or coordinates no r
 task. The reporting L3 does not repair Altitude;
 Altitude's operator/coordinator selects implementation separately. Normal issue verbs remain bound
 to the calling project's origin and accept no repository override. A cross-provider
-continuation is a deliberate, recorded fresh attempt based on saved work: when a worker exhausts an
-allowance and the task has no explicit engine/model pin, an eligible configured alternative can receive
-a new attempt briefed with the task's `progress.md`. A named model allowance excludes only that model.
-No eligible alternative leaves the task blocked. Only a provider-reported reset schedules resumption;
-unknown reset times create no timer. The existing thirty-minute routing observation expiry is an
+continuation is a deliberate, recorded fresh attempt based on saved work, and only the operator or L3
+starts one. When a worker hits a usage limit, or its engine refuses it, the task stops on that engine
+and session with the reason; nothing moves it to another engine or model by itself. Its conversation
+shows the stop with **Change model…**, which opens the task's model panel, so the operator can switch
+instead of waiting. A named model allowance excludes only that model from new routing. Only a
+provider-reported reset schedules resumption on the same engine; unknown reset times create no timer. The existing thirty-minute routing observation expiry is an
 availability recheck, not a reset claim. Ordinary resume preserves the provider conversation and launch model.
 
-For a running owner, an operator/L3-stopped owner, or one blocked by worker death, a recognized usage limit or an unanswered question with a confirmed ended worker, L3 or the operator
+For a running owner, an operator/L3-stopped owner, or one blocked by worker death, a recognized usage limit, an engine refusal or an unanswered question with a confirmed ended worker, L3 or the operator
 uses [`alt task handoff`](CLI.md#explicit-provider-handoff) with the observed attempt, target engine
 and reason. A running owner gets one native checkpoint instruction to refresh `progress.md` and write a
 request-specific readiness file identifying its attempt and worker/session. That receipt replaces
 the normal block/report at turn end; the owner ends its turn without another lifecycle command.
 This works with workers
 whose immutable CLI predates handoff. Readiness does not depend on file modification time or a send receipt.
-There is no automatic timeout. Confirmed engine exit, a recorded usage limit, an existing Stop or an
+There is no automatic timeout. Confirmed engine exit, a recorded usage limit or engine refusal, an existing Stop or an
 explicit `--now` allows saved-context transfer without a new note; silence and network failure do not.
-The task composer's model chooser uses this same lifecycle for engine, model and effort changes.
+The task composer's model and effort button uses this same lifecycle for engine, model and effort changes.
 Confirmation freezes its resolved selection; later defaults do not alter the pending attempt. An
 unchanged selection creates no request. Same-engine changes start a fresh session after the same
 patient checkpoint and confirmed termination. This selection is local to the new attempt and its
-ordinary resumes; it changes no global/project settings or explicit pin. Pending questions and holds
-stay open, and confirmed quota exhaustion uses saved progress without requiring a fresh note.
+ordinary resumes; it changes no coordinator, New tasks or project setting or explicit pin. Pending questions and holds
+stay open, and a recorded usage limit or engine refusal uses saved progress without requiring a fresh note.
 While a fresh attempt is queued, the previous launch's engine, model and effort remain applied
 facts; only a successful replacement launch updates them. These facts do not pin Auto routing.
 `--request <id> --cancel` cancels while the request waits and sends a correction to the same owner.
@@ -1108,7 +1110,8 @@ delivery, not provider adherence or live browser isolation. See
 [browser verification](DEVELOPMENT.md#browser-verification).
 
 A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common
-directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment
+directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots,
+with the Git settings, hooks and worktree records inside them [read-only](ARCHITECTURE.md#isolation-and-landing), the network stays on for pushes, PRs, and tests, and the launch environment
 carries the task identity. A Codex L3 turn uses a dedicated permission profile: it writes only one fresh per-turn
 runtime directory; the deployment checkout and Altitude home are read-only, direct command networking and the
 user-service bus are denied. A required stdio MCP adapter exposes one coordinator tool for `alt` verbs and

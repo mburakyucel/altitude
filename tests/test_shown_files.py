@@ -321,16 +321,20 @@ class TestShownFiles(AltitudeCase):
             self.reply("overview.png")
         self.assertEqual(swapped, [True])
 
-    def test_registered_worktree_cannot_be_replaced_with_another_tasks_checkout(self):
+    def test_a_rewritten_worktree_record_never_shows_another_checkout(self):
         other = add_worktree(self.repo, "another-owner")
-        (other / "overview.png").write_bytes(png())
+        (other / "overview.png").write_bytes(png(99))
         task = S.load_task(self.project, self.slug)
         for path in (self.repo, other, self.worktree / "docs"):
             with self.subTest(path=path):
                 task["worktree"] = str(path)
                 S.save_task(self.project, task)
-                with self.assertRaises(T.TransitionError):
-                    self.reply("overview.png")
+                row = self.reply("overview.png")
+                self.assertEqual(self.saved(row["shown"]["images"][0]["name"]).read_bytes(), png(50))
+        task["worktree"] = None
+        S.save_task(self.project, task)
+        with self.assertRaisesRegex(T.TransitionError, "registered worktree"):
+            self.reply("overview.png")
 
     def test_interrupted_publication_is_retryable_without_a_partial_saved_file(self):
         original = os.replace
