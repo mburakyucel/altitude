@@ -2036,7 +2036,7 @@ barely compress and travel as stored. Opening requests no dictation asset; `web/
 walks cold, warm and slow opens with dictation assets failing.
 
 A page keeps running the build it opened with. Activation replaces `web/dist`, so a file that page
-loads later, such as the terminal's code (the app's one lazy module), is gone and altd answers 404.
+loads later, such as document formatting or the terminal's code, is gone and altd answers 404.
 The terminal view then says whether the served page names another app script, meaning Altitude was
 updated, or Altitude could not be reached (no answer within five seconds counts as unreachable), and offers
 Reload. Only a failed load of that code shows this; an error inside a loaded terminal reaches the route's error page. It does not reload by itself, and says
@@ -2045,6 +2045,22 @@ module import for the page's lifetime, so only a reload recovers. The terminal's
 that its import alone requests: its stylesheet (about 1 KB compressed) travels with the app's, because
 Vite also preloads a lazy module that has a stylesheet, and WebKit keeps a failed preload across a
 reload, which would leave Reload broken. Earlier builds are not retained.
+
+Document formatting has one shared deferred loader for the task-file reader, shown reader and
+expanded system information messages. A rejected formatting import stays inside the document:
+**Formatting unavailable**, the exact inert source text, and **Reload page** keep the surrounding
+view usable. The shown reader also keeps its saved embedded images below the source, with their
+existing gallery controls; nonembedded images retain their position. Remote URLs in source are
+not fetched. Conversation-hosted readers warn that reloading clears text typed but not sent; the
+separate file tab has no draft warning because reloading it leaves the conversation tab alone.
+Closing a reader or hiding a system card keeps the unsent draft. A failed shared import also leaves
+subsequent documents readable as source. Only the operator's explicit Reload page reloads the app;
+API read failures retain their existing Retry, and errors inside a loaded renderer reach the route's
+error page. Import rejection also covers a module that cannot finish initialization; an error
+thrown while rendering a successfully loaded module propagates. No update or network cause is
+inferred from import rejection. Document styles travel
+with the initial app CSS, so no deferred stylesheet preload can strand formatting across a reload.
+The formatting script stays deferred, preserving the initial download's performance limit.
 
 Every API reply is `no-store`. The app keeps what it has read in memory only (TanStack Query, per
 project and task), re-reads a view on each open and on every change event, and drops it all on

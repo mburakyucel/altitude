@@ -370,6 +370,23 @@ boards in place, removing obsolete review scaffolding and its generators/referen
 
 ### Loading and caching evidence
 
+`web/e2e/document-update.pw.ts` walks all three document entry points across replacement of the
+actual built JS/CSS served by a disposable real server. Fixture controls use PUT requests, leaving
+the application's GET and POST dispatchers real. Separate script, stylesheet and combined removal cases
+establish readable-source recovery, saved-image access, draft preservation, repeated
+document entry and explicit whole-page reload at phone and desktop widths. Styles load with the
+app, so removal of an old stylesheet leaves the open page's formatting usable. Connection-drop
+fixtures keep the browser cache enabled and verify same-script reload without module preloads.
+Content transport abort overlays keep API Retry, whose successful read uses real API/storage;
+offline content reads resume on reconnect. A successful
+module whose renderer throws reaches the route error page at each entry point, rather than being
+misclassified as a load failure. `file-references.pw.ts` and `shown-files.pw.ts` cover the readers'
+loading, empty, denied, unavailable and image states; `app-update.pw.ts` retains terminal recovery,
+and `first-open.pw.ts` keeps the cold/warm/slow opening checks and compressed-script limit.
+Run these committed candidates through `alt task validate -- make ui-validate` and the separate
+emulated-iPhone WebKit lane. Their fictional network failures establish application behavior, not
+the response or network/TLS cause of a private browser incident.
+
 Caching and prefetch changes follow the [project rule](../AGENTS.md#working-rules-for-every-pr): a
 reviewed proposal, then a reviewed implementation. Measure before choosing. `web/e2e/first-open.pw.ts`
 is the example: it opens its own browser context, because the harness's request interception turns

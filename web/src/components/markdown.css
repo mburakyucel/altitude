@@ -1,3 +1,10 @@
+/* Document styles load with the app: deferred CSS preloads can stay failed across WebKit reloads. */
+.document-load-notice { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 20px; }
+.document-load-notice .btn { min-height: 44px; }
+.sys-card-body .document-load-notice { margin-top: 16px; }
+.document-source { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono);
+  font-size: var(--text-meta); line-height: 1.65; }
+
 /* A markdown document as GitHub shows it, on Altitude's tokens (SPEC.md §3.11). Wide tables and code scroll in
  * their own block; the document never scrolls sideways. */
 .markdown { min-width: 0; font-size: 16px; line-height: 1.65; color: var(--text-primary); overflow-wrap: break-word; }
