@@ -67,9 +67,11 @@ try {
         env:{...process.env,HOME:home,XDG_CONFIG_HOME:join(home,"config"),XDG_CACHE_HOME:join(home,"cache")}});
       const page=await context.newPage();
       if(cfg.control_socket) {
+        const wrongHostnamePage=await context.newPage();
         let rejected=false;
-        try {await page.goto('https://altitude-wrong.invalid:'+cfg.port,{timeout:15000});}
+        try {await wrongHostnamePage.goto('https://altitude-wrong.invalid:'+cfg.port,{timeout:15000});}
         catch(error) {if(!String(error).includes('ERR_CERT_COMMON_NAME_INVALID')) throw error;rejected=true;}
+        finally {await wrongHostnamePage.close();}
         if(!rejected) throw Error('Wrong TLS hostname was accepted');
         writeFileSync(join(evidence,'tls-controls.json'),JSON.stringify({untrusted_ca_rejected:true,wrong_hostname_rejected:true}));
       }
