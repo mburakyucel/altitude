@@ -744,22 +744,29 @@ board("VoiceStates", 1200, 2700, voice_inner)
 
 # ---------- settings overview and nested voice settings ----------
 def voice_options(chosen="host", host="ready"):
+    """The three transcription cards: In use on the chosen one, one Use button on each other."""
     opts = [
-        ("host", "This computer", "Words appear as you speak, with punctuation and capitals, in English, in every browser. Audio goes from your device to this computer over Altitude’s own connection, is transcribed here and is never stored or sent to another service. If the connection drops, recording continues and your words catch up."),
-        ("browser", "Browser recognition", "No setup in supported browsers. Words appear as you speak. Your browser may send audio to its speech service; that service’s privacy policy applies."),
+        ("host", "This computer", "Words appear as you speak, with punctuation and capitals, in English, in every browser. Audio goes from your device to this computer over Altitude’s own connection, is transcribed here and is never stored or sent to another service. If the connection drops, recording continues and your words catch up.", "Use this computer"),
+        ("browser", "Browser recognition", "No setup in supported browsers. Words appear as you speak. Your browser may send audio to its speech service; that service’s privacy policy applies.", "Use browser recognition"),
+        ("service", "Your speech service", "Words appear after you stop. Audio passes through this computer to the service you choose. Its privacy policy and charges apply.", "Use your speech service"),
     ]
     panels = {
-        "ready": ('Ready on this computer. While you dictate, the speech process uses about 2 GB of memory.', '<span class="btn">Remove voice (698 MB)</span>'),
+        "ready": ('While you dictate, the speech process uses about 2 GB of memory.', '<span class="btn">Remove voice (698 MB)</span>'),
         "absent": ('Needs a one-time download of about 698 MB, checked against this release.', '<span class="btn primary">Set up voice</span>'),
     }
     rows = ""
-    for key, title, note in opts:
-        rows += f'<div class="opt"><span class="radio{" on" if chosen == key else ""}"></span><div style="flex:1;min-width:0"><b>{title}</b><p>{note}</p>'
-        if key == "host" and chosen == "host":
+    for key, title, note, action in opts:
+        mark = '<span style="color:var(--accent);font-weight:600;font-size:13px">✓ In use</span>' if chosen == key else ''
+        use = '' if chosen == key or (key == "host" and host != "ready") else f'<span class="btn">{action}</span>'
+        rows += (f'<div class="opt" style="display:block"><div style="display:flex;justify-content:space-between;gap:12px"><b>{title}</b>{mark}</div>'
+                 f'<p>{note}</p>')
+        if key == "host":
             text, button = panels[host]
-            rows += (f'<div class="form"><p class="muted" style="font-size:12px;margin:0">{text}</p><div class="actions">{button}</div>'
+            rows += (f'<div class="form"><p class="muted" style="font-size:12px;margin:0">{text}</p><div class="actions">{use}{button}</div>'
                      '<p class="muted" style="font-size:12px;margin:0">Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.</p></div>')
-        rows += '</div></div>'
+        elif use:
+            rows += f'<div class="actions">{use}</div>'
+        rows += '</div>'
     return rows
 
 def model_select(label, choices):
@@ -862,11 +869,11 @@ settings_inner = (
     + '<div class="vlab">Models and effort · All projects<span>One pair per engine; routing remains separate.</span></div>' + global_pairs()
     + srow("Loading", "no selected default or editable controls", None, "Loading settings…")
     + srow("Read failed", "Retry reads again; typing elsewhere is unaffected", None, 'Could not load settings. <span style="color:var(--accent);text-decoration:underline">Retry</span>')
-    + srow("Saved host", "This computer, saved at once; its setup panel shows the current state; the overview reads This computer, with · not set up until ready", "host", "Saved.")
+    + srow("Saved host", "Use this computer saves at once; its setup panel shows the current state; the overview reads This computer, with · not set up until ready", "host", "Saved.")
     + srow("Host not set up", "Set up voice starts the download; progress refreshes every second with Cancel setup", "host", host="absent")
-    + srow("Saved browser", "Browser recognition, saved at once; nothing to configure", "browser", "Saved.")
-    + srow("Saving", "choices disabled until the request answers", "browser", "Saving…")
-    + srow("Failed/denied save", "server explanation with Retry; a choice changed elsewhere offers Reload settings; the saved choice is unchanged", "host", "Not saved: the voice choice changed elsewhere.")
+    + srow("Saved browser", "Use browser recognition saves at once; nothing to configure", "browser", "Saved.")
+    + srow("Saving", "the pressed Use button shows a spinner; the other Use buttons ignore presses until the request answers", "browser", "Saving…")
+    + srow("Failed/denied save", "explanation with Retry in the pressed card; a choice changed elsewhere offers Reload settings; In use stays on the saved choice", "host", "Not saved: the voice choice changed elsewhere.")
     + '</div>'
 )
 board("SettingsStates", 1200, 3900, settings_inner)

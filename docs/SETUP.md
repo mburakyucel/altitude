@@ -301,9 +301,9 @@ After pairing, the browser opens First run. Each step can be skipped and changed
 ## Your speech service
 
 To use a transcription server you run or choose, open **Settings → Voice input → Your speech
-service**. Enter its complete transcription endpoint, for example
-`https://speech.example.test/v1/audio/transcriptions`, and expand **Key or model (optional)** if
-your server requires them. Choose **Save and use service**. Saving does not contact the endpoint.
+service** and press **Use your speech service**. Enter its complete transcription endpoint, for
+example `https://speech.example.test/v1/audio/transcriptions`, and expand **Key or model
+(optional)** if your server requires them. Choose **Use this service**. Saving does not contact the endpoint.
 The computer running Altitude must be able to reach it; a loopback address refers to that computer,
 not the phone. Existing defaults and first-run setup stay unchanged.
 

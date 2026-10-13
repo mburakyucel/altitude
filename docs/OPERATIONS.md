@@ -653,10 +653,11 @@ run keeps its choice and says why. First run offers the one-time download (**Set
 browser recognition instead** or **Skip**); after Skip, the microphone offers the download.
 
 The setting lands in the private `~/.altitude/settings.json` through the machine-settings request.
-**Settings → Voice input** edits the same setting: **This computer**, **Browser recognition**, and
-**Your speech service** use explicit Save/Cancel. Saving another choice removes saved service details;
-tapping a radio only changes the draft choice. Built-in setup/removal actions remain immediate and
-independent of saving the choice. A Settings read or save updates the next capture in that browser document. Other
+**Settings → Voice input** edits the same setting as three cards: **This computer**, **Browser
+recognition** and **Your speech service**. Each card's **Use …** button saves that choice at once;
+**This computer** can be chosen once its voice is ready. Leaving a saved speech service asks first,
+because switching removes its saved details. A speech service's fields save with **Use this service**
+or **Save**. Setup, update and removal actions are immediate and never change the choice. A Settings read or save updates the next capture in that browser document. Other
 documents and CLI changes are picked up when opening Settings, on reload or after a recording is
 refused for a changed setting. Recordings identify their backend and host runtime; changing either
 cannot silently reroute unfinished audio. Altitude keeps no recordings.

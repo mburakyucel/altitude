@@ -44,14 +44,17 @@ test("invalid saved service stays unavailable with a usable draft and repair for
   await expect(page.getByRole("textbox", { name: "Transcription URL", exact: true })).toHaveValue("");
 });
 
+const inUse = (page: Page, title: string) => page.getByRole("main").locator(".voice-option")
+  .filter({ has: page.getByRole("heading", { name: title, exact: true }) }).getByText("In use", { exact: true });
+
 test("speech service settings: explicit save, key privacy, new address and removal", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await walk.open("/settings/voice");
-  const service = page.getByRole("radio", { name: "Your speech service", exact: true });
   const url = page.getByRole("textbox", { name: "Transcription URL", exact: true });
   const key = page.getByLabel("API key", { exact: true });
-  await service.click();
-  await walk.state("service-settings-01-empty", { visible: [url, page.getByRole("button", { name: "Save and use service", exact: true })], hidden: [page.getByRole("alert")] });
+  await page.getByRole("button", { name: "Use your speech service", exact: true }).click();
+  await walk.state("service-settings-01-empty", { visible: [url, page.getByRole("button", { name: "Use this service", exact: true })], hidden: [page.getByRole("alert")] });
+  await expect(url).toBeFocused();
   expect((await voice(request)).backend).toBe("host");
   await url.fill("HTTP://speech.example.test/v1/audio/transcriptions");
   await walk.state("service-settings-02-http", { visible: [page.getByText("This connection is unencrypted. Audio and any key travel over HTTP.", { exact: true })], hidden: [] });
@@ -59,39 +62,50 @@ test("speech service settings: explicit save, key privacy, new address and remov
   await page.getByText("Key or model (optional)", { exact: true }).click();
   await key.fill("fictional-test-key");
   await page.getByRole("textbox", { name: "Model", exact: true }).fill("fixture-model");
-  await page.getByRole("button", { name: "Save and use service", exact: true }).click();
+  await page.getByRole("button", { name: "Use this service", exact: true }).click();
   await expect.poll(async () => (await voice(request)).backend).toBe("service");
+  await expect(inUse(page, "Your speech service")).toBeVisible();
   const saved = await voice(request);
   expect(saved.service).toEqual({ url: endpoint, model: "fixture-model", key_present: true });
   expect(JSON.stringify(saved)).not.toContain("fictional-test-key");
   await page.reload();
   await page.getByText("Key or model (optional)", { exact: true }).click();
   await expect(key).toHaveValue("");
-  await walk.state("service-settings-03-saved-key", { visible: [page.getByRole("checkbox", { name: "Remove saved key", exact: true })], hidden: [page.getByRole("alert")] });
+  await walk.state("service-settings-03-saved-key", { visible: [page.getByRole("checkbox", { name: "Remove saved key", exact: true })], hidden: [page.getByRole("alert"), page.getByRole("button", { name: "Save", exact: true })] });
   await url.fill("https://speech.example.test/another/transcriptions");
-  await walk.state("service-settings-04-new-address", { visible: [page.getByText("Enter a key for the new address, if needed.", { exact: true })], hidden: [] });
+  await walk.state("service-settings-04-new-address", {
+    visible: [page.getByRole("button", { name: "Save", exact: true }), page.getByRole("button", { name: "Cancel", exact: true })],
+    hidden: [page.getByRole("checkbox", { name: "Remove saved key", exact: true })],
+  });
+  await expect(key).not.toHaveAttribute("placeholder");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(url).toHaveValue(endpoint);
   await page.getByRole("checkbox", { name: "Remove saved key", exact: true }).check();
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(async () => (await voice(request)).service.key_present).toBe(false);
-  await page.getByRole("radio", { name: "Browser recognition", exact: true }).click();
-  await walk.state("service-settings-05-switch-is-a-draft", { visible: [page.getByRole("button", { name: "Save and remove service", exact: true })], hidden: [url] });
+  await page.getByRole("button", { name: "Use browser recognition", exact: true }).click();
+  await walk.state("service-settings-05-leaving-asks-first", {
+    visible: [page.getByText("Switching removes your speech service’s address and key.", { exact: true }),
+      page.getByRole("button", { name: "Remove service and switch", exact: true }), page.getByRole("button", { name: "Keep service", exact: true })],
+    hidden: [page.getByRole("button", { name: "Use browser recognition", exact: true })],
+  });
   expect((await voice(request)).backend).toBe("service");
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(service).toBeChecked();
-  await page.getByRole("radio", { name: "Browser recognition", exact: true }).click();
-  await page.getByRole("button", { name: "Save and remove service", exact: true }).click();
+  await page.getByRole("button", { name: "Keep service", exact: true }).click();
+  await expect(inUse(page, "Your speech service")).toBeVisible();
+  await page.getByRole("button", { name: "Use browser recognition", exact: true }).click();
+  await page.getByRole("button", { name: "Remove service and switch", exact: true }).click();
   await expect.poll(async () => (await voice(request)).backend).toBe("browser");
+  await expect(inUse(page, "Browser recognition")).toBeVisible();
+  await expect(url).toHaveCount(0);
   expect((await voice(request)).service).toBeUndefined();
 });
 
-test("speech service settings: invalid URL, failed save and conflict preserve deliberate selection", async ({ page, request }, info) => {
+test("speech service settings: invalid URL, failed save and conflict keep the saved choice", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await walk.open("/settings/voice");
-  await page.getByRole("radio", { name: "Your speech service", exact: true }).click();
+  await page.getByRole("button", { name: "Use your speech service", exact: true }).click();
   const url = page.getByRole("textbox", { name: "Transcription URL", exact: true });
-  const save = page.getByRole("button", { name: "Save and use service", exact: true });
+  const save = page.getByRole("button", { name: "Use this service", exact: true });
   await url.fill("https://speech.example.test/transcriptions?secret=invalid");
   await save.click();
   await walk.state("service-settings-invalid-url", { visible: [page.getByText("Enter a complete http:// or https:// transcription URL.", { exact: true })], hidden: [] });
@@ -105,7 +119,7 @@ test("speech service settings: invalid URL, failed save and conflict preserve de
   await page.route("**/api/voice", route => route.request().method() === "POST" && refuse
     ? route.fulfill({ status: 503, json: { error: "Fixture unavailable" } }) : route.continue());
   await save.click();
-  await walk.state("service-settings-save-failure", { visible: [page.getByRole("alert").filter({ hasText: "Fixture unavailable" }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
+  await walk.state("service-settings-save-failure", { visible: [page.getByRole("alert").filter({ hasText: "Fixture unavailable" }), page.getByRole("button", { name: "Retry", exact: true }), inUse(page, "This computer")], hidden: [] });
   await expect(key).toHaveValue("fictional-private-draft");
   await expect(url).toHaveValue(endpoint);
   expect((await voice(request)).backend).toBe("host");
@@ -115,8 +129,8 @@ test("speech service settings: invalid URL, failed save and conflict preserve de
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await walk.state("service-settings-conflict", { visible: [page.getByRole("button", { name: "Reload settings", exact: true })], hidden: [page.getByRole("button", { name: "Retry", exact: true })] });
   await page.getByRole("button", { name: "Reload settings", exact: true }).click();
-  await expect(page.getByRole("radio", { name: "Browser recognition", exact: true })).toBeChecked();
-  await page.getByRole("radio", { name: "Your speech service", exact: true }).click();
+  await expect(inUse(page, "Browser recognition")).toBeVisible();
+  await page.getByRole("button", { name: "Use your speech service", exact: true }).click();
   await page.getByText("Key or model (optional)", { exact: true }).click();
   await expect(key).toHaveValue("");
 });
@@ -204,7 +218,7 @@ test("speech service: connection loss is terminal and another conversation recei
   await v.mic.click();
   await expect(v.listening).toBeVisible();
   await page.getByRole("link", { name: /^Voice settings:/ }).click();
-  await expect(page.getByRole("radio", { name: "Your speech service", exact: true })).toBeChecked();
+  await expect(inUse(page, "Your speech service")).toBeVisible();
   await walk.open(`${project.path}/tasks/${encodeURIComponent(task.slug)}`);
   await walk.state("service-navigation-cancels-unsubmitted-audio", {
     visible: [page.getByRole("main").getByRole("textbox", { name: /Message/, includeHidden: true })],
