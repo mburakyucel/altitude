@@ -64,8 +64,10 @@ class TestTranscriptProtocol(_CodexTranscriptCase):
         self.assertFalse(delta["has_earlier"])
 
     def test_changing_old_command_is_an_upsert_and_duplicate_native_ids_are_scoped_to_turn(self):
+        started, completed = _stamp(1), _stamp(5)
         def command(status, output):
-            return {"type": "item.completed", "timestamp": _stamp(1),
+            return {"type": "item.started" if status == "in_progress" else "item.completed",
+                    "timestamp": started if status == "in_progress" else completed,
                     "item": {"id": "same-id", "type": "command_execution", "command": "true",
                              "status": status, "aggregated_output": output, "exit_code": 0}}
         self.write([command("in_progress", "")])
@@ -80,12 +82,38 @@ class TestTranscriptProtocol(_CodexTranscriptCase):
         updated = next(row for row in changes if row["kind"] == "command")
         self.assertEqual(updated["id"], call["id"])
         self.assertEqual(updated["order"], call["order"])
+        self.assertEqual(updated["at"], started)
         self.assertEqual(updated["output"], "finished")
         self.assertGreater(updated["version"], call["version"])
         self.write([{"type": "thread.started", "thread_id": "thread-1"}, command("completed", "other turn")], path=self.new)
         calls = [row for row in self.all_history(self._view()) if row["kind"] == "command"]
         self.assertEqual({row["output"] for row in calls}, {"finished", "other turn"})
         self.assertEqual(len({row["id"] for row in calls}), 2)
+        self.assertEqual({row["output"]: row["at"] for row in calls},
+                         {"finished": started, "other turn": completed})
+        # A fresh viewer and paged history reconstruct the same time, without a browser cache.
+        with transcript._indexes_lock:
+            transcript._indexes.clear()
+        reconnected = [row for row in self.all_history(self._view()) if row["kind"] == "command"]
+        self.assertEqual({row["output"]: row["at"] for row in reconnected},
+                         {"finished": started, "other turn": completed})
+
+    def test_untimed_start_does_not_borrow_completion_turn_or_file_time(self):
+        for timestamp in (None, "not a date"):
+            with self.subTest(timestamp=timestamp):
+                records = [{"type": "item.started", "timestamp": timestamp, "item": {
+                    "id": "command", "type": "command_execution", "command": "true", "status": "in_progress"}},
+                    {"type": "item.completed", "timestamp": _stamp(5), "item": {
+                        "id": "command", "type": "command_execution", "command": "true", "status": "completed",
+                        "aggregated_output": "done", "duration_ms": 4000}}]
+                self.write(records[:1])
+                first = self._view()
+                self.assertEqual(next(row for row in first["events"] if row["kind"] == "command")["at"], timestamp)
+                self.write(records[1:], append=True)
+                row, = self._view(mode="delta", cursor=first["cursor"], lower="")["events"]
+                self.assertEqual(row["status"], "completed")
+                self.assertEqual(row["at"], timestamp)
+                self.assertEqual(row["output"], "done")
 
     def test_bursts_are_byte_bounded_and_continuations_never_skip_equal_time_siblings(self):
         first = self._view()
