@@ -35,9 +35,8 @@ class TerminalCase(AltitudeCase):
         saved = settings.read_text() if settings.exists() else None
         self.addCleanup(lambda: settings.write_text(saved) if saved is not None else settings.unlink(missing_ok=True))
         self.addCleanup(self._close_all)
-        self.worktree = self.tmp / "worktree"
-        self.worktree.mkdir()
         self.slug = T.new(self.project, "Inspect the build", "Look at the build output.")["slug"]
+        self.worktree = self.task_worktree(self.slug)
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
                    worktree=str(self.worktree), branch="work")
 

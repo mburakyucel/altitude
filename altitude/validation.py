@@ -41,7 +41,7 @@ import threading
 import time
 import uuid
 
-from . import capture as C, config, engines, line, platform, simulator as sim, state as S, tasks as T
+from . import capture as C, config, engines, git_policy, line, platform, simulator as sim, state as S, tasks as T
 
 TIMEOUT = 3600                   # seconds for one run, image build included
 WAIT = TIMEOUT + 600             # seconds a request waits in line for the machine: the client's budget for one run
@@ -206,7 +206,8 @@ def browser_grant(project: str, task: dict) -> dict:
         raise PermissionError(refused)
     try:
         pinned = subprocess.run(["git", "show", f"{policy['commit']}:AGENTS.md"], cwd=config.project_path(project),
-                                check=True, capture_output=True, text=True, timeout=30).stdout
+                                check=True, capture_output=True, text=True, timeout=30,
+                                env=git_policy.git_env(config.project_path(project))).stdout
         deployed = (config.SOURCE / "AGENTS.md").read_text()
         for document in (pinned, deployed):
             sections = re.findall(r"^#{1,6} VM lane runs on this Mac\n(.*?)(?=^#{1,6} |\Z)",
@@ -277,17 +278,20 @@ def _job(name: str, script: str, folder: Path, timeout: int, limits: bool) -> di
 
 def _clone(worktree: Path, target: Path, project: str) -> tuple[str, str]:
     """The task branch's committed HEAD as a repository of its own, with the project's remote-tracking branches
-    and tags, and the project's GitHub origin when it has one. Returns the commit and its tree."""
+    and tags, and the project's GitHub origin when it has one. Returns the commit and its tree. The copy comes from
+    the project's own Git folder, which holds every task's objects, never from where the worktree points."""
     git = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+    env = git_policy.task_git(worktree)
     commit, tree = subprocess.run([*git, "-C", str(worktree), "rev-parse", "HEAD^{commit}", "HEAD^{tree}"],
-                                  capture_output=True, text=True, timeout=30, check=True).stdout.split()
-    for step in (["clone", "--quiet", "--no-hardlinks", "--no-checkout", str(worktree), str(target)],
-                 ["-C", str(target), "fetch", "--quiet", "--no-tags", str(worktree),
+                                  capture_output=True, text=True, timeout=30, check=True, env=env).stdout.split()
+    common = env["GIT_COMMON_DIR"]
+    for step in (["clone", "--quiet", "--no-hardlinks", "--no-checkout", common, str(target)],
+                 ["-C", str(target), "fetch", "--quiet", "--no-tags", common,
                   "+refs/remotes/origin/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"],
                  ["-C", str(target), "checkout", "--quiet", "--detach", commit]):
         subprocess.run([*git, *step], capture_output=True, text=True, timeout=600, check=True)
-    origin = subprocess.run(["git", "-C", str(config.project_path(project)), "remote", "get-url", "origin"],
-                            capture_output=True, text=True, timeout=10).stdout.strip()
+    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=common, capture_output=True, text=True,
+                            timeout=10, env=git_policy.git_env(common)).stdout.strip()
     if re.fullmatch(r"(https://github\.com/|git@github\.com:)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", origin):
         subprocess.run([*git, "-C", str(target), "remote", "set-url", "origin", origin], check=True, timeout=10)
     return commit, tree
@@ -716,8 +720,8 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
         watcher = threading.Thread(target=watch, name="validation-client", daemon=True)
         watcher.start()
         try:
-            commit, tree = _clone(Path(task["worktree"]), area / "work", project)
-        except (OSError, subprocess.SubprocessError) as exc:
+            commit, tree = _clone(config.task_worktree(project, slug), area / "work", project)
+        except (git_policy.GitPolicyError, OSError, subprocess.SubprocessError) as exc:
             raise ValueError(f"alt task validate: cannot copy the task branch's committed HEAD: {exc}") from exc
         with _state:
             phone = None if _active["stopped"] else phone   # a run stopped while its clone was made boots no phone

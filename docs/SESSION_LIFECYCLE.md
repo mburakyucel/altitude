@@ -330,7 +330,8 @@ intermediate content.
 
 Deployment staged, working and untracked content remains untouched by dispatch and resume.
 Task CLI code, personas, hooks, templates and schemas come from the activated committed installation
-export outside worker writable roots; fresh project work starts from fetched `origin/main`.
+export outside worker writable roots, taken from Altitude's own copy of its repository; fresh project work
+starts from fetched `origin/main`.
 Deployment and activation errors remain visible independently of isolated task progress.
 
 An archive installation pins these inputs to its immutable application version; it needs no
@@ -1108,7 +1109,8 @@ delivery, not provider adherence or live browser isolation. See
 [browser verification](DEVELOPMENT.md#browser-verification).
 
 A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common
-directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment
+directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots,
+with the Git settings, hooks and worktree records inside them [read-only](ARCHITECTURE.md#isolation-and-landing), the network stays on for pushes, PRs, and tests, and the launch environment
 carries the task identity. A Codex L3 turn uses a dedicated permission profile: it writes only one fresh per-turn
 runtime directory; the deployment checkout and Altitude home are read-only, direct command networking and the
 user-service bus are denied. A required stdio MCP adapter exposes one coordinator tool for `alt` verbs and

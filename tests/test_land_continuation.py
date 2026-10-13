@@ -89,8 +89,7 @@ class TestLandContinuation(AltitudeCase):
         self.assertEqual((self.repo / "src/value").read_text(), "followup\n")
         self.assertEqual((self.repo / "src/followup").read_text(), "second\n")
         self.assertEqual(self.git("status", "--porcelain"), "")
-        dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                        require_clean=False)
+        dispatch._validate_task_worktree("demo", "fix-x", require_clean=False)
 
     def test_raised_rebase_failure_also_aborts(self):
         git("merge", "--ff-only", "origin/main", cwd=self.project_repo)

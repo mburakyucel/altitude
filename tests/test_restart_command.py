@@ -57,7 +57,7 @@ class TestRestartCommand(AltitudeCase):
         self.assertIn("python3 scripts/restart_altitude.py", restart)
         self.assertIn("`make restart`", (REPO / "docs" / "OPERATIONS.md").read_text())
         helper = SCRIPT.read_text()
-        self.assertIn("service_preflight", helper)
+        self.assertIn("source_head", helper)
         self.assertIn("require_idle()", helper)
         self.assertIn('unit_environment().get("ALTITUDE_HOME"', helper)
 
@@ -255,8 +255,7 @@ class TestRestartCommand(AltitudeCase):
             unit = {"WorkingDirectory": str(restart.ROOT),
                     "Environment": f"ALTITUDE_HOME={config.ROOT} {environment}".strip()}
             with self.subTest(branch=branch), mock.patch.object(restart, "unit_properties", return_value=unit), \
-                    mock.patch.object(restart.git_policy, "service_preflight",
-                                      return_value=mock.Mock(head="a" * 40)) as preflight:
+                    mock.patch.object(restart.git_policy, "source_head", return_value="a" * 40) as preflight:
                 self.assertEqual(restart.require_deployed_checkout(), "a" * 40)
                 preflight.assert_called_once_with(restart.ROOT, branch)
 
@@ -323,10 +322,9 @@ class TestRestartCommand(AltitudeCase):
             S.write_json(config.MONITOR_DIR / dispatch.RESTART_PENDING,
                          {**(S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING) or {"files": ["altitude/server.py"]}),
                           "requested_at": S.now(), "unit": "u"})
-        checkout = [h if isinstance(h, Exception) else mock.Mock(head=h, behind=1) for h in heads]
         with mock.patch.object(restart, "unit_properties", return_value={"WorkingDirectory": str(restart.ROOT),
                                                                          "Environment": f"ALTITUDE_HOME={config.ROOT}"}), \
-                mock.patch.object(restart.git_policy, "service_preflight", side_effect=checkout), \
+                mock.patch.object(restart.git_policy, "source_head", side_effect=list(heads)), \
                 mock.patch.object(restart, "build_bundle", return_value=self.tmp / "staging"), \
                 mock.patch.object(restart, "require_idle", side_effect=idle or restart.require_idle), \
                 mock.patch.object(restart, "publish_and_restart") as publish, \

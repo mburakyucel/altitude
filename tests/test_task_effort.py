@@ -5,7 +5,7 @@ import subprocess
 from types import SimpleNamespace
 from unittest import mock
 
-from tests.support import ALT, AltitudeCase
+from tests.support import ALT, AltitudeCase, add_worktree, make_repo
 from tests.test_codex_door import FakeProcess, launch_spec
 from tests.test_engine_raw_capture import FakeProcess as PrintProcess
 from tests.test_engines import _Process as ClaudeWorker
@@ -27,7 +27,8 @@ class TestTaskEffort(AltitudeCase):
         self.quiet_engines()
         self.register(self.project, routing=config.parse_routing("codex > claude:opus"))
         self.patch(dispatch.git_policy, "fetch_origin", return_value="a" * 40)
-        self.patch(dispatch, "_task_worktree", return_value=self.repo)
+        make_repo(self.repo)
+        self.patch(dispatch, "_task_worktree", side_effect=lambda repo, project, slug, sha: add_worktree(repo, slug))
         self.patch(dispatch, "_validate_task_worktree")
         self.patch(engines, "worker_live", return_value=False)
         self.patch(engines, "stop_l2_worker")
@@ -204,7 +205,6 @@ class TestTaskEffort(AltitudeCase):
             proc.alive = False
             return proc
         with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen) as launch, \
-             mock.patch.object(engines.common, "_git_dirs", return_value=[]), \
              mock.patch.object(platform, "job_active", return_value=False):
             dispatch.run(self.project, task["slug"])
             finished = dispatch.poll(self.project)
@@ -233,6 +233,10 @@ class TestTaskEffort(AltitudeCase):
 class TestEffortCommand(AltitudeCase):
     host = "linux"  # systemd fixtures
 
+    def setUp(self):
+        super().setUp()
+        self.worktree = add_worktree(make_repo(self.repo), "task")
+
     def test_claude_worker_fresh_and_resume_honor_effort_without_inherited_override(self):
         self.quiet_engines()
         self.patch(platform, "job_active", return_value=False)
@@ -246,7 +250,7 @@ class TestEffortCommand(AltitudeCase):
                         processes.append(ClaudeWorker(kwargs["stdout"], session="conversation"))
                         return processes[-1]
                     with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen) as launch:
-                        kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model="opus",
+                        kwargs = dict(cwd=self.worktree, persona=config.PERSONAS / "l2.md", model="opus",
                                       effort=effort, settings=self.tmp / "settings.json", extra_env={},
                                       job_root=self.runtime_tmp / "jobs")
                         result = (engines.resume_l2("claude", "task", "conversation", "message", **kwargs) if resume
@@ -295,9 +299,8 @@ class TestEffortCommand(AltitudeCase):
                         processes.append(FakeProcess(cmd, stdout=kwargs["stdout"], thread="conversation"))
                         return processes[-1]
                     with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen), \
-                         mock.patch.object(engines.common, "_git_dirs", return_value=[]), \
-                         mock.patch.object(platform, "job_active", return_value=False):
-                        kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model=None,
+                                     mock.patch.object(platform, "job_active", return_value=False):
+                        kwargs = dict(cwd=self.worktree, persona=config.PERSONAS / "l2.md", model=None,
                                       effort=effort, settings=self.tmp / "settings.json", extra_env={},
                                       job_root=self.runtime_tmp / "jobs")
                         result = (engines.resume_l2("codex", "task", "conversation", "message", **kwargs) if resume
@@ -328,7 +331,7 @@ class TestEffortCommand(AltitudeCase):
     def test_unsupported_engine_is_refused_before_external_effects(self):
         with mock.patch.object(engines.common.subprocess, "Popen") as launch:
             with self.assertRaisesRegex(ValueError, "does not support reasoning effort"):
-                engines.start_l2("claude", "task", "request", cwd=self.repo, persona=config.PERSONAS / "l2.md",
+                engines.start_l2("claude", "task", "request", cwd=self.worktree, persona=config.PERSONAS / "l2.md",
                                  model="opus", effort="ultra", settings=self.tmp / "settings.json",
                                  extra_env={}, job_root=self.runtime_tmp / "jobs")
         launch.assert_not_called()

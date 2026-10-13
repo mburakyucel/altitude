@@ -140,7 +140,7 @@ class TestTemporaryCapacity(AltitudeCase):
         verify.assert_not_called()
 
         second["resume_after"] = "1970-01-01T00:00:00+00:00"
-        second["worktree"] = str(self.repo)
+        second["worktree"] = str(self.task_worktree(task["slug"]))
         S.save_task(self.project, second)
         seen = {}
 

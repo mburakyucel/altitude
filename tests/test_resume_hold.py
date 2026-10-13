@@ -30,7 +30,7 @@ class TestResumeHold(AltitudeCase):
     def _task(self, title, state, path, created):
         task = T.new(self.project, title, "request", actor="l3", paths=[path])
         task.update({"state": state, "created": created, "attempt": 1, "session_id": f"session-{task['slug']}",
-                     "agent_id": f"agent-{task['slug']}", "worktree": str(self.repo)})
+                     "agent_id": f"agent-{task['slug']}", "worktree": str(self.task_worktree(task["slug"]))})
         S.save_task(self.project, task)
         return task
 

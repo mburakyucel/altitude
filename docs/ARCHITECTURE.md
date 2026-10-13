@@ -290,7 +290,12 @@ describes selection, imports and activation limits. Brief boundary excerpts use 
 rule file. Managed projects retain their own policy.
 
 Source deployments export their committed installation HEAD on successful service startup into the ignored
-deployment-local `.altitude-source/<sha>` directory. `config.REPO` identifies the deployment checkout;
+deployment-local `.altitude-source/<sha>` directory. Task workers write the checkout's shared Git store, so
+Altitude trusts its own code only through its copy of the repository beside its home
+(`~/.altitude-repository`), a bare repository only altd writes. The copy is seeded once from the checkout's
+`origin/<branch>` and afterwards fetched from the origin. The service starts, exports and self-deploys only
+when the checkout's files are exactly a commit on the copy's branch, compared by content with the copy's
+objects; self-deploy fast-forwards the checkout to the copy's fetched tip and checks it again. `config.REPO` identifies the deployment checkout;
 `config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
 These exports sit outside worker writable roots. The maintenance tick removes an export nothing names:
 the running service's export, the target of `current` and every export named in the brief or session
@@ -1020,6 +1025,22 @@ when requested and allowed. After the push, the fetched branch tip must equal th
 a different tip refuses immediately. A lagging PR view is re-read every two seconds within a
 30-second polling window before pinning that head. A task may carry an explicit merge hold for operator review.
 
+A task worker writes its project's shared Git folder (objects, refs and its own worktree's state), so
+altd, which runs Git outside any sandbox, takes every path from its own layout rather than from the
+worktree's `.git` file or the task record: the worktree is `<repo>/.claude/worktrees/<slug>`, the common
+folder `<repo>/.git` and the worktree's record `.git/worktrees/<slug>`. `git_policy.task_git` refuses
+unless the common folder, `.git/worktrees` and the record are plain folders and the `.git` file names
+that record, and Altitude's Git commands in a worktree run with `GIT_DIR`, `GIT_COMMON_DIR` and
+`GIT_WORK_TREE` set to these paths and replacement objects off. Validation clones a task's commit
+from the common folder. Workers on both engines keep the common folder's `config`, `config.worktree`,
+`hooks`, `info`, `modules`, `worktrees`, `commondir` and `gitdir` and their record's `commondir`,
+`gitdir` and `config.worktree` read-only (`git_policy.worker_git_access`): the repository's settings,
+hooks and worktree records stay as the operator and Altitude wrote them. Altitude's repository-level
+Git commands outside a task worktree (`git_policy.git_env`) name the Git folder explicitly too, so a
+redirection a worker plants in a shared folder does not steer them. Workers
+create branches with `--no-track` and pass a one-off setting with `git -c`; landing pushes without
+recording an upstream.
+
 A finished task's worktree and branch are retained only while something needs them. Every maintenance
 tick revisits each done or rejected task that is not yet cleaned up. Its worktree is removed once no
 worker runs, the tree has no uncommitted changes and every commit in it is on a branch or remote. Its
@@ -1385,14 +1406,14 @@ and runs on that phone with Apple's UI testing. See the
 Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
 may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
-the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
+the worktree's Git directories except their [read-only parts](#isolation-and-landing), Altitude's home, Claude's own state, the GitHub CLI's configuration and
 temporary directories, and neither read nor write macOS's [private places](DEVELOPMENT.md#macos-private-places);
 launchd refuses service control to any sandboxed process. The profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
 whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
 Events, which script running apps with only macOS's Automation consent in the way. Every Claude L3 turn
 also runs as a job of its own under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
-roots. The session bus and manager runtime directory (including its direct private socket) are denied;
+roots and the same read-only Git parts. The session bus and manager runtime directory (including its direct private socket) are denied;
 other runtime-directory paths retain their policy. The generated profile also supplies provider-free
 confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
 CLI sign-in without reaching the keyring that holds it: the launcher, which still reaches the session

@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import TestCase, mock, skipIf
 
-from tests.support import AltitudeCase, make_repo
+from tests.support import AltitudeCase, add_worktree, make_repo
 from tests.test_grant import SHIM, wait_for
 from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal, tls, validation
 
@@ -185,7 +185,8 @@ class RunnerCase(AltitudeCase):
         self.stops = self.patch(platform, "job_stop")
         self.active = self.patch(platform, "job_active", return_value=False)
         self.slug = self.task("Check the installation")
-        self.head = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+        self.worktree = config.task_worktree(self.project, self.slug)
+        self.head = subprocess.run(["git", "-C", str(self.worktree), "rev-parse", "HEAD"], capture_output=True,
                                    text=True, check=True).stdout.strip()
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.httpd.daemon_threads = True
@@ -196,8 +197,8 @@ class RunnerCase(AltitudeCase):
     def task(self, title, agent="agent"):
         """A running task whose worker is `agent`; returns its slug."""
         slug = T.new(self.project, title, "Run the VM lifecycle.")["slug"]
-        T.dispatch(self.project, slug, attempt=1, session_id="session", agent_id=agent, worktree=str(self.repo),
-                   branch="work")
+        T.dispatch(self.project, slug, attempt=1, session_id="session", agent_id=agent,
+                   worktree=str(add_worktree(self.repo, slug)), branch=f"worktree-{slug}")
         root = dispatch.l2_job_root(self.project, slug)
         root.mkdir(parents=True, exist_ok=True)
         S.write_json(root / f"{agent}.json", {"id": agent, "engine": "claude", "unit": engines.claude._claude_unit(agent)})
@@ -330,7 +331,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         return [a for a in map(json.loads, self.record.read_text().splitlines()) if a[:1] == [verb]]
 
     def test_a_run_uses_the_committed_head_the_fixed_container_and_leaves_a_record(self):
-        (self.repo / "uncommitted.txt").write_text("not tested\n")
+        (self.worktree / "uncommitted.txt").write_text("not tested\n")
         result = self.validate(["sh", "-c", "git rev-parse HEAD > /results/head; mkdir /results/logs; "
                                             "echo evidence > /results/logs/a; ln -s /etc/passwd /results/link; "
                                             "echo done; test -e uncommitted.txt"],
@@ -371,7 +372,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
 
         [row] = [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl").read_text()
                  .splitlines()]
-        tree = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD^{tree}"], capture_output=True,
+        tree = subprocess.run(["git", "-C", str(self.worktree), "rev-parse", "HEAD^{tree}"], capture_output=True,
                               text=True, check=True).stdout.strip()
         self.assertEqual({k: row[k] for k in ("n", "purpose", "commit", "tree", "kvm", "exit", "ended", "isolation",
                                               "host", "cleanup")},
@@ -958,10 +959,10 @@ class TestGuestBrowserValidation(MacRunnerCase):
         self.policy = "The fictional VM approval (`fixture-vm-approval`) permits one bounded disposable guest."
         document = "# Rules\n\n### VM lane runs on this Mac\n\n" + self.policy + "\n"
         (self.source / "AGENTS.md").write_text(document)
-        (self.repo / "AGENTS.md").write_text(document)
-        subprocess.run(["git", "-C", str(self.repo), "add", "AGENTS.md"], check=True)
-        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "Fictional VM policy"], check=True)
-        self.head = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+        (self.worktree / "AGENTS.md").write_text(document)
+        subprocess.run(["git", "-C", str(self.worktree), "add", "AGENTS.md"], check=True)
+        subprocess.run(["git", "-C", str(self.worktree), "commit", "-qm", "Fictional VM policy"], check=True)
+        self.head = subprocess.run(["git", "-C", str(self.worktree), "rev-parse", "HEAD"], capture_output=True,
                                    text=True, check=True).stdout.strip()
         self.patch(config, "SOURCE", self.source)
         self.patch(config, "REPO", self.repo)
@@ -1004,7 +1005,7 @@ else:
                 self.assertIn("current standing VM policy", self.validate([], container_browser=True, status=403)["error"])
 
     def test_trusted_controller_receives_capture_and_cleanup_precedes_delivery(self):
-        (self.repo / "uncommitted").write_text("excluded")
+        (self.worktree / "uncommitted").write_text("excluded")
         result = self.validate([], container_browser=True)
         self.assertEqual((result["exit"], result["cleanup"], result["commit"]), (0, None, self.head))
         self.assertTrue(result["isolation"].startswith("guest:rootless-container;controller-sha256:"))
@@ -1115,7 +1116,7 @@ else:
 
 class TestMacValidationRunner(ClientStop, MacRunnerCase):
     def test_a_run_uses_the_committed_head_under_the_validation_profile_with_its_own_environment(self):
-        (self.repo / "uncommitted.txt").write_text("not tested\n")
+        (self.worktree / "uncommitted.txt").write_text("not tested\n")
         result = self.validate(["sh", "-c", 'git rev-parse HEAD > "$VALIDATION_RESULTS/head"; '
                                             'env > "$VALIDATION_RESULTS/env"; echo done; test ! -e uncommitted.txt'])
         self.assertEqual((result["exit"], result["ended"], result["commit"]), (0, "exit", self.head))

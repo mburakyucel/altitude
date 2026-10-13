@@ -11,7 +11,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from .. import config, platform, state as S
+from .. import config, git_policy, platform, state as S
 
 
 from . import common
@@ -660,7 +660,8 @@ def prepare_worker(name, prompt, *, cwd, persona, model, settings, effort, resum
     for row in claude_agents():
         if row.get("name") == name and row.get("state") not in ("done", "failed", "stopped"):
             claude_stop(row["id"])
-    return cmd, content, _claude_writable(Path(cwd), *common._worktree_git_dirs(cwd), config.ROOT)
+    git_writable, read_only = git_policy.worker_git_access(cwd)
+    return cmd, content, _claude_writable(Path(cwd), *git_writable, config.ROOT), read_only
 
 
 worker_unit_name = _claude_unit
