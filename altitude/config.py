@@ -697,6 +697,7 @@ def _write_project(name: str, entry: dict | None) -> None:
 def add_project(name: str, *, path=None, approval="default", l2_engine=None):
     """CLI/HTTP registration, including rollback if the caller's setup fails."""
     from . import state as S
+    name = require_project_name(name)
     path = Path(path or (project_roots()[0] / name)).expanduser()
     platform.require_container_project(path)
     if platform.private(path):
@@ -773,7 +774,15 @@ def remove_project(name: str) -> None:
         _write_project(name, None)
 
 
+def require_project_name(name: str) -> str:
+    """Project identifiers are single folder names, independent of registration."""
+    if not isinstance(name, str) or name in (".", "..") or not re.fullmatch(r"[^/\\\x00]+", name):
+        raise ValueError(f"invalid project name {name!r}")
+    return name
+
+
 def project(name: str) -> dict:
+    name = require_project_name(name)
     p = load_projects().get(name)
     if not p:
         raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
@@ -785,7 +794,7 @@ def project_path(name: str) -> Path:
 
 
 def project_dir(name: str) -> Path:
-    return ROOT / name
+    return ROOT / require_project_name(name)
 
 
 def discover_projects() -> list[dict]:

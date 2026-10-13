@@ -91,7 +91,7 @@ def design_viewer_url(project: str) -> str | None:
     from a paired browser redirects to that browser's read pass (`design_entry`)."""
     try:
         root = config.project_path(project)
-    except (KeyError, OSError):
+    except (KeyError, ValueError, OSError):
         return None
     if not (root / DESIGN_ENTRY).is_file():
         return None
@@ -2642,9 +2642,9 @@ class Handler(BaseHTTPRequestHandler):
                 except (ValueError, KeyError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if api == "project" and len(parts) > 2 and parts[2] == "add":
-                name = o["name"]
-                restoring = name not in config.load_projects() and bool(l3.chat_history(name, 1))
                 try:
+                    name = config.require_project_name(o["name"])
+                    restoring = name not in config.load_projects() and bool(l3.chat_history(name, 1))
                     with config.add_project(name, path=o.get("path"), approval=o.get("approval") or "default") as entry:
                         pass
                 except ValueError as exc:
