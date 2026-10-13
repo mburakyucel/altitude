@@ -105,19 +105,18 @@ def _runtime_parts(path: Path) -> list[str]:
     return parts
 
 
-def open_runtime(path: Path, flags: int, *, truncate: bool = False) -> int:
+def open_runtime(path: Path, flags: int) -> int:
     """Open a file in the runtime root without following a link at any component; creation also creates its folders.
 
     Workers can write the runtime root, so a writer that followed a planted link would write for them outside it.
     Truncation happens only after the leaf is known to be this root's own regular file."""
     *parents, name = _runtime_parts(path)
     _component(name)
-    truncate = truncate or bool(flags & os.O_TRUNC)
     with runtime_directory(parents, create=bool(flags & os.O_CREAT), search=True) as directory:
         fd = os.open(name, flags & ~os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
     try:
         _regular(fd)
-        if truncate:
+        if flags & os.O_TRUNC:
             os.ftruncate(fd, 0)
     except BaseException:
         os.close(fd)
@@ -133,11 +132,6 @@ def opener(path, flags: int) -> int:
 def runtime_lock(path: Path):
     """A lock file in the runtime root as an unbuffered binary handle for flock."""
     return os.fdopen(open_runtime(path, os.O_WRONLY | os.O_CREAT), "wb", buffering=0)
-
-
-def runtime_log(path: Path):
-    """A fresh text log in the runtime root, such as a child process's stderr."""
-    return os.fdopen(open_runtime(path, os.O_WRONLY | os.O_CREAT, truncate=True), "w")
 
 
 def append(path: Path, text: str, *, sync: bool = False) -> None:

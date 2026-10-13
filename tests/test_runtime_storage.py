@@ -6,12 +6,12 @@ import subprocess
 import sys
 import unittest
 from collections import Counter
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from unittest import mock
 
 from tests.support import AltitudeCase
 from altitude import (config, dispatch, engines, incidents, installation, l3, platform, project_setup, reviews,
-                      server, speech, state as S, storage, transcript)
+                      server, state as S, storage, transcript)
 
 
 class RuntimeStorage(AltitudeCase):
@@ -132,12 +132,6 @@ class RuntimeStorage(AltitudeCase):
         self.patch(config, "INCIDENT_INDEX", self.runtime / "incidents.jsonl")
         self.patch(incidents, "FAULTS", self.runtime / "monitor" / "faults.json")
         self.patch(server, "LOG", self.runtime / "altd.log")
-        self.patch(speech, "ROOT", self.runtime / "speech")
-
-        @contextmanager
-        def entered(manager):
-            with manager:
-                yield
 
         @contextmanager
         def called(function, *args, **kwargs):
@@ -162,10 +156,6 @@ class RuntimeStorage(AltitudeCase):
             (self.runtime / "monitor" / "restart.lock", lambda: config.restart_lock()),
             (self.runtime / "monitor" / "faults.lock", lambda: incidents._fault_lock()),
             (self.runtime / "incidents.jsonl", lambda: called(incidents._index_append, {"id": "x"})),
-            (self.runtime / "speech" / ".control", lambda: closing(speech._guard())),
-            (self.runtime / "speech" / ".lock", lambda: entered(speech._lock())),
-            (self.runtime / "speech" / ".use", lambda: entered(speech._lease(False))),
-            (self.runtime / "speech" / "worker.log", lambda: storage.runtime_log(self.runtime / "speech" / "worker.log")),
             (slug / "l2-engine" / "w.stdout.jsonl",
              lambda: open(slug / "l2-engine" / "w.stdout.jsonl", "ab", opener=storage.opener)),
             (slug / "l2-engine" / "w.stderr.log",  # an opener never truncates before the regular-file check
