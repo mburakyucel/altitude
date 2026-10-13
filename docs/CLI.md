@@ -1413,8 +1413,14 @@ unchanged re-parking retains the response. Independent unanswered members remain
 An open operator question about the held PR replaces its generated review card: one marked
 `"review": "changes"`, or an unmarked one linking or naming the PR, including a freeform question.
 This holds while a submitted response awaits owner interpretation.
-After resolution the fallback returns if merge approval is still needed. A held PR closed without
-merging asks for no review: `alt task block` by the owner reads the PR's state from the checkout origin's repository and records the closure
+After resolution the fallback returns if merge approval is still needed. Automatic approval waits
+until every active review is completed and assessed with no open findings, and no L3 question or
+L3 wait remains. Explicit operator questions
+keep their saved response surfaces independently. The generated approval button checks the current
+PR, hold and readiness atomically before sending; a stale card sends nothing. Approval remains a
+message, and landing still checks current review evidence, CI and hold authority.
+A held PR closed without merging asks for no review: `alt task block` by the owner reads the PR's
+state from the checkout origin's repository and records the closure
 as a `pr-closed` task event, or a later reopening as `pr-reopened`; when that read fails, the block
 still lands, the review stays shown and stderr says the state was unavailable. This display rule neither
 classifies the answer as approval nor changes the quick-option requirement for a changes review.

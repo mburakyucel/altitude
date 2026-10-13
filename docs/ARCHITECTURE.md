@@ -3145,8 +3145,11 @@ without one, with an image count when it carries images. Its Show opens the comp
 images in place; the task record, the L2's inbox and authority checks keep every word, and the summary
 is stored beside the text as display metadata only. Then come the open question group at the end of the conversation (closed groups
 at their recorded message anchor), a held review card when one waits, no open operator question is about its PR (marked as its merge question, or
-unmarked and linking or naming it) and the PR is not already
-approved since its hold, and the composer
+unmarked and linking or naming it), all active reviews are completed and assessed with no open findings,
+no L3 question or L3 wait remains, and the PR is not already
+approved since its hold. The generated approval submits its PR and hold identity through the message
+endpoint, which rechecks this readiness under the task lock before writing. Explicit operator
+questions retain their existing response surfaces. The composer appears
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
 concise explanation with its complete reason in details. Task rows and pages share a read-only

@@ -8,7 +8,7 @@ test.use({ serviceScript: "review-status-service.py" });
 const entry = (page: Page) => page.evaluate(() => (window.history.state as { idx: number }).idx);
 const conversation = (page: Page) => page.getByRole("region", { name: "Task conversation", exact: true });
 const proposal = "Proposal review · done, 2 findings resolved";
-const implementation = "Implementation review · done, 1 open finding";
+const implementation = "Implementation review · done, 1 finding resolved";
 
 /** Follow a question's review line, check its review card is open and in view, and return with `back`. */
 async function roundTrip(page: Page, link: Locator, review: string, finding: string, back: () => Promise<unknown>) {
@@ -36,7 +36,7 @@ test("Needs you shows each proposal and merge review and Back returns to its car
   await walk.state("01-needs-you-review-lines", {
     visible: [settings.getByRole("link", { name: proposal, exact: true }), settings.locator(".question-review .review-icon-ok"),
       header.getByText("Proposal review · not done", { exact: true }), header.locator(".question-review .review-icon-warn"),
-      merge.getByRole("link", { name: implementation, exact: true }), merge.locator(".question-review .review-icon-warn"),
+      merge.getByRole("link", { name: implementation, exact: true }), merge.locator(".question-review .review-icon-ok"),
       longest, notes.locator(".question-review .review-icon-warn")],
     // No review means no link; a question that is neither a proposal nor a merge approval has no line.
     hidden: [header.getByRole("link", { name: /^Proposal review/ }), region.locator(".question-review")],

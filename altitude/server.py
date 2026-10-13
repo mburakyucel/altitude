@@ -2734,7 +2734,8 @@ class Handler(BaseHTTPRequestHandler):
                     message = T.message(project, slug, T.OPERATOR_MESSAGE_ROLE, text,
                                         question_id=o.get("question_id"), revision=o.get("revision"),
                                         group_id=o.get("group_id"), group_revision=o.get("group_revision"),
-                                        stop_id=o.get("stop_id"), **image_args)
+                                        stop_id=o.get("stop_id"), review_number=o.get("review_pr"),
+                                        review_hold_id=o.get("review_hold_id"), **image_args)
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 try:
