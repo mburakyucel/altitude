@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Stamp } from "../components/Stamp";
 import { StatusMark } from "../components/StatusMark";
@@ -49,8 +49,10 @@ export function ProjectSetup({ name }: { name: string }) {
   const [kept, setKept] = useState(false);
   const client = useQueryClient();
   const open = search.get("setup") === "1";
+  const conversationFocus = useRef(false);
   const prerequisites = usePrerequisites(open);
   const close = (conversation = false) => {
+    conversationFocus.current = conversation;
     // The conversation polls slowly while idle; a first reply saved meanwhile appears on arrival.
     if (conversation) void client.invalidateQueries({ queryKey: ["chat", name] });
     setSearch((current) => {
@@ -60,7 +62,6 @@ export function ProjectSetup({ name }: { name: string }) {
       return next;
     }, { replace: true });
     setIntegration(null);
-    if (conversation) window.requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".composer-field")?.focus());
   };
   const data = setup.data;
   const refused = action.error instanceof ApiError && action.error.status >= 400 && action.error.status < 500;
@@ -89,7 +90,8 @@ export function ProjectSetup({ name }: { name: string }) {
       <span className="setup-dot" aria-hidden />
       <span>Setup<span className="setup-trigger-status"><span className="setup-separator"> · </span>{label}</span></span>
     </button> : null}
-    {open ? <Overlay label="Project setup" side="right" onClose={() => close()}>
+    {open ? <Overlay label="Project setup" side="right" onClose={() => close()}
+      returnFocus={() => conversationFocus.current ? document.querySelector<HTMLTextAreaElement>(".composer-field") : null}>
       <section className="setup-panel">
         <header className="setup-heading">
           <div><p className="label text-muted">{name}</p><h2>Project setup</h2></div>

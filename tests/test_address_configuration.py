@@ -1,6 +1,7 @@
 """Address changes keep real certificates and receipts; native service effects use a throwaway home."""
 import ipaddress
 import json
+import plistlib
 from pathlib import Path
 import sys
 from unittest import mock
@@ -40,7 +41,7 @@ class AddressConfiguration(InstallationCase):
         self.assertTrue(result["applied"])
         self.assertEqual(result["service"], "stopped")
         self.assertFalse(result["verified"])
-        self.assertEqual(self.actions, ["reload"])
+        self.assertEqual(self.actions, ["stop", "reload"])
         for name in ("ca.crt", "ca.key", "server.key"):
             path = self.certificates / name
             self.assertEqual(path.read_bytes(), self.original[path])
@@ -132,6 +133,34 @@ class AddressConfiguration(InstallationCase):
 
 class MacAddressConfiguration(AddressConfiguration):
     HOST = "darwin"
+
+    def test_inactive_or_failed_bootstrapped_job_is_unloaded_before_mutation_and_later_start_reads_new_definition(self):
+        for state in ("inactive", "failed"):
+            with self.subTest(state=state):
+                self.active = state
+                loaded = {"coalition": None, "environment": {"ALTITUDE_HOST": config.HOST}}
+                native_commands = []
+                def run(*args):
+                    nonlocal loaded
+                    native_commands.append(args[1])
+                    if args[1] == "bootout":
+                        loaded = None
+                    elif args[1] == "bootstrap":
+                        loaded = {"coalition": None, "environment": plistlib.loads(self.unit.read_bytes())["EnvironmentVariables"]}
+                    return ""
+                with mock.patch.object(platform, "control", side_effect=platform._launchd_control), \
+                     mock.patch.object(platform, "_print", side_effect=lambda *args, **kwargs: loaded), \
+                     mock.patch.object(platform, "run", side_effect=run):
+                    result = installation.configure_address("10.20.30.40", apply=True)
+                    self.assertEqual(result["service"], "stopped")
+                    self.assertEqual(native_commands, ["bootout"])
+                    self.assertIsNone(loaded)
+                    platform.control("start")
+                    self.assertEqual(native_commands, ["bootout", "bootstrap"])
+                    self.assertEqual(loaded["environment"]["ALTITUDE_HOST"], "10.20.30.40")
+                # Restore the fixture for the other original native state, through the same operator action.
+                with mock.patch.object(config, "HOST", "10.20.30.40"):
+                    installation.configure_address("127.0.0.1", apply=True)
 
 
 class CacheRecovery(InstallationCase):

@@ -112,6 +112,7 @@ test("optional voice setup remains in Settings with its current privacy, downloa
   host.state = { state: "unavailable", reason: "Fictional capability unavailable" };
   await page.reload();
   await expect(setUp).toHaveAttribute("aria-disabled", "true");
-  await walk.state("voice-03-unavailable", { action: () => setUp.click(), visible: [setUp, page.getByText(/Fictional capability unavailable/).first()], hidden: [] });
+  // aria-disabled remains pressable to disclose the reason; Playwright's enabled check needs the explicit press.
+  await walk.state("voice-03-unavailable", { action: () => setUp.click({ force: true }), visible: [setUp, page.getByText(/Fictional capability unavailable/).first()], hidden: [] });
   expect(host.requests).toEqual(["setup"]);
 });

@@ -812,7 +812,7 @@ release. A new release may still receive its own automatic attempt.
 
 `alt pair` prints a one-time code that pairs one browser with Altitude, the running service's
 address to open on that browser (or the reason there is none), a QR code of that address when a
-phone can reach it, and the CA's name and the last eight pairs of its SHA-256 to compare before
+phone can reach it, and the CA's name and full SHA-256 to compare independently before
 installing it. The code never appears in a link. It writes the code straight to the private access store, so it
 works over SSH and without a browser; only the operator runs it, and L2 and L3 are refused. A code
 works once, for ten minutes; a new code cancels the previous one and five wrong codes cancel it.

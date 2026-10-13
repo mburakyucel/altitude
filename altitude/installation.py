@@ -928,10 +928,10 @@ def configure_address(host: str, *, apply: bool = False) -> dict:
                    "active": native["ActiveState"] == "active"}
         atomic(prefix / "pending.json", json.dumps(receipt) + "\n")
         try:
-            if receipt["active"]:
-                platform.control("stop")
-                if platform.status().get("ActiveState") not in ("inactive", "failed"):
-                    raise RuntimeError("Service stop is unconfirmed")
+            # A stopped native job can still retain its loaded definition. Unload it before changing that definition.
+            platform.control("stop")
+            if platform.status().get("ActiveState") not in ("inactive", "failed"):
+                raise RuntimeError("Service stop is unconfirmed")
             atomic(directory / "server.crt", candidate)
             atomic(settings, receipt["candidate_configuration"])
             atomic(platform.service_path(), receipt["candidate_service"], 0o644)
