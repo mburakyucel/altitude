@@ -154,9 +154,13 @@ test("@chromium listening survives confirmation and an accepted transfer without
   await start(page);
   await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
   await walk.state("02-listening-while-preparing", { visible: [stopVoice, card(page)], hidden: [] });
-  expect((await request.post("/fixture/transfer", { data: { slug, ready: true, launch: true } })).ok()).toBe(true);
+  expect((await request.post("/fixture/transfer", { data: { slug, ready: true } })).ok()).toBe(true);
+  await expect.poll(async () => (await (await request.get(path(slug))).json()).state).toBe("queued");
+  await walk.state("03-listening-retained-while-queued", { visible: [stopVoice, draft(page)], hidden: [] });
+  expect(host.finals).toBe(0);
+  expect((await request.post("/fixture/transfer", { data: { slug, launch: true } })).ok()).toBe(true);
   await expect(card(page).getByRole("button", { name: "Cancel switch", exact: true })).toBeHidden();
-  await walk.state("03-listening-retained-on-new-attempt", { visible: [stopVoice, draft(page)], hidden: [] });
+  await walk.state("04-listening-retained-on-new-attempt", { visible: [stopVoice, draft(page)], hidden: [] });
   await expect(draft(page)).toHaveValue("Unsent text. preserve the recorded instruction");
   expect(host.opened).toBe(1);
   expect(host.finals).toBe(0);
@@ -177,7 +181,7 @@ test("@desktop-only compact transfer header remains readable at 1024 pixels", as
   await start(page);
   await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
   await walk.state("01-1024-preparing-with-stop", { visible: [card(page), page.getByRole("button", { name: "Stop", exact: true }).first(), page.getByText("Merge held", { exact: true }).first()], hidden: [] });
-  expect(await page.locator(".task-state-line").first().evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await page.locator(".task-header .task-chips").evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
 });
 
@@ -233,7 +237,7 @@ for (const outcome of ["question", "report", "unavailable"] as const) test(`prep
   await expect(card(page).getByRole("button", { name: "Cancel switch", exact: true })).toBeVisible();
   expect((await request.post("/fixture/transfer", { data: { slug, outcome } })).ok()).toBe(true);
   await expect.poll(async () => (await read()).transfer.request.status).toBe(outcome === "question" ? "cancelled" : "refused");
-  await walk.state(`01-${outcome}-owns-the-task`, { visible: [draft(page), conversation.locator(".bubble").filter({ hasText: /Switch cancelled|did not finish|Report finished|Switch failed/ }).last()], hidden: [card(page).getByRole("button", { name: "Cancel switch", exact: true }), card(page).getByRole("button", { name: "Switch now", exact: true })] });
+  await walk.state(`01-${outcome}-owns-the-task`, { visible: [draft(page), conversation.getByText(/Switch cancelled|did not finish|Report finished|Switch failed/).last()], hidden: [card(page).getByRole("button", { name: "Cancel switch", exact: true }), card(page).getByRole("button", { name: "Switch now", exact: true })] });
   const after = await read();
   expect(after.attempt).toBe(before.attempt);
   expect(after.next_engine).toBeFalsy();
