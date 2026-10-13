@@ -326,12 +326,13 @@ def validate_projects_folder(value) -> None:
             platform.require_container_project(inspected, folder=True)
             if not platform.directory_type(inspected):
                 raise ValueError(f"{value} is not a directory")
-            with platform.readable_directory(inspected):
-                pass
+            try:
+                with platform.readable_directory(inspected):
+                    pass
+            except PermissionError:
+                raise ValueError(f"{value} is not readable") from None
     except platform.PrivatePath:
         raise ValueError(PRIVATE_FOLDER) from None
-    except PermissionError:
-        raise ValueError(f"{value} is not readable") from None
     except OSError:
         raise ValueError(f"{value} is not a directory") from None
 

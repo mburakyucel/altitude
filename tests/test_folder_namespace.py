@@ -261,6 +261,16 @@ class FolderNamespace(FolderCase):
         with self.assertRaisesRegex(ValueError, "not readable"):
             config.validate_projects_folder(str(leaf))
 
+    @unittest.skipIf(os.geteuid() == 0, "nonroot ancestor permission parity")
+    def test_selection_distinguishes_uninspectable_type_from_unreadable_known_directory(self):
+        parent = self.home / "unsearchable"
+        leaf = parent / "folder"
+        leaf.mkdir(parents=True)
+        parent.chmod(0)
+        self.addCleanup(parent.chmod, 0o700)
+        with self.assertRaisesRegex(ValueError, "not a directory"):
+            config.validate_projects_folder(str(leaf))
+
     def test_private_marker_is_unavailable_without_hiding_safe_child(self):
         marker = self.home / "code" / "atlas" / ".git"
         marker.rmdir()
