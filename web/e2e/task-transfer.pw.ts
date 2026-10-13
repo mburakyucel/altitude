@@ -63,9 +63,14 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   await start(page);
   await confirm.getByRole("button", { name: "Prepare change", exact: true }).click();
   await expect(card(page)).toBeVisible();
+  await page.getByRole("button", {name:/^Task model:/}).click();
+  await expect(confirm.getByRole("button", {name:"Cancel switch"})).toBeVisible();
   const response = await request.post("/fixture/transfer", { data: { slug, ready: true, launch: true } });
   expect(response.ok()).toBe(true);
   await expect.poll(async () => (await read()).attempt).toBe(before.attempt + 1);
+  await expect(confirm.getByRole("combobox")).toHaveCount(0);
+  await walk.state("03b-open-progress-shows-completed-outcome", {visible:[confirm,confirm.getByText(`Switched to ${target.label}.`,{exact:true})],hidden:[confirm.getByRole("button",{name:"Prepare change"})]});
+  await page.keyboard.press("Escape");
   await expect(card(page).getByRole("button", { name: "Cancel switch", exact: true })).toBeHidden();
   const after = await read();
   expect(after.l2_engine).toBe(target.engine);
