@@ -650,6 +650,10 @@ verification; it is not a registration-only plug-in operation. The [roadmap](ROA
 records these follow-up candidates without expanding this documentation milestone into a rewrite.
 
 Engines retain responsibility for their execution tools, context management and native helpers.
+Coordinator context observations use an individual request and its reported window, independently
+of cumulative turn usage. An integration with native compaction retains its conversation at the
+context threshold; only the integration needing managed rotation uses Altitude's threshold reset.
+Explicit reset and confinement-policy changes retain their existing fresh-session behavior.
 Every L2 launch and resume supplies the same task-local tool-cache environment on Linux and Mac.
 GitHub CLI logs and package-tool caches live under `l2-engine/tool-cache` inside the task's existing
 writable runtime root; installed Corepack managers retain their original location. Tool-native

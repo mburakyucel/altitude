@@ -1666,6 +1666,12 @@ Claude L2 settings explicitly supply `autoCompactWindow` from `config.AUTOCOMPAC
 the engine boundary. Native compaction remains the engine's responsibility; Altitude keeps the
 owner's small progress checkpoint for recovery and handoffs.
 
+Codex coordinator turns also keep native compaction and the same provider conversation. Altitude
+does not rotate that conversation at a context threshold. Explicit coordinator reset and a changed
+confinement policy still start a fresh conversation. Its context reading is the newest complete own
+request from this invocation's rollout, against the reported model window. Missing request or window
+evidence stays unknown; cumulative `turn.completed` input remains usage, never context occupancy.
+
 A task's context is the inclusive input of the current owner session's newest own request, read by
 the same passive collection as task tokens and stored as `token_usage.context` with its tokens,
 window, percentage and observation time. For Claude that is input plus cache-read plus
