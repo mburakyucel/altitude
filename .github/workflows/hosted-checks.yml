@@ -101,8 +101,8 @@ jobs:
         with:
           node-version: 22
 
-      # The image integration fixtures use the detected ffmpeg converter and Little CMS (docs/DEVELOPMENT.md).
-      - name: Install the image converter
+      # Image fixtures use ffmpeg/Little CMS; verified HTTPS uses a disposable NSS trust database.
+      - name: Install fixture tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg liblcms2-2 libnss3-tools

@@ -180,8 +180,8 @@ class Installation(InstallationCase):
             result = self.install()
         self.assertEqual(result["service"], "running")
         self.assertEqual(result["pairing"]["minutes"], 10)
-        base, separator, code = result["pairing"]["url"].partition("/#pair=")
-        self.assertEqual((base, separator), (result["url"], "/#pair="))
+        base, separator, code = result["pairing"]["url"].partition("/projects#pair=")
+        self.assertEqual((base, separator), (result["url"], "/projects#pair="))
         self.assertRegex(code, r"^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$")
         self.assertTrue(receipts)
         persistent = self.settings.read_text() + "".join(receipts) + (access.DIR / "devices.json").read_text()
@@ -226,7 +226,7 @@ class Installation(InstallationCase):
 
     def test_rerun_and_update_preserve_paired_devices_without_issuing_a_code(self):
         first = self.install()
-        code = first["pairing"]["url"].partition("/#pair=")[2]
+        code = first["pairing"]["url"].partition("#pair=")[2]
         key, row = access.redeem(code, "Retained fixture browser")
         before = (access.DIR / "devices.json").read_bytes()
         with mock.patch.object(access, "issue_code", side_effect=AssertionError("rerun/update issued a code")):
@@ -279,6 +279,33 @@ class Installation(InstallationCase):
 
     def test_pairing_record_error_keeps_running_installation_and_recovery_without_path(self):
         self._pairing_issuance_error(ValueError("private fixture corrupt record detail"))
+
+    def test_malformed_retained_pairing_records_do_not_fail_healthy_installation(self):
+        for record in ({}, [], {"devices": None}, {"devices": [], "code": []},
+                       {"devices": [], "code": {"expires": None}},
+                       {"devices": [], "code": {"hash": "fixture", "expires": "2026-10-13T12:00:00", "wrong": 0}}):
+            with self.subTest(record=record):
+                retained = json.dumps(record)
+                access.DIR.mkdir(parents=True, exist_ok=True)
+                store = access.DIR / "devices.json"
+                store.write_text(retained)
+                # A separate fresh prefix per case keeps the real retained store in the tested path.
+                prefix = self.prefix
+                with mock.patch.object(installation, "_settings", return_value=self.settings), \
+                        mock.patch.dict(os.environ, {"PATH": str(self.tmp / "absent-bin")}), \
+                        mock.patch.object(platform, "openssl", return_value=Path("/fixture/bin/openssl")):
+                    result = self.install()
+                self.assertEqual(result["service"], "running")
+                self.assertEqual(result["pairing_error"], "Run ~/.local/bin/alt pair to pair this browser.")
+                self.assertNotIn("pairing", result)
+                self.assertEqual(store.read_text(), retained)
+                self.assertFalse((prefix / "pending.json").exists())
+                # Reset only this fixture's install resources; access bytes remain untouched.
+                shutil.rmtree(prefix)
+                self.settings.unlink()
+                self.launcher.unlink()
+                self.unit.unlink()
+                self.active, self.enabled = "inactive", "disabled"
 
     def test_installer_refuses_missing_tool_before_persistent_effects(self):
         archive, checksum = self.archive()

@@ -77,7 +77,7 @@ def run(case, probe, info):
                                 input=renderer, capture_output=True, text=True, check=True).stdout
         result_file.unlink()
         # Extract the visible link, so the browser cannot bypass the actual printed output contract.
-        link = next(line.strip() for line in output.splitlines() if "/#pair=" in line)
+        link = next(line.strip() for line in output.splitlines() if "/projects#pair=" in line)
         access.prepare()
     except BaseException:
         httpd.shutdown()

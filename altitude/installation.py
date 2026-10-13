@@ -862,7 +862,7 @@ def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer
         try:
             code = access.issue_code(first_browser=True)
             if code:
-                result["pairing"] = {"url": result["url"].rstrip("/") + "/#pair=" + code["code"],
+                result["pairing"] = {"url": result["url"].rstrip("/") + "/projects#pair=" + code["code"],
                                      "minutes": code["minutes"]}
         except (OSError, ValueError):
             # Activation is already verified. A pairing-store failure must not report a failed install

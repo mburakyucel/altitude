@@ -60,9 +60,19 @@ def _locked():
 
 def _read() -> dict:
     try:
-        return json.loads((DIR / "devices.json").read_text())
+        record = json.loads((DIR / "devices.json").read_text())
     except FileNotFoundError:
         return {"devices": [], "code": None}
+    if not isinstance(record, dict) or not isinstance(record.get("devices"), list):
+        raise ValueError("Pairing data is invalid; the file is retained.")
+    active = record.get("code")
+    if active is not None:
+        if (not isinstance(active, dict) or not isinstance(active.get("hash"), str)
+                or not isinstance(active.get("expires"), str) or not isinstance(active.get("wrong"), int)):
+            raise ValueError("Pairing data is invalid; the file is retained.")
+        if datetime.fromisoformat(active["expires"]).tzinfo is None:
+            raise ValueError("Pairing data is invalid; the file is retained.")
+    return record
 
 
 def _write(record: dict) -> None:
