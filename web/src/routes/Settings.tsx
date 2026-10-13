@@ -104,6 +104,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const client = useQueryClient();
   const committed = useRef(saved);
   const [host, setHost] = useState(saved.host);
+  const dirty = useRef(false);
   const [choice, setChoice] = useState(saved.backend);
   const [url, setUrl] = useState(saved.service?.url ?? "");
   const [model, setModel] = useState(saved.service?.model ?? "");
@@ -111,6 +112,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const [removeKey, setRemoveKey] = useState(false);
   const [invalid, setInvalid] = useState(false);
   const reset = (value: VoiceSettings) => {
+    dirty.current = false;
     setChoice(value.backend); setUrl(value.service?.url ?? ""); setModel(value.service?.model ?? "");
     setKey(""); setRemoveKey(false); setInvalid(false);
   };
@@ -121,7 +123,10 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
     setHost(saved.host);
     // Preserve the edit's expected selection. A concurrent backend change must conflict at Save,
     // rather than silently replacing the draft or granting it the new destination's saved key.
-    if (unchanged) committed.current = saved;
+    if (unchanged || !dirty.current) {
+      committed.current = saved;
+      if (!unchanged) reset(saved);
+    }
   }, [saved]);
   const [save, setSave] = useState<SaveState>({ status: "idle" });
   const baseline = committed.current;
@@ -142,6 +147,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
     }
   };
   const choose = (backend: VoiceBackend) => {
+    dirty.current = true;
     setChoice(backend);
     setSave({ status: "idle" });
   };
@@ -176,23 +182,23 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
           {backend === "host" && (choice === "host" || host.state !== "absent") ? <HostVoicePanel host={host} onChange={hostChanged} /> : null}
           {backend === "service" && choice === "service" ? <div className="choice-fields service-fields">
             <label htmlFor="voice-url">Transcription URL</label>
-            <input id="voice-url" type="url" autoComplete="off" value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" aria-invalid={invalid || undefined} aria-describedby="voice-url-help" onChange={(event) => { setUrl(event.target.value); setKey(""); setRemoveKey(false); setSave({ status: "idle" }); }} />
+            <input id="voice-url" type="url" autoComplete="off" value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" aria-invalid={invalid || undefined} aria-describedby="voice-url-help" onChange={(event) => { dirty.current = true; setUrl(event.target.value); setKey(""); setRemoveKey(false); setSave({ status: "idle" }); }} />
             <p id="voice-url-help" className="text-meta text-muted">Use a compatible audio transcription endpoint reachable from the computer running Altitude.</p>
             {invalid ? <p role="alert" className="text-meta text-danger">Enter a complete http:// or https:// transcription URL.</p> : null}
             {url.trim().startsWith("http:") ? <p className="text-meta text-danger">This connection is unencrypted. Audio and any key travel over HTTP.</p> : null}
             <details><summary>Key or model (optional)</summary>
               <label htmlFor="voice-key">API key</label>
-              <input id="voice-key" type="password" autoComplete="new-password" value={key} aria-describedby="voice-key-help" placeholder={baseline.service?.key_present && url.trim() === baseline.service.url ? "Key saved — leave blank to keep" : undefined} onChange={(event) => { setKey(event.target.value); setRemoveKey(false); }} />
-              {baseline.service?.key_present && url.trim() === baseline.service.url ? <label className="service-remove-key"><input type="checkbox" checked={removeKey} onChange={(event) => { setRemoveKey(event.target.checked); setKey(""); }} /> Remove saved key</label> : null}
+              <input id="voice-key" type="password" autoComplete="new-password" value={key} aria-describedby="voice-key-help" placeholder={baseline.service?.key_present && url.trim() === baseline.service.url ? "Key saved — leave blank to keep" : undefined} onChange={(event) => { dirty.current = true; setKey(event.target.value); setRemoveKey(false); }} />
+              {baseline.service?.key_present && url.trim() === baseline.service.url ? <label className="service-remove-key"><input type="checkbox" checked={removeKey} onChange={(event) => { dirty.current = true; setRemoveKey(event.target.checked); setKey(""); }} /> Remove saved key</label> : null}
               <p id="voice-key-help" className="text-meta text-muted">{baseline.service && url.trim() !== baseline.service.url ? "Enter a key for the new address, if needed." : ""}</p>
-              <label htmlFor="voice-model">Model</label><input id="voice-model" value={model} autoComplete="off" onChange={(event) => setModel(event.target.value)} />
+              <label htmlFor="voice-model">Model</label><input id="voice-model" value={model} autoComplete="off" onChange={(event) => { dirty.current = true; setModel(event.target.value); }} />
             </details>
             <a className="service-help" href="https://github.com/mburakyucel/altitude/blob/main/docs/SETUP.md#your-speech-service" target="_blank" rel="noreferrer">How to run one</a>
             <p className="text-meta text-muted">If transcription fails, record again. Recordings are not kept.</p>
           </div> : null}
         </div>)}
-        <div className="onboarding-nav"><button type="submit" className="btn btn-primary"><BusyLabel busy={save.status === "saving"} working="Saving…" label={choice !== "service" && baseline.backend === "service" ? "Save and remove service" : choice === "service" && baseline.backend !== "service" ? "Save and use service" : "Save changes"} /></button>
-          <button type="button" className="btn" onClick={() => { reset(committed.current); setSave({ status: "idle" }); }}>Cancel</button></div>
+        <div className="onboarding-nav voice-actions"><button type="submit" className="btn btn-primary"><span role={save.status === "saving" ? "status" : undefined} aria-label={save.status === "saving" ? "Saving…" : undefined}><BusyLabel busy={save.status === "saving"} working="Saving…" label={choice !== "service" && baseline.backend === "service" ? "Save and remove service" : choice === "service" && baseline.backend !== "service" ? "Save and use service" : "Save changes"} /></span></button>
+          <button type="button" className="btn" onClick={() => { committed.current = saved; reset(saved); setSave({ status: "idle" }); }}>Cancel</button></div>
       </fieldset>
       {save.status === "saved" ? <StatusMark busy={false} label="Saved." /> : null}
       {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{stale ? "Voice settings changed. Reload settings and try again." : "Could not save voice settings."}{" "}

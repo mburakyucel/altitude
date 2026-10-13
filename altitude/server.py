@@ -1472,7 +1472,7 @@ class Handler(BaseHTTPRequestHandler):
             self._head = False
             self.wfile = wfile
 
-    def _json(self, obj, code: int = 200, compress: bool = False) -> None:
+    def _json(self, obj, code: int = 200, compress: bool = False, *, deadline: float | None = None) -> None:
         """A JSON reply. `compress` is for the large read-only views of a task, project or session, which
         carry no credentials; replies that can carry a pairing code or key never do (docs/ARCHITECTURE.md#web-delivery)."""
         body = json.dumps(obj, default=str).encode()
@@ -1481,6 +1481,12 @@ class Handler(BaseHTTPRequestHandler):
             body = gzip.compress(body, compresslevel=6, mtime=0)
         if self._keep_open:  # an HTTP/1.1 reply with its length keeps the connection in every browser
             self.protocol_version = "HTTP/1.1"
+        def budget():
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("response deadline")
+                self.connection.settimeout(remaining)
         try:
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1491,10 +1497,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Encoding", "gzip")
             if compress:
                 self.send_header("Vary", "Accept-Encoding")
+            budget()
             self.end_headers()
+            budget()
             self.wfile.write(body)
             if self._keep_open:
                 self.close_connection = False
+        except TimeoutError:
+            if deadline is None:
+                raise
+            self.close_connection = True
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as exc:
             # Error replies run inside exception handlers, outside the route's disconnect catcher.
             self.close_connection = True
@@ -1789,10 +1801,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _service_voice(self) -> None:
         """Bound one capture to the saved service and paired device, through upload and completion."""
+        deadline = time.monotonic() + speech.SERVICE_UPLOAD_SECONDS + speech.SERVICE_RESPONSE_SECONDS
         denied = self._page_denied(json_body=False, subject="Voice")
         if denied or not self._device:
             self.close_connection = True
-            return self._json({"error": denied or "Pair this device to use your speech service."}, 403)
+            return self._json({"error": denied or "Pair this device to use your speech service."}, 403,
+                              deadline=deadline)
         device = self._device["id"]
         selection = self.headers.get("X-Voice-Selection")
         owner = self.headers.get("X-Voice-Owner")
@@ -1815,7 +1829,7 @@ class Handler(BaseHTTPRequestHandler):
             if not acquired:
                 raise speech.ServiceError("service_unavailable")
             # read1 plus an absolute deadline prevents a slow trickle from renewing the upload lease.
-            until = time.monotonic() + speech.SERVICE_UPLOAD_SECONDS
+            until = deadline - speech.SERVICE_RESPONSE_SECONDS
             pcm = bytearray()
             while len(pcm) < length:
                 remaining = until - time.monotonic()
@@ -1829,18 +1843,22 @@ class Handler(BaseHTTPRequestHandler):
             setting = current()
             text = speech.transcribe_service(setting, bytes(pcm))
             current()
-            return self._json({"text": text})
+            return self._json({"text": text}, deadline=deadline)
         except (TimeoutError, OSError):
             error = speech.ServiceError("service_unavailable")
             self.close_connection = True
-            return self._json({"error": str(error), "code": error.code}, 502)
+            return self._json({"error": str(error), "code": error.code}, 502, deadline=deadline)
         except speech.ServiceError as exc:
             self.close_connection = True
-            return self._json({"error": str(exc), "code": exc.code}, 409 if exc.code == "selection_changed" else 502)
+            return self._json({"error": str(exc), "code": exc.code},
+                              409 if exc.code == "selection_changed" else 502, deadline=deadline)
         finally:
-            self.connection.settimeout(None)
             if acquired:
                 speech.SERVICE_SLOTS.release()
+            try:
+                self.connection.settimeout(None)
+            except OSError:
+                pass
 
     def _cross_site(self) -> bool:
         """Whether another site or page, not Altitude's own page, sent this request. A client that is no page

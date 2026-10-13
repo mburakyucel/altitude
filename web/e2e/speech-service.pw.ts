@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { test } from "./fixtures";
-import { fixtureProject, fixtureTask } from "./fixture-data";
+import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "speech-service.py" });
@@ -165,7 +165,10 @@ for (const failure of ["service_auth", "service_unavailable", "service_response"
 
 test("speech service: connection loss is terminal and another conversation receives no words", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
-  const task = await fixtureTask(request, project.name);
+  // This journey needs an editable destination; fixtureTask deliberately chooses an archived task.
+  const projectData = await (await request.get(`/api/project/${project.name}`)).json();
+  const task = projectData.tasks.find((row: { state: string }) => row.state === "running");
+  expect(task).toBeTruthy();
   await configure(request);
   const walk = walkthrough(page, info);
   const v = controls(page);

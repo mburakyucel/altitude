@@ -339,6 +339,42 @@ class TestServiceConfiguration(TestVoiceSettingsRoute):
         speech.SERVICE_SLOTS.release()
         speech.SERVICE_SLOTS.release()
 
+    def test_exhausted_total_budget_does_not_open_another_response_window(self):
+        self.configure()
+        def finish_after_deadline(*args):
+            time.sleep(0.03)
+            return "late result"
+        with mock.patch.object(speech, "SERVICE_UPLOAD_SECONDS", 0.01), \
+                mock.patch.object(speech, "SERVICE_RESPONSE_SECONDS", 0.01), \
+                mock.patch.object(speech, "transcribe_service", side_effect=finish_after_deadline):
+            with self.assertRaises(http.client.RemoteDisconnected):
+                self.audio()
+        self.assertTrue(speech.SERVICE_SLOTS.acquire(blocking=False))
+        self.assertTrue(speech.SERVICE_SLOTS.acquire(blocking=False))
+        speech.SERVICE_SLOTS.release()
+        speech.SERVICE_SLOTS.release()
+
+    def test_response_header_and_body_writes_share_absolute_deadline(self):
+        handler = object.__new__(server.Handler)
+        handler.headers = {}
+        handler._keep_open = False
+        handler.connection = mock.Mock()
+        handler.send_response = mock.Mock()
+        handler.send_header = mock.Mock()
+        handler.end_headers = mock.Mock()
+        handler.wfile = mock.Mock()
+        with mock.patch.object(server.time, "monotonic", side_effect=[9.0, 9.75]):
+            handler._json({"text": "words"}, deadline=10.0)
+        self.assertEqual(handler.connection.settimeout.call_args_list, [mock.call(1.0), mock.call(0.25)])
+        handler.wfile.write.assert_called_once()
+        handler.wfile.reset_mock()
+        handler.end_headers.reset_mock()
+        with mock.patch.object(server.time, "monotonic", return_value=10.0):
+            handler._json({"text": "late"}, deadline=10.0)
+        handler.end_headers.assert_not_called()
+        handler.wfile.write.assert_not_called()
+        self.assertTrue(handler.close_connection)
+
     def test_refused_receipt_and_crash_replay_project_before_writing(self):
         self.configure(key="old-secret")
         stored = config.voice_setting()

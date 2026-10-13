@@ -22,7 +22,9 @@
 .service-fields input:not([type=checkbox]) { display: block; width: 100%; min-height: 44px; margin-top: 8px; }
 .service-fields summary, .service-help { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
 .service-fields summary { display: list-item; padding-top: 12px; }
-.service-fields .service-remove-key { display: flex; align-items: center; gap: 8px; min-height: 44px; margin-top: 8px; margin-bottom: 16px; }
+.service-fields .service-remove-key { display: flex; flex-direction: row; align-items: center; gap: 8px; min-height: 44px; margin-top: 8px; margin-bottom: 16px; }
+.service-fields .service-remove-key input { width: 18px; height: 18px; min-height: 0; padding: 0; flex: none; accent-color: var(--accent); }
+.shell[data-phone] .onboarding-nav.voice-actions { position: static; margin-inline: 0; padding: 12px 0; border-top: 0; }
 .service-help { text-decoration: underline; }
 .voice-host { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .voice-host .btn { align-self: flex-start; min-height: 44px; }

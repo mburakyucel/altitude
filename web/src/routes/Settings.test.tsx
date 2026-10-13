@@ -172,6 +172,18 @@ describe("Host voice settings", () => {
 });
 
 describe("Voice settings", () => {
+  it("fresh settings replace an untouched cached form but preserve an edit's original selection", async () => {
+    const calls = fixture();
+    const { user, queryClient } = renderApp({ route: "/settings/voice" });
+    await screen.findByRole("radio", { name: "This computer" });
+    act(() => queryClient.setQueryData(["voice-settings"], { ...saved, backend: "browser", selection: "browser-fresh" }));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Browser recognition" })).toBeChecked());
+    await user.click(screen.getByRole("radio", { name: "This computer" }));
+    act(() => queryClient.setQueryData(["voice-settings"], { ...saved, backend: "browser", selection: "browser-later" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Saved.");
+    expect(calls).toEqual([{ backend: "host", selection: "browser-fresh" }]);
+  });
   it("service edits are drafts, preserve an empty saved key and explicitly remove details on switching", async () => {
     const calls = fixture({ ...saved, backend: "service", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", model: "small", key_present: true } });
     const { user } = renderApp({ route: "/settings/voice" });
@@ -234,6 +246,7 @@ describe("Voice settings", () => {
       await user.click(screen.getByRole("button", { name: "Save changes" }));
       expect(screen.getByRole("radio", { name: "This computer" })).toBeDisabled();
       expect(screen.getByText("Saving…")).toBeVisible();
+      expect(screen.getByRole("status", { name: "Saving…" })).toBeVisible();
       release();
       await screen.findByText("Saved.");
       expect(screen.getByRole("radio", { name: "This computer" })).toBeEnabled();
