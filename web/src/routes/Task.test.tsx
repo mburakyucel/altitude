@@ -844,6 +844,20 @@ describe("Task on desktop", () => {
       for (const call of sent) expect(JSON.parse(String(call[1]?.body)).text).toBe("Approved: merge PR #204.");
     });
 
+    it("replaces a stale card refused by the server with the task's current state", async () => {
+      const current = { ...overview, queue: [review] };
+      stub(reported, { overview: current, message: () => {
+        current.queue = [];
+        return jsonResponse({ error: "This PR is not ready for automatic merge approval. Refresh the task." }, 409);
+      } });
+      const { user } = renderApp({ route });
+      await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+      const turn = await waitFor(reviewTurn);
+      await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
+      await waitFor(() => expect(screen.queryByRole("button", { name: /Approve merge/ })).toBeNull());
+      expect(screen.queryByText("Your turn · review before merge")).toBeNull();
+    });
+
     it("says the operator cannot approve here when access is denied", async () => {
       stub(reported, { overview: { ...overview, queue: [review] }, message: () => jsonResponse({ error: "Access denied" }, 403) });
       const { user } = renderApp({ route });
