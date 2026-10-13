@@ -111,9 +111,10 @@ it("keeps an open progress dialog read-only when polling observes the replacemen
   const u=userEvent.setup();
   const {rerender}=render(<Live task={preparing}/>);
   await u.click(screen.getByRole("button",{name:/Task model:/}));
-  rerender(<Live task={{...initial,transfer:{...initial.transfer!,request:{...preparing.transfer!.request!,status:"done",phase:"done"}}}}/>);
+  rerender(<Live task={{...initial,transfer:{...initial.transfer!,current_effort:"medium",current_effort_label:"Medium",request:{...preparing.transfer!.request!,status:"done",phase:"done"}}}}/>);
   const modal=screen.getByRole("dialog");
   expect(within(modal).getByText("Switched to Engine B.")).toBeVisible();
+  expect(within(modal).getByText("Model A · Medium")).toBeVisible();
   expect(within(modal).queryByRole("combobox")).not.toBeInTheDocument();
   await u.keyboard("{Escape}");
   await u.click(screen.getByRole("button",{name:/Task model:/}));

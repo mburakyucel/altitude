@@ -162,13 +162,14 @@ export function TransferDialog({ transfer: t }: { transfer: Transfer }) {
   const { phone } = useViewport();
   if (!t.dialog || !t.shown) return null;
   const info = t.shown;
+  const current = t.info ?? info;
   const now = t.dialog === "now";
   const name = now ? info.request?.target_label : t.selected?.label;
   const title = now ? "Switch without a fresh note?" : info.targets.length === 1 ? `Switch to ${name}?` : "Switch engine";
   if (!now) return <Overlay label="This task’s model" side={phone ? "bottom" : "center"} onClose={t.close}>
     <div className="models task-models">
       <header className="models-head"><h2>This task’s model</h2><button type="button" className="icon-btn" aria-label="Close" onClick={t.close}>×</button></header>
-      <p className="models-in-use">Current: <strong>{info.current_model_label || `${info.current_label} · Settings unknown`}{info.current_model ? ` · ${info.current_effort_label}` : ""}</strong></p>
+      <p className="models-in-use">Current: <strong>{current.current_model_label || `${current.current_label} · Settings unknown`}{current.current_model ? ` · ${current.current_effort_label}` : ""}</strong></p>
       {t.active || t.label || ["pending", "executing"].includes(info.request?.status ?? "") ? <TransferCard transfer={t} inDialog /> : <>
         <fieldset className="task-model-fields" disabled={t.pending}>
           <label>Engine<select value={t.target} onChange={(event) => t.pickEngine(event.target.value)}>{info.targets.map((item) => <option key={item.engine} value={item.engine}>{item.label}</option>)}</select></label>

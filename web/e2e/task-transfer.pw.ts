@@ -127,6 +127,9 @@ test("same-engine effort change shows the current tuple until the fresh attempt 
   expect((await request.post("/fixture/transfer",{data:{slug,launch:true}})).ok()).toBe(true);
   await expect.poll(async ()=>(await read()).attempt).toBe(2);
   await expect(page.getByRole("button",{name:/^Task model:/})).toContainText("Medium");
+  await page.getByRole("button",{name:/^Task model:/}).click();
+  await expect(page.getByRole("dialog").locator(".models-in-use")).toContainText("Medium");
+  await page.keyboard.press("Escape");
   const after=await read();
   expect(after.l2_engine).toBe(before.l2_engine);
   expect(after.session_id).not.toBe(before.session_id);
