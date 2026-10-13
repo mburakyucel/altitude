@@ -788,6 +788,7 @@ def _transcript_row(source: str, kind: str, role: str, text: str = "", *, type: 
 
 
 def transcript_engine(task: dict) -> str:
+    """The task owner's engine; tasks recorded before owners could choose one name none and are Claude's."""
     return str(task.get("l2_engine") or "claude")
 
 
@@ -865,7 +866,8 @@ def delivered_context(engine: str, record: dict) -> list[str]:
 
 
 def public_message_identity(engine: str, record: dict) -> str | None:
-    return implementation(engine).public_message_identity(record)
+    native = _configured(engine)
+    return native.public_message_identity(record) if native else None
 
 
 def background_work(engine: str, records: list[dict]) -> list[dict] | None:
