@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, state as S, storage, transcript
+from altitude import config, platform, state as S, storage, transcript
 
 
 class RuntimeStorage(AltitudeCase):
@@ -56,6 +56,19 @@ class RuntimeStorage(AltitudeCase):
             pass
         with config.project_activity(self.project, exclusive=True) as acquired:
             self.assertTrue(acquired)
+
+    def test_simulated_service_backend_keeps_native_filesystem_search_flags(self):
+        """Cross-platform service fixtures still operate real storage on the runner's kernel."""
+        expected = os.O_SEARCH if hasattr(os, "O_SEARCH") else os.O_PATH
+        live = self.directory / "tasks/fictional-task"
+        live.mkdir(parents=True)
+        (live / "brief.md").write_text("native full brief")
+        for backend in ("linux", "darwin"):
+            with self.subTest(backend=backend), mock.patch.object(platform.sys, "platform", backend):
+                self.assertEqual(platform.directory_search_access(), expected)
+                with S.project_lock(self.project), config.project_activity(self.project) as acquired:
+                    self.assertTrue(acquired)
+                    self.assertEqual(transcript._turn_prompt(self.project, "fictional-task", {}, {}), "native full brief")
 
     def test_serialization_waits_for_existing_writer_without_truncating(self):
         script = ("from altitude import state; import sys; print('ready',flush=True); "

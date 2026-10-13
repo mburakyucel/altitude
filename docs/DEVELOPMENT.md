@@ -96,6 +96,8 @@ and live/archive selection. Normal, Raw and record transcript reads exercise fix
 invocation and native-source regression coverage does not establish their physical containment.
 The Linux execute-only case requires a non-root runner, denied directory listing and successful
 full brief reads and lock acquisition. No provider, private-place or native sandbox probe runs.
+Fixtures may select another service backend while using the runner's real filesystem; directory
+search flags follow the interpreter's native platform constants in both cases.
 
 On macOS the suite runs natively with Homebrew's `python@3.12`, `node@24`, `openssl@3`, `ffmpeg`,
 `lcms2`, `webp` (Homebrew's `ffmpeg` decodes WebP but cannot encode it, so the image fixtures use
