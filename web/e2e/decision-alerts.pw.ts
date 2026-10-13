@@ -124,24 +124,34 @@ test("the switch walks its states and alerts once for each new decision", { tag:
   });
 });
 
-/** Every banner the device shows now, as the real service worker left them. */
+/** Every banner the device shows now, as the real service worker left them. Read only between wakes: Chromium
+ * forgets a banner whose record it reads while the worker is still showing it. */
 const banners = (page: Page) => page.evaluate(async () => {
   const registration = await navigator.serviceWorker.getRegistration("/sw.js");
   return ((await registration?.getNotifications()) ?? []).map((banner) => ({ title: banner.title, body: banner.body, tag: banner.tag }));
 });
 
-/** The push service's wake, delivered to the registered worker as the browser delivers it: no payload. */
+/** The push service's wake, delivered to the registered worker as the browser delivers it: no payload. It returns
+ * once the browser records the worker's push event as completed, every banner of that wake shown. */
 async function waker(page: Page) {
   const cdp = await page.context().newCDPSession(page);
   const registrations: { registrationId: string; scopeURL: string }[] = [];
+  let completed = 0;
   cdp.on("ServiceWorker.workerRegistrationUpdated", ({ registrations: updated }) => registrations.push(...updated));
+  cdp.on("BackgroundService.backgroundServiceEventReceived", ({ backgroundServiceEvent: event }) => {
+    if (event.eventName === "Push event completed") completed += 1;
+  });
   await cdp.send("ServiceWorker.enable");
+  await cdp.send("BackgroundService.setRecording", { shouldRecord: true, service: "pushMessaging" });
+  await cdp.send("BackgroundService.startObserving", { service: "pushMessaging" });
   await expect.poll(() => registrations.length).toBeGreaterThan(0);
   return async () => {
     const [registration] = registrations;
+    const before = completed;
     await cdp.send("ServiceWorker.deliverPushMessage", {
       origin: new URL(page.url()).origin, registrationId: registration!.registrationId, data: "",
     });
+    await expect.poll(() => completed).toBe(before + 1);
   };
 }
 
@@ -162,14 +172,14 @@ test("a push wakes the real worker, which names the decision and never shows a b
   // waits, never that nothing is new.
   const retention = { title: "atlas still needs a decision", body: "Choose backup retention", tag: expect.stringContaining("choose-backup-retention") };
   await wake();
-  await expect.poll(() => banners(page)).toEqual([retention]);
+  expect(await banners(page)).toEqual([retention]);
 
   // A new decision: the worker names its project and task, and the page, which push now covers, adds nothing.
   const slug = (await (await request.post("/fixture/decision", {
     data: { project: "beacon", title: "Pick a drill day", question: "Which day?" } })).json()).slug as string;
   await wake();
   const drill = { title: "beacon needs a decision", body: "Pick a drill day", tag: expect.stringContaining(slug) };
-  await expect.poll(() => banners(page)).toEqual([retention, drill]);
+  expect(await banners(page)).toEqual([retention, drill]);
   await walk.state("12-push-names-the-decision", { visible: [page.getByRole("article", { name: "Pick a drill day" })], hidden: [] });
 
   // Answered elsewhere: the open page closes its banner without being touched.
@@ -181,14 +191,13 @@ test("a push wakes the real worker, which names the decision and never shows a b
   expect((await request.post("/fixture/ask-again", {
     data: { project: "beacon", slug, question: "Which day, given the freeze?" } })).ok()).toBe(true);
   await wake();
-  await expect.poll(() => banners(page)).toEqual([retention, drill]);
+  expect(await banners(page)).toEqual([retention, drill]);
   await walk.state("14-asked-again-named", { visible: [page.getByRole("article", { name: "Pick a drill day" })], hidden: [] });
 
   // Nothing new: the wake names every decision still waiting and opens Needs you. No path shows a bare "Altitude".
   await wake();
   const waiting = { title: "Still waiting for you", body: "atlas · Choose backup retention\nbeacon · Pick a drill day", tag: "altitude-nothing-new" };
-  await expect.poll(async () => (await banners(page)).sort((a, b) => a.title.localeCompare(b.title)))
-    .toEqual([retention, drill, waiting]);
+  expect((await banners(page)).sort((a, b) => a.title.localeCompare(b.title))).toEqual([retention, drill, waiting]);
   expect((await banners(page)).map((banner) => banner.title)).not.toContain("Altitude");
   await walk.state("15-still-waiting-named", { visible: [page.getByRole("article", { name: "Choose backup retention" }), page.getByRole("article", { name: "Pick a drill day" })], hidden: [] });
 });
@@ -259,7 +268,7 @@ test("Settings chooses what this device's alerts show, how often they come and w
   await decision("beacon", "Pick a drill day", "Which day?");
   await decision("atlas", "Rotate the signing key", "Rotate now or at the next release?");
   await wake();
-  await expect.poll(() => banners(page)).toEqual([{ title: "2 decisions need you", body: "", tag: expect.stringContaining("pick-a-drill-day") }]);
+  expect(await banners(page)).toEqual([{ title: "2 decisions need you", body: "", tag: expect.stringContaining("pick-a-drill-day") }]);
   expect(JSON.stringify((await banners(page)).map(({ title, body }) => [title, body]))).not.toMatch(/beacon|atlas|drill|signing/i);
   await page.reload();
   await expect(show).toHaveValue("none");
@@ -271,7 +280,7 @@ test("Settings chooses what this device's alerts show, how often they come and w
   await expect.poll(async () => (await (await request.get("/fixture/push")).json()).every).toEqual({});
   await decision("beacon", "Pick a log format", "Which format?");
   await wake();
-  await expect.poll(async () => (await banners(page)).map((banner) => banner.title)).toContain("A decision needs you");
+  expect((await banners(page)).map((banner) => banner.title)).toContain("A decision needs you");
   await walk.state("22-discreet-banner", { visible: [show], hidden: [] });
 
   // Off: the choices step aside until alerts are on again here.

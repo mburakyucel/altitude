@@ -34,7 +34,11 @@ export default defineConfig({
       args: ["--enable-automation", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
         ...(process.platform === "darwin" ? ["--disable-gpu"] : [])],
       // Crashpad also needs a writable directory even with Playwright's temporary browser profile.
-      env: { ...process.env, XDG_CONFIG_HOME: process.env.ALTITUDE_UI_BROWSER_CONFIG ?? resolve("ui-artifacts/browser-config") },
+      // On Linux the host's ALSA configuration loads its sound server plugin into Chromium's audio service,
+      // which intermittently crashed it and ended the fake microphone mid-walkthrough; without it,
+      // Chromium plays to its fake output device, as on hosted runners.
+      env: { ...process.env, XDG_CONFIG_HOME: process.env.ALTITUDE_UI_BROWSER_CONFIG ?? resolve("ui-artifacts/browser-config"),
+        ALSA_CONFIG_PATH: "/dev/null" },
     },
     headless: true,
     screenshot: "only-on-failure",
