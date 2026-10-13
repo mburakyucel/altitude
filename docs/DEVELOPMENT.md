@@ -1453,6 +1453,13 @@ service, LaunchAgents, keychains, trust stores or network configuration.
 
 ## CI and candidate identity
 
+Text parsing keeps complete fictional output and span fixtures in `tests/fixtures/text-parity.json`.
+`tests/test_text_parsing.py` checks option and recommendation forms, malformed delimiters, whitespace,
+duplicate keys and precedence, plus shared serial recognition, redaction and publication rejection.
+Its long-input probes run the actual parsers in separate Python children with a two-second deadline
+per child. Parser changes preserve the accepted language and full input; they do not truncate text
+or relax publication checks.
+
 `.github/workflows/hosted-checks.yml` runs `make check` for every pull request to main, every push
 to main and manual dispatches as parallel `shard` jobs, each on its own GitHub-hosted
 `ubuntu-24.04` runner: `make check-python SHARD=i/4` and `make check-web SHARD=i/6`, with

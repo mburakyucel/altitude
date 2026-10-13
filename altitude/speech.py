@@ -71,7 +71,7 @@ def transcribe_service(setting: dict, pcm: bytes) -> str:
     code = ("import sys; sys.path.insert(0, sys.argv[1]); "
             "from altitude.speech import _service_worker; _service_worker()")
     try:
-        result = subprocess.run([sys.executable, "-I", "-c", code, str(Path(__file__).resolve().parent.parent)],
+        result = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(Path(__file__).resolve().parent.parent)],
                                 input=json.dumps(setting).encode() + b"\n" + pcm,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 timeout=SERVICE_RESPONSE_SECONDS, check=False)

@@ -361,12 +361,43 @@ def _private_address(match: re.Match) -> bool:
 
 # A serial number named as one ("serial PF4SERIAL9", "Serial Number: C02XK1ZZJGH5"); a value needs a digit, so
 # "serial port" is prose.
-_SERIAL = re.compile(r"((?i:\bserial(?:[ _-]?(?:number|no\.?))?)[\"']?\s*[:=#]?\s*[\"']?)"
-                     r"(?!\[REDACTED\])(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{5,}")
+_SERIAL_START = re.compile(r"((?i:\bserial(?:[ _-]?(?:number|no\.?))?)[\"']?\s*+[:=#]?\s*+[\"']?)"
+                           r"[A-Za-z0-9-]{5}")
+_SERIAL_VALUE = re.compile(r"[A-Za-z0-9-]+")
+
+
+def _serials(text: str):
+    """Recognize the same serial spans for redaction and publication checks.
+
+    Rejected candidates can contain another label. Revisit those labels, but read a shared value
+    run only once; its last digit says whether each suffix satisfies the recognition rule.
+    """
+    position, value_end, last_digit = 0, 0, -1
+    while match := _SERIAL_START.search(text, position):
+        value_start = match.end() - 5
+        if value_start >= value_end:
+            value_end = _SERIAL_VALUE.match(text, value_start).end()
+            last_digit = -1
+            for digit in re.finditer(r"[0-9]", text[value_start:value_end]):
+                last_digit = value_start + digit.start()
+        # The original lookahead also recognizes a Unicode decimal immediately after the ASCII run.
+        if last_digit >= value_start or value_end < len(text) and text[value_end].isdecimal():
+            yield match.start(), value_end, match.group(1)
+            position = value_end
+        else:
+            position = match.start() + len("serial")
+
+
+def _redact_serials(text: str) -> str:
+    parts, end = [], 0
+    for start, following, prefix in _serials(text):
+        parts.extend((text[end:start], prefix, "[REDACTED]"))
+        end = following
+    return "".join(parts) + text[end:]
+
+
 _PATH_TAIL = r"(?:[/\\][^\s`'\"<>\[\]{}()]*)?"
 _REDACTIONS = (
-    (_CREDENTIAL, "[REDACTED]"),
-    (_SERIAL, r"\1[REDACTED]"),
     (re.compile(r"(?:~|\$HOME|/home/[^/\s]+|/Users/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)" + _PATH_TAIL), "[path]"),
     (re.compile(r"[^\s`'\"<>\[\]{}()]*(?:\.altitude/|\bincidents(?:/|\.jsonl\b)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b)[^\s`'\"<>\[\]{}()]*"), "[path]"),
     (re.compile(r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b", re.I), "[file]"),
@@ -396,6 +427,7 @@ def sanitize(text: str) -> str:
     home = str(Path.home())
     if home not in ("/", ""):
         text = re.sub(re.escape(home) + _PATH_TAIL, "[path]", text)
+    text = _redact_serials(_CREDENTIAL.sub("[REDACTED]", text))
     for pattern, replacement in _REDACTIONS:
         text = pattern.sub(replacement, text)
     if names := _names():
@@ -420,7 +452,7 @@ def check_public(text: str) -> None:
         raise ValueError("Private incident evidence boundary: an issue is public; home paths and private incident evidence must stay on this machine")
     if any(_private_address(m) for m in _ADDRESS.finditer(text)):
         raise ValueError("Private incident evidence boundary: an issue is public; network addresses stay on this machine")
-    if _SERIAL.search(text):
+    if next(_serials(text), None) is not None:
         raise ValueError("Private incident evidence boundary: an issue is public; serial numbers stay on this machine")
     if _CREDENTIAL.search(text):
         raise ValueError("Private credential boundary: redact credentials and tokens before publishing an issue")

@@ -1361,6 +1361,8 @@ report, a block, or a completion blocks the task with its result error or stderr
 Codex L3 uses a dedicated permission profile: only its fresh per-turn runtime directory is writable; the
 deployment checkout and Altitude home are read-only, direct command networking and the user-service bus are denied,
 and a required stdio MCP coordinator tool forwards structured requests to that project's role-fenced altd Unix socket.
+The coordinator and captured-review adapters and external speech transcription child pass `-I -B` to
+Python, preserving isolation and suppressing bytecode writes in the manifest-verified installation.
 The adapter runs isolated Python from the protected deployment checkout, outside the command sandbox; it
 executes no shell commands and grants no filesystem or service authority to the model. Only this tool is
 approved for unattended use; altd continues to authorize each verb. Linux Codex proxy mode denies creation
