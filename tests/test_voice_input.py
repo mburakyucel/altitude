@@ -520,6 +520,7 @@ class TestServiceTransport(VoiceCase):
                               capture_output=True, timeout=10)
         self.assertEqual(made.returncode, 0, made.stderr.decode())
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(cert, key)
         https = server.ThreadingHTTPServer(("127.0.0.1", 0), self.fixture.RequestHandlerClass)
         https.socket = context.wrap_socket(https.socket, server_side=True)
