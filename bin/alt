@@ -333,7 +333,8 @@ def main(argv=None) -> None:
                            'merge question (one naming the PR is one unmarked), "none" any other; while a PR waits for '
                            'review, an unmarked question with choices must name it or carry a mark')
             x.add_argument("--show", action="append", metavar="PATH",
-                           help="current L2: show this worktree file with the one question (repeat; one .md/.txt, images)")
+                           help="current L2: show this worktree file with the question, in a group the one marked "
+                                "\"review\": \"proposal\" (repeat; one .md/.txt, images)")
             x.add_argument("--recommendation"); x.add_argument("--label"); x.add_argument("--why")
             x.add_argument("--fault", action="store_true", help="the environment failed, not a decision: file the incident and tell L3")
             x.add_argument("--for-operator", action="store_true", help="the brief says to ask the operator here, or the call is plainly theirs: skip L3")
@@ -792,8 +793,8 @@ def main(argv=None) -> None:
             questions, args.reason = _question_input(args, args.reason)
             if args.show and (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK")
                               or p != os.environ.get("ALTITUDE_PROJECT") or not os.environ.get("ALTITUDE_ATTEMPT")
-                              or args.fault or (questions is not None and len(questions["questions"]) != 1)):
-                sys.exit("alt task block --show: only the current L2's own project/task and one question")
+                              or args.fault):
+                sys.exit("alt task block --show: only the current L2's own project/task, without --fault")
             if args.fault and questions is not None:
                 sys.exit("alt task block: --fault needs --reason, not questions JSON")
             if ACTOR == "l2":
@@ -814,7 +815,7 @@ def main(argv=None) -> None:
                                       recommendation_why=args.why, questions=questions, show=args.show,
                                       tell_l3=True)
                     if args.show:
-                        asked = questions["questions"][0]["question"] if questions else args.reason
+                        asked = T.shown_question(questions)["question"] if questions else args.reason
                         question = next(q for q in reversed(blocked["questions"])
                                         if q["status"] == "open" and q["detail"].strip() == asked.strip())
                         out({**blocked, "view_url": T.shown_url(p, args.slug, question["id"], question["revision"])})

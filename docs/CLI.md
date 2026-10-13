@@ -1404,7 +1404,9 @@ Options have stable keys, short button labels and explicit answer text. `"review
 approval rests on: `"proposal"` a proposal go, which shows its proposal review (spec §3.8.3);
 `"changes"` the held PR's merge question, which shows its implementation review and links the PR;
 `"none"` any other question. An unmarked question showing files is a proposal and an unmarked one naming
-the held PR is its merge question; revisions keep the mark. While the task's PR waits for the
+the held PR is its merge question; revisions keep the mark. With `--show`, the files go to the
+member marked `"proposal"` and the other listed members publish without files, as [showing
+files](#showing-files) describes. While the task's PR waits for the
 operator's review, `alt task block` refuses an unmarked question with choices that does not name the
 PR, so the operator never sees two **Approve merge** controls. A question may omit options;
 multiple options require a recommendation key. Nothing becomes an operator answer by default.
@@ -1888,6 +1890,9 @@ alt task reply --show README.md --show captures/overview.png 'The README draft i
 alt task block "$ALTITUDE_TASK" --reason 'Build the compact chat layout as proposed?' \
   --recommendation 'Build the layout shown in the proposal.' --label 'Build as proposed' \
   --show design/wireframes/PROPOSAL.md
+# With a group: the member marked "review": "proposal" shows the files; the others are asked beside it.
+alt task block "$ALTITUDE_TASK" --reason 'Merge and design decisions.' \
+  --questions-file questions.json --show design/wireframes/PROPOSAL.md
 ```
 
 `--show PATH` repeats. Paths are plain paths inside the task's registered worktree; untracked and
@@ -1901,9 +1906,12 @@ remote images are never fetched. Symlinks, traversal, special files and unsuppor
 and a refused set adds no reply or question.
 
 Only the current owner attempt shows files. A reply with `--show` goes to the operator's conversation
-and cannot use `--to l3`. A block with `--show` carries one ordinary question or a `--questions-file`
-selecting exactly one member; it cannot accompany `--fault`. A question showing files is a proposal
-approval, so its card shows the proposal review.
+and cannot use `--to l3`. A block with `--show` cannot accompany `--fault`. The files go to one
+question, which is a proposal approval, so its card shows the proposal review: the ordinary question,
+a `--questions-file` with one unmarked member, or the one member marked `"review": "proposal"`. The
+other listed members, such as the held PR's merge question marked `"changes"`, publish as their own
+cards without files; a member that showed files earlier advances to a revision without them. A file
+with no such member, or several, is refused and publishes nothing.
 
 The task keeps fixed, content-named copies. Later edits, branch changes, worktree removal and task
 archive leave a shown set exactly as published. Showing a question's files again with identical bytes

@@ -397,6 +397,75 @@ class TestShownFiles(AltitudeCase):
                            disposition="answered", reason="Build it.", expected_attempt=1)
         self.assertEqual(S.load_task(self.project, self.slug)["questions"][-1]["status"], "resolved")
 
+    def group(self, proposal="proposal", merge="changes"):
+        """The held PR's merge question beside a proposal go; a mark of None leaves that member unmarked."""
+        items = [{"question": "Merge PR #7?", "review": merge, "recommended_key": "merge",
+                  "options": [{"key": "merge", "label": "Approve merge", "text": "Merge PR #7."}]},
+                 {"question": "Build the README as shown?", "review": proposal, "recommended_key": "build",
+                  "options": [{"key": "build", "label": "Build as shown", "text": "Build the README as shown."}]}]
+        return {"questions": [{k: v for k, v in item.items() if v is not None} for item in items]}
+
+    def test_a_group_shows_files_only_on_its_proposal_and_leaves_the_merge_question_as_without_files(self):
+        task = S.load_task(self.project, self.slug)
+        task.update(prs=[7], delivery={"pr": 7})
+        S.save_task(self.project, task)
+        task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
+                       updates={"waiting_on": "burak"}, questions=self.group(), show=["README.md"])
+        merge, proposal = task["questions"]
+        self.assertEqual([q["status"] for q in task["questions"]], ["open", "open"])
+        self.assertEqual(proposal["shown"]["document"]["path"], "README.md")
+        self.assertNotIn("shown", merge)
+        views = {v["id"]: v for v in T.question_views(self.project, self.slug)}
+        self.assertEqual(views[proposal["id"]]["review"]["subject"], "proposal")
+        self.assertIsNone(views[proposal["id"]]["pr"])
+        self.assertEqual(views[merge["id"]]["review"]["subject"], "changes")
+        self.assertEqual(views[merge["id"]]["pr"], 7)
+        self.assertNotIn("shown", views[merge["id"]])
+        T.accept_question(self.project, self.slug, merge["id"], 1)
+        self.saved(proposal["shown"]["images"][0]["name"]).unlink()
+        with self.assertRaisesRegex(T.TransitionError, "Preview unavailable"):
+            T.accept_question(self.project, self.slug, proposal["id"], 1)
+        # Showing the group's files again restores the proposal's copies at its revision; the merge question keeps its own.
+        T.resume(self.project, self.slug)
+        payload = self.group()
+        for item, question in zip(payload["questions"], (merge, proposal)):
+            item["id"] = question["id"]
+        task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
+                       questions=payload, show=["README.md"])
+        current = {q["id"]: q for q in task["questions"] if q["status"] == "open"}
+        self.assertEqual(current[proposal["id"]]["revision"], 1)
+        self.assertNotIn("shown", current[merge["id"]])
+        T.accept_question(self.project, self.slug, proposal["id"], 1)
+
+    def test_a_group_with_files_refuses_without_exactly_one_proposal_and_publishes_nothing(self):
+        lone = [{"questions": [{"question": "Merge PR #7?", "review": mark}]} for mark in ("changes", "none")]
+        for payload in (self.group(proposal=None, merge=None), self.group(proposal="none"),
+                        self.group(merge="proposal"), *lone):
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(T.TransitionError, 'mark exactly one question "review": "proposal"'):
+                    T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
+                            updates={"waiting_on": "burak"}, questions=payload, show=["README.md"])
+                task = S.load_task(self.project, self.slug)
+                self.assertEqual(task["state"], "running")
+                self.assertFalse(task.get("questions"))
+                self.assertFalse(self.saved("").exists())
+        task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
+                       updates={"waiting_on": "burak"}, questions=self.group(proposal=None, merge=None))
+        self.assertEqual([q.get("shown") for q in task["questions"]], [None, None])
+
+    def test_moving_files_to_another_member_revises_the_earlier_one_without_them(self):
+        first = self.publish(recommendation="Build as shown", recommendation_label="Build")
+        T.resume(self.project, self.slug)
+        payload = {"questions": [
+            {"id": first["id"], "question": first["detail"], "review": "none"},
+            {"question": "Publish the guide as shown?", "review": "proposal"}]}
+        task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
+                       questions=payload, show=["overview.png"])
+        earlier, guide = [q for q in task["questions"] if q["status"] == "open"]
+        self.assertEqual((earlier["id"], earlier["revision"]), (first["id"], 2))
+        self.assertNotIn("shown", earlier)
+        self.assertEqual([i["path"] for i in guide["shown"]["images"]], ["overview.png"])
+
     def test_an_altered_record_is_unavailable_and_cannot_be_accepted(self):
         question = self.publish(recommendation="Build as shown", recommendation_label="Build")
         task = S.load_task(self.project, self.slug)
@@ -461,6 +530,18 @@ class TestShownFiles(AltitudeCase):
                          T.shown_url(self.project, self.slug, question["id"], question["revision"]))
         self.assertEqual(git("rev-parse", "HEAD", cwd=self.worktree), head)
         self.assertEqual(git("ls-files", "--stage", cwd=self.worktree), index)
+
+    def test_owner_cli_shows_a_groups_files_on_its_proposal(self):
+        group = self.tmp / "questions.json"
+        group.write_text(json.dumps(self.group()))
+        result = self.alt("task", "block", self.slug, "--reason", "Two decisions.", "--for-operator",
+                          "--questions-file", str(group), "--show", "README.md", env=self.owner_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        merge, proposal = S.load_task(self.project, self.slug)["questions"]
+        self.assertEqual(json.loads(result.stdout)["view_url"],
+                         T.shown_url(self.project, self.slug, proposal["id"], proposal["revision"]))
+        self.assertEqual((proposal["review"], merge["review"]), ("proposal", "changes"))
+        self.assertNotIn("shown", merge)
 
     def test_cli_refuses_nonowner_stale_attempt_fault_ambiguous_group_and_l3_reply(self):
         group = self.tmp / "questions.json"
