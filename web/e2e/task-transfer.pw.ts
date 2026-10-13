@@ -234,7 +234,7 @@ test("Stop supersedes preparation and uncertain termination never launches a rep
   expect((await read()).attempt).toBe(before.attempt);
   expect((await read()).next_engine).toBeFalsy();
   expect((await request.post("/fixture/transfer", { data: { slug, unknown_termination: false } })).ok()).toBe(true);
-  await page.getByRole("button", { name: "Check status", exact: true }).first().click();
+  // Polling can confirm the stop before a manual recheck; observe the restored action without clicking it.
   await walk.state("02-stop-confirmed-continue-restored", { visible: [page.getByRole("button", { name: "Continue", exact: true }).first()], hidden: [page.getByText(/Stop unconfirmed/).first(), card(page).getByRole("button", { name: "Switch now", exact: true })] });
 });
 
