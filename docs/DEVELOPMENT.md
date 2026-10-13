@@ -10,8 +10,9 @@ use the operator's service or runtime records.
 `python3 -m unittest tests.test_static_files tests.test_server_head tests.test_task_files`
 checks website bytes and response metadata, index/SPA and inside-build links, plain/gzip replacement
 races, missing assets, malformed paths, regular-file refusals and descriptor cleanup. It warms the
-64-entry compression cache and verifies replacement, modification and concurrent hardlink invalidation
-without rejecting verified response bytes. The Linux-only
+64-entry compression cache and verifies replacement and modification invalidation. The built-update
+fixture copies independent inodes; concurrent snapshot creation/update leaves the original build's
+bytes and signature unchanged, including while gzip is running. The Linux-only
 execute-only-directory case requires an unprivileged process and proves directory listing is denied
 while readable assets and the task-file search helper remain accessible; a root run is not evidence.
 

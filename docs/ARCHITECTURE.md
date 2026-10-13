@@ -2097,9 +2097,7 @@ replacement links. Root and client-route pages remain HTML and uncached; directl
 use their resolved target's type and cache policy. Compression uses the same verified descriptor.
 The process keeps at most 64 compressed assets, checking each opened file's device, inode, size and
 modification/change timestamps before reusing an encoding. Replacement or modification invalidates
-that entry. A signature changing during compression leaves the verified response uncached, including
-when another build snapshot hardlinks unchanged bytes. This does not promise an atomic snapshot
-against a writer changing file contents in place.
+that entry. This does not promise an atomic snapshot against a writer changing file contents in place.
 Gzip cuts the cold download to about a third: in the fictional walkthrough on simulated
 slow 4G the page appears in about 1.7 seconds instead of 4.4. The punctuation model's packed weights
 barely compress and travel as stored. Opening requests no dictation asset; `web/e2e/first-open.pw.ts`

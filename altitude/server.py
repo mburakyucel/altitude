@@ -126,10 +126,7 @@ def _gzipped(path: Path, stream) -> bytes:
             return cached[1]
         data = gzip.compress(stream.read(), compresslevel=9, mtime=0)
         if signature() != before:
-            # A build snapshot can change ctime by linking unchanged bytes during compression.
-            # Serve the verified open file, but never retain an encoding under a stale signature.
-            _gzip_cache.pop(path, None)
-            return data
+            raise ValueError("asset changed while it was read")
         _gzip_cache[path] = (before, data)
         _gzip_cache.move_to_end(path)
         if len(_gzip_cache) > 64:

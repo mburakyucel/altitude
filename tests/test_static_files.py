@@ -1,6 +1,7 @@
 """Website reads bind successful responses, compression and cache hits to verified files."""
 import gzip
 import io
+import importlib.util
 import os
 import sys
 import unittest
@@ -10,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 from unittest import mock
 
-from tests.support import AltitudeCase
+from tests.support import AltitudeCase, REPO
 from altitude import config, server, tasks
 
 
@@ -252,21 +253,49 @@ class StaticFiles(AltitudeCase):
             self.assertTrue(all(status == 200 and data == expected for status, _, data in results))
             self.assertEqual(len(server._gzip_cache), 1)
 
-    def test_hardlink_metadata_change_during_compression_keeps_verified_response(self):
-        # Build snapshots share immutable bytes by hardlink. Creating another snapshot changes
-        # ctime while gzip works, without changing the bytes opened by this request.
+    def test_changed_open_file_signature_during_compression_is_not_cached_or_served(self):
         original = server.gzip.compress
         sibling = self.tmp / "snapshot.js"
         def compressed(data, **kwargs):
             os.link(self.asset, sibling)
             return original(data, **kwargs)
+        with mock.patch.object(server.gzip, "compress", side_effect=compressed):
+            status, _, data = self.request("/assets/app.js", True)
+        self.assertEqual(status, 404)
+        self.assertNotIn(b"console.log", data)
+        self.assertNotIn(self.asset, server._gzip_cache)
+
+    def test_document_build_copies_do_not_change_original_signature_during_gzip(self):
+        spec = importlib.util.spec_from_file_location("document_update_fixture", REPO / "web/e2e/document-update-service.py")
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.object(sys, "path", [str(REPO / "web/e2e"), *sys.path]):
+            spec.loader.exec_module(module)
         expected = self.asset.read_bytes()
+        def signature():
+            info = self.asset.stat()
+            return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_nlink
+        before = signature()
+        snapshots = []
+        original = server.gzip.compress
+        def compressed(data, **kwargs):
+            for _ in range(2):
+                snapshot = module.copy_build(self.dist)
+                snapshots.append(snapshot)
+                copied = snapshot / "assets/app.js"
+                self.assertNotEqual((copied.stat().st_dev, copied.stat().st_ino), before[:2])
+                self.assertEqual(copied.read_bytes(), expected)
+                copied.unlink()
+                copied.write_bytes(b"fictional updated build")
+                self.assertEqual(signature(), before)
+                self.assertEqual(self.asset.read_bytes(), expected)
+            return original(data, **kwargs)
         with mock.patch.object(server.gzip, "compress", side_effect=compressed):
             status, _, data = self.request("/assets/app.js", True)
         self.assertEqual((status, data), (200, expected))
-        self.assertNotIn(self.asset, server._gzip_cache)
-        self.assertEqual(self.request("/assets/app.js", True)[2], expected)
+        self.assertEqual(signature(), before)
         self.assertIn(self.asset, server._gzip_cache)
+        self.assertNotEqual((snapshots[0] / "index.html").stat().st_ino,
+                            (snapshots[1] / "index.html").stat().st_ino)
 
     def test_nonregular_substitution_and_read_failures_close_all_descriptors(self):
         original_open, original_dup, original_close, original_stat = os.open, os.dup, os.close, os.fstat

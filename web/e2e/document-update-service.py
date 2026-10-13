@@ -1,5 +1,4 @@
 """Documents opened across a built-app replacement, using real handlers and fictional storage."""
-import os
 import re
 import socket
 import shutil
@@ -13,13 +12,18 @@ from tests.support import add_worktree, make_repo
 from altitude import config, l3, server, state as S, tasks
 
 
-def main():
-    configure()
-    artifacts = config.WEB_DIST.parent / "ui-artifacts"
+def copy_build(source: Path) -> Path:
+    """An update mutates only this service's own build, including inode metadata."""
+    artifacts = source.parent / "ui-artifacts"
     artifacts.mkdir(exist_ok=True)
     dist = Path(tempfile.mkdtemp(prefix="document-dist-", dir=artifacts))
-    shutil.copytree(config.WEB_DIST, dist, copy_function=os.link, dirs_exist_ok=True)
-    config.WEB_DIST = dist
+    shutil.copytree(source, dist, dirs_exist_ok=True)
+    return dist
+
+
+def main():
+    configure()
+    dist = config.WEB_DIST = copy_build(config.WEB_DIST)
     repo = make_repo(config.PROJECT_ROOTS[0] / "atlas")
     with config.add_project("atlas", path=repo):
         pass
@@ -79,7 +83,7 @@ def main():
                     text, count = re.subn(r"[A-Za-z_$][\w$]*\s+as\s+default", "fixtureRendererFailure as default",
                                          path.read_text(), count=1)
                     assert count == 1, "The built renderer must have one default export"
-                    path.unlink()  # leave the original build's hard-linked bytes untouched
+                    path.unlink()
                     path.write_text(text + "\nfunction fixtureRendererFailure(){throw new Error('Fictional renderer failure');}\n")
                 return self._json({"ok": True})
             if self.path == "/fixture/update":
