@@ -250,20 +250,7 @@ def cleanup():
     if removed.returncode:
         raise RuntimeError('Browser container cleanup failed: ' + removed.stderr[-2000:])
     if fixture.ROOT.exists():
-        with container_acceptance.environment(fixture.ROOT, reuse=True):
-            environment = platform.container_user_environment()
-            for instance in ('fixture-browser-build', *INSTANCES,
-                             *(name + '-restored' for name in INSTANCES)):
-                platform.container_stop_unit(platform.container_unit(instance), environment)
-            if fixture.STATE.exists():
-                fixture.run('cleanup', {})
-            else:
-                # A partial online build has no fixture instances or state yet.
-                platform.container_command(['rm', '--force', '--all'], timeout=40)
-                platform.container_command(['rmi', '--force', '--all'], timeout=40)
-                platform.container_command(['system', 'migrate'])
-                import shutil
-                shutil.rmtree(fixture.ROOT)
+        fixture.cleanup()
     for name in ('control.sock', 'https.sock'):
         (SOCKETS / name).unlink(missing_ok=True)
     return {'browser_removed': True, 'runtime_removed': not fixture.ROOT.exists(),

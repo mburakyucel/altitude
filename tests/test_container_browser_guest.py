@@ -149,6 +149,36 @@ class ContainerBrowserGuestTests(AltitudeCase):
         cleanup.assert_called_once()
         self.assertFalse(cleanup.call_args.args[0].exists())
 
+    def test_bootstrap_cleanup_queries_only_created_units(self):
+        fixture = guest.fixture
+        root = self.tmp / 'runtime'
+        root.mkdir()
+        self.patch(fixture, 'ROOT', root)
+        self.patch(fixture, 'STATE', self.tmp / 'state.json')
+        self.patch(fixture, 'BASES', self.tmp / 'bases.json')
+        self.patch(fixture.container_acceptance, 'environment', return_value=mock.MagicMock())
+        self.patch(fixture.platform, 'container_command', return_value='')
+        stopped = self.patch(fixture.platform, 'container_stop_unit')
+        self.assertTrue(fixture.cleanup()['runtime_removed'])
+        stopped.assert_not_called()
+
+    def test_created_unit_unknown_status_still_preserves_runtime(self):
+        fixture = guest.fixture
+        root = self.tmp / 'runtime'
+        root.mkdir()
+        self.patch(fixture, 'ROOT', root)
+        state = self.tmp / 'state.json'
+        state.write_text(json.dumps({'instances': ['browser-phone']}))
+        self.patch(fixture, 'STATE', state)
+        self.patch(fixture.container_acceptance, 'environment', return_value=mock.MagicMock())
+        self.patch(fixture.platform, 'container_command', return_value='')
+        self.patch(fixture.platform, 'container_user_environment', return_value={})
+        stopped = self.patch(fixture.platform, 'container_stop_unit', side_effect=RuntimeError('unknown unit'))
+        with self.assertRaisesRegex(RuntimeError, 'unknown unit'):
+            fixture.cleanup()
+        stopped.assert_called_once_with('altitude-container-browser-phone.service', {})
+        self.assertTrue(root.exists())
+
     def test_offline_prepare_refuses_missing_base_without_building(self):
         fixture = guest.fixture
         root = self.tmp / 'runtime'

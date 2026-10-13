@@ -85,7 +85,36 @@ def prepare_bases():
         return images
 
 
+def cleanup():
+    """Retire created fixture resources; never query units that were not started."""
+    if not ROOT.exists():
+        return {'runtime_removed':True}
+    with container_acceptance.environment(ROOT,reuse=True):
+        command=platform.container_command
+        names=set(command(['ps','--all','--format','{{.Names}}']).splitlines())
+        if STATE.exists():
+            names.update(json.loads(STATE.read_text())['instances'])
+        owned={'fixture-browser-build','browser-phone','browser-desktop',
+               'browser-phone-restored','browser-desktop-restored'}
+        if not names<=owned:
+            raise RuntimeError('Unexpected running fixture resource; retain evidence')
+        for name in names:
+            platform.container_stop_unit(platform.container_unit(name),platform.container_user_environment())
+        command(['rm','--force','--all'],timeout=40)
+        for volume in command(['volume','ls','--quiet']).split(): command(['volume','rm',volume])
+        command(['rmi','--force','--all'],timeout=40)
+        if command(['ps','--all','--quiet']).strip() or command(['volume','ls','--quiet']).strip():
+            raise RuntimeError('Browser fixture resources survived cleanup')
+        command(['system','migrate'])
+        shutil.rmtree(ROOT)
+        STATE.unlink(missing_ok=True)
+        BASES.unlink(missing_ok=True)
+        return {'runtime_removed':not ROOT.exists()}
+
+
 def run(action, value, *, captured_bases=False):
+    if action=='cleanup':
+        return cleanup()
     ROOT.mkdir(exist_ok=True)
     with container_acceptance.environment(ROOT,reuse=True):
         command=platform.container_command
@@ -166,16 +195,6 @@ def run(action, value, *, captured_bases=False):
                 "'later_state_absent':not (config.HOME/'.fixture-after-upgrade').exists()}))"]))
             platform.container_stop(restored)
             return {'complete':saved['complete'],'paused':not receipt['ready'],'upgraded_version':version,**observed}
-        if action=='cleanup':
-            for name in state['instances']:
-                platform.container_stop_unit(platform.container_unit(name),platform.container_user_environment())
-            command(['rm','--force','--all'],timeout=40)
-            for volume in command(['volume','ls','--quiet']).split(): command(['volume','rm',volume])
-            command(['rmi','--force','--all'],timeout=40)
-            if command(['ps','--all','--quiet']).strip() or command(['volume','ls','--quiet']).strip():
-                raise RuntimeError('Browser fixture resources survived cleanup')
-            command(['system','migrate']); shutil.rmtree(ROOT)
-            return {'runtime_removed':not ROOT.exists()}
         raise ValueError(action)
 
 

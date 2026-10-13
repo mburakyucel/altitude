@@ -248,6 +248,9 @@ def run(args):
         vm.user_data = lambda key: original(key).replace('packages: [git, gh, openssl]',
             'packages: [git, gh, openssl, podman, crun, uidmap, dbus-bin, slirp4netns, nftables]')
         vm.CPUS = platform.validation_guest_cpus()
+        record['limits'] = {'cpus': vm.CPUS, 'memory_bytes': vm.MEMORY_GIB * vm.GIB,
+                            'disk_bytes': vm.DISK_GIB * vm.GIB, 'minimum_free_bytes': vm.FLOOR,
+                            'download_bytes': LIMIT, 'controller_seconds': args.timeout}
         machine = vm.Machine(work, cache / vm.IMAGE)
         machine.start(on_spawn=lambda pid: dump(area / 'guest-owner.json', {'process': platform.process_identity(pid)}))
         original_ssh = machine.ssh
@@ -255,6 +258,12 @@ def run(args):
         machine.wait_ready(time.monotonic() + phase_seconds(600))
         record['boot_seconds'] = time.monotonic() - started
         record['guest_runtime'] = machine.ssh('uname -a; podman --version; crun --version').stdout
+        resources = "import json,os;from pathlib import Path;print(json.dumps({'cpus':os.cpu_count(),'memory_kib':int(next(s.split()[1] for s in Path('/proc/meminfo').read_text().splitlines() if s.startswith('MemTotal:'))),'disk_bytes':int(Path('/sys/class/block/vda/size').read_text())*512}))"
+        record['guest_resources'] = json.loads(machine.ssh(shlex.join(['python3', '-c', resources])).stdout)
+        if (record['guest_resources']['cpus'] != vm.CPUS
+                or record['guest_resources']['memory_kib'] * 1024 > vm.MEMORY_GIB * vm.GIB
+                or record['guest_resources']['disk_bytes'] != vm.DISK_GIB * vm.GIB):
+            raise RuntimeError('Observed guest resources differ from fixed limits')
         budget.observe(machine)
         thread = threading.Thread(target=budget.watch, args=(machine,))
         thread.start()
