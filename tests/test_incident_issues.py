@@ -85,11 +85,13 @@ class TestPublication(IncidentIssueCase):
                                    "for [project]\n[REDACTED]\nat [path]")
             with self.assertRaisesRegex(ValueError, "operator's name"):
                 incidents.check_public("Ada Fixture")
-        # Key runs match from their start, flag hyphens included, and a Bearer or Basic scheme is skipped to the value.
-        for flag in ("--password=hunter22", "-token=abcd1234", "--api-key=abcd1234", "X-Auth-Token: Bearer abcd1234",
-                     'access_token="Basic abcd1234"'):
+        # A key matches at its keyword, so its prefix stays; a Bearer or Basic scheme is skipped to the value.
+        for flag, redacted in (("--password=hunter22", "--[REDACTED]"), ("-token=abcd1234", "-[REDACTED]"),
+                               ("--api-key=abcd1234", "--[REDACTED]"),
+                               ("X-Auth-Token: Bearer abcd1234", "X-Auth-[REDACTED]"),
+                               ('access_token="Basic abcd1234"', "access_[REDACTED]")):
             with self.subTest(flag=flag):
-                self.assertEqual(incidents.sanitize(f"ran tool {flag} then"), "ran tool [REDACTED] then")
+                self.assertEqual(incidents.sanitize(f"ran tool {flag} then"), f"ran tool {redacted} then")
                 with self.assertRaisesRegex(ValueError, "credential"):
                     incidents.check_public(f"ran tool {flag}")
         self.assertEqual(incidents.sanitize("mail (fixture.name@example.org), see repo:.altitude/state.json"),
