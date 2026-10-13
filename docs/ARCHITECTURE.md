@@ -2217,15 +2217,25 @@ projects folder First run names and the operator's configured name.
 
 First run's folder browser reads `GET /api/folders?path=<absolute path>` (no path means the home
 folder), one folder per request and only when the operator opens it; nothing is scanned, indexed or
-kept. `server.folders` refuses a path in one of macOS's [private places](DEVELOPMENT.md#macos-private-places),
-judged before anything inside it is touched, then resolves the path and refuses one outside the home folder
-or through a hidden (dot) folder, then returns `path`, `parts` (relative to home) and `readable`, plus one row per visible
+kept. Folder operations and website serving share the platform seam's descriptor traversal. It judges
+each candidate against the [private policy](DEVELOPMENT.md#macos-private-places) before lookup,
+holds accepted ancestors and verifies opened identities. Browser aliases may traverse a nonprivate
+exterior location and return inside HOME; the final inspected address establishes containment and
+hidden-folder filtering. Website aliases retain their stricter build anchors. Browsing returns
+`path`, `parts` (relative to home) and `readable`, plus one row per visible
 subfolder whose resolved target stays inside home and outside the private places: `name`, `path`, the registered `project` for that
 folder and whether it holds `.git`. It never returns file names, sizes or contents, and an unreadable
 folder returns `readable: false`. The browser adds through the existing `POST /api/project/add`;
 **Type a path instead** covers folders outside home. `POST /api/projects-folder` applies the
 operator's choice through the machine settings request, like `alt machine set --projects-folder`.
-Registration, the projects folder and project discovery refuse or skip the private places the same way;
+Selection, discovery, registered-address matching and child/`.git` metadata use the inspected
+namespace. Registration checks final directory type without requiring final read/list/execute
+permission; selection requires read/search. Caller-specific raw and canonical alias budgets remain
+distinct, and completed-address reuse retains full logical expansion cost. Marker presence checks
+never read marker contents; unavailable or private targets report no marker. Container containment
+uses inspected candidate and volume addresses. Settings retain the selected spelling.
+Later Git, hooks, engines, other runtime path uses and unrelated private-check consumers remain
+outside this operation boundary; saved strings are not persistent safe capabilities.
 TLS and installation location checks read the same `config.project_roots()`.
 
 Task, decision and project reads refresh through one change stream per browser app. The shell opens

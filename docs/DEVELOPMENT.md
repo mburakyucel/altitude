@@ -237,10 +237,21 @@ root it admits reopens one: the worker profile, the validation profile, and Code
 coordinator permissions. Altitude code that runs outside a sandbox (altd, the coordinator launch,
 doctor, the installer, the speech runtime) follows one rule: it never lists, walks or searches the home
 folder or mounted volumes, and it starts no child in the home folder; it reads only its own named paths.
-Code that must take a path the operator chose (the folder browser, project discovery and registration,
-the projects folder) asks `platform.private(path)` first, which reads each link on the way and judges
-its target before following it, so nothing inside a private place is touched.
-`tests/test_folders.py` and `tests/test_platform_darwin.py` cover the rule with fictional homes;
+Folder selection, browsing, discovery and initial registration inspect paths through the platform
+seam's shared descriptor traversal. It judges each candidate against the private policy before
+metadata lookup and pins accepted ancestors; directory type, permissions, listing and `.git`
+presence use that same namespace. Readable typed selections outside HOME remain supported, and
+browser aliases may traverse a nonprivate exterior location before returning inside HOME. Container
+containment compares inspected candidate and volume addresses. Registration checks final type
+without requiring final read/list/execute access; selection requires read/search access.
+Each caller retains its original raw/canonical alias budget, including logical expansion costs on
+completed-target reuse and a separate directory-plus-marker budget. Website traversal retains its
+strict build anchors, completed-address work bound and long-chain support. The server copy is removed.
+These operation checks do not cover later Git, hook, engine or other runtime uses of saved path strings,
+regular content modified in place or unrelated `platform.private` consumers. They do not establish a
+global native privacy boundary.
+`tests/test_folder_namespace.py`, `tests/test_folders.py`, `tests/test_static_files.py` and
+`tests/test_platform_darwin.py` cover these contracts with fictional homes and deterministic replacements;
 the [native probe](#local-checks) checks that a sandboxed read of the Desktop or `/Volumes` fails with
 "operation not permitted" and that macOS's privacy log records no request for either (macOS logs a request even when it
 already holds an answer); it reads only after Seatbelt's own verdict refuses the read, and otherwise fails
