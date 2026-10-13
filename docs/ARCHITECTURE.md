@@ -1255,7 +1255,7 @@ from the saved status, or as uncertain without one, and the owner's CLI reconnec
 the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
 on this single-account host can reach; the task record and the per-command log are the boundary,
 not caller identity. Both engines share the verb; only the launcher is host-specific.
-Candidate checks, installation VMs, containers and sandboxed-browser checks need no grant:
+Ordinary candidate checks need no grant; the fixed Mac guest browser lane requires its standing VM-policy grant:
 `POST /api/task/validate` lets the running owner's current attempt, from a process in its own worker
 job, run one command against a throwaway clone of its committed `HEAD`. On Linux the command runs in a
 disposable rootless Podman container that altd starts from its own deployed image, with fixed flags and
