@@ -380,6 +380,7 @@ class TestSendNowL2(AltitudeCase):
                          T.render_inbox([first, note]))
         self.assertEqual(S.load_task(self.project, task["slug"])["send_now"]["ids"], self.ids([first, note]))
         self.assertEqual(self.delivery(task, first)["send_now_reason"], SENDING)
+        self.assertEqual(self.request(task, first), {"status": "sending", "idempotent": True})
         T.settle_send_now(self.project, task["slug"], first["id"], "delivered", agent_id=task["agent_id"])
         self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids([image, later]))
         self.steer(task)  # images keep their message, and everything after it, for the next turn

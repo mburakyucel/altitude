@@ -123,6 +123,7 @@ class _CodexDriver(common._Driver):
                     "threadId": self.session_id, "expectedTurnId": self.turn, "clientUserMessageId": message["id"],
                     "input": [{"type": "text", "text": message["text"], "text_elements": []}]}})
             except OSError:
+                self.held = True
                 return "returned"
             self.steers[identity] = message["id"]
             return None

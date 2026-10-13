@@ -99,8 +99,8 @@ L2 receives the request, repository context, expected files, worktree, branch, a
 the lightest useful execution shape. Its conversation with the operator is stored apart from tool logs, so
 the operator messages it directly without routing through L3. Messages queue on the task and reach the
 worker at its next checkpoint. A Claude owner's hook checkpoint names the operator's own messages, which reach
-it only as a user turn, at the next session turn; a Codex owner's driver writes every waiting message into its
-running turn as it arrives. An explicit Stop ends a worker. **Send now** on an inbox-owned operator
+it only as a user turn, at the next session turn; a Codex owner's driver writes waiting messages into its
+running turn as they arrive, with the exceptions [message delivery](#message-delivery-and-voice) names. An explicit Stop ends a worker. **Send now** on an inbox-owned operator
 message hands the queued operator group to the running turn in arrival order, without stopping its
 work (see [message delivery](#message-delivery-and-voice)). Each message keeps its own visible row and
 delivery receipt; messages arriving after the claim wait for a later checkpoint. Task message writers hold the project
