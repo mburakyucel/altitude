@@ -914,7 +914,8 @@ class MacLifecycle(Lifecycle):
         self.run("address-interrupted-settings", sys.executable, "-B", "-c", code, self.prefix / "current", success=False)
         assert self.result["steps"][-1]["exit"] == 75, "The intended process-loss boundary was not reached"
         assert (self.prefix / "pending.json").is_file(), "Interrupted transaction has no recovery receipt"
-        self.run("address-supported-recovery", self.alt, "recover")
+        # The interrupted transaction saved ::1; its saved settings, not the fixture's old shell host, govern recovery.
+        self.run("address-supported-recovery", "/usr/bin/env", "-u", "ALTITUDE_HOST", self.alt, "recover")
         self.healthy("address-recovered", release)
         assert all(digest(p) == h for p, h in before.items()), "Address recovery did not restore the owned files"
         assert all(digest(p) == h for p, h in identities.items()), "Recovery altered identity or registrations"
