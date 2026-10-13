@@ -304,6 +304,45 @@ class TestInvocationReader(_CodexTranscriptCase):
         with self.assertRaises(OSError):
             os.fstat(job)
 
+    def test_archive_parent_and_task_entries_preserve_refusal_and_close_directories(self):
+        archive = self._archive_without_live_tasks_directory("missing")
+        outside = self.tmp / "outside-archive"
+        outside.mkdir()
+        directory = storage.directory
+        for entry in (archive, archive.parent):
+            for kind in ("missing", "file", "link"):
+                with self.subTest(entry=entry.name, kind=kind):
+                    held = entry.with_name("held-archive-entry")
+                    entry.rename(held)
+                    if kind == "file":
+                        entry.write_text("ordinary entry")
+                    elif kind == "link":
+                        entry.symlink_to(outside, target_is_directory=True)
+                    descriptors = []
+                    @contextmanager
+                    def tracked(*args, **kwargs):
+                        with directory(*args, **kwargs) as fd:
+                            descriptors.append(fd)
+                            yield fd
+                    try:
+                        with mock.patch.object(storage, "directory", tracked), \
+                             mock.patch.object(storage, "regular_reader", side_effect=AssertionError("outside read")):
+                            if kind == "link":
+                                with self.assertRaises(invocation.InvocationRefused):
+                                    with invocation.job_directory(self.project, self.slug):
+                                        self.fail("linked archive selected")
+                            else:
+                                with invocation.job_directory(self.project, self.slug) as (job, _):
+                                    self.assertIsNone(job)
+                        self.assertTrue(descriptors)
+                        for fd in descriptors:
+                            with self.assertRaises(OSError):
+                                os.fstat(fd)
+                    finally:
+                        if kind != "missing":
+                            entry.unlink()
+                        held.rename(entry)
+
     def test_linked_live_tasks_parent_refuses_archive_without_outside_read(self):
         self._archive_without_live_tasks_directory("link")
         directory = storage.runtime_directory

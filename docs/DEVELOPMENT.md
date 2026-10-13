@@ -101,7 +101,7 @@ search flags follow the interpreter's native platform constants in both cases.
 Invocation-reader fixtures use fictional registered projects and worker records. They cover
 malformed-name refusal before opening directories or attempting task metadata with live or
 archived tasks, activity's earlier identity refusal, live and archived selection with missing,
-ordinary-file and linked live parents, historical headers,
+ordinary-file and linked live parents and archive entries, historical headers,
 current activity, normal/Raw/record reads, complete
 UTF-8 and partial lines, replacement of JSON and stdout between discovery and consumption,
 late regular-file replacement before publication, unavailable discovery followed by creation,
