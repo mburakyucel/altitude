@@ -212,7 +212,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     engineLabel,
     selection,
     finished,
-    canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question))),
+    canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question) || task.transfer?.request?.status === "done")),
     canStop: state === "running",
     canResume: !task.transfer?.quota_limited && (state === "blocked" || task["can_continue"] === true) && (!task.steering || task.steering.state === "idle") && task.question?.status !== "open",
     canReject: ["queued", "running", "blocked", "reported"].includes(state),
@@ -635,7 +635,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         shows={shownCopy}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
-        sendDisabled={transfer.stopping || ["stopping", "stop_unconfirmed"].includes(steering.state)}
+        sendDisabled={transfer.stopping || (task.state === "queued" && task.transfer?.request?.status === "done") || ["stopping", "stop_unconfirmed"].includes(steering.state)}
         hint={task.state === "blocked" && steering.state === "idle" && !task.transfer?.quota_limited ? "Sending resumes the L2 with your message." : ""} />
         {steering.state === "stopped" ? <p className="text-meta text-muted">Send a correction to continue this session.</p>
           : null}
