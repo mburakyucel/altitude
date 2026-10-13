@@ -299,6 +299,8 @@ readings; refresh them after completing the displayed hosting-terminal commands.
 project enables integration and starts its coordinator's introduction using the coding account's
 allowance. Project Setup observes integration and tool readiness, then offers **Open conversation**;
 that action focuses the composer without starting a task. Remaining blockers link to their fix.
+A non-Git folder can be conversation-ready with a ready coding agent; Git/GitHub checks concern
+Git task delivery. No task delivery is offered without a repository.
 
 ## Your speech service
 

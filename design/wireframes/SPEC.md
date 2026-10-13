@@ -1613,6 +1613,9 @@ is introduced. A non-Git folder says conversation is available and Git tasks are
 Current project integration and coding-tool readings support **Open conversation** only when ready;
 that action closes Setup and focuses the existing composer without sending or launching work.
 Unmet tools link to Settings → Prerequisites; loading or failed reads never count as ready.
+For an observed non-Git **Conversation ready** folder, Git and GitHub checks concern Git task
+delivery; coding-agent checks still gate readiness. The endpoint opens the existing conversation
+and never suggests Git delivery is available without a repository.
 
 The concise explanation reads: **Setup runs automatically. If a step fails, L3 can help.**
 **Check again** refreshes observations. **Retry** repeats supported programmatic setup;

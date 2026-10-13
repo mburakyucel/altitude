@@ -70,7 +70,10 @@ export function ProjectSetup({ name }: { name: string }) {
   const stale = setup.isError;
   const steps = [...(data?.steps ?? [])].sort((a, b) => Number(attention(b.status)) - Number(attention(a.status)));
   const failed = data?.steps.some((step) => step.status === "failed" || step.status === "unknown");
-  const toolsReady = !prerequisites.isError && !prerequisites.isFetching && !!prerequisites.data?.every((item) => item.state !== "unmet");
+  const conversationOnly = data?.status === "conversation_ready";
+  // Existing non-Git conversations require a coding agent, while Git/GitHub checks apply to Git task delivery.
+  const toolsReady = !prerequisites.isError && !prerequisites.isFetching && !!prerequisites.data?.every((item) =>
+    item.state !== "unmet" || conversationOnly && (item.key === "github" || item.key === "git"));
   const projectReady = !stale && !busy && (data?.status === "ready" || data?.status === "conversation_ready");
   const ready = projectReady && toolsReady;
   const run = (kind: "check" | "repair" | "combine", expected?: string) => {

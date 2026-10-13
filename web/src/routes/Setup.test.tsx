@@ -33,6 +33,24 @@ function mockSetup(initial: Setup = healthy, refusal = false) {
 }
 
 describe("Project setup", () => {
+  it.each(["met", "unmet"])("keeps Git prerequisites separate from non-Git conversation readiness when the coding agent is %s", async state => {
+    const server = mockSetup({ ...healthy, status: "conversation_ready" });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/prerequisites"
+      ? response({ items: [
+        { key: "github", label: "GitHub CLI", state: "unmet" },
+        { key: "git", label: "Git", state: "unmet" },
+        { key: "fixture-agent", label: "Coding agent", state },
+      ] }) : server(input, init)));
+    renderApp({ route: "/projects/atlas?setup=1" });
+    await screen.findByText("Using existing conversation");
+    if (state === "met") {
+      expect(await screen.findByRole("button", { name: "Open conversation" })).toBeEnabled();
+      expect(screen.getByText("Git task delivery requires a repository.")).toBeVisible();
+    } else {
+      expect(await screen.findByText("Coding tools need attention")).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Open conversation" })).toBeNull();
+    }
+  });
   it("keeps project results while real prerequisites are unmet and offers the coding-tool destination", async () => {
     const server = mockSetup();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/prerequisites"
