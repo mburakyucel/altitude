@@ -723,19 +723,19 @@ def main(argv=None) -> None:
                 out(dispatch.request_setting(None, "wip", args.wip, args.reason, actor=ACTOR))
         else:
             # Pending and historical voice receipts may contain private service details.
-            voice_request = S.read_json(config.ROOT / "voice-request.json", None)
+            voice_request = S.read_runtime_json(config.ROOT / "voice-request.json", None)
             if isinstance(voice_request, dict):
                 voice_request = {k: config.voice_receipt(v) for k, v in voice_request.items()}
             voice = config.voice_setting()
             out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
                  "default": config.WIP_PER_MACHINE, "machine_runs": config.MACHINE_RUNS,
-                 "request": S.read_json(config.ROOT / "wip-request.json", None),
+                 "request": S.read_runtime_json(config.ROOT / "wip-request.json", None),
                  "voice": {"backend": voice["backend"]},
                  "voice_request": voice_request,
                  "projects_folder": [str(root) for root in config.project_roots()],
                  "new_tasks": config.machine_settings().get("new_tasks"),
-                 "new_tasks_request": S.read_json(config.ROOT / "new_tasks-request.json", None),
-                 "projects_folder_request": S.read_json(config.ROOT / "projects_folder-request.json", None)})
+                 "new_tasks_request": S.read_runtime_json(config.ROOT / "new_tasks-request.json", None),
+                 "projects_folder_request": S.read_runtime_json(config.ROOT / "projects_folder-request.json", None)})
         return
     if c == "project":
         if args.pcmd == "set":

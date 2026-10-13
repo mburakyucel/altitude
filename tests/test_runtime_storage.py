@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, platform, state as S, storage, transcript
+from altitude import config, installation, platform, state as S, storage, transcript
 
 
 class RuntimeStorage(AltitudeCase):
@@ -96,6 +96,72 @@ class RuntimeStorage(AltitudeCase):
         (self.directory / "missing").symlink_to(self.outside, target_is_directory=True)
         with self.assertRaises(OSError):
             storage.runtime_unlink(missing, missing_ok=True)
+
+    def test_list_tasks_skips_child_archived_or_removed_after_enumeration(self):
+        live = S.tasks_dir(self.project) / "fictional-task"
+        archived = S.archive_dir(self.project) / "fictional-task"
+        archived.parent.mkdir(parents=True)
+        real_directory = storage.directory
+        for action in ("archive", "remove"):
+            with self.subTest(action=action):
+                live.mkdir(parents=True)
+                S.write_runtime_json(live / "status.json", {"slug": "fictional-task"})
+                @contextmanager
+                def move_before_open(root, parts, **kwargs):
+                    if isinstance(root, int) and parts == ["fictional-task"]:
+                        if action == "archive":
+                            live.rename(archived)
+                        else:
+                            (live / "status.json").unlink()
+                            live.rmdir()
+                    with real_directory(root, parts, **kwargs) as opened:
+                        yield opened
+                opened, closed = [], []
+                real_open, real_dup, real_close = os.open, os.dup, os.close
+                def opening(*args, **kwargs):
+                    fd = real_open(*args, **kwargs); opened.append(fd); return fd
+                def duplicating(fd):
+                    result = real_dup(fd); opened.append(result); return result
+                def closing(fd):
+                    closed.append(fd); return real_close(fd)
+                with mock.patch.object(storage, "directory", move_before_open), \
+                        mock.patch.object(os, "open", side_effect=opening), \
+                        mock.patch.object(os, "dup", side_effect=duplicating), \
+                        mock.patch.object(os, "close", side_effect=closing):
+                    self.assertEqual(S.list_tasks(self.project), [])
+                self.assertEqual(Counter(opened), Counter(closed))
+                if action == "archive":
+                    self.assertEqual(S.list_tasks(self.project, include_archive=True), [{"slug": "fictional-task"}])
+                    (archived / "status.json").unlink()
+                    archived.rmdir()
+                self.assertFalse(live.exists())
+
+    def test_update_status_uses_held_record_and_settings_after_root_replacement(self):
+        self.runtime.mkdir(exist_ok=True)
+        S.write_runtime_json(self.runtime / "update.json", {"latest": {"version": "v0.2.0"}})
+        S.write_runtime_json(self.runtime / "settings.json", {"update_check": True})
+        release = {"version": "v0.1.0", "repository": "https://github.com/example/altitude"}
+        with mock.patch.object(config, "RELEASE", release), mock.patch.object(platform, "containerized", return_value=False):
+            with installation._changing_update_record() as (record, parent):
+                moved = self.tmp / "original-runtime"
+                self.runtime.rename(moved)
+                self.runtime.mkdir()
+                (self.runtime / "update.json").write_text('{"latest":{"version":"v0.3.0"}}')
+                (self.runtime / "settings.json").write_text('{"update_check":false}')
+                status = installation.update_status(record=record, parent=parent)
+                self.assertEqual(status["available"]["version"], "v0.2.0")
+                self.assertTrue(status["check"])
+
+    def test_ensure_root_needs_search_only_on_existing_monitor_and_hooks(self):
+        config.ensure_root()
+        paths = (self.runtime / "monitor", self.runtime / "hooks")
+        for path in paths:
+            path.chmod(0o111)
+        try:
+            self.assertEqual(config.load_projects(), {})
+        finally:
+            for path in paths:
+                path.chmod(0o755)
 
     def test_creation_regular_contents_and_shared_exclusive_contention(self):
         for name, locked in self.locks():

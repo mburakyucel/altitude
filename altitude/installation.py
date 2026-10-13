@@ -169,7 +169,7 @@ def _changing_update_record():
         fcntl.flock(lock, fcntl.LOCK_EX)
         record = S.read_json_at(parent, "update.json", path, {})
         before = json.dumps(record, sort_keys=True)
-        yield record
+        yield record, parent
         if json.dumps(record, sort_keys=True) != before:
             S.write_json_at(parent, "update.json", record)
 
@@ -188,11 +188,11 @@ def check_for_update(now: float | None = None) -> None:
                  "next": now + UPDATE_CHECK_SECONDS}
     except (OSError, ValueError, RuntimeError):
         found = {"next": now + UPDATE_RETRY_SECONDS}
-    with _changing_update_record() as record:
+    with _changing_update_record() as (record, _):
         record.update(found)
 
 
-def update_status() -> dict | None:
+def update_status(*, record: dict | None = None, parent: int | None = None) -> dict | None:
     """What the app, `alt doctor` and the CLI notice show; None for a source deployment.
 
     `automatic` is the switch that installs an offered release at a quiet point; `installed` names the release an
@@ -205,8 +205,9 @@ def update_status() -> dict | None:
     if config.RELEASE is None:
         return None
     current = config.RELEASE["version"]
-    _, record = _update_record()
-    settings = config.machine_settings()
+    if record is None:
+        _, record = _update_record()
+    settings = config.machine_settings(parent)
     check = settings.get("update_check") is not False
     latest = record.get("latest") if check else None
     newer = bool(latest) and VERSION.fullmatch(latest.get("version", "")) and version_key(latest["version"]) > version_key(current)
@@ -234,7 +235,7 @@ def _reconcile_update_locked(prefix: Path) -> None:
     """Caller owns install.lock: no live updater can be downloading, activating or recovering here."""
     if (prefix / "pending.json").exists():
         return
-    with _changing_update_record() as record:
+    with _changing_update_record() as (record, _):
         attempt = record.get("attempt") or {}
         if attempt.get("state") != "running":
             return
@@ -310,8 +311,8 @@ def request_update(version: str, *, automatic: bool = False) -> dict:
     try:
         with _lock(_prefix()):
             _reconcile_update_locked(_prefix())
-            with _changing_update_record() as record:
-                status = update_status()
+            with _changing_update_record() as (record, parent):
+                status = update_status(record=record, parent=parent)
                 if not status["available"] or status["available"]["version"] != version:
                     raise UpdateRefused("Only the newer release Altitude is showing can be installed from the app")
                 last = record.get("attempt") or {}
@@ -345,7 +346,7 @@ def request_update(version: str, *, automatic: bool = False) -> dict:
 
 def _finish_attempt(ident: str, state: str) -> None:
     """Only this transaction changes its receipt; details stay in its terminal or job log."""
-    with _changing_update_record() as record:
+    with _changing_update_record() as (record, _):
         attempt = record.get("attempt") or {}
         if attempt.get("state") == "running" and attempt.get("id") == ident:
             record["attempt"] = {**attempt, "state": state, **({"error": UPDATE_FAILED} if state == "failed" else {})}
@@ -389,7 +390,7 @@ def _update(version: str | None, ident: str) -> dict:
         raise ValueError(f"{version} is older than the installed {current}; alt recover restores the previous version")
     if (_prefix() / "pending.json").exists():
         raise RuntimeError("Interrupted activation exists; run alt recover before updating")
-    with _changing_update_record() as record:
+    with _changing_update_record() as (record, _):
         if (record.get("attempt") or {}).get("id") != ident:
             record["attempt"] = {"id": ident, "version": version, "state": "running", "started": time.time(),
                                  "automatic": False}

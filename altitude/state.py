@@ -184,10 +184,13 @@ def list_tasks(project: str, include_archive: bool = False) -> list[dict]:
             continue
         with storage.runtime_directory(storage.runtime_parts(d)) as parent:
             for name in sorted(os.listdir(parent)):
-                with storage.directory(parent, [name], search=True) as child:
-                    t = read_json_at(child, "status.json", d / name / "status.json")
-                    if t:
-                        out.append(t)
+                try:
+                    with storage.directory(parent, [name], search=True) as child:
+                        t = read_json_at(child, "status.json", d / name / "status.json")
+                        if t:
+                            out.append(t)
+                except FileNotFoundError:
+                    pass  # archived or removed after enumeration
     return out
 
 

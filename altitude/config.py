@@ -642,8 +642,8 @@ def activation_pending() -> bool:
 def ensure_root() -> None:
     with storage.runtime_directory([], create=True, search=True, mode=0o777):
         pass
-    with storage.runtime_directory(["monitor"], create=True, mode=0o777), \
-            storage.runtime_directory(["hooks"], create=True, mode=0o777):
+    with storage.runtime_directory(["monitor"], create=True, search=True, mode=0o777), \
+            storage.runtime_directory(["hooks"], create=True, search=True, mode=0o777):
         pass
     with storage.runtime_directory([], search=True) as parent:
         if not storage.exists(parent, "projects.json"):

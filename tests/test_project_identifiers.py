@@ -114,6 +114,16 @@ class TestProjectIdentifiers(ProjectIdentifierCase):
         with self.assertRaises(NotADirectoryError):
             S.list_tasks("fictional")
 
+    def test_machine_cli_refuses_linked_setting_receipt(self):
+        config.ensure_root()
+        marker = self.sentinel / "outside-receipt.json"
+        marker.write_text('{"private":"outside marker"}')
+        (config.ROOT / "voice-request.json").symlink_to(marker)
+        result = self.alt("machine", "show")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("outside marker", result.stdout + result.stderr)
+        self.assertEqual(marker.read_text(), '{"private":"outside marker"}')
+
 
 class TestProjectIdentifierHTTP(ProjectIdentifierCase):
     def setUp(self):

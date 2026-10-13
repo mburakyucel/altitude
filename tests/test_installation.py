@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest import mock
 
@@ -961,6 +962,25 @@ class NoticeCase(PublishedReleaseCase):
 class NewVersionNotice(NoticeCase):
     """The daemon's release check, what the app and terminal show, and the app's Update button."""
 
+    def test_request_update_uses_held_offer_and_settings_after_root_replacement(self):
+        self.assertEqual(self.offered("v0.2.0"), "v0.2.0")
+        original = installation._changing_update_record
+        moved = self.tmp / "original-runtime"
+        @contextmanager
+        def swap_after_lock():
+            with original() as pair:
+                self.runtime.rename(moved)
+                self.runtime.mkdir()
+                (self.runtime / "update.json").write_text('{"latest":{"version":"v0.3.0"}}')
+                (self.runtime / "settings.json").write_text('{"update_check":false}')
+                yield pair
+        with mock.patch.object(installation, "_reconcile_update_locked"), \
+                mock.patch.object(installation, "_changing_update_record", swap_after_lock):
+            installation.request_update("v0.2.0")
+        self.assertEqual(len(self.detached), 1)
+        self.assertEqual(json.loads((moved / "update.json").read_text())["attempt"]["version"], "v0.2.0")
+        self.assertNotIn("attempt", json.loads((self.runtime / "update.json").read_text()))
+
     def test_check_runs_every_twelve_hours_and_retries_an_hour_after_going_offline(self):
         installation.check_for_update(now=1000)
         self.assertEqual(self.requests, [self.LATEST])
@@ -1146,7 +1166,7 @@ class AutomaticUpdates(NoticeCase):
                                          ("v0.2.0", "running", "failed"),
                                          ("v0.2.0", "failed", "failed")):
             with self.subTest(version=version, state=state):
-                with installation._changing_update_record() as record:
+                with installation._changing_update_record() as (record, _):
                     record["attempt"] = {"version": version, "state": state, "started": time.time() - 1801}
                 self.assertEqual(config.restart_in_progress(), state == "running")
                 installation.reconcile_update()
@@ -1287,7 +1307,7 @@ class AutomaticUpdates(NoticeCase):
 
     def test_new_offer_never_overlaps_and_a_previously_failed_version_is_not_retried(self):
         installation.request_update("v0.2.0", automatic=True)
-        with installation._changing_update_record() as record:
+        with installation._changing_update_record() as (record, _):
             record["latest"] = {"version": "v0.3.0", "notes": f"{self.RELEASES}/tag/v0.3.0"}
         self.assertIsNone(installation.automatic_update())
         with self.assertRaises(installation.UpdateRefused):
@@ -1297,7 +1317,7 @@ class AutomaticUpdates(NoticeCase):
         installation.request_update("v0.3.0", automatic=True)
         with self.assertRaises(OSError):
             self.run_detached()
-        with installation._changing_update_record() as record:
+        with installation._changing_update_record() as (record, _):
             record["latest"] = {"version": "v0.2.0", "notes": f"{self.RELEASES}/tag/v0.2.0"}
         self.assertIsNone(installation.automatic_update())
         self.assertEqual(len(self.detached), 2)
@@ -1326,7 +1346,7 @@ class AutomaticUpdates(NoticeCase):
         with self.assertRaisesRegex(RuntimeError, "recovery is incomplete"):
             self.run_detached()
         # A process can disappear before its exception handler marks the request failed.
-        with installation._changing_update_record() as record:
+        with installation._changing_update_record() as (record, _):
             record["attempt"]["state"] = "running"
         recovered = installation.recover(self.prefix)
         self.assertEqual(recovered["version"], "v0.1.0")
