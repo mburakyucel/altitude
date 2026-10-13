@@ -47,14 +47,14 @@ class RuntimeStorage(AltitudeCase):
         with storage.runtime_directory([], search=True) as parent:
             primary = OSError("fictional replace failure")
             def cleanup(path, *args, **kwargs):
-                if str(path).startswith(".settings.json."):
+                if str(path).startswith(".tmp-"):
                     raise PermissionError("fictional cleanup failure")
                 return original_unlink(path, *args, **kwargs)
             with mock.patch.object(os, "replace", side_effect=primary), mock.patch.object(os, "unlink", side_effect=cleanup):
                 with self.assertRaises(OSError) as found:
                     storage.atomic_write(parent, "settings.json", "fictional")
             self.assertIs(found.exception, primary)
-        for temporary in self.runtime.glob(".settings.json.*"):
+        for temporary in self.runtime.glob(".tmp-*"):
             temporary.unlink()
 
     def test_create_absent_does_not_follow_substituted_temp_link(self):

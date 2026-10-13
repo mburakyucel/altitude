@@ -192,7 +192,7 @@ def directory_fd_for_sync(parent: int):
 def atomic_write(directory: int, name: str, text: str) -> None:
     """Replace a leaf entry without opening it, and sync the held parent."""
     name = _component(name)
-    temporary = _component(f".{name}.{uuid.uuid4().hex}")
+    temporary = _component(f".tmp-{uuid.uuid4().hex}")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -297,7 +297,7 @@ def runtime_listdir(path: Path) -> list[str]:
 def create_absent(directory: int, name: str, text: str) -> None:
     """Publish a complete file only when the destination remains absent."""
     name = _component(name)
-    temporary = _component(f".{name}.{uuid.uuid4().hex}")
+    temporary = _component(f".tmp-{uuid.uuid4().hex}")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:

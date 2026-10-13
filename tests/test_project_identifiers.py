@@ -5,7 +5,7 @@ import threading
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, l3, server, state as S, tasks as T
+from altitude import config, dispatch, incidents, l3, server, state as S, tasks as T, usage
 
 
 class ProjectIdentifierCase(AltitudeCase):
@@ -33,6 +33,24 @@ class ProjectIdentifierCase(AltitudeCase):
 
 
 class TestProjectIdentifiers(ProjectIdentifierCase):
+    def test_long_supported_runtime_observation_writes_in_poll(self):
+        project = "p" * 180
+        self.assertEqual(config.require_project_name(project), project)
+        with config.add_project(project, path=self.repo):
+            pass
+        task = T.new(project, "t" * 40, "Fictional worker observation")
+        task.update(state="running", l2_engine="codex", agent_id="fictional-agent")
+        S.save_task(project, task)
+        live = config.MONITOR_DIR / f"live-{project}--{task['slug']}.json"
+        self.assertLessEqual(len(live.name.encode("utf-8")), 255)
+        self.assertGreater(len(live.name.encode("utf-8")), 221)
+        with mock.patch.object(usage, "refresh", return_value=task), \
+             mock.patch.object(dispatch.engines, "worker", side_effect=OSError("fictional unavailable")), \
+             mock.patch.object(incidents, "system_fault"):
+            self.assertEqual(dispatch.poll(project), [])
+        self.assertEqual(S.read_runtime_json(live)["agent"]["status"], "unknown")
+        self.assertEqual(list(config.MONITOR_DIR.glob(".tmp-*")), [])
+
     def test_invalid_names_refuse_storage_and_settings_without_filesystem_effects(self):
         before = self.snapshot()
         for name in self.invalid_names():
