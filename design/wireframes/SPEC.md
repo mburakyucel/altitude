@@ -66,8 +66,11 @@ guides future iterations as the visual direction evolves.
 
 In the cross-engine design review of every UI proposal and the [phone and desktop walkthrough](../../AGENTS.md#ui), check that:
 
-- Visual hierarchy makes the primary action clear; navigation and plain labels show where people
-  are, where they can go, and what an action does.
+- Before styling, evaluate user priorities, frequency and importance in the surrounding experience.
+  Common work and current status lead; infrequent actions remain discoverable lower in the hierarchy.
+  Exceptional prominence needs a current user need, not the novelty of a feature. Visual hierarchy
+  makes the primary action clear; navigation and plain labels show where people are, where they can
+  go, and what an action does.
 - Every clickable control reads as clickable at rest. The only or primary action in an area is a
   bordered or filled button; a borderless ghost button sits only beside a visible bordered or
   filled action; a text link is underlined. Plain text beside muted meta lines is not a control.
