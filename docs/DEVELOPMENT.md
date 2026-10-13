@@ -94,6 +94,8 @@ Runtime files a test writes (monitor, incident ledgers and worker jobs) live und
 inside the test runtime root, because runtime writes refuse paths outside it.
 `tests/test_runtime_storage.py` plants leaf links, hard links and linked folders under every runtime
 writer and reader and checks that nothing outside the root changes or leaks.
+`tests/test_invocation_reader.py` checks that malformed task and worker names are refused before any
+directory or record is opened.
 
 On macOS the suite runs natively with Homebrew's `python@3.12`, `node@24`, `openssl@3`, `ffmpeg`,
 `lcms2`, `webp` (Homebrew's `ffmpeg` decodes WebP but cannot encode it, so the image fixtures use
