@@ -6,6 +6,7 @@ import sys
 import unittest
 from collections import Counter
 from contextlib import nullcontext
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 from unittest import mock
 
@@ -177,6 +178,48 @@ class StaticFiles(AltitudeCase):
             self.assertEqual(self.request(f"/assets/build{n}.js", True)[0], 200)
         self.assertEqual(len(server._gzip_cache), 64)
         self.assertNotIn(self.asset, server._gzip_cache)
+
+    def test_pinned_build_root_survives_replacement_after_normalization(self):
+        original = os.open
+        (self.outside / "index.html").write_bytes(b"outside index")
+        for path in ("/", "/projects/atlas", "/assets/app.js"):
+            for encoded in (False, True):
+                for warm in (False, True):
+                    with self.subTest(path=path, encoded=encoded, warm=warm):
+                        if warm:
+                            self.request("/assets/app.js", True)
+                        swapped = []
+                        saved = self.dist.with_name("saved-dist")
+                        def opened(name, flags, *args, **kwargs):
+                            if name == "index.html" and not swapped:
+                                self.dist.rename(saved)
+                                self.dist.symlink_to(self.outside, target_is_directory=True)
+                                swapped.append(True)
+                            return original(name, flags, *args, **kwargs)
+                        try:
+                            with mock.patch.object(os, "open", side_effect=opened):
+                                status, _, data = self.request(path, encoded)
+                            # The homepage uses the index already opened from the pinned root. Any
+                            # later request normalization observes and refuses the outside target.
+                            self.assertEqual(status, 200 if path == "/" else 404)
+                            if status == 200:
+                                self.assertEqual(data, b"<title>fictional build</title>")
+                            self.assertNotIn(b"outside", data)
+                        finally:
+                            if swapped:
+                                self.dist.unlink()
+                                saved.rename(self.dist)
+                        server._gzip_cache.clear()
+
+    def test_concurrent_cold_and_warm_compression_returns_verified_bytes(self):
+        expected = self.asset.read_bytes()
+        for warm in (False, True):
+            if warm:
+                self.request("/assets/app.js", True)
+            with ThreadPoolExecutor(max_workers=4) as workers:
+                results = list(workers.map(lambda _: self.request("/assets/app.js", True), range(16)))
+            self.assertTrue(all(status == 200 and data == expected for status, _, data in results))
+            self.assertEqual(len(server._gzip_cache), 1)
 
     def test_nonregular_substitution_and_read_failures_close_all_descriptors(self):
         original_open, original_dup, original_close, original_stat = os.open, os.dup, os.close, os.fstat
