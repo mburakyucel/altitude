@@ -460,6 +460,26 @@ fixture engine processes, on either host:
 alt task validate -- python3 -m unittest tests.test_container_workflow tests.test_direct_dispatch tests.test_review_engines
 ```
 
+On Linux, direct process-test suites need a child process and a reaper. Running unittest as
+container PID 1 makes a fixture's parent PID 1 look like the application and leaves killed
+orphan processes unreaped ([runner evidence](https://github.com/mburakyucel/altitude/issues/905)).
+This invocation passes the installation/TLS/platform suites in the same confined image, with
+the original assertions and runner protections; it establishes fixture behavior, not native Mac
+acceptance. The wrapper reaps adopted children while waiting for unittest and returns its exit status:
+
+```sh
+alt task validate -- python3 -c 'import os, subprocess, sys
+child = subprocess.Popen(sys.argv[1:])
+while True:
+    pid, status = os.wait()
+    if pid == child.pid:
+        child.returncode = os.waitstatus_to_exitcode(status)
+        sys.exit(child.returncode)
+' python3 -m unittest tests.test_openssl tests.test_tls tests.test_push \
+    tests.test_installation_lifecycle_harness tests.test_installation tests.test_platform_darwin \
+    tests.test_release_publish tests.test_release_archive tests.test_project_layers
+```
+
 - **Image.** altd builds the only image from its own deployed `scripts/validation.Containerfile`
   (Ubuntu 24.04 with QEMU, nested Podman, Node and pinned Playwright Chromium and WebKit, including
   both browsers' system libraries). The image is tagged by the file's hash and is never built from
