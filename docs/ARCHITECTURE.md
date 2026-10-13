@@ -396,6 +396,11 @@ loopback, private-network ranges, private names and the subtree of a DNS name co
 so device trust extends to no other public site. Existing unconstrained or external CAs keep their scope. Startup validates identity and reissues a managed server certificate
 whose host no longer matches the bind address; the existing daily timer renews managed server
 certificates within thirty days of expiry, retaining the CA/key.
+`platform.openssl()` selects the TLS and notification-signing tool: OpenSSL on PATH on Linux;
+OpenSSL 3 or newer on PATH or Homebrew's standard `openssl@3` keg locations on macOS. The bootstrap
+checks the same locations before downloading; the verified Python installer checks again before
+persistent installation changes. Startup, renewal and `alt doctor` use the same discovery with the
+saved service PATH, without changing shell profiles or that PATH.
 Invalid TLS refuses startup or reports renewal failure without switching to HTTP. Each connection
 completes its handshake on its own request thread within ten seconds, so a stalled client drops
 only itself and never delays other requests. External
@@ -516,10 +521,10 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
-| Native libraries, tools | system packages (apt, dnf, pacman or zypper) | Homebrew; `openssl` must be OpenSSL 3, not macOS's LibreSSL | Setup |
+| Native libraries, tools | system packages (apt, dnf, pacman or zypper) | Homebrew; Altitude finds OpenSSL 3 or newer on PATH or in standard `openssl@3` keg locations without a profile change | Setup |
 | Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |
 | Source-checkout deployment | systemd unit (`make install-service`) for the checkout at `~/Projects/altitude` on `main`; address, PATH and branch by drop-in; TLS drop-in; self-restart | LaunchAgent (`make install-service`) for the checkout wherever it is, taking the address, PATH and checked-out branch from the installing command; self-restart through the seam; TLS drop-in refused with an explicit message | Setup, Operations |
-| Installer checks | not root, Python 3.12+, `curl`, a SHA-256 tool, `openssl`, `systemctl --user` | macOS 15+, not root, Python 3.12+, `curl`, a SHA-256 tool, OpenSSL 3 ahead of LibreSSL on PATH, launchd's domain of the logged-in desktop session; on both hosts each missing item stops with its fix, for the package manager found, before anything downloads, and a host other than Linux x86_64 or Apple silicon installs with one line saying it is not yet validated | Setup |
+| Installer checks | not root, Python 3.12+, `curl`, a SHA-256 tool, `openssl`, `systemctl --user` | macOS 15+, not root, Python 3.12+, `curl`, a SHA-256 tool, OpenSSL 3 or newer on PATH or in standard Homebrew locations, launchd's domain of the logged-in desktop session; on both hosts each missing item stops with its fix, for the package manager found, before anything downloads, and a host other than Linux x86_64 or Apple silicon installs with one line saying it is not yet validated | Setup |
 | Installed service | `~/.config/systemd/user/altitude.service`, enabled and started | `~/Library/LaunchAgents/dev.altitude.altd.plist`, bootstrapped into the `gui` domain; its definition sets `HOME`, and an installation under another `HOME` gets a label derived from that home | Setup, Operations |
 | Update from the app | `alt update --version` in a transient user unit; its output is in the user journal | `alt update --version` as the launchd job `dev.altitude.job.altitude-update-<version>`, logging to `~/Library/Logs/altitude/altitude-update-<version>.log` | Operations |
 | Failed update, interrupted activation | the previous version is restored and its unit restarted; `alt recover` (or `install.py --recover`) finishes an interrupted one | the same, restarting the LaunchAgent | Setup, Operations |

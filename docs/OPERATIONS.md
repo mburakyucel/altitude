@@ -436,7 +436,8 @@ It installs Altitude's Git guards in the checkout and starts the service at `htt
 - **Mac:** it writes the LaunchAgent `~/Library/LaunchAgents/dev.altitude.altd.plist`, which
   logs to `~/Library/Logs/altitude/altd.log`. The agent listens on `ALTITUDE_HOST` from the
   command's environment (default `127.0.0.1`), keeps the PATH the command runs with, which must
-  find OpenSSL 3, `gh`, the coding CLIs and pnpm, and runs the checked-out branch. Run it again to
+  find `gh`, the coding CLIs and pnpm, and runs the checked-out branch. Altitude finds OpenSSL 3
+  on PATH or in Homebrew's standard `openssl@3` locations without a shell-profile change. Run it again to
   change any of them, for example `ALTITUDE_HOST=<private address> make install-service`.
 
 The service starts only while the checkout is clean, on its branch and not ahead of

@@ -2,7 +2,8 @@
 
 `make install-service` runs it on a Mac. The agent carries the unit's settings. It listens on ALTITUDE_HOST from this
 command's environment, 127.0.0.1 by default as for `make run`; its PATH is the one this command runs with, so the
-service finds the same Python, OpenSSL 3, gh and coding CLIs as the operator's shell. A checkout on a branch other
+service finds the same Python, gh and coding CLIs as the operator's shell; Altitude discovers Homebrew's OpenSSL
+without a PATH change. A checkout on a branch other
 than main runs and self-deploys that branch (ALTITUDE_SOURCE_BRANCH)."""
 import os
 import plistlib

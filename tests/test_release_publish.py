@@ -39,7 +39,9 @@ class InstallScript(unittest.TestCase):
                   for name in ("altitude-v0.1.0.tar.gz", "install.py")}
         self.script = self.tmp / "install.sh"
         self.script.write_text(build_release.install_script((REPO / "scripts/install.sh").read_text(), "v0.1.0",
-                                                            REPOSITORY, digest["altitude-v0.1.0.tar.gz"], digest["install.py"]))
+                                                            REPOSITORY, digest["altitude-v0.1.0.tar.gz"], digest["install.py"])
+                               .replace("/opt/homebrew/opt/openssl@3/bin/openssl", str(self.tmp / "arm/bin/openssl"))
+                               .replace("/usr/local/opt/openssl@3/bin/openssl", str(self.tmp / "intel/bin/openssl")))
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         for tool in ("sh", "cat", "cp", "cut", "sha256sum", "mktemp", "rm"):
@@ -153,8 +155,8 @@ class InstallScript(unittest.TestCase):
     def test_mac_prerequisites_stop_with_the_fix_before_downloading(self):
         mac = {"FIXTURE_SYSTEM": "Darwin", "FIXTURE_MACHINE": "arm64"}
         cases = [({"FIXTURE_MACOS": "14.6.1"}, "needs macOS 15 or newer; this Mac runs macOS 14.6.1", "Software Update"),
-                 ({"FIXTURE_OPENSSL": "LibreSSL 3.3.6"}, "the openssl on PATH is LibreSSL 3.3.6, not OpenSSL 3",
-                  'brew install openssl@3), put it ahead of /usr/bin (export PATH="$(brew --prefix openssl@3)/bin:$PATH"'),
+                 ({"FIXTURE_OPENSSL": "LibreSSL 3.3.6"}, "OpenSSL 3 or newer was not found",
+                  'brew install openssl@3), then run this again; no shell-profile change is needed'),
                  ({"FIXTURE_LAUNCHD": "1"}, "no logged-in desktop session of this account is reachable",
                   "Log in to this Mac's desktop")]
         for env, message, fix in cases:
