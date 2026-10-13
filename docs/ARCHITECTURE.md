@@ -494,14 +494,17 @@ Then `access.py` decides who is asking. The page and its files, `GET /api/health
 needs a paired browser or this machine's key, and otherwise gets 401 with `"pair": true`. Everything
 lives in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside every runtime,
 source and project root). altd creates `machine.key` there when it starts; the `alt` CLI and the
-restart script send it as `X-Altitude-Key`. The key is compared in constant time. Only the operator's
+restart script send it as `X-Altitude-Key`, each only to an altd that proves itself with the installation's CA
+(the system trust store for an external certificate). The key is compared in constant time. Only the operator's
 account can read it, and no Altitude sandbox can: the Codex worker, coordinator and reviewer profiles
 and the macOS Seatbelt profiles deny the access and TLS folders (`platform.secret_places`), so the key
 proves a caller is the operator's own CLI rather than a confined agent. A Claude worker on Linux has no
 OS sandbox and still shares the operator's account and files. `key.json` records the key's
 generation: when altd starts with a key from an earlier generation, whose sandboxes could still read
-this folder, it replaces the key, drops a pairing code in flight and notes the Altitude jobs then
-running; once all of them have ended, the tick replaces the key once more (`access.settle`).
+this folder, it replaces the key, drops a pairing code in flight and notes the agent jobs then running
+(task workers, coordinator turns and reviews); once all of them have ended, the tick replaces the key once
+more (`access.settle`). Each replacement also ends open design-board links and the replay of a voice
+recording in flight, which are signed with the key.
 
 The CLI finds altd through the service record, `~/.config/altitude/service.json`, outside the hidden
 folders so a sandboxed `alt` can read it: as the service instance (`ALTITUDE_SERVICE=1`) starts
@@ -563,7 +566,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Operator-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
-| Coordinator socket admission | in the per-user runtime folder; the peer's pidfd and cgroup | beside Altitude's private configuration; the peer's audit token, pinned by its pid version, and its job coalition | Isolation and landing |
+| Coordinator socket admission | in the per-user runtime folder; the peer's pidfd (Linux 6.5 or newer) and cgroup | beside Altitude's private configuration; the peer's audit token, pinned by its pid version, and its job coalition | Isolation and landing |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
 | Native libraries, tools | system packages (apt, dnf, pacman or zypper) | Homebrew; Altitude finds OpenSSL 3 or newer on PATH or in standard `openssl@3` keg locations without a profile change | Setup |
 | Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |

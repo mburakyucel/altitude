@@ -15,7 +15,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
 import secrets
 import time
 import uuid
@@ -121,10 +120,11 @@ def _replace_key(after: list[str]) -> None:
 
 
 def _jobs() -> list[str]:
-    """The Altitude jobs running now, the service's own aside."""
-    from . import platform
+    """The agent jobs running now: task workers, coordinator turns and reviews, whose sandboxes are what changed.
+    Long-lived jobs that run no agent (terminal shells, the container's volume holder) do not hold the key back."""
+    from . import engines, platform
     return sorted({part for _, groups in platform.process_table().values() for part in groups
-                   if re.fullmatch(r"altitude-[^/]+\.service", part)})
+                   if engines.agent_unit(part)})
 
 
 def is_machine(presented: str | None) -> bool:

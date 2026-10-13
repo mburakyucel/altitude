@@ -1,6 +1,6 @@
 # Set up Altitude
 
-Altitude runs for one person on Linux with a systemd user manager, or on macOS 15 or newer. Follow
+Altitude runs for one person on Linux 6.5 or newer with a systemd user manager, or on macOS 15 or newer. Follow
 these steps top to bottom on the computer that will run it. To run it in a Linux container
 instead, see [container deployment](CONTAINERS.md).
 
@@ -10,7 +10,7 @@ voice remains usable; failed or cancelled updates wait for your Retry in Setting
 
 ## Prerequisites
 
-- **Linux** with a working systemd user manager (`systemctl --user status` answers), or **macOS 15
+- **Linux** 6.5 or newer with a working systemd user manager (`systemctl --user status` answers), or **macOS 15
   or newer** with your account logged in (the screen may stay locked).
 - **Python 3.12 or newer, Git, `curl` and OpenSSL.** On a Mac, run
   `brew install python@3.12 openssl@3`; Git comes with the Xcode command line tools. Altitude

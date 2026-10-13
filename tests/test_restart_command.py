@@ -44,7 +44,7 @@ def slow_service(delay: float):
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        yield {"host": "127.0.0.1", "port": server.server_address[1], "tls": False}
+        yield config.network({"ALTITUDE_PORT": str(server.server_address[1]), "ALTITUDE_TLS": "0"})
     finally:
         server.shutdown()
         server.server_close()
@@ -233,7 +233,7 @@ class TestRestartCommand(AltitudeCase):
         with socket.socket() as stalled:  # accepts the connection but never completes a TLS handshake
             stalled.bind(("127.0.0.1", 0))
             stalled.listen()
-            service = {"host": "127.0.0.1", "port": stalled.getsockname()[1], "tls": True}
+            service = config.network({"ALTITUDE_PORT": str(stalled.getsockname()[1])})
             with mock.patch.object(restart, "service", return_value=service), \
                     mock.patch.object(restart, "unit_properties", return_value={"MainPID": "20", "ActiveState": "active"}), \
                     mock.patch.object(restart.time, "sleep"), \

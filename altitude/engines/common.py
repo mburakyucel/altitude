@@ -627,6 +627,11 @@ def coordinator_unit() -> str:
     return f"altitude-coordinator-{uuid.uuid4().hex}.service"
 
 
+def agent_unit(name: str) -> bool:
+    """Whether the job `name` runs an agent: a task worker on any engine, a coordinator turn or a review."""
+    return bool(re.fullmatch(rf"altitude-(?:{'|'.join((*config.ENGINES, 'coordinator', 'review'))})-[^/]+\.service", name))
+
+
 def machine_unit(project: str, slug: str, sequence: int) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", f"{project}-{slug}")
     return f"altitude-machine-{safe}-{sequence}.service"

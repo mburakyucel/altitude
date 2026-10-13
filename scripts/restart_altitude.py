@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from altitude import access, config, dispatch, git_policy, incidents, platform, state as S  # noqa: E402
+from altitude import access, config, dispatch, git_policy, incidents, platform, state as S, tls  # noqa: E402
 
 
 ROOT = config.REPO
@@ -161,12 +161,12 @@ def service() -> dict:
 def fetch(path: str, *, timeout: float = PROBE_SECONDS) -> bytes:
     network = service()
     scheme = "https" if network["tls"] else "http"
-    # The local CA may not be in Python's trust store.
-    context = ssl._create_unverified_context() if network["tls"] else None
+    # The key goes only to a service that proves it is this installation's, as `alt` requires: with its folder's CA
+    # (the system trust store for an external certificate), never to whatever answers on the port while it restarts.
+    ca = network["tls_dir"] / "ca.crt"
+    context = (ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if network["tls"] else None)
     try:
-        # The address is this machine's own, so the key never leaves it.
-        request = Request(f"{scheme}://{network['host']}:{network['port']}{path}",
-                          headers={access.KEY_HEADER: access.machine_key() or ""})
+        request = Request(f"{tls.located(network)['url']}{path}", headers={access.KEY_HEADER: access.machine_key() or ""})
         with urlopen(request, timeout=timeout, context=context) as response:
             if response.status != 200:
                 raise RestartError(f"{path} returned HTTP {response.status}")

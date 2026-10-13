@@ -45,6 +45,7 @@ from .common import (
     launch_env,
     task_tool_env,
     coordinator_unit,
+    agent_unit,
     machine_unit,
     machine_files,
     machine_command,

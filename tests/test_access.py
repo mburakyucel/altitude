@@ -284,7 +284,8 @@ class TestAccess(AltitudeCase):
     def test_the_restart_check_reaches_the_gated_server_with_the_machine_key(self):
         restart = load_script()
         host, port = self.httpd.server_address
-        self.patch(restart, "service", new=lambda: {"host": host, "port": port, "tls": False})
+        self.patch(restart, "service", new=lambda: config.network({"ALTITUDE_HOST": host, "ALTITUDE_PORT": str(port),
+                                                                  "ALTITUDE_TLS": "0"}))
         self.assertEqual(json.loads(restart.fetch("/api/overview")), {"state": "ready"})
         self.patch(access, "machine_key", new=lambda: None)
         with self.assertRaises(restart.RestartError):  # refused with 401
