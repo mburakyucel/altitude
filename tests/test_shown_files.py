@@ -438,9 +438,9 @@ class TestShownFiles(AltitudeCase):
         T.accept_question(self.project, self.slug, proposal["id"], 1)
 
     def test_a_group_with_files_refuses_without_exactly_one_proposal_and_publishes_nothing(self):
-        lone_merge = {"questions": [{"question": "Merge PR #7?", "review": "changes"}]}
+        lone = [{"questions": [{"question": "Merge PR #7?", "review": mark}]} for mark in ("changes", "none")]
         for payload in (self.group(proposal=None, merge=None), self.group(proposal="none"),
-                        self.group(merge="proposal"), lone_merge):
+                        self.group(merge="proposal"), *lone):
             with self.subTest(payload=payload):
                 with self.assertRaisesRegex(T.TransitionError, 'mark exactly one question "review": "proposal"'):
                     T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
@@ -452,6 +452,19 @@ class TestShownFiles(AltitudeCase):
         task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
                        updates={"waiting_on": "burak"}, questions=self.group(proposal=None, merge=None))
         self.assertEqual([q.get("shown") for q in task["questions"]], [None, None])
+
+    def test_moving_files_to_another_member_revises_the_earlier_one_without_them(self):
+        first = self.publish(recommendation="Build as shown", recommendation_label="Build")
+        T.resume(self.project, self.slug)
+        payload = {"questions": [
+            {"id": first["id"], "question": first["detail"], "review": "none"},
+            {"question": "Publish the guide as shown?", "review": "proposal"}]}
+        task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
+                       questions=payload, show=["overview.png"])
+        earlier, guide = [q for q in task["questions"] if q["status"] == "open"]
+        self.assertEqual((earlier["id"], earlier["revision"]), (first["id"], 2))
+        self.assertNotIn("shown", earlier)
+        self.assertEqual([i["path"] for i in guide["shown"]["images"]], ["overview.png"])
 
     def test_an_altered_record_is_unavailable_and_cannot_be_accepted(self):
         question = self.publish(recommendation="Build as shown", recommendation_label="Build")

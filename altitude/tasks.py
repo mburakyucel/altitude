@@ -2289,7 +2289,8 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, audie
         _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
                           force_revision=bool(previous and previous.get("response")),
                           options=options, recommended_key=recommended, why=why,
-                          shown=shown if item["question"] == showing else _UNSET, review=item["review"],
+                          shown=_UNSET if shown is None else shown if item["question"] == showing else None,
+                          review=item["review"],
                           audience=_audience(audience, previous, item["question"]))
     group["reason"] = reason
     if len(task["questions"]) != before:
