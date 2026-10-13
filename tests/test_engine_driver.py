@@ -349,7 +349,7 @@ class TestEngineDriver(AltitudeCase):
             current = S.load_task(self.project, task["slug"])
             current.update(state="running", agent_id="worker", session_id="fake-thread", attempt=1)
             S.save_task(self.project, current)
-        record = engines.common._codex_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker")["record"]
+        record = engines.common._worker_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker")["record"]
         record.parent.mkdir(parents=True, exist_ok=True)
         S.atomic_write(record, json.dumps({"id": "worker", "sends": str(self.sends)}))
         return {"project": self.project, "slug": task["slug"]}
