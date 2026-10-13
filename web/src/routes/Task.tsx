@@ -24,7 +24,7 @@ import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
 import { SteeringControls, SteeringNotice, useTaskSteering } from "../components/TaskSteering";
 import type { Steering } from "../components/TaskSteering";
-import { TransferCard, TransferDialog, TransferEntry, useTaskTransfer } from "../components/TaskTransfer";
+import { TransferCard, TransferDialog, useTaskTransfer } from "../components/TaskTransfer";
 import type { Transfer } from "../components/TaskTransfer";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
@@ -615,16 +615,15 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             <ReviewDecision decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
           </div> : null}
           {/* What the task waits on ends the chat, after any card, under the header's state; L3's open question already says it (SPEC.md §3.10). */}
-          {facts.explanation && !(answering && !task["fault"]) ? <p className="conversation-status" data-tone={task["fault"] ? "danger" : undefined} role="status">
+          {facts.explanation && !(transfer.quotaOffer && !readOnly && !denied) && !(answering && !task["fault"]) ? <p className="conversation-status" data-tone={task["fault"] ? "danger" : undefined} role="status">
             <span className="dot" data-state={facts.dot} aria-hidden />{facts.explanation}
           </p> : null}
-          {task.transfer?.quota_limited && !readOnly && !denied ? <TransferEntry transfer={transfer} quota /> : null}
+          <TransferCard transfer={transfer} />
           {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
             {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><Stamp at={event["at"]} className="event-time" /> · <InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
           </details> : null}
           {facts.canMessage && steering.state === "running" && !(task.state === "blocked" && current) ? <TaskActivity activity={task.activity} /> : null}
-          <TransferCard transfer={transfer} />
         </div>
       </div>
       {(latest || (current && questionOffscreen)) ? <div className="conversation-jumps">
@@ -829,9 +828,6 @@ function TaskPage({
     <div className="task-details">
       <div className="task-details-heading"><h2>Task details</h2><button type="button" className="icon-btn" aria-label="Close task details" onClick={closeDetails}>×</button></div>
       <p className="task-details-title">{title}</p>
-      {!readOnly && !denied && (task.transfer?.targets.length || transfer.request) ? <section><h3>Engine transfer</h3>
-        <TransferEntry transfer={transfer} /><TransferCard transfer={transfer} details />
-      </section> : null}
       {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
       <Chips chips={facts.chips} />
       {/* The complete reasons come first: the page shows only the state and a short excerpt (SPEC.md §3.10). */}
@@ -856,6 +852,7 @@ function TaskPage({
         <ConfirmRow actions={actions} />
         {resumeError}
       </> : null}
+      {!readOnly && !denied ? <TransferCard transfer={transfer} details /> : null}
     </div>
   </Overlay> : null;
   useEffect(() => {

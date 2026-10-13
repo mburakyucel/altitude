@@ -3,6 +3,7 @@ import { ApiError, taskAction } from "../data/api";
 import type { TaskView } from "../data/api";
 import { Overlay } from "../shell/Overlay";
 import { BusyLabel } from "./StatusMark";
+import "./task-review.css";
 import "./task-transfer.css";
 
 /** Transfer follows the task record; only an in-flight submission lives in this component. */
@@ -68,8 +69,9 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   };
   const label = uncertain ? "Switch unconfirmed" : active ? stopping ? `Switching to ${request?.target_label}` : "Preparing switch"
     : request?.status === "done" && task.state === "queued" ? `Waiting for ${request.target_label}` : "";
+  const quotaOffer = Boolean(task.state === "blocked" && info?.quota_limited && info.targets.length && !active && !uncertain && !error);
   return { info, shown, request, active, stopping, label, dialog, setDialog: openDialog, target, setTarget, selected,
-    pending, uncertain, error, unavailable, blocked, disabled, start, perform, recheck,
+    pending, uncertain, error, unavailable, blocked, disabled, quotaOffer, start, perform, recheck,
     controls: active && !stopping || uncertain,
     close: () => { if (!submitting.current) {
       setDialog("");
@@ -79,11 +81,11 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
 }
 export type Transfer = ReturnType<typeof useTaskTransfer>;
 
-export function TransferEntry({ transfer: t, quota = false }: { transfer: Transfer; quota?: boolean }) {
-  if (!t.info?.targets.length || t.active || t.uncertain) return null;
+function TransferEntry({ transfer: t, quota = false }: { transfer: Transfer; quota?: boolean }) {
+  if (!t.info?.targets.length || t.active || t.label || t.uncertain) return null;
   const offered = t.info.targets.filter((target) => target.available);
   return <div className="transfer-entry">
-    <button type="button" className={quota ? "btn btn-primary" : "btn"} disabled={t.blocked}
+    <button type="button" className="btn" disabled={t.blocked}
       aria-disabled={!t.info.eligible} onClick={t.start}>
       {quota && offered.length === 1 ? `Switch to ${offered[0]?.label}` : "Switch engine…"}
     </button>
@@ -92,11 +94,23 @@ export function TransferEntry({ transfer: t, quota = false }: { transfer: Transf
 }
 
 export function TransferCard({ transfer: t, details = false }: { transfer: Transfer; details?: boolean }) {
-  if (!t.active && !t.uncertain && !t.error && !(details && t.request)) return null;
-  const title = t.label || (t.request?.status === "cancelled" ? "Switch cancelled." : t.request?.status === "done" ? `Switch to ${t.request.target_label} queued.` : "Switch failed.");
-  return <section className="transfer-card" aria-label="Engine transfer" tabIndex={-1}
+  const quota = !details && t.quotaOffer && !t.disabled;
+  if (!t.active && !t.label && !t.error && !quota && !(details && (t.request || t.info?.targets.length))) return null;
+  const busy = !t.uncertain && (t.active || t.pending || Boolean(t.label));
+  const warning = quota || t.uncertain || Boolean(t.error) || ["failed", "refused"].includes(t.request?.status ?? "");
+  const tone = warning ? "warn" : busy ? "run" : t.request?.status === "done" ? "ok" : "wait";
+  const title = quota ? "Engine usage limit" : "Engine transfer";
+  const status = quota ? `${t.info?.current_label} reached its usage limit.`
+    : t.active && !t.stopping && !t.uncertain ? `Preparing switch to ${t.request?.target_label}`
+    : t.label || (t.request?.status === "cancelled" ? "Switch cancelled." : t.request?.status === "done" ? `Switched to ${t.request.target_label}.`
+      : t.request ? "Switch failed." : t.info?.current_label);
+  return <section className="review-box transfer-card" aria-label={title} tabIndex={-1}
     onKeyDown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
-    <p role="status">{t.active || t.pending ? <span className="spinner" aria-hidden /> : null}{t.active && !t.stopping && !t.uncertain ? `Preparing switch to ${t.request?.target_label}` : title}</p>
+    <span className={`review-icon review-icon-${tone}`} aria-hidden><svg viewBox="0 0 24 24"><path d={warning ? "M12 3 2 21h20L12 3zm0 6v5m0 3v1" : busy ? "M20 12a8 8 0 1 1-8-8"
+      : t.request?.status === "done" ? "m5 12 4 4L19 6" : t.request?.status === "cancelled" ? "M6 6h12v12H6z" : "M4 7h15m-4-4 4 4-4 4M20 17H5m4-4-4 4 4 4"} /></svg></span>
+    <div className="review-main">
+    <p className="review-name">{title}</p>
+    <p className="review-meta" role="status">{status}</p>
     {t.error ? <p role="alert">{t.error}</p> : null}
     {details && !t.active && t.request?.note ? <p className="text-meta">{t.request.note}</p> : null}
     {t.controls && (t.uncertain || !t.disabled) ? <div className="transfer-actions">
@@ -105,6 +119,8 @@ export function TransferCard({ transfer: t, details = false }: { transfer: Trans
         <button type="button" className="btn" disabled={t.blocked} onClick={() => void t.perform("handoff-cancel")}>Cancel switch</button>
       </>}
     </div> : null}
+    {details || quota ? <TransferEntry transfer={t} quota={quota} /> : null}
+    </div>
   </section>;
 }
 

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ApiError, taskAction } from "../data/api";
 import type { TaskView } from "../data/api";
-import { TransferCard, TransferDialog, TransferEntry, useTaskTransfer } from "./TaskTransfer";
+import { TransferCard, TransferDialog, useTaskTransfer } from "./TaskTransfer";
 
 vi.mock("../data/api", async (original) => ({ ...await original<typeof import("../data/api")>(), taskAction: vi.fn() }));
 const initial: TaskView = { slug: "sample", state: "running", transfer: {
@@ -18,7 +18,7 @@ function Harness({ task = initial, next = preparing, refreshError = false }: { t
   const [current, update] = useState(task);
   const [denied, setDenied] = useState(false);
   const t = useTaskTransfer("sample", current, async () => { if (refreshError) throw new Error("offline"); update(next); }, denied, () => setDenied(true), () => undefined);
-  return <><TransferEntry transfer={t} /><TransferCard transfer={t} /><TransferDialog transfer={t} /><input aria-label="Draft" defaultValue="Keep my draft" /></>;
+  return <><TransferCard transfer={t} details /><TransferDialog transfer={t} /><input aria-label="Draft" defaultValue="Keep my draft" /></>;
 }
 afterEach(() => vi.resetAllMocks());
 it("confirms the warning and fences the observed attempt, then exposes patient controls", async () => {
@@ -66,4 +66,16 @@ it("removes mutation controls after access is denied", async () => {
   await u.click(screen.getByRole("button", { name: "Cancel switch" }));
   expect(await screen.findByText("You do not have permission to switch this task.")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Cancel switch" })).not.toBeInTheDocument();
+});
+it("keeps a completed result and the next action in one details card", () => {
+  render(<Harness task={{ ...initial, transfer: { ...initial.transfer!, request: { ...preparing.transfer!.request!, status: "done", phase: "done" } } }} />);
+  const card = screen.getByRole("region", { name: "Engine transfer" });
+  expect(within(card).getByText("Switched to Engine B.")).toBeVisible();
+  expect(within(card).getByRole("button", { name: "Switch engine…" })).toBeVisible();
+  expect(card.querySelector(".review-icon-run")).toBeNull();
+});
+it("shows queued progress without offering a conflicting new switch", () => {
+  render(<Harness task={{ ...initial, state: "queued", transfer: { ...initial.transfer!, request: { ...preparing.transfer!.request!, status: "done", phase: "done" } } }} />);
+  expect(screen.getByText("Waiting for Engine B")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Switch engine…" })).not.toBeInTheDocument();
 });

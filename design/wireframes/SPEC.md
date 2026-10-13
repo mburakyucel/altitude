@@ -1149,8 +1149,12 @@ unavailable.** with **Retry capture**, and recovery removes the error.
 
 ### 3.10 Task page
 
-**Engine transfer.** Existing Task details offers **Switch engine…**; a quota-stop explanation also
-offers **Switch to {engine}**. A confirmation identifies the target and warns **Some session context
+**Engine transfer.** A stacked card at the bottom of Task details, after existing information and
+actions, offers **Switch engine…**. It shares the review cards’ icon, title, state and button treatment.
+Opening details keeps ordinary status and reviews first; it never scrolls to the transfer card.
+A quota-stop card combines the explanation and a secondary **Switch to {engine}** button without
+duplicating the explanation. Unanswered questions and merge-review actions precede contextual
+transfer controls. A confirmation identifies the target and warns **Some session context
 may not carry over. The new engine uses extra tokens to get up to speed.** It preserves saved work,
 questions and merge holds. A running owner prepares its note with no timeout; stopped/exhausted work
 uses saved context. No alternative hides the entry; pins and unavailable targets reveal a reason on press.
@@ -1163,6 +1167,10 @@ and **Check status**, without another mutation; unknown termination uses the sha
 state. Outcomes become concise conversation messages. Draft, selection, recording and view survive;
 polling never steals focus. Escape closes a dialog before applying page shortcuts. There is no new
 browser cache or persistent transfer state.
+Idle uses transfer arrows; preparing, stopping and queued states use an activity arc with reduced
+motion support. Unconfirmed/failure uses a warning, completion a check, and cancellation a stopped
+mark, always alongside state text. Details retains the latest result and eligible next action in
+one card. A completed switch does not retain a progress animation.
 
 The [maintained task states](TaskStates.html) describe activity and steering. Task actions stay
 directly accessible in the compact header, with one consistent button treatment.

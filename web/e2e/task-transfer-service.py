@@ -38,7 +38,8 @@ def main():
     config.save_projects(projects)
     fixture_tasks = {}
     for title, mode in (("Transfer running work", "running"), ("Transfer quota work", "quota"),
-                        ("Transfer pinned work", "pinned"), ("Transfer question work", "question")):
+                        ("Transfer pinned work", "pinned"), ("Transfer question work", "question"),
+                        ("Transfer quota question", "quota-question")):
         task = T.new(project, title, "Fictional transfer walkthrough.", paths=["README.md"],
                      hold_merge="Review the delivered change before merging.")
         slug = task["slug"]
@@ -49,11 +50,11 @@ def main():
         task = T.dispatch(project, slug, attempt=1, session_id=agent, agent_id=agent,
                           worktree=str(worktree), branch=f"worktree-{slug}", l2_engine=config.ENGINES[0])
         T.message(project, slug, "l2", "Saved work is ready for the next engine.")
-        if mode == "question":
+        if mode in {"question", "quota-question"}:
             T.block(project, slug, "Keep the bounded validation scope?", actor="l2",
                     updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE})
             fake.workers[agent].update(state="done", status="exited")
-        if mode == "quota":
+        if mode in {"quota", "quota-question"}:
             fake.workers[agent].update(state="failed", status="exited")
             T.block(project, slug, "Engine allowance exhausted.", actor="altd",
                     updates={"usage_limit": {"scope": "engine", "until": None,

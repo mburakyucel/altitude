@@ -32,6 +32,11 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   await walk.state("00a-task-before-switch", { visible: [page.getByRole("button", { name: /Task details$/ })], hidden: [card(page)] });
   await page.getByRole("button", { name: /Task details$/ }).click();
   const details = page.getByRole("dialog", { name: "Task details", exact: true });
+  const entryCard = details.getByRole("region", { name: "Engine transfer", exact: true });
+  expect(await entryCard.evaluate(node => node.parentElement?.lastElementChild === node)).toBe(true);
+  await expect(details.getByRole("button", { name: "Switch engine…", exact: true })).not.toBeFocused();
+  await walk.state("00b-details-opens-with-status", { visible: [details], hidden: [] });
+  await entryCard.scrollIntoViewIfNeeded();
   await walk.state("00b-switch-entry-in-task-details", { visible: [details, details.getByRole("button", { name: "Switch engine…", exact: true })], hidden: [card(page)] });
   await page.keyboard.press("Escape");
   await draft(page).fill("Keep this unsent instruction.");
@@ -111,6 +116,27 @@ test("a blocked question owner switches from saved context without answering the
   expect(after.questions).toEqual(before.questions.map((question: Record<string, unknown>) => ({ ...question, state: after.state })));
   expect(after.hold_merge).toBe(before.hold_merge);
   await walk.state("02-new-owner-question-stays-open", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first(), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm, page.getByRole("button", { name: "Resume", exact: true })] });
+  await start(page);
+  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  const answer = page.getByPlaceholder("Your answer or a follow-up question…");
+  await answer.fill("Keep this unanswered decision.");
+  await answer.focus();
+  await page.waitForResponse(response => response.url().endsWith(path(slug)) && response.request().method() === "GET");
+  await expect(answer).toBeFocused();
+  await expect(answer).toHaveValue("Keep this unanswered decision.");
+  expect(await card(page).evaluate(node => Boolean(document.querySelector('.conversation-question')?.compareDocumentPosition(node)! & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await walk.state("03-question-leads-during-preparation", { visible: [answer, card(page), card(page).getByRole("button", { name: "Cancel switch" })], hidden: [] });
+});
+
+test("quota switching stays secondary to an unanswered decision", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  await walk.open("/projects/atlas/tasks/transfer-quota-question");
+  const offer = page.getByRole("region", { name: "Engine usage limit", exact: true });
+  await expect(offer).toBeVisible();
+  expect(await offer.evaluate(node => Boolean(document.querySelector('.conversation-question')?.compareDocumentPosition(node)! & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await expect(offer.getByRole("button", { name: /^Switch to / })).not.toHaveClass(/btn-primary/);
+  await expect(page.locator('.conversation-status')).toHaveCount(0);
+  await walk.state("01-question-before-quota-offer", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first(), offer], hidden: [] });
 });
 
 test("quota stop offers saved-context confirmation; pinned work explains unavailability", async ({ page, request }, info) => {
