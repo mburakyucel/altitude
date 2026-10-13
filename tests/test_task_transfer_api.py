@@ -153,6 +153,32 @@ class TestTaskTransferAPI(AltitudeCase):
         self.assertEqual(self.view()["request"]["selection"], {"model": selected, "effort": "medium"})
         self.assertEqual(config.project(self.project), before)
 
+    def test_default_configured_target_catalog_launches_exact_named_choice(self):
+        self.register(self.project, routing=config.parse_routing("claude > codex"))
+        before = config.project(self.project)
+        defaults = config.machine_settings()
+        view = self.view()
+        target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])
+        self.assertTrue(target["available"], target)
+        named = next(model for model in target["models"] if model["value"] != "default")
+        self.assertTrue(named["available"], named)
+        selection = {"model": named["model"], "effort": "medium"}
+        self.action(engine=target["engine"], selection=selection, observed=view["observed"])
+        self.assertEqual(self.view()["request"]["selection"], selection)
+        self.action("handoff-now", request_id=self.view()["request"]["id"])
+        dispatch.run_task_operation(self.project, self.task["slug"])
+        dispatch.run(self.project, self.task["slug"])
+        after = S.load_task(self.project, self.task["slug"])
+        self.assertEqual(after["state"], "running")
+        self.assertEqual(after["attempt"], self.task["attempt"] + 1)
+        self.assertEqual(after["l2_engine"], target["engine"])
+        self.assertEqual(after["launch_model"], selection["model"])
+        self.assertEqual(after["launch_effort"], selection["effort"])
+        for key in ("worktree", "branch", "hold_merge"):
+            self.assertEqual(after[key], self.task[key])
+        self.assertEqual(config.project(self.project), before)
+        self.assertEqual(config.machine_settings(), defaults)
+
     def test_stopped_task_transfers_and_completed_task_refuses(self):
         self.action("stop", generation=self.task["agent_id"])
         dispatch.run_task_operation(self.project, self.task["slug"])
