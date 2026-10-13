@@ -1864,10 +1864,18 @@ visible while the content scrolls. Opening a Settings page does not change a set
 The voice page offers two choices, This computer and Browser recognition, each saved immediately.
 Descriptions state where audio goes and any setup. This computer shows its setup below the choice:
 "Needs a one-time download of about 698 MB, checked against this release." with **Set up voice**;
-while setting up, a progress bar, "Setting up… X MB of Y MB" and **Cancel setup**; when ready, "Ready
-on this computer. While you dictate, the speech process uses about 2 GB of memory." and **Remove voice
-(698 MB)**; a failed setup shows its reason with **Retry**; an outdated runtime asks for an update with
-the same button; the model's credit line (NVIDIA Parakeet TDT 0.6B v2, CC-BY-4.0) stays visible. When
+while setting up, a progress bar, "Setting up… X MB of Y MB" and **Cancel setup**; when ready,
+"While you dictate, the speech process uses about 2 GB of memory." and **Remove voice** in a red
+outline; a failed setup shows its reason with **Retry**. Supported installed voice stays available while
+an automatic replacement shows "Preparing update…", "Updating voice · X MB of Y MB" with a progress
+bar, "The update will finish after dictation.", or "Checking update…" with an inline spinner.
+**Cancel update** sits beside **Remove voice**. Cancellation shows "Update cancelled." and an outlined
+**Retry update**; failure shows "Update did not finish. <reason>" and a filled **Retry update**.
+Failure stays muted when voice is ready, red when an update is required. Unsupported installed voice
+says "Voice needs an update."; its composer links **View update** while updating, **Update voice**
+otherwise. Ready composers retain normal dictation. Buttons disable during actions and show the
+pending action without shifting width; denied actions keep authoritative state and show the error.
+The model's credit line (NVIDIA Parakeet TDT 0.6B v2, CC-BY-4.0) stays visible. When
 this computer cannot run it, the choice is disabled and **Set up voice** reveals why on press, with an accessible description. A successful save updates only the
 next capture; a recording keeps the selection it started with and stops when it changes.
 

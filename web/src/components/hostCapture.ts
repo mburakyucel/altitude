@@ -13,7 +13,7 @@
  * at once: one sending, one recording. A request that gets no answer is repeated with the same samples,
  * number and final flag, so the host never counts it twice, while the microphone keeps recording. When the
  * host no longer knows the recording (it idled out or restarted), the capture opens a new one and replays
- * everything from the start; the host refuses that replay if the voice setting or its runtime changed, or if
+ * everything from the start; the host refuses that replay if the voice setting or installation changed, or if
  * the browser was paired again as another device. The words shown hold still until the replay catches up. After Stop, the capture waits two minutes
  * at most for the connection, then ends with the words shown.
  */
@@ -259,7 +259,7 @@ export class HostCapture {
     } catch (error) {
       if (this.state === "inactive") return;
       // During a replay, a busy host frees a slot once the lost recording idles out; keep asking until the deadline.
-      if (this.reopening && error instanceof ApiError && error.status === 429 || lost(error)) this.again(error);
+      if (error instanceof ApiError && (error.status === 425 || this.reopening && error.status === 429) || lost(error)) this.again(error);
       else this.fail(message(error), error);
     } finally {
       this.finish(request);
@@ -327,7 +327,7 @@ export class HostCapture {
   /** No answer: keep recording, and repeat the same request after a pause. */
   private again(error: unknown) {
     traceVoice("host.retry", this, { error: voiceError(error) });
-    this.watch("lost");
+    this.watch(error instanceof ApiError && error.status === 425 ? "catching-up" : "lost");
     const pause = Math.min(RETRY_MS * 2 ** this.attempts, MAX_RETRY_MS);
     this.attempts += 1;
     this.retry = setTimeout(() => { this.retry = null; this.pump(); }, pause);

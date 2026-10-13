@@ -865,8 +865,12 @@ can run the speech model and `browser` elsewhere; `machine show` reports the bac
 
 `alt voice status` reports whether [host voice](OPERATIONS.md#host-voice) can run here and its setup
 state. `alt voice setup` downloads and checks the speech model and its runtime once (about 700 MB),
-printing progress and the final state; `alt voice remove` stops dictation and deletes them. Setup
-and removal are the operator's; agents are refused.
+printing progress and the final state; it also retries a failed or cancelled update. `alt voice cancel`
+cancels setup or updating; `alt voice remove` cancels updating, stops dictation and deletes the files.
+The daemon automatically attempts each release's replacement once for already-installed, selected
+host voice, preserving supported dictation until verification and handoff. Cancel or failure requires
+explicit Retry, even after restart. First installation stays manual. Setup, cancel and removal commands
+are the operator's; agents are refused.
 
 ### Projects folder
 

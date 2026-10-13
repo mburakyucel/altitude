@@ -2803,7 +2803,8 @@ Voice transcription sits behind the capability seam as one machine setting, `voi
 settings file: `host` or `browser`. Without a saved choice the backend is `host` when this release's
 speech manifest names a runtime this computer can run, and `browser` elsewhere.
 `GET /api/voice` reports the backend, an opaque selection identity over the backend and, for `host`,
-the pinned runtime, and `host`, where host voice stands on this computer. `alt machine set --voice`
+the installation identity, and `host`, where host voice stands on this computer. Supported runtime
+replacement preserves that identity; removal invalidates it. `alt machine set --voice`
 requests a change through the same durable request that carries `wip`; `--unset-voice` returns to the
 default.
 
@@ -2845,11 +2846,40 @@ Each file streams into `~/.altitude/speech/.staging` with a size cap and must ma
 SHA-256. The wheels are unpacked with the release installer's path rules (no absolute, parent,
 backslash or link entries, a total size cap) into `site/`, not installed with pip. A completion record
 naming the manifest digest is written last and the folder is moved to `runtime-<digest>` in one
-rename; only a runtime whose record matches this release's manifest is used, and a changed manifest
-reads as `outdated`. An exclusive file lock admits one setup across the daemon and the CLI. Cancel or
-any failure deletes staging; a failure, not a cancel, is remembered for Settings until the next setup.
-`remove` refuses during setup, stops the worker and deletes every runtime; the daemon also stops its
-worker within a second when its runtime disappears under it (`alt voice remove`).
+rename. Before promotion, the actual isolated worker loads the model and performs its warmup within
+the load deadline. Completed runtimes explicitly supported by this release keep serving during an
+update; unknown, incompatible or revoked runtimes read as `outdated` and cannot serve recordings.
+Support is an explicit per-platform/interpreter digest list, never inferred from age or a completion
+marker alone. Retained model files are copied only after matching the target size and SHA-256; wheel
+archives are downloaded and deleted after unpacking. There is no download cache.
+
+The support set retains the preceding Linux onnxruntime 1.22 manifests for CPython 3.12 and 3.13;
+both load and warm up with the current worker and the exact pinned model. The supported-table test
+derives their identities from those prior wheel checksums and the unchanged model/decoder/numpy.
+There is no preceding macOS manifest for this transition, so no prior macOS runtime is admitted.
+Future pin changes review and test their preceding platform manifests explicitly. This is fixed-model compatibility, not general support for arbitrary
+ONNX graphs: clients provide bounded PCM, never graph attributes or tensors. A release removes a
+digest if a relevant unsafe runtime is identified; an offline release cannot learn future revocations.
+
+At daemon startup, selected, already-installed host voice gets one automatic attempt per target
+manifest. First installation stays manual. The installation record persists the attempt, cancellation,
+failure and stable selection identity. An interrupted attempt also requires explicit Retry; switching
+to browser recognition cancels an automatic attempt. Availability (`ready` or `outdated`) is independent
+of `host.update`: `preparing`, `downloading` with bytes, `waiting`, `checking`, `failed` or `cancelled`.
+Settings shows phase/progress with Cancel or Retry; ready voice remains usable. Unsupported voice links
+to the running update instead of offering a duplicate setup.
+
+One file lock admits setup across CLI and daemon. Workers inherit a shared use lock; verification,
+promotion and cleanup acquire it exclusively. Active recordings finish before the idle worker exits
+for the update. Finished response replay remains available. Staging temporarily uses another runtime's
+disk space; preflight budgets downloads and bounded wheel expansion. Cancel or failure deletes staging
+and leaves supported voice available. `alt voice cancel` and Settings cancel the shared attempt.
+Remove records an invalidating tombstone first, cancels setup, drains worker use and deletes runtimes;
+the daemon observes removal within a second. Successful promotion cleans superseded runtimes only
+after their readers exit.
+Removal invalidates completion before deleting a runtime's files, so interruption cannot leave a
+partially deleted runtime usable. A later explicit setup can recover an interrupted removal. A lock
+timeout restores availability without restoring old recording identity, and reports removal unfinished.
 
 The worker (`altitude/speech_worker.py`) runs as `python -I` with the daemon's interpreter and a
 minimal environment, imports only the runtime's unpacked wheels, runs the model on onnxruntime's CPU

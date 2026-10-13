@@ -671,9 +671,20 @@ alt machine set --voice host --reason 'Transcribe on this computer'
 Setup downloads the model from Hugging Face and its runtime (onnxruntime, numpy and the onnx-asr
 decoder) from PyPI, pinned by checksum in the Altitude release, into `~/.altitude/speech`. Nothing is
 installed elsewhere and Altitude's own Python stays standard-library only. Settings shows progress and
-**Cancel setup**; a failed setup shows its reason and **Retry**. An Altitude release that pins a new
-runtime shows "Voice needs an update" with the same button. Only the operator runs `alt voice setup`
-and `alt voice remove`; Altitude's agents cannot.
+**Cancel setup**; a failed setup shows its reason and **Retry**. At startup after a release changes
+the runtime, Altitude makes one automatic update attempt for already-installed, selected host voice.
+Supported voice stays ready while Settings shows update progress. The update waits for recordings to
+finish, checks that the replacement model runs, then switches and removes superseded files. An unsafe
+or incompatible runtime cannot keep serving; Settings and the composer say that it needs an update.
+
+Unchanged model files are reused after checksum verification. Updates download the missing files
+(about 40 MB for a library-only update, up to about 700 MB) and temporarily need space for another
+runtime, including unpacked libraries. Cancel, failure, interrupted setup or switching to browser
+recognition leaves Retry to you, including after restart. `alt voice cancel` also cancels the update.
+First installation stays manual. Only the operator invokes setup, cancel and removal; agents cannot.
+Removing voice cancels any update, stops dictation and deletes its runtime files.
+If removal is interrupted, **Set up voice** restores it; the displayed full-download estimate is an
+upper bound, since any surviving verified model files are reused.
 
 The first recording starts a speech process in about 1–3 seconds; speech during startup is kept. While
 you dictate it uses about 1.3–2 GB of memory and one to two CPU cores; it exits after fifteen minutes

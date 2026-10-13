@@ -1472,19 +1472,36 @@ describe("Composer", () => {
   });
 
   it.each([
-    [{ state: "absent", download_bytes: 698_000_000 }, "Voice needs a one-time download on this computer. Set up voice"],
-    [{ state: "outdated", download_bytes: 698_000_000 }, "Voice needs an update on this computer. Set up voice"],
-    [{ state: "setting-up", download_bytes: 698_000_000, done_bytes: 1 }, "Voice is being set up on this computer. Typing works."],
-  ] as const)("host voice not set up (%o): the mic explains instead of opening the microphone", async (host, hint) => {
+    [{ state: "absent", download_bytes: 698_000_000 }, "Voice needs a one-time download on this computer.", "Set up voice"],
+    [{ state: "outdated", download_bytes: 698_000_000 }, "Voice needs an update on this computer.", "Update voice"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "preparing" } }, "Voice is updating on this computer.", "View update"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "downloading", done_bytes: 12, download_bytes: 40 } }, "Voice is updating on this computer.", "View update"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "checking" } }, "Voice is updating on this computer.", "View update"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "failed", reason: "Download failed." } }, "Voice needs an update on this computer.", "Update voice"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "cancelled" } }, "Voice needs an update on this computer.", "Update voice"],
+    [{ state: "setting-up", download_bytes: 698_000_000, done_bytes: 1 }, "Voice is being set up on this computer. Typing works.", null],
+  ] as const)("host voice not set up (%o): the mic explains instead of opening the microphone", async (host, hint, link) => {
     const { getUserMedia } = installVoiceBrowser({ backend: "host", host });
     const fetchMock = vi.fn(async () => jsonResponse({ backend: "host", selection: "fixture-host", url: "", model: "", key_set: false, host }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<MemoryRouter><Harness /></MemoryRouter>);
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    expect(await screen.findByText(hint.split(" Set up voice")[0]!, { exact: false })).toBeInTheDocument();
-    if (hint.endsWith("Set up voice")) expect(await screen.findByRole("link", { name: "Set up voice" })).toHaveAttribute("href", "/settings/voice");
+    expect(await screen.findByText(hint, { exact: false })).toBeInTheDocument();
+    if (link) expect(await screen.findByRole("link", { name: link })).toHaveAttribute("href", "/settings/voice");
     expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it.each(["downloading", "failed", "cancelled"] as const)("supported host voice remains usable during update %s", async (state) => {
+    installVoiceBrowser({ backend: "host", host: { state: "ready", download_bytes: 701000000,
+      update: { state, download_bytes: 40000000, done_bytes: 12000000 } } });
+    hostVoice("Still dictating", "Still dictating.");
+    const { user, field } = mount();
+    await listen(user);
+    expect(field).toHaveValue("Still dictating");
+    expect(screen.queryByRole("link", { name: /update/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Still dictating."));
   });
 
   it.each([
