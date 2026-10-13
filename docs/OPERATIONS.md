@@ -683,8 +683,9 @@ the local result but cannot recall audio already received by the service.
 
 Authentication errors link to Voice settings; check the saved key. For unavailable or timed-out
 services, check reachability from the Altitude computer and the complete endpoint address. For
-invalid or empty responses, check the model and compatible response format. Selection changes or
-re-pairing invalidate unfinished recordings; audio is never silently routed to a new destination.
+invalid or empty responses, check the model and compatible response format. Saving changed service
+details or another choice invalidates unfinished recordings; audio is never silently routed to a new
+destination. Saving unchanged details leaves them valid.
 Typing remains usable after every failure.
 Malformed saved service settings remain unavailable without choosing another backend. Re-enter
 the service details in Voice settings, or explicitly save a different voice choice.

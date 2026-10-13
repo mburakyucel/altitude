@@ -308,7 +308,7 @@ describe("Voice settings", () => {
     expect(calls).toEqual([{ backend: "host", selection: "browser-fresh" }]);
   });
   it("service edits are drafts, preserve an empty saved key and explicitly remove details on switching", async () => {
-    const calls = fixture({ ...saved, backend: "service", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", model: "small", key_present: true } });
+    const calls = fixture({ ...saved, backend: "service", service: { url: "https://speech.example.test/v1/audio/transcriptions", model: "small", key_present: true } });
     const { user } = renderApp({ route: "/settings/voice" });
     await screen.findByRole("radio", { name: "Your speech service" });
     await user.click(screen.getByText("Key or model (optional)"));
@@ -325,7 +325,7 @@ describe("Voice settings", () => {
   });
 
   it("changing a service URL clears any typed key and explains the new destination", async () => {
-    const calls = fixture({ ...saved, backend: "service", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: true } });
+    const calls = fixture({ ...saved, backend: "service", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: true } });
     const { user } = renderApp({ route: "/settings/voice" });
     await screen.findByRole("radio", { name: "Your speech service" });
     await user.click(screen.getByText("Key or model (optional)"));

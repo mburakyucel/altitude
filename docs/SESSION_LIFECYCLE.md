@@ -796,8 +796,8 @@ or provider call. The overview stays compact; the nested voice page contains bac
 credentials. Back returns to Settings without saving unfinished endpoint edits. Successful saves
 change the next capture in the document. An upload carries its capture's backend/destination identity;
 if it no longer matches the saved choice, transcription is refused before forwarding and the typed
-draft is preserved. A transcription already forwarded uses its captured settings, but a changed
-service selection or paired owner invalidates its result. Cancellation cannot recall forwarded audio.
+draft is preserved. A transcription already forwarded uses its captured settings and its result
+reaches the capture. Cancellation cannot recall forwarded audio.
 
 Message acceptance is separate from the answer or wake succeeding. A saved L2 message receipt,
 L3 turn ID or queue receipt keeps the composer cleared, including after a broken stream or failed

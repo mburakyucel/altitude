@@ -62,41 +62,9 @@ class ServiceError(RuntimeError):
 
 
 def transcribe_service(setting: dict, pcm: bytes) -> str:
-    """A disposable child gives DNS, connect and response one hard deadline, then kills and reaps it.
-
-    Configuration and samples cross private pipes only. At most two admitted callers own these children.
-    """
+    """One direct, certificate-verified request: no proxy discovery, redirect, retry or audio file."""
     if not pcm or len(pcm) > SERVICE_PCM_LIMIT or len(pcm) % 2:
         raise ServiceError("service_response")
-    code = ("import sys; sys.path.insert(0, sys.argv[1]); "
-            "from altitude.speech import _service_worker; _service_worker()")
-    try:
-        result = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(Path(__file__).resolve().parent.parent)],
-                                input=json.dumps(setting).encode() + b"\n" + pcm,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                timeout=SERVICE_RESPONSE_SECONDS, check=False)
-        if result.returncode:
-            raise ServiceError("service_unavailable")
-        answer = json.loads(result.stdout)
-        if "error" in answer:
-            raise ServiceError(answer["error"])
-        return answer["text"]
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        raise ServiceError("service_unavailable") from None
-
-
-def _service_worker() -> None:
-    setting = json.loads(sys.stdin.buffer.readline())
-    pcm = sys.stdin.buffer.read(SERVICE_PCM_LIMIT + 1)
-    try:
-        answer = {"text": _service_request(setting, pcm)}
-    except ServiceError as exc:
-        answer = {"error": exc.code}
-    sys.stdout.write(json.dumps(answer))
-
-
-def _service_request(setting: dict, pcm: bytes) -> str:
-    """One direct, certificate-verified request: no proxy discovery, redirect, retry or audio file."""
     wav = io.BytesIO()
     with wave.open(wav, "wb") as audio:
         audio.setnchannels(1)

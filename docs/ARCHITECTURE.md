@@ -2968,20 +2968,19 @@ remains available without voice.
 #### Operator-supplied service
 
 Paired Settings reads expose URL/model/key-present, never the key. Machine output exposes the backend
-only. Before capturing service audio, the browser reads the current selection and paired owner;
-both are checked again before accepting and forwarding `POST /api/voice/service`, and before the
-server releases its result. Local settings and unpairing events also invalidate pending captures.
-Saving URL/model/key changes the service selection identity independently
-of the built-in installation identity. Re-pairing or selection changes invalidate unfinished work.
+only. A capture carries the selection its composer read; the server checks it against the saved
+choice before accepting and forwarding `POST /api/voice/service`, and a transcript the service has
+returned reaches the capture. A Settings read showing another selection invalidates pending captures.
+Saving a changed URL/model/key changes the service selection identity independently of the built-in
+installation identity; saving unchanged settings keeps it.
 
 The browser retains raw mono 16 kHz signed 16-bit PCM in page memory until Stop/Send, at most
 19,200,000 bytes per capture and two captures including a pending Send. The authenticated service
 route creates WAV/multipart framing and sends one request to the exact saved endpoint, without
 redirects, environment proxies, probes or retries. It accepts JSON text, limits the response to
 1 MiB, limits concurrent requests to two, and bounds upload and upstream response separately to
-120 seconds each. Each admitted outbound request runs in a disposable child process; its timeout
-kills and reaps that process, including stalled DNS or response reads. The key and audio travel on
-stdin, never command arguments or disk. HTTPS uses normal certificate verification.
+120 seconds each; the outbound request runs in the daemon with a 120-second socket timeout, and the
+key and audio never touch disk. HTTPS uses normal certificate verification.
 
 Stop appends text to its draft; Send carries text/images and completion to its original conversation.
 Cancellation and late results never alter another draft. Errors are sanitized and preserve typed

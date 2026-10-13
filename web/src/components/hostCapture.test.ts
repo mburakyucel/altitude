@@ -45,13 +45,14 @@ describe("HostCapture", () => {
       if (call.path === "/api/voice") throw new TypeError("settings connection lost");
       return answer({ text: "finished words" });
     };
-    const capture = new HostCapture(mic.stream, "s", "device");
+    const capture = new HostCapture(mic.stream, "s", true);
     capture.start(); mic.speak(8000); await vi.advanceTimersByTimeAsync(0);
     expect(calls).toHaveLength(0);
     capture.stop();
     expect(mic.track.stop).toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(0);
-    expect(calls[0]).toMatchObject({ path: "/api/voice/service", headers: { "X-Voice-Selection": "s", "X-Voice-Owner": "device" } });
+    expect(calls[0]).toMatchObject({ path: "/api/voice/service", headers: { "X-Voice-Selection": "s" } });
+    expect(calls[0]!.headers).not.toHaveProperty("X-Voice-Owner");
     expect((calls[0]!.body as Int16Array).length).toBe(8000);
     expect(capture.text).toBe("finished words");
     expect(calls).toHaveLength(1);
@@ -61,7 +62,7 @@ describe("HostCapture", () => {
   it.each(["service_auth", "service_response", "service_empty", "service_unavailable", "selection_changed"])("service preserves structured %s failure without retry", async (code) => {
     const mic = microphone();
     reply = () => answer({ error: "safe failure", code }, 502);
-    const capture = new HostCapture(mic.stream, "s", "device");
+    const capture = new HostCapture(mic.stream, "s", true);
     capture.start(); mic.speak(8000); capture.stop();
     await vi.advanceTimersByTimeAsync(10000);
     expect(calls).toHaveLength(1);
@@ -73,40 +74,35 @@ describe("HostCapture", () => {
   it("service discards uncertain network failure and a late response after Cancel", async () => {
     const mic = microphone();
     reply = async () => { throw new TypeError("network lost"); };
-    const capture = new HostCapture(mic.stream, "s", "device");
+    const capture = new HostCapture(mic.stream, "s", true);
     capture.start(); mic.speak(8000); capture.stop();
     await vi.advanceTimersByTimeAsync(10000);
     expect(calls).toHaveLength(1);
     expect(capture.serviceFailure).toBe("service_unavailable");
     let release: (value: Response) => void = () => {};
     reply = () => new Promise((resolve) => { release = resolve; });
-    const cancelled = new HostCapture(mic.stream, "s", "device");
+    const cancelled = new HostCapture(mic.stream, "s", true);
     cancelled.start(); mic.speak(8000); cancelled.stop(); cancelled.cancel();
     release(answer({ text: "must not land" })); await vi.advanceTimersByTimeAsync(0);
     expect(cancelled.text).toBe("");
     expect(calls).toHaveLength(2);
   });
 
-  it("service rejects changed ownership at completion and re-pairing before upload", async () => {
+  it("service reports a selection the server no longer forwards to", async () => {
     const mic = microphone();
     reply = () => answer({ error: "Voice settings changed", code: "selection_changed" }, 409);
-    const capture = new HostCapture(mic.stream, "s", "device");
+    const capture = new HostCapture(mic.stream, "s", true);
     capture.start(); mic.speak(8000); capture.stop(); await vi.advanceTimersByTimeAsync(0);
     expect(capture.serviceFailure).toBe("selection_changed"); expect(capture.text).toBe("");
-    calls = [];
-    const repaired = new HostCapture(mic.stream, "s", "device");
-    repaired.start(); mic.speak(8000); window.dispatchEvent(new Event("altitude:unpaired")); repaired.stop();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(calls).toHaveLength(0); expect(repaired.serviceFailure).toBe("selection_changed");
   });
 
   it("keeps a known selection change when an in-flight upload loses its connection", async () => {
     const mic = microphone();
     let reject: (error: Error) => void = () => {};
     reply = () => new Promise((_resolve, fail) => { reject = fail; });
-    const capture = new HostCapture(mic.stream, "s", "device");
+    const capture = new HostCapture(mic.stream, "s", true);
     capture.start(); mic.speak(8000); capture.stop();
-    capture.checkServiceSelection("new-selection", "device");
+    capture.checkServiceSelection("new-selection");
     reject(new TypeError("connection reset"));
     await vi.advanceTimersByTimeAsync(0);
     expect(capture.serviceFailure).toBe("selection_changed");

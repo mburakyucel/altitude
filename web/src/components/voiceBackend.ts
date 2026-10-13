@@ -8,7 +8,7 @@ export const INVALID_SERVICE = "Your speech service settings are invalid. Re-ent
 /*
  * The installation's transcription backend, read once per document from `GET /api/voice`. "host" streams
  * to this computer's speech model; "browser" runs the browser's own recognition; "service" uploads after Stop.
- * Service captures additionally acquire a fresh paired owner/selection. Until the read answers,
+ * Until the read answers,
  * the composer shows no microphone; a failed read is retried while a composer is mounted.
  */
 const RETRY_MS = 5000;
@@ -34,7 +34,7 @@ export function presetVoiceBackend(backend: VoiceBackend | null, host: HostVoice
 
 /** A successful Settings save changes the next capture in every mounted composer. */
 export function updateVoiceSettings(settings: VoiceSettings | null) {
-  if (settings) for (const capture of HostCapture.retained) capture.checkServiceSelection(settings.selection, settings.owner);
+  if (settings) for (const capture of HostCapture.retained) capture.checkServiceSelection(settings.selection);
   known = settings;
   reading = null;
   if (retry) clearTimeout(retry);
