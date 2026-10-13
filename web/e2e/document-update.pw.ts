@@ -14,7 +14,7 @@ const draft = (page: Page, entry: Entry) => page.getByRole("textbox", {
 });
 
 async function prepare(page: Page, request: APIRequestContext, entry: Entry, interceptFile = true) {
-  const { slug, path, source } = await (await request.get("/fixture/documents")).json();
+  const { slug, path, source } = await (await request.put("/fixture/documents")).json();
   let release = () => {};
   if (entry === "file" && interceptFile) {
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -160,15 +160,16 @@ for (const entry of entries) {
 
 for (const entry of ["file", "shown"] as const) {
   test(`failed content transport retains API Retry: ${entry}`, async ({ page, request }, info) => {
+    // A transport overlay affects only the first content read; Retry still uses the real API/storage.
+    const content = entry === "file" ? "**/api/files/atlas?*" : "**/api/shown/atlas/**";
+    await page.route(content, route => route.abort("connectionfailed"), { times: 1 });
     const view = await prepare(page, request, entry);
-    expect((await request.put("/fixture/content-unreachable")).ok()).toBe(true);
     await view.show();
     const title = entry === "file" ? "File unavailable" : "Preview unavailable";
     await walkthrough(page, info).state(`${entry}-failed-content`, {
       visible: [page.getByRole("heading", { name: title, exact: true }), page.getByRole("button", { name: "Retry", exact: true })],
       hidden: [page.getByText("Formatting unavailable", { exact: true })],
     });
-    expect((await request.put("/fixture/back")).ok()).toBe(true);
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Migration plan", exact: true })).toBeVisible();
     await view.close();
@@ -176,7 +177,7 @@ for (const entry of ["file", "shown"] as const) {
   test(`offline content read resumes on reconnect: ${entry}`, async ({ page, request, context }, info) => {
     let view: Awaited<ReturnType<typeof prepare>> | undefined;
     if (entry === "file") {
-      const { path } = await (await request.get("/fixture/documents")).json();
+      const { path } = await (await request.put("/fixture/documents")).json();
       expect((await page.goto("/projects/atlas"))?.ok()).toBe(true);
       await expect(draft(page, "system")).toBeVisible();
       await context.setOffline(true);

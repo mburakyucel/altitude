@@ -372,12 +372,13 @@ boards in place, removing obsolete review scaffolding and its generators/referen
 
 `web/e2e/document-update.pw.ts` walks all three document entry points across replacement of the
 actual built JS/CSS served by a disposable real server. Fixture controls use PUT requests, leaving
-the application's POST dispatcher real. Separate script, stylesheet and combined removal cases
+the application's GET and POST dispatchers real. Separate script, stylesheet and combined removal cases
 establish readable-source recovery, saved-image access, draft preservation, repeated
 document entry and explicit whole-page reload at phone and desktop widths. Styles load with the
 app, so removal of an old stylesheet leaves the open page's formatting usable. Connection-drop
 fixtures keep the browser cache enabled and verify same-script reload without module preloads.
-Content transport failures keep API Retry; offline content reads resume on reconnect. A successful
+Content transport abort overlays keep API Retry, whose successful read uses real API/storage;
+offline content reads resume on reconnect. A successful
 module whose renderer throws reaches the route error page at each entry point, rather than being
 misclassified as a load failure. `file-references.pw.ts` and `shown-files.pw.ts` cover the readers'
 loading, empty, denied, unavailable and image states; `app-update.pw.ts` retains terminal recovery,

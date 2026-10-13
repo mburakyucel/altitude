@@ -53,7 +53,6 @@ def main():
                                  "exchange_id": "fictional-document-exchange"})
 
     unreachable = False
-    content_unreachable = False
 
     class Handler(server.Handler):
         def _static(self, raw_path):
@@ -63,27 +62,16 @@ def main():
                 return None
             return super()._static(raw_path)
 
-        def do_GET(self):
-            if content_unreachable and self.path.startswith(("/api/files/atlas?", "/api/shown/atlas/")):
-                self.close_connection = True
-                self.connection.shutdown(socket.SHUT_RDWR)
-                return None
+        # Fixture controls do not interpose on the application's GET or POST dispatchers.
+        def do_PUT(self):
+            nonlocal unreachable
             if self.path == "/fixture/documents":
                 return self._json({"slug": slug, "shown": shown, "second": second, "path": str(saved), "source": source})
-            return super().do_GET()
-
-        # Fixture controls do not interpose on the application's POST dispatcher.
-        def do_PUT(self):
-            nonlocal unreachable, content_unreachable
             if self.path == "/fixture/unreachable":
                 unreachable = True
                 return self._json({"ok": True})
             if self.path == "/fixture/back":
                 unreachable = False
-                content_unreachable = False
-                return self._json({"ok": True})
-            if self.path == "/fixture/content-unreachable":
-                content_unreachable = True
                 return self._json({"ok": True})
             if self.path == "/fixture/renderer-error":
                 # The module loads successfully; its default component throws only when rendered.
