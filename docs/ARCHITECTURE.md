@@ -2190,9 +2190,10 @@ compact cards in one column, answered through `POST /api/decide`), the project p
 `/projects/<name>` (the §3.2 header with its status line and overflow menu, the L3 conversation, and
 the work panel), the task conversation (including redirects from `/projects/<name>/decisions/<slug>`), and
 Monitor. `/projects` and `/chat/<name>` redirect to the project
-page, and with no managed project every project route shows First run: the steps name, what the
-agents need, incident reports and projects, held in `?step=`, each skippable and a Settings row
-afterwards. What the agents need reads `GET /api/prerequisites`, `installation.prerequisites()`: the
+page, and with no managed project every project route shows First run: hosting, coding tools and
+one project, held in `?step=` with Back and Continue controls. Numbered positions describe navigation,
+not completion. Name, incident reporting and voice are optional Settings links. What the agents need
+reads `GET /api/prerequisites`, `installation.prerequisites()`: the
 doctor's GitHub CLI checks (the pull request fields `alt land` reads, from the list `gh pr view --json` prints
 without a repository, sign-in or network request, then sign-in), each engine's local sign-in status through the
 engine seam (`engines.sign_in`) and Git, as met, unmet with the terminal command to run (the install command from
@@ -2949,8 +2950,7 @@ desktop operator row open Settings. `POST /api/voice` saves `{backend, selection
 durable request/apply path as the CLI, with no restart or provider probe; a selection that no longer
 matches the saved one is refused (409) and asks the person to reload settings. Failed saves leave the
 persisted choice unchanged. Fresh settings reads update the form as well as the composer's selection.
-First run offers built-in or browser recognition in its Voice step (see the design spec §3.12); a setup failure there
-never blocks onboarding.
+First run links to optional **Settings → Voice input**; voice setup never blocks onboarding.
 
 On start, `dispatch.forget_speech_service()` deletes only untagged legacy service settings and
 receipts, including their keys. New deliberate service configurations carry `backend: service`
