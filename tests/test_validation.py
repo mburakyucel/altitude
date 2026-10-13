@@ -32,6 +32,69 @@ from altitude import config, dispatch, engines, platform, server, state as S, ta
 RUNNER_HOME = validation.home
 
 
+class TestValidationResults(TestCase):
+    def test_receipts_and_failure_logs_precede_traces_across_the_whole_tree(self):
+        files = {
+            "artifacts/a.trace": b"t" * 100,
+            "artifacts/b.zip": b"z" * 100,
+            "artifacts/error-context.txt": b"failed journey",
+            "journeys.log": b"journey timed out",
+            "preflight.json": b'{"passed":true}',
+            "preflight.log": b"sandbox checked",
+            "ui-validation.json": b'{"passed":false,"exit":124}',
+            "z-stage/protection.json": b'{"sandbox":true}',
+            "z-stage/execution.jsonl": b'{"exit":124}\n',
+        }
+        essential = {p: data for p, data in files.items() if not p.endswith((".trace", ".zip"))}
+        for limit in (sum(map(len, essential.values())), sum(map(len, files.values()))):
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source = root / "results"
+                for path, data in files.items():
+                    target = source / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(data)
+                parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    with mock.patch.object(validation, "RESULTS_LIMIT", limit):
+                        skipped = validation.copy_results(source, parent, "copy")
+                finally:
+                    os.close(parent)
+                kept = {p.relative_to(root / "copy").as_posix(): p.read_bytes()
+                        for p in (root / "copy").rglob("*") if p.is_file()}
+                overflow = limit < sum(map(len, files.values()))
+                self.assertEqual(kept, essential if overflow else files)
+                self.assertEqual(skipped, [f"{p}: over the 0 MiB results limit"
+                                           for p in ("artifacts/a.trace", "artifacts/b.zip")] if overflow else [])
+                self.assertLessEqual(sum(map(len, kept.values())), limit)
+
+    def test_prioritized_evidence_still_obeys_size_and_no_follow_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "results"
+            source.mkdir()
+            (source / "large.json").write_bytes(b"x" * 10)
+            (source / "result.json").write_bytes(b"{}")
+            (source / "failure.log").write_bytes(b"bad")
+            (source / "trace.zip").write_bytes(b"x")
+            (root / "private").write_bytes(b"secret")
+            (source / "linked.json").symlink_to(root / "private")
+            (source / "linked-folder").symlink_to(root, target_is_directory=True)
+            os.mkfifo(source / "pipe.log")
+            parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with mock.patch.object(validation, "RESULTS_LIMIT", 5):
+                    skipped = validation.copy_results(source, parent, "copy")
+            finally:
+                os.close(parent)
+            self.assertEqual({p.name: p.read_bytes() for p in (root / "copy").iterdir()},
+                             {"result.json": b"{}", "failure.log": b"bad"})
+            self.assertEqual(set(skipped), {
+                "large.json: over the 0 MiB results limit", "trace.zip: over the 0 MiB results limit",
+                "linked.json: not a regular file or folder", "linked-folder: not a regular file or folder",
+                "pipe.log: not a regular file or folder"})
+
+
 class TestValidationImage(TestCase):
     def test_browser_pin_matches_the_walkthroughs_lockfile(self):
         # #667: browser downloads alone cannot prepare a runner's Linux libraries.
@@ -493,6 +556,21 @@ class TestValidationRunner(ClientStop, RunnerCase):
         with self.assertRaises(FileExistsError):
             validation.copy_results(source, parent, "planted")
         self.assertEqual(list(elsewhere.iterdir()), [])
+
+    def test_failed_run_retains_receipts_and_logs_when_traces_fill_the_budget(self):
+        command = ("mkdir -p /results/artifacts; printf 1234567890 > /results/artifacts/trace.zip; "
+                   "printf '{\"passed\":false}' > /results/ui-validation.json; "
+                   "printf timeout > /results/journeys.log; echo failed-run; exit 124")
+        with mock.patch.object(validation, "RESULTS_LIMIT", len(b'{"passed":false}timeout')):
+            result = self.validate(["sh", "-c", command])
+        self.assertEqual((result["exit"], result["ended"], result["cleanup"]), (124, "exit", None))
+        evidence = Path(result["results"])
+        self.assertEqual(json.loads((evidence / "ui-validation.json").read_text()), {"passed": False})
+        self.assertEqual((evidence / "journeys.log").read_text(), "timeout")
+        self.assertEqual(result["results_skipped"], ["artifacts/trace.zip: over the 0 MiB results limit"])
+        self.assertIn("failed-run", Path(result["log"]).read_text())
+        self.assertEqual(self.rows()[-1]["exit"], 124)
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
 
     def test_the_runner_and_what_a_run_writes_stay_out_of_worker_writable_paths(self):
         self.assertFalse(RUNNER_HOME().is_relative_to(config.ROOT))
