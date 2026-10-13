@@ -527,8 +527,13 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | L3 journal reading | `journalctl` shim | not available; L3 reads service status through the broker | Isolation and landing |
 | Incident system facts | `os-release` name, kernel release, DMI vendor and product family (product name when the family is a placeholder) | macOS version, Darwin release, `hw.model` identifier | [Incident issues](CLI.md#incident-issues) |
 
-Case-insensitive project names are refused on both hosts, because macOS disks are case-insensitive by
-default and runtime folders are named after projects.
+Project identifiers are single folder names on both hosts. The shared path resolver validates them
+before project storage or locks are accessed; registration validates before resolving a repository
+folder, and monitor session keys use the same check. Empty names, `.` and `..`, path separators and
+NUL are refused. Flat names retain their case, spaces, Unicode, dots and underscores. Validation does
+not require registration, so initialization and detached project archives use the same resolver.
+Names differing only by case are refused at registration on both hosts, because macOS disks are
+case-insensitive by default and runtime folders are named after projects.
 
 ### Project setup
 
