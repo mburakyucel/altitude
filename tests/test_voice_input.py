@@ -413,13 +413,13 @@ class TestServiceConfiguration(TestVoiceSettingsRoute):
         self.assertNotIn("secret", json.dumps(receipt))
         dispatch.request_setting(None, "voice", value, "fixture", actor=config.OPERATOR_ACTOR,
                                  expected=stored["selection"])
-        real_write = S.atomic_write
-        def fail_event(path, data, *args, **kwargs):
-            if path.name == "events.jsonl":
+        real_write = dispatch.storage.atomic_write
+        def fail_event(parent, name, data):
+            if name == "events.jsonl":
                 self.assertNotIn("secret", data)
                 raise OSError("fixture crash before event write")
-            return real_write(path, data, *args, **kwargs)
-        with mock.patch.object(S, "atomic_write", side_effect=fail_event):
+            return real_write(parent, name, data)
+        with mock.patch.object(dispatch.storage, "atomic_write", side_effect=fail_event):
             with self.assertRaises(OSError):
                 dispatch._run_setting(None, "voice")
         self.assertEqual(config.voice_setting()["selection"], "new-identity")

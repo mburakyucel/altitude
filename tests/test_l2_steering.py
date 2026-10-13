@@ -19,6 +19,7 @@ class TestL2Steering(AltitudeCase):
         super().setUp()
         make_repo(self.repo)
         self.private_ledgers()
+        self.fixture_boot_identity()
         self.quiet_engines()
         self.engine = FakeL2()
         self.engine.install(self)
@@ -72,7 +73,7 @@ class TestL2Steering(AltitudeCase):
     def archive_during_live_status_read(self, slug):
         """Reject and archive the task after a reader resolved its live folder but before it reads status."""
         live_status = S.tasks_dir(self.project) / slug / "status.json"
-        read_json = S.read_json
+        read_json = S.read_runtime_json
         archived = []
 
         def read(path, *args, **kwargs):
@@ -81,7 +82,7 @@ class TestL2Steering(AltitudeCase):
                 T.reject(self.project, slug, "The operator ended this task.")
             return read_json(path, *args, **kwargs)
 
-        return mock.patch.object(S, "read_json", side_effect=read), archived
+        return mock.patch.object(S, "read_runtime_json", side_effect=read), archived
 
     def test_poll_crossing_archive_reads_the_archived_task(self):
         task = T.new(self.project, "Archive while polling", "Keep the archived conversation readable.")
@@ -139,7 +140,7 @@ class TestL2Steering(AltitudeCase):
             with self.subTest(name=name):
                 task = T.new(self.project, f"Archive during {name}", "Keep this request readable.")
                 target = S.task_dir(self.project, task["slug"]) / name
-                read_text = Path.read_text
+                read_text = server.storage.runtime_read_text
                 activity = server.transcript.activity
                 attempted = threading.Event()
                 errors = []
@@ -168,7 +169,7 @@ class TestL2Steering(AltitudeCase):
                     return activity(project, slug)
 
                 try:
-                    with mock.patch.object(Path, "read_text", new=read), \
+                    with mock.patch.object(server.storage, "runtime_read_text", new=read), \
                             mock.patch.object(server.transcript, "activity", new=after_archive), \
                             mock.patch.object(server, "log") as log:
                         snapshot = self.view(task)

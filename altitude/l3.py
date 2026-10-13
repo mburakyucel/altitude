@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, engines, images as image_store, platform, route, state as S, transcript
+from . import config, engines, images as image_store, platform, route, state as S, storage, transcript
 
 _locks: dict[str, threading.Lock] = {}
 _active: dict[str, dict] = {}
@@ -623,7 +623,10 @@ def search(project: str, query: str, limit: int = 5) -> dict:
         if parent.exists():
             slugs.update(S.require_task_slug(d.name) for d in parent.iterdir() if d.is_dir())
     for slug in sorted(slugs):
-        directory = local(S.task_dir(project, slug))
+        try:
+            directory = local(S.task_dir(project, slug))
+        except storage.StorageRefused:
+            raise ValueError("search evidence resolves outside the selected project") from None
         for name in ("status.json", "conversation.jsonl"):
             local(directory / name)
         # #364: event-only directories are not resolvable tasks; retain other evidence.

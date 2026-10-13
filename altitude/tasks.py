@@ -89,7 +89,11 @@ def task_file(project: str, reference: str) -> dict:
     outside = "Only text documents directly in this project's task folders can open here."
     unsupported = "Only regular UTF-8 .md or .txt documents up to 1 MiB can open here."
     unavailable = "This document is missing or cannot be read."
-    if not config.is_managed(project) or any(ord(c) < 32 for c in reference):
+    try:
+        managed = config.is_managed(project)
+    except OSError:
+        raise TaskFileError(unavailable, 404) from None
+    if not managed or any(ord(c) < 32 for c in reference):
         raise TaskFileError(outside)
     path = reference
     if reference.startswith("file:"):
@@ -130,7 +134,7 @@ def task_file(project: str, reference: str) -> dict:
                             raise TaskFileError(unavailable, 404)
                         try:
                             text = _bounded_bytes(directory, name, TASK_FILE_LIMIT).decode("utf-8")
-                        except (ValueError, UnicodeError):
+                        except (ValueError, UnicodeError, storage.NotRegularFile):
                             raise TaskFileError(unsupported, 415) from None
                         except OSError:
                             raise TaskFileError(unavailable, 404) from None

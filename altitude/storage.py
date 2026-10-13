@@ -22,9 +22,10 @@ class OrdinaryNonDirectory(NotADirectoryError):
     """An ordinary file occupies a directory component used by a directory predicate."""
 
 
-def _component(name: str) -> None:
+def _component(name: str) -> str:
     if not name or name in (".", "..") or "/" in name or "\\" in name:
         raise StorageRefused("invalid relative storage path")
+    return name
 
 
 @contextmanager
@@ -38,8 +39,8 @@ def directory(root: Path | int, parts: list[str], *, create: bool = False, searc
     else:
         fd = os.open(root, flags)
     try:
-        for part in parts:
-            _component(part)
+        for raw_part in parts:
+            part = _component(raw_part)
             if create:
                 try:
                     os.mkdir(part, mode=mode, dir_fd=fd)
@@ -89,9 +90,7 @@ def runtime_parts(path: Path) -> list[str]:
         parts = list(Path(path).relative_to(config.ROOT).parts)
     except ValueError as exc:
         raise StorageRefused("not a runtime record") from exc
-    for part in parts:
-        _component(part)
-    return parts
+    return [_component(part) for part in parts]
 
 
 @contextmanager
@@ -107,7 +106,7 @@ def runtime_parent(path: Path, *, create: bool = False, mode: int = 0o700,
 @contextmanager
 def regular_reader(directory: int, name: str):
     """Never follow a leaf link or block on a substituted special file."""
-    _component(name)
+    name = _component(name)
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -128,7 +127,7 @@ def runtime_read_text(path: Path) -> str:
 
 
 def regular_stat(directory: int, name: str) -> os.stat_result:
-    _component(name)
+    name = _component(name)
     info = os.stat(name, dir_fd=directory, follow_symlinks=False)
     if not stat.S_ISREG(info.st_mode):
         raise NotRegularFile("not a regular file")
@@ -141,7 +140,7 @@ def runtime_regular_stat(path: Path) -> os.stat_result:
 
 
 def exists(directory: int, name: str, *, kind: str = "file") -> bool:
-    _component(name)
+    name = _component(name)
     try:
         info = os.stat(name, dir_fd=directory, follow_symlinks=False)
     except FileNotFoundError:
@@ -192,8 +191,8 @@ def directory_fd_for_sync(parent: int):
 
 def atomic_write(directory: int, name: str, text: str) -> None:
     """Replace a leaf entry without opening it, and sync the held parent."""
-    _component(name)
-    temporary = f".{name}.{uuid.uuid4().hex}"
+    name = _component(name)
+    temporary = _component(f".{name}.{uuid.uuid4().hex}")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -213,7 +212,7 @@ def atomic_write(directory: int, name: str, text: str) -> None:
 
 def initialize(directory: int, name: str, text: str) -> None:
     """Create the first registry leaf with its existing umask-based mode."""
-    _component(name)
+    name = _component(name)
     try:
         fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                      0o666, dir_fd=directory)
@@ -229,7 +228,7 @@ def runtime_atomic_write(path: Path, text: str, *, create: bool = True, mode: in
 
 
 def append(directory: int, name: str, text: str, *, sync: bool = False) -> None:
-    _component(name)
+    name = _component(name)
     fd = os.open(name, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
                  0o666, dir_fd=directory)
     try:
@@ -259,7 +258,7 @@ def runtime_unlink(path: Path, *, missing_ok: bool = False) -> None:
 
 
 def unlink(parent: int, name: str, *, missing_ok: bool = False) -> None:
-    _component(name)
+    name = _component(name)
     try:
         if not exists(parent, name):
             raise FileNotFoundError(name)
@@ -297,8 +296,8 @@ def runtime_listdir(path: Path) -> list[str]:
 
 def create_absent(directory: int, name: str, text: str) -> None:
     """Publish a complete file only when the destination remains absent."""
-    _component(name)
-    temporary = f".{name}.{uuid.uuid4().hex}"
+    name = _component(name)
+    temporary = _component(f".{name}.{uuid.uuid4().hex}")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -316,7 +315,7 @@ def create_absent(directory: int, name: str, text: str) -> None:
 @contextmanager
 def lock_file(directory: int, name: str, *, truncate: bool = False, mode: int = 0o600):
     """Create a fixed regular lock leaf without following links or truncating existing bytes."""
-    _component(name)
+    name = _component(name)
     flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | (0 if truncate else os.O_APPEND)
     fd = os.open(name, flags, mode, dir_fd=directory)
     try:

@@ -462,7 +462,12 @@ class TestImages(AltitudeCase):
         image_path.write_bytes(b"replacement")
         with self.assertRaisesRegex(images.ImageError, "damaged"):
             images.read(self.project, refs[0]["id"])
-        with mock.patch.object(images.os, "open", side_effect=PermissionError("private path")):
+        original_open = os.open
+        def denied_image(path, flags, *args, **kwargs):
+            if os.fspath(path) == str(image_path):
+                raise PermissionError("private path")
+            return original_open(path, flags, *args, **kwargs)
+        with mock.patch.object(images.os, "open", side_effect=denied_image):
             with self.assertRaises(images.ImageError) as denied:
                 images.read(self.project, refs[0]["id"])
             self.assertEqual(denied.exception.status, 403)

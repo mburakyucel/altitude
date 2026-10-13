@@ -11,6 +11,7 @@ class ConversationDecisions(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
+        self.fixture_boot_identity()
         self.quiet_engines()
         task = T.new(self.project, "Index retention", "Keep rollback available.", hold_merge="Operator review")
         task.update(state="running", attempt=1, agent_id="owner", session_id="conversation")
@@ -67,10 +68,10 @@ class ConversationDecisions(AltitudeCase):
         prefix = path.read_bytes()
         replace = os.replace
 
-        def fail_inbox(source, destination):
-            if destination == path:
+        def fail_inbox(source, destination, **kwargs):
+            if destination == path.name and kwargs.get("dst_dir_fd") is not None:
                 raise OSError("inbox publication interrupted")
-            return replace(source, destination)
+            return replace(source, destination, **kwargs)
 
         with mock.patch.object(S.os, "replace", side_effect=fail_inbox), self.assertRaises(OSError):
             T.accept_question(self.project, self.slug, question["id"], 1)
@@ -352,7 +353,7 @@ class ConversationDecisions(AltitudeCase):
         [message] = T.pending(self.project, self.slug)
         claim = T.claim_resume(self.project, self.slug)
         self.assertEqual(claim["phase"], "claimed", "the provider has not received the batch yet")
-        with mock.patch.object(S, "atomic_write", side_effect=OSError("release write failed")):
+        with mock.patch.object(T.storage, "runtime_atomic_write", side_effect=OSError("release write failed")):
             with self.assertRaises(OSError):
                 T.release_resume_claim(self.project, self.slug, claim["id"], consume_request=False)
         self.assertEqual(S.load_task(self.project, self.slug)["resume_claim"]["messages"], [message])

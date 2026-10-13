@@ -823,7 +823,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         self.assertEqual(server.settle_interrupted_machine_commands(), [])
 
     def test_recovery_keeps_original_evidence_when_a_prior_terminal_event_names_it(self):
-        write = S.atomic_write
+        write = T.storage.runtime_atomic_write
 
         def interrupted_write(path, *args, **kwargs):
             if path.name == "machine.jsonl" and any(e["kind"] == "machine-run"
@@ -832,7 +832,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
             return write(path, *args, **kwargs)
 
         with mock.patch.object(validation, "_deliver", side_effect=OSError("temporary copy failure")), \
-                mock.patch.object(S, "atomic_write", side_effect=interrupted_write):
+                mock.patch.object(T.storage, "runtime_atomic_write", side_effect=interrupted_write):
             result = self.validate(["sh", "-c", "echo original-log; echo original-result > /results/check"], status=400)
         self.assertIn("interrupted ledger", result["error"])
         [area] = list((validation.home() / "runs").iterdir())
@@ -860,7 +860,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
     def test_finishing_again_after_an_interrupted_finish_keeps_the_first_outcome_once(self):
         row = T.start_machine_run(self.project, self.slug, lambda n: {
             "purpose": "validation", "command": "true", "unit": "altitude-validation-x.service"})
-        with mock.patch.object(S, "atomic_write", side_effect=OSError("altd stopped")):
+        with mock.patch.object(T.storage, "runtime_atomic_write", side_effect=OSError("altd stopped")):
             with self.assertRaises(OSError):
                 T.finish_machine_run(self.project, self.slug, {**row, "exit": 0, "finished": S.now(), "ended": "exit"})
         T.finish_machine_run(self.project, self.slug, {**row, "finished": S.now(), "ended": "interrupted"})

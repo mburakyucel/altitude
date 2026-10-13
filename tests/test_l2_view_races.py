@@ -1,11 +1,10 @@
 """#302: task polling tolerates inbox consumption and archival without inventing handoff evidence."""
-from pathlib import Path
 import threading
 from unittest import mock
 
 from tests.support import AltitudeCase, make_repo
 from tests.fakes import FakeL2
-from altitude import config, dispatch, server, state as S, tasks as T
+from altitude import config, dispatch, server, state as S, storage, tasks as T
 
 
 class TestL2ViewRaces(AltitudeCase):
@@ -13,10 +12,12 @@ class TestL2ViewRaces(AltitudeCase):
         super().setUp()
         make_repo(self.repo)
         self.private_ledgers()
+        self.fixture_boot_identity()
         self.quiet_engines()
         self.engine = FakeL2()
         self.engine.install(self)
         self.patch(server.monitor, "sessions", return_value=[])
+        self.patch(config, "machine_wip", return_value=20)
 
     def launch(self, engine):
         self.register(self.project, routing=[[{"engine": engine, "model": "fixture-model"}]], wip=20)
@@ -26,7 +27,7 @@ class TestL2ViewRaces(AltitudeCase):
 
     def race(self, task, action):
         inbox = S.task_dir(self.project, task["slug"]) / "inbox.jsonl"
-        read_text = Path.read_text
+        read_text = storage.read_text
         intercepted = []
         attempted, finished = threading.Event(), threading.Event()
         errors = []
@@ -42,16 +43,16 @@ class TestL2ViewRaces(AltitudeCase):
 
         writer = threading.Thread(target=write)
 
-        def read(path, *args, **kwargs):
-            if path == inbox and not intercepted:
+        def read(parent, name):
+            if name == inbox.name and not intercepted:
                 intercepted.append(True)
                 writer.start()
                 self.assertTrue(attempted.wait(5))
                 self.assertFalse(finished.is_set(), "the writer must wait for the locked message snapshot")
-            return read_text(path, *args, **kwargs)
+            return read_text(parent, name)
 
         try:
-            with mock.patch.object(Path, "read_text", new=read):
+            with mock.patch.object(storage, "read_text", new=read):
                 view = server.task_view(self.project, task["slug"])
         finally:
             if writer.ident:
@@ -92,6 +93,8 @@ class TestL2ViewRaces(AltitudeCase):
                     if operation == "archive":
                         self.assertEqual(settled["state"], "rejected")
                         self.assertTrue((S.archive_dir(self.project) / task["slug"] / "inbox.jsonl").exists())
+                    else:
+                        T.reject(self.project, task["slug"], "Fixture complete")
 
     def test_known_delivery_survives_a_later_inbox_consumption_race(self):
         for engine in config.ENGINES:
@@ -106,6 +109,7 @@ class TestL2ViewRaces(AltitudeCase):
                 self.assertEqual([row["delivery"]["state"] for row in view["messages"]], ["delivered", "queued"])
                 settled = server.task_view(self.project, task["slug"])
                 self.assertEqual([row["delivery"]["state"] for row in settled["messages"]], ["delivered", "unconfirmed"])
+                T.reject(self.project, task["slug"], "Fixture complete")
 
     def test_corrupt_and_denied_inbox_reads_still_fail_explicitly(self):
         task = self.launch(config.ENGINES[0])
@@ -113,12 +117,12 @@ class TestL2ViewRaces(AltitudeCase):
         inbox.write_text("{corrupt}\n")
         with self.assertRaisesRegex(ValueError, "corrupt task inbox"):
             server.task_view(self.project, task["slug"])
-        read_text = Path.read_text
+        read_text = storage.read_text
 
-        def denied(path, *args, **kwargs):
-            if path == inbox:
+        def denied(parent, name):
+            if name == inbox.name:
                 raise PermissionError("fixture inbox denied")
-            return read_text(path, *args, **kwargs)
+            return read_text(parent, name)
 
-        with mock.patch.object(Path, "read_text", new=denied), self.assertRaisesRegex(PermissionError, "inbox denied"):
+        with mock.patch.object(storage, "read_text", new=denied), self.assertRaisesRegex(PermissionError, "inbox denied"):
             server.task_view(self.project, task["slug"])
