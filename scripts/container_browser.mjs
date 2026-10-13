@@ -67,9 +67,11 @@ try {
         env:{...process.env,HOME:home,XDG_CONFIG_HOME:join(home,"config"),XDG_CACHE_HOME:join(home,"cache")}});
       const page=await context.newPage();
       if(cfg.control_socket) {
+        const wrongHostnamePage=await context.newPage();
         let rejected=false;
-        try {await page.goto('https://altitude-wrong.invalid:'+cfg.port,{timeout:15000});}
+        try {await wrongHostnamePage.goto('https://altitude-wrong.invalid:'+cfg.port,{timeout:15000});}
         catch(error) {if(!String(error).includes('ERR_CERT_COMMON_NAME_INVALID')) throw error;rejected=true;}
+        finally {await wrongHostnamePage.close();}
         if(!rejected) throw Error('Wrong TLS hostname was accepted');
         writeFileSync(join(evidence,'tls-controls.json'),JSON.stringify({untrusted_ca_rejected:true,wrong_hostname_rejected:true}));
       }
@@ -118,8 +120,11 @@ try {
       await expect(panel.getByText("Using AGENTS.md; its contents are unchanged.")).toBeVisible();
       await panel.getByRole("button",{name:"Open conversation"}).click();
       // The real daemon records setup turns as system events; open their actual
-      // conversation group instead of replacing history with a fixture response.
-      await page.getByRole('button',{name:'Show',exact:true}).click();
+      // completed failure/retry group before expanding it. The initial history
+      // read can still contain only the first turn while the real poll catches up.
+      const setupHistory=page.getByText('L3 handled 2 system events between your messages',{exact:true});
+      await expect(setupHistory).toBeVisible();
+      await setupHistory.locator('..').getByRole('button',{name:'Show',exact:true}).click();
       await state("11-coordinator-connected",page.getByText("Fictional container coordinator connected.",{exact:true}).last());
       await page.getByRole('textbox',{name:'Message L3 about atlas'}).fill('Create the fictional browser task.');
       await page.getByRole('button',{name:'Send',exact:true}).click();
