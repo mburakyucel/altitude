@@ -3260,6 +3260,18 @@ The server retains only row signatures, order and change versions for active/rec
 Indexes expire after 60 idle seconds, checked on access, without evicting other active readers;
 it retains no transcript bodies. Unchanged source fingerprints
 avoid parsing and return a small response. Changed inputs rebuild the canonical projection.
+Task-owned invocation records and stdout use a request-local reader in the engine seam.
+It selects the registered project's live task directory, or its archive when the live `tasks`
+parent or task entry is absent or an ordinary non-directory; linked entries refuse selection.
+It pins the selected job directory. Historical discovery
+parses each regular JSON record once and scans stdout incrementally through the initialization
+header; current activity uses the validated worker identity without a header selection rule.
+Projection and activity read complete stdout bytes through a regular no-follow descriptor relative
+to that pinned directory. The post-projection fingerprint also compares opened runtime identities
+before index publication; same-inode appends remain readable. A replaced JSON or stdout identity refuses the view before index
+publication and makes activity unavailable; the next request rediscovers the source. The reader
+retains no transcript body or descriptor per historical turn. External native sessions remain
+distinct adapter-selected sources with their existing provenance boundary.
 Deletion history is bounded; index loss, source replacement or an expired cursor requests bounded
 reconciliation of a paused reader's loaded interval. A following reader reopens the recent tail
 after a lost index or a long absence; older rows remain available by scrolling upward. The browser

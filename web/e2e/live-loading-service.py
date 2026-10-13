@@ -6,7 +6,7 @@ import json
 import sys
 import threading
 
-from service_support import configure, serve
+from service_support import FixtureSource, configure, serve
 from tests.support import add_worktree, make_repo
 from altitude import config, engines, server, state as S, tasks as T, transcript
 
@@ -33,8 +33,18 @@ def main():
             row.update(tool_use_id=f"call-{index // 4}", tool="fixture-check", summary=f"Inspect fixture {index // 4}")
         return {"timestamp": at, "row": row}
 
-    engines.transcript_sources = lambda task, **_kwargs: [sources[task["slug"]]]
-    engines.activity_source = lambda task, **_kwargs: sources[task["slug"]]
+    @contextmanager
+    def transcript_sources(_project, slug, _task):
+        path, record = sources[slug]
+        yield [(FixtureSource(path, record), record)]
+
+    @contextmanager
+    def activity_source(_project, slug, _task):
+        path, record = sources[slug]
+        yield FixtureSource(path, record)
+
+    engines.transcript_sources = transcript_sources
+    engines.activity_source = activity_source
     engines.session_context_source = lambda _task: None
     engines.transcript_rows = lambda _engine, value, _worktree: [dict(value["row"])]
     engines.public_message_identity = lambda _engine, _value: None

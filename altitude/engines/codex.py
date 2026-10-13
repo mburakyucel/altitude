@@ -5,6 +5,7 @@ import math
 import selectors
 import os
 import re
+import stat
 import shutil
 import socket
 import subprocess
@@ -248,35 +249,30 @@ def _codex_unit(worker_id: str) -> str:
     return f"{CODEX_UNIT_PREFIX}{safe}.service"
 
 
-def codex_turns(job_root: Path, session_id: str) -> list[Path]:
+def codex_turns(job: int, root: Path, session_id: str):
     """The stdout JSONL of every turn of one thread under `job_root`, oldest first (one worker record per turn)."""
+    from . import invocation
     turns = []
-    for record_path in Path(job_root).glob("*.json"):
-        record = S.read_json(record_path, None)
-        if not isinstance(record, dict):
+    for name in os.listdir(job):
+        if not name.endswith(".json"):
             continue
-        stdout = common._codex_paths(job_root, record_path.stem)["stdout"]
+        worker = name[:-5]
+        source = invocation.invocation(job, root, worker)
+        if source is None:
+            continue
+        stdout_name = f"{worker}.stdout.jsonl"
+        try:
+            info = os.stat(stdout_name, dir_fd=job, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            raise invocation.InvocationRefused("invocation stdout refused")
         # The initialization record identifies the thread; do not parse the whole transcript
         # merely to discover which sources the live viewer must subsequently project.
-        thread = None
-        try:
-            with stdout.open(errors="replace") as stream:
-                for line in stream:
-                    try:
-                        event = json.loads(line)
-                    except ValueError:
-                        continue
-                    if isinstance(event, dict) and event.get("type") == "thread.started" and event.get("thread_id"):
-                        thread = str(event["thread_id"])
-                        break
-                    if isinstance(event, dict) and event.get("type", "").startswith(("item.", "turn.")):
-                        break
-        except OSError:
-            pass
-        thread = thread or record.get("session_id")
-        if thread == session_id and stdout.is_file():
-            turns.append((str(record.get("started_at") or ""), record_path.stem, stdout))
-    return [path for _, _, path in sorted(turns)]
+        thread = source.discover_stdout(header=True) or source.record.get("session_id")
+        if thread == session_id:
+            turns.append((str(source.record.get("started_at") or ""), worker, source))
+    return [source for _, _, source in sorted(turns)]
 
 
 def _codex_error(record: dict) -> str:
@@ -634,9 +630,8 @@ def image_input(prompt, images, native):
             *({"type": "localImage", "path": item["path"]} for item in images if native)]
 
 
-def transcript_sources(task, *, job_root):
-    return [(path, S.read_json(path.parent / f"{path.name.split('.')[0]}.json", None) or {})
-            for path in codex_turns(job_root, str(task.get("session_id") or ""))]
+def transcript_sources(task, *, job, root):
+    return [(source, source.record) for source in codex_turns(job, root, str(task.get("session_id") or ""))]
 
 
 def transcript_rows(record, worktree):

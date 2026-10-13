@@ -685,9 +685,10 @@ def image_input(prompt, images, native):
     return content
 
 
-def transcript_sources(task, *, job_root):
+def transcript_sources(task):
+    from .invocation import NativeSession
     path = _claude_path(str(task.get("session_id") or ""))
-    return [(path, {})] if path and path.is_file() else []
+    return [(NativeSession(path, {}), {})] if path and path.is_file() else []
 
 
 def transcript_rows(record, worktree):

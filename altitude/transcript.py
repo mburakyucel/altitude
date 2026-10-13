@@ -81,6 +81,10 @@ def _read_jsonl(path: Path) -> list[tuple[dict | None, str | None]]:
         data = path.read_bytes()
     except OSError:
         return [(None, "source unavailable")]
+    return _parse_jsonl(data)
+
+
+def _parse_jsonl(data: bytes) -> list[tuple[dict | None, str | None]]:
     lines = data.splitlines(keepends=True)
     out = []
     for index, raw in enumerate(lines, 1):
@@ -161,16 +165,25 @@ def activity(project: str, slug: str) -> dict:
     running in the background (None when its engine reports none)."""
     _require_task_access(project, slug)
     task = S.load_task(project, slug)
+    try:
+        with engines.activity_source(project, slug, task) as source:
+            return _activity(project, slug, task, source)
+    except engines.InvocationRefused:
+        return {"generation": task.get("agent_id") or None, "state": "unavailable", "commentary": None,
+                "observation": None, "delivered": [], "background": None,
+                "error": "Current activity records are unavailable."}
+
+
+def _activity(project: str, slug: str, task: dict, source) -> dict:
     generation = task.get("agent_id") or None
     result = {"generation": generation, "state": "empty", "commentary": None, "observation": None, "delivered": [],
               "background": None}
     engine = engines.transcript_engine(task)
     worktree = str(task.get("worktree") or "")
-    source = engines.activity_source(task, job_root=dispatch.l2_job_root(project, slug))
     context = engines.session_context_source(task)
     # These timestamps stay attached to actual native source messages, never poll/turn start times.
     native_text: dict[tuple[str, int, str], str] = {}
-    started = _when(source[1].get("started_at")) if source else None
+    started = _when(source.record.get("started_at")) if source else None
     if context:
         messages = [(message["id"], tasks.render_inbox([message])) for message in tasks.task_messages(project, slug)]
         delivered: dict[str, str | None] = {}
@@ -197,8 +210,12 @@ def activity(project: str, slug: str) -> dict:
         if generation:
             result.update(state="unavailable", error="Current activity records are unavailable.")
         return result
-    path, _ = source
-    records = _read_jsonl(path)
+    try:
+        data, info = source.read()
+        records = _parse_jsonl(data)
+    except OSError:
+        records = [(None, "source unavailable")]
+        info = None
     # Every task read walks the whole source, so both readings below share one redaction of each record.
     redacted = [None if record is None else _redact(record) for record, _ in records]
     work = engines.background_work(engine, [record for record in redacted if record is not None])
@@ -220,9 +237,9 @@ def activity(project: str, slug: str) -> dict:
             at = row.get("at") if _when(row.get("at")) is not None else native_text.get((identity, block, row["text"]))
             result["commentary"] = {"id": f"{generation}:{index}:{block}", "text": row["text"], "at": at,
                                     "time_kind": "source" if at else "unknown"}
-    if records:
+    if records and info is not None:
         try:
-            result["observation"] = {"at": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(),
+            result["observation"] = {"at": datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(),
                                      "label": "Recorded output changed"}
         except OSError:
             result.update(state="unavailable", error="Current activity records are unavailable.")
@@ -249,13 +266,12 @@ def _stat(path: Path) -> tuple:
         return ()
 
 
-def _inputs(project: str, slug: str, task: dict) -> tuple[str, list]:
-    sources = engines.transcript_sources(task, job_root=dispatch.l2_job_root(project, slug))
+def _inputs(project: str, slug: str, task: dict, sources: list) -> str:
     directory = S.task_dir(project, slug)
     files = [(name, _stat(directory / name)) for name in ("events.log", "brief.md", "conversation.jsonl")]
     fields = {key: task.get(key) for key in ("l2_engine", "session_id", "attempt", "agent_id", "worktree", "message_deliveries")}
     return _digest([files, fields, config.operator_label(),
-                    [(str(path), _stat(path), turn) for path, turn in sources]]), sources
+                    [(str(source), source.stat(), turn) for source, turn in sources]])
 
 
 def _clock_order(value: float) -> str:
@@ -372,9 +388,9 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
     for offset, event in enumerate(S.read_events(project, slug)):
         safe = _redact(event)
         add(_platform_row(event), safe, event_source, _when(event.get("at")) or 0.0, 0, 0.0, offset)
-    for source_order, (path, turn) in enumerate(sources):
+    for source_order, (file, turn) in enumerate(sources):
         turn = turn or {}
-        source = f"{path}:{_stat(path)[:2]}"
+        source = f"{file}:{file.stat()[:2]}"
         turn_time = _when(turn.get("started_at")) or 0.0
         when = turn_time
         if turn:
@@ -389,7 +405,7 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
                 add(_row("platform", "message", "user", safe["prompt"], type="prompt", at=turn.get("started_at")),
                     safe, source, when, 1, turn_time, -1)
         try:
-            data = path.read_bytes()
+            data, _ = file.read()
         except OSError:
             add(_row(engine, "error", "system", "source unavailable", type="record-error"),
                 {"error": "source unavailable"}, source, when, 1, turn_time, 0)
@@ -397,11 +413,11 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
         has_engine = has_engine or bool(data)
         # Only complete bytes are append-stable; finishing a partial last line is not replacement.
         complete = max(data.rfind(b"\n"), data.rfind(b"\r")) + 1
-        old = previous_sources.get(str(path))
+        old = previous_sources.get(str(file))
         if old and (old[0] != source or old[3] != source_order or len(data) < old[1]
                     or hashlib.sha256(data[:old[1]]).hexdigest() != old[2]):
             replacement = True
-        source_state[str(path)] = (source, complete, hashlib.sha256(data[:complete]).hexdigest(), source_order)
+        source_state[str(file)] = (source, complete, hashlib.sha256(data[:complete]).hexdigest(), source_order)
         calls: dict[str, dict] = {}
         pending: dict[str, list[dict]] = {}
         offset = 0
@@ -487,7 +503,14 @@ def _publish(index: _Index, rows: dict, sources: dict, has_engine: bool, fingerp
     index.fingerprint = fingerprint
 
 
-def view(project: str, slug: str, *, engine: str, session_id: str, attempt: int, raw: bool = False,
+def view(*args, **kwargs) -> dict:
+    try:
+        return _view(*args, **kwargs)
+    except engines.InvocationRefused as exc:
+        raise TranscriptAccessError("invocation source changed or was refused") from exc
+
+
+def _view(project: str, slug: str, *, engine: str, session_id: str, attempt: int, raw: bool = False,
          mode: str = "initial", cursor: str = "", before: str = "", lower: str = "", after: str = "",
          record: str = "", offset: int = 0) -> dict:
     """Recent first, demand-loaded history and coalesced deltas over a metadata-only change index."""
@@ -512,23 +535,27 @@ def view(project: str, slug: str, *, engine: str, session_id: str, attempt: int,
                 since = int(value)
             except (ValueError, AttributeError):
                 epoch, since = "", -1
-        fingerprint, sources = _inputs(project, slug, task)
-        rows = records = None
-        # A continuation needs bodies for still-undelivered upserts even when sources are unchanged.
-        # Materialize and publish once, before selecting changes, so metadata always describes
-        # this request's actual bodies rather than an earlier projection of the same inputs.
-        needs_body = (epoch == index.epoch and 0 <= since <= index.version
-                      and any(meta.version > since and meta.order >= lower for meta in index.rows.values()))
-        if fingerprint != index.fingerprint or mode != "delta" or needs_body:
-            rows, records, source_state, has_engine, replacement = _projection(
-                project, slug, task, engine, raw, sources, index.sources)
-            current = S.load_task(project, slug)
-            _require_task_access(project, slug)
-            require_generation(current, engine=engine, session_id=session_id, attempt=attempt)
-            fresh, _ = _inputs(project, slug, current)
-            # Live writers must not starve readers. Return this coherent projection while forcing
-            # the next request to re-read when inputs changed during materialization.
-            _publish(index, rows, source_state, has_engine, fingerprint if fresh == fingerprint else "", replacement)
+        with engines.transcript_sources(project, slug, task) as sources:
+            fingerprint = _inputs(project, slug, task, sources)
+            rows = records = None
+            # A continuation needs bodies for still-undelivered upserts even when sources are unchanged.
+            # Materialize and publish once, before selecting changes, so metadata always describes
+            # this request's actual bodies rather than an earlier projection of the same inputs.
+            needs_body = (epoch == index.epoch and 0 <= since <= index.version
+                          and any(meta.version > since and meta.order >= lower for meta in index.rows.values()))
+            if fingerprint != index.fingerprint or mode != "delta" or needs_body:
+                rows, records, source_state, has_engine, replacement = _projection(
+                    project, slug, task, engine, raw, sources, index.sources)
+                current = S.load_task(project, slug)
+                _require_task_access(project, slug)
+                require_generation(current, engine=engine, session_id=session_id, attempt=attempt)
+                with engines.transcript_sources(project, slug, current) as fresh_sources:
+                    fresh = _inputs(project, slug, current, fresh_sources)
+                    if engines.replaced_after_projection(sources, fresh_sources):
+                        raise engines.InvocationRefused("invocation source replaced before publication")
+                # Live writers must not starve readers. Return this coherent projection while forcing
+                # the next request to re-read when inputs changed during materialization.
+                _publish(index, rows, source_state, has_engine, fingerprint if fresh == fingerprint else "", replacement)
         _require_task_access(project, slug)
         require_generation(S.load_task(project, slug), engine=engine, session_id=session_id, attempt=attempt)
         result = {"project": project, "slug": slug, "engine": engine, "session_id": session_id, "attempt": attempt,
