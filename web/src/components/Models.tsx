@@ -117,7 +117,7 @@ export function ModelSelect({ value, models, engines, emptyLabel, busy, onChange
       {models.map((m) => <option key={modelKey(m)} value={modelKey(m)}>
         {m.model ? `${m.label} · ${label(m.engine)}` : m.label}
       </option>)}
-      {!listed ? <option value={modelKey(value)}>{value?.model} · {label(value!.engine!)}</option> : null}
+      {!listed ? <option value={modelKey(value)}>{value?.model || "Project default"} · {label(value!.engine!)}</option> : null}
       <option value="other">Other model…</option>
     </select>
     {other ? <div ref={custom} className="model-other-fields" onBlur={(event) => {

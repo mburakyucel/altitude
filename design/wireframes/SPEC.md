@@ -1768,8 +1768,8 @@ A direct overview visit returns to `/projects`; entry from another view returns 
 
 The overview groups rows by where a setting applies, in two columns on desktop and one on phone.
 **Your name** comes first: the name, or "Not set · screens say “you”", opening `/settings/name`.
-**This project**, present only when Settings opens from a project, has one row naming it with its L3
-choice and routing ("L3: Fable · Low · tasks prefer Codex"), opening `/settings/projects/<name>`,
+**This project**, present only when Settings opens from a project, has one row naming it with its
+routing ("tasks prefer Codex"), opening `/settings/projects/<name>`,
 followed by **L3 · <project>** with native **Model** and **Effort** dropdowns and "Applies from the
 next reply." **Models** holds **New tasks · All projects**, the same saved choice as the quota
 shortcut (§3.6.1), with native **Model** and **Effort** dropdowns and "Applies when tasks start,
@@ -1909,7 +1909,7 @@ inherits with **Default (from project)**. Other model reveals Engine then exact 
 or just ID for a fixed-engine project default. Enter in ID or leaving the entire custom group
 saves a valid ID; moving between Engine and ID never saves. Blank blur or Escape restores the
 saved value. An ID containing spaces says "Use one model ID without spaces." without a write.
-Custom saved IDs remain explicit options. Loading disables controls; read failure offers Retry.
+Custom saved IDs remain explicit options. Loading shows Loading models; read failure offers Retry.
 Saving retains focus with guarded aria-disabled controls and shows the pending choice; success
 shows Saved. Failed/denied saves restore the saved value and offer Retry save, preserving custom
 text for retry; concurrent changes offer Reload. No prior reply says "No reply yet."
