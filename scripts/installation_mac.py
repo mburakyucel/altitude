@@ -33,6 +33,7 @@ import sys
 import time
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
 ACCOUNT_LABEL = "dev.altitude.altd"
 STARTED = time.monotonic()
 
@@ -61,9 +62,11 @@ def missing_prerequisites() -> list[str]:
         missing.append("macOS 15 or newer")
     if sys.version_info < (3, 12):
         missing.append(f"Python 3.12 or newer (this is {platform.python_version()})")
-    openssl = shutil.which("openssl")
-    if not openssl or not subprocess.run([openssl, "version"], capture_output=True, text=True).stdout.startswith("OpenSSL 3"):
-        missing.append("OpenSSL 3 first on PATH (brew install openssl@3)")
+    from altitude import platform as native
+    try:
+        native.openssl()
+    except RuntimeError as exc:
+        missing.append(str(exc))
     missing += [tool for tool in ("git", "gh", "pnpm") if not shutil.which(tool)]
     if sandboxed():
         missing.append("a process outside the worker sandbox (alt task run under an operator grant, or a terminal)")
@@ -78,11 +81,11 @@ def build(commit: str, output: Path, log: Path) -> None:
 
 
 def clean_environment(home: Path) -> dict[str, str]:
-    """What a fresh login on this Mac would give the installer: its own HOME, and a PATH with Homebrew's Python 3.12,
-    OpenSSL 3, Git and GitHub CLI ahead of the system's, and nothing of the operator's shell or Altitude."""
-    folders = [str(Path(shutil.which("openssl")).parent), str(Path(sys.executable).parent),
+    """A fresh HOME with stock system tools first, and installed Python, Git and GitHub CLI available.
+    LibreSSL stays first: the installer and service must discover OpenSSL themselves."""
+    folders = ["/usr/bin", "/bin", str(Path(sys.executable).parent),
                str(Path(shutil.which("gh")).parent), str(Path(shutil.which("git")).parent),
-               "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+               "/usr/sbin", "/sbin"]
     user = os.environ.get("USER") or os.getlogin()
     return {"HOME": str(home), "USER": user, "LOGNAME": user, "SHELL": "/bin/zsh", "LANG": "en_US.UTF-8",
             "TMPDIR": os.environ.get("TMPDIR", "/tmp"), "PATH": ":".join(dict.fromkeys(folders))}

@@ -112,7 +112,7 @@ class ReleaseArchive(AltitudeCase):
         self.assertIn("REPOSITORY='https://github.com/example/altitude'", script)
         self.assertIn(f"ARCHIVE_SHA256='{checksum}'", script)
         self.assertIn(f"INSTALLER_SHA256='{installer}'", script)
-        self.assertNotIn("@", script.split("case")[0].split("set -eu")[1])
+        self.assertNotRegex(script, r"@[A-Z_]+@", "every release-template placeholder is filled")
         self.assertTrue(os.access(output / "install.sh", os.X_OK))
         self.assertEqual((output / "SHA256SUMS").read_text().splitlines(), [
             f"{checksum}  {archive.name}", f"{installer}  install.py",
