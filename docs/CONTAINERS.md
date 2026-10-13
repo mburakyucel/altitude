@@ -522,7 +522,11 @@ guest administration credentials or host mounts. The controller physically disco
 before candidate guest administration, application daemons or Chromium run. Network controls accompany that
 transition. The lane shares the single-guest lock, uses at most half the host CPUs (up to four), 6 GiB
 memory and a 24 GiB sparse disk, keeps 10 GiB free and stops provisioning before its 1 GB download
-limit. Images, fixture storage, socket endpoints and the guest disk are disposable.
+limit. Images, fixture storage, socket endpoints and the guest disk are disposable. Both fictional
+release images use one delegated build lifetime and private store, downloading common distribution
+layers once. That store is deleted after the paired build, including failure, and persists across
+neither validation runs nor devices. The protection image uses deployed locked dependency manifests;
+both preflight and journey containers select its captured image ID.
 
 The browser container runs as a non-root user with `--network=none`. It mounts only read-only candidate
 source, results and local fixture sockets. A bounded, versioned framed Unix protocol admits fixed
