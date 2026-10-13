@@ -371,10 +371,9 @@ boards in place, removing obsolete review scaffolding and its generators/referen
 ### Loading and caching evidence
 
 `web/e2e/document-update.pw.ts` walks all three document entry points across replacement of the
-actual built JS/CSS served by a disposable real server. Separate script, stylesheet and combined
-removal controls use fixture-only PUT requests; the application's POST dispatcher remains real.
-Separate script, stylesheet and combined
-removal cases establish readable-source recovery, saved-image access, draft preservation, repeated
+actual built JS/CSS served by a disposable real server. Fixture controls use PUT requests, leaving
+the application's POST dispatcher real. Separate script, stylesheet and combined removal cases
+establish readable-source recovery, saved-image access, draft preservation, repeated
 document entry and explicit whole-page reload at phone and desktop widths. Styles load with the
 app, so removal of an old stylesheet leaves the open page's formatting usable. Connection-drop
 fixtures keep the browser cache enabled and verify same-script reload without module preloads.
