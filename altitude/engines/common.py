@@ -10,12 +10,14 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 from .. import config, platform, state as S
+from . import invocation
 
 
 def implementation(engine: str):
@@ -775,10 +777,17 @@ def transcript_engine(task: dict) -> str:
     return str(task.get("l2_engine") or "claude")
 
 
-def transcript_sources(task: dict, *, job_root: Path) -> list[tuple[Path, dict]]:
+@contextmanager
+def transcript_sources(project: str, slug: str, task: dict):
     """Task-selected session evidence and any owning turn, oldest first."""
     engine = transcript_engine(task)
-    return implementation(engine).transcript_sources(task, job_root=job_root) if engine in config.ENGINES else []
+    if engine == "codex" and engine in config.ENGINES:
+        with invocation.job_directory(project, slug) as (job, root):
+            items = implementation(engine).transcript_sources(task, job=job, root=root) if job is not None else []
+            info = os.fstat(job) if job is not None else None
+            yield invocation.RuntimeSources(items, (info.st_dev, info.st_ino) if info else None)
+    else:
+        yield implementation(engine).transcript_sources(task) if engine in config.ENGINES else []
 
 
 def transcript_rows(engine: str, record: dict, worktree: str) -> list[dict]:
@@ -799,21 +808,31 @@ def _hide_reasoning(record: dict) -> dict:
     return record
 
 
-def activity_source(task: dict, *, job_root: Path) -> tuple[Path, dict] | None:
+@contextmanager
+def activity_source(project: str, slug: str, task: dict):
     """Only the current owned invocation can supply a current direction preview."""
     identity = str(task.get("agent_id") or "")
     if not re.fullmatch(r"[\w-]+", identity):
-        return None
-    paths = _codex_paths(job_root, identity)
-    try:
-        record = S.read_json(paths["record"], None)
-    except (OSError, ValueError):
-        return None
-    if (not isinstance(record, dict) or record.get("id") != identity
-            or record.get("engine") != transcript_engine(task)
-            or record.get("session_id") != task.get("session_id")):
-        return None
-    return paths["stdout"], record
+        yield None
+        return
+    with invocation.job_directory(project, slug) as (job, root):
+        if job is None:
+            yield None
+            return
+        try:
+            source = invocation.invocation(job, root, identity)
+        except invocation.InvocationRefused:
+            raise
+        except (OSError, ValueError):
+            source = None
+        record = source.record if source else {}
+        if (not source or record.get("id") != identity
+                or record.get("engine") != transcript_engine(task)
+                or record.get("session_id") != task.get("session_id")):
+            yield None
+            return
+        source.discover_stdout(header=False)
+        yield source
 
 
 def session_context_source(task: dict) -> Path | None:
