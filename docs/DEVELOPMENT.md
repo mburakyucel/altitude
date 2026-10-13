@@ -91,8 +91,10 @@ The configured runtime home may itself be a symlink; its resolved root anchors c
 links below it are refused.
 
 Runtime-storage regressions use disposable real directories and task records for project lock
-contention, leaf/ancestor replacement, startup aliases, descriptor failure cleanup, full UTF-8 briefs
-and live/archive selection. Normal, Raw and record transcript reads exercise fixed-brief refusal;
+contention, registry and settings transactions, leaf/ancestor replacement, startup aliases, atomic
+failure cleanup, full UTF-8 briefs and live/archive selection. Restart publication covers temporary
+link substitution without claiming ownership of a mutable directory entry or file contents.
+Normal, Raw and record transcript reads exercise fixed-brief refusal;
 invocation and native-source regression coverage does not establish their physical containment.
 The Linux execute-only case requires a non-root runner, denied directory listing and successful
 full brief reads and lock acquisition. No provider, private-place or native sandbox probe runs.

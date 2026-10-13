@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from altitude import access, config, dispatch, git_policy, incidents, platform, state as S  # noqa: E402
+from altitude import access, config, dispatch, git_policy, incidents, platform, state as S, storage  # noqa: E402
 
 
 ROOT = config.REPO
@@ -120,11 +120,11 @@ def require_idle() -> None:
             raise Transient("restart refused while dispatch, L3, validation or report verification is active: " + ", ".join(active))
         # The operator command also closes entry until the replacement daemon answers.
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
-        pending = S.read_json(flag, {}) or {}
+        pending = S.read_runtime_json(flag, {}) or {}
         if pending.pop("failed", None):
             pending.pop("requested_at", None)
         pending.setdefault("requested_at", S.now())
-        S.write_json(flag, pending)
+        S.write_runtime_json(flag, pending)
 
 
 def validate_bundle(directory: Path) -> None:
@@ -251,7 +251,7 @@ def publish_and_restart(staging: Path) -> None:
 
 
 def requested() -> dict:
-    return S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {}) or {}
+    return S.read_runtime_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {}) or {}
 
 
 def record_failure(attempt: dict, exc: RestartError) -> None:
@@ -264,7 +264,7 @@ def record_failure(attempt: dict, exc: RestartError) -> None:
     if not attempt.get("requested_at"):
         return
     flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
-    pending = S.read_json(flag, {}) or {}
+    pending = S.read_runtime_json(flag, {}) or {}
     if pending.get("requested_at") == attempt["requested_at"]:
         if pending.get("failed"):
             return
@@ -273,10 +273,10 @@ def record_failure(attempt: dict, exc: RestartError) -> None:
             del pending["requested_at"]
             retry_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=RETRY_SECONDS)
             pending.update(error=str(exc), retries=retries + 1, retry_at=retry_at.isoformat())
-            S.write_json(flag, pending)
+            S.write_runtime_json(flag, pending)
             return
         pending.update(failed=S.now(), error=str(exc))
-        S.write_json(flag, pending)
+        S.write_runtime_json(flag, pending)
     elif web := [path for path in attempt.get("files", []) if dispatch.activation_component(path) == "web"]:
         create_absent(flag, {**{key: attempt[key] for key in ("since", "head") if key in attempt},
                              "files": web, "failed": S.now(), "error": str(exc)})
@@ -286,17 +286,8 @@ def record_failure(attempt: dict, exc: RestartError) -> None:
 def create_absent(path: Path, record: dict) -> None:
     """Write `record` only where no record exists. A merge or restart request the replacement recorded meanwhile keeps
     its own record and activates the current bundle itself; nothing here reads and rewrites another writer's record."""
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w") as stream:
-            json.dump(record, stream, indent=2, sort_keys=True)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.link(temporary, path)
-    except FileExistsError:
-        pass
-    finally:
-        os.unlink(temporary)
+    with storage.runtime_parent(path) as (parent, name):
+        storage.create_absent(parent, name, json.dumps(record, indent=2, sort_keys=True))
 
 
 def main() -> int:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from . import config, dispatch, l3, route, state as S, tasks as T
+from . import config, dispatch, l3, route, state as S, storage, tasks as T
 
 # L3 reads a block notification in about a minute, and half an hour when its queue is busy; an owner it answers
 # resumes to resolve or revise the question. A decision still waiting after this alerts even while either of them
@@ -35,7 +35,7 @@ def wip() -> dict:
     """The running counts and every task waiting for a slot, each with its hold (the queued task card names
     it, SPEC.md §3.5): the WIP limit, engine availability, a pending activation, or a resume checkpoint."""
     per = {p: sum(dispatch.occupies_slot(t) for t in S.list_tasks(p)) for p in config.load_projects()}
-    restart = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
+    restart = S.read_runtime_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
     return {"per_project": per, "machine": sum(per.values()),
             "limit_machine": config.machine_wip(),
             "waiting": [{"project": p, "slug": t["slug"], "why": "planned" if t.get("planned_wait") else "dispatch" if t["state"] == "queued" else "resume",
@@ -73,7 +73,7 @@ def _waiting(project: str, task: dict, restart: dict | None) -> dict:
 
 def queue_status() -> dict:
     """Every running task and every queued/blocked task with its single current wait."""
-    restart = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
+    restart = S.read_runtime_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
     running, waiting = [], []
     for project in config.load_projects():
         for task in S.list_tasks(project):
@@ -97,5 +97,5 @@ def text() -> str:
     if w["waiting"]:
         lines += [f"- {x['project']}/{x['slug']}: {x['hold']}" for x in w["waiting"]]
     txt = "\n".join(lines) + "\n"
-    S.atomic_write(config.DIGEST_FILE, txt)
+    storage.runtime_atomic_write(config.DIGEST_FILE, txt)
     return txt

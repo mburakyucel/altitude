@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, engines, git_policy, l3, platform, state as S, tasks as T
+from . import config, engines, git_policy, l3, platform, state as S, storage, tasks as T
 
 
 class SetupError(git_policy.GitPolicyError):
@@ -25,14 +25,15 @@ def path(project: str):
     return config.project_dir(project) / "setup.json"
 
 
-def read(project: str) -> dict:
-    return S.read_json(path(project), {}) or {}
+def read(project: str, parent: int | None = None) -> dict:
+    return (S.read_json_at(parent, "setup.json", path(project), {}) if parent is not None
+            else S.read_runtime_json(path(project), {})) or {}
 
 
 def save(project: str, **updates) -> dict:
-    with S.project_lock(project):
-        record = {**read(project), **updates}
-        S.write_json(path(project), record)
+    with S.project_lock(project) as parent:
+        record = {**read(project, parent), **updates}
+        S.write_json_at(parent, "setup.json", record)
         return record
 
 
@@ -43,9 +44,9 @@ def operation_lock(project: str, *, wait: bool = False):
     Probes never wait. The runner waits, so a read holding the lock delays an accepted repair
     instead of losing its wake (setup walkthrough interrupted-retry, 2026-09-23).
     """
-    directory = config.project_dir(project)
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / ".setup.lock").open("a") as handle:
+    with storage.runtime_directory([config.require_project_name(project)], create=True,
+                                   search=True, mode=0o777) as directory, \
+            storage.lock_file(directory, ".setup.lock", mode=0o666) as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:
@@ -87,10 +88,10 @@ def request(project: str, action: str, *, actor: str, expected: str | None = Non
         raise ValueError("Inspect the current hook integration before choosing it.")
     if action != "combine" and expected is not None:
         raise ValueError("A hook selection applies only to integration.")
-    with config.project_activity(project) as attached, S.project_lock(project):
+    with config.project_activity(project) as attached, S.project_lock(project) as parent:
         if not attached or not config.is_managed(project):
             raise ValueError("Project is not managed.")
-        record = read(project)
+        record = read(project, parent)
         operation = record.get("operation") or {}
         if operation.get("state") == "running":
             with operation_lock(project) as free:
@@ -102,7 +103,7 @@ def request(project: str, action: str, *, actor: str, expected: str | None = Non
         else:
             record["operation"] = {"id": uuid.uuid4().hex, "action": action, "actor": actor,
                                    "reason": reason, "expected": expected, "state": "pending", "at": S.now()}
-            S.write_json(path(project), record)
+            S.write_json_at(parent, "setup.json", record)
     return observe(project)
 
 

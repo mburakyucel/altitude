@@ -248,9 +248,10 @@ def subprocess_env() -> dict[str, str]:
     return env
 
 
-def machine_settings() -> dict:
+def machine_settings(parent: int | None = None) -> dict:
     from . import state as S
-    return S.read_json(ROOT / "settings.json", {})
+    return (S.read_json_at(parent, "settings.json", ROOT / "settings.json", {}) if parent is not None
+            else S.read_runtime_json(ROOT / "settings.json", {}))
 
 
 #: Why a folder inside one of macOS's private places (Desktop, Documents and the rest) cannot hold a project.
@@ -334,9 +335,9 @@ def machine_wip() -> int:
 
 # The capability seam for speech: host voice runs the pinned speech model on this computer (`altitude/speech.py`)
 # and is the default wherever that model can run; elsewhere the browser's own recognition is.
-def voice_setting() -> dict:
+def voice_setting(parent: int | None = None) -> dict:
     """The saved backend and private service details, else host where its model can run."""
-    value = machine_settings().get("voice")
+    value = machine_settings(parent).get("voice")
     if isinstance(value, dict) and value.get("backend") == "service":
         try:
             validate_voice(value)
@@ -570,8 +571,8 @@ def restart_lock(*, exclusive: bool = False):
     Shared holders are dispatch, review admission, L3, validation and report handling. The exclusive requester
     checks quiet and records requested_at before another holder can enter, across processes.
     """
-    MONITOR_DIR.mkdir(parents=True, exist_ok=True)
-    with (MONITOR_DIR / "restart.lock").open("a") as handle:
+    with storage.runtime_directory(storage.runtime_parts(MONITOR_DIR), create=True, search=True, mode=0o777) as directory, \
+            storage.lock_file(directory, "restart.lock", mode=0o666) as handle:
         try:
             fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -623,7 +624,7 @@ def restart_in_progress() -> bool:
         # From the request on, as for a source restart: new work cannot claim the quiet point activation waits for.
         return (INSTALL_PREFIX / "pending.json").exists() or installation.update_running()
     from . import state as S
-    pending = S.read_json(MONITOR_DIR / "restart-pending.json", {}) or {}
+    pending = S.read_runtime_json(MONITOR_DIR / "restart-pending.json", {}) or {}
     return bool(pending.get("requested_at") and not pending.get("failed"))
 
 
@@ -634,38 +635,44 @@ def activation_pending() -> bool:
     if platform.containerized() or RELEASE is not None:
         return restart_in_progress()
     from . import state as S
-    pending = S.read_json(MONITOR_DIR / "restart-pending.json", {}) or {}
+    pending = S.read_runtime_json(MONITOR_DIR / "restart-pending.json", {}) or {}
     return bool(pending) and not pending.get("failed")
 
 
 def ensure_root() -> None:
-    for d in (ROOT, MONITOR_DIR, ROOT / "hooks"):
-        d.mkdir(parents=True, exist_ok=True)
-    if not PROJECTS_FILE.exists():
-        PROJECTS_FILE.write_text("{}\n")
+    with storage.runtime_directory([], create=True, search=True, mode=0o777):
+        pass
+    with storage.runtime_directory(["monitor"], create=True, mode=0o777), \
+            storage.runtime_directory(["hooks"], create=True, mode=0o777):
+        pass
+    with storage.runtime_directory([], search=True) as parent:
+        if not storage.exists(parent, "projects.json"):
+            storage.initialize(parent, "projects.json", "{}\n")
 
 
 def load_projects() -> dict:
-    with projects_lock():
-        return _load_projects()
+    with projects_lock() as parent:
+        return _load_projects(parent)
 
 
 @contextmanager
 def projects_lock():
     """Serialize registry edits across projects without losing concurrent changes."""
     ensure_root()
-    with open(ROOT / ".projects.lock", "a") as lock:
+    with storage.runtime_directory([], search=True) as directory, \
+            storage.lock_file(directory, ".projects.lock", mode=0o666) as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            yield
+            yield directory
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def _load_projects() -> dict:
+def _load_projects(parent: int | None = None) -> dict:
     """Read under projects_lock; project concurrency is not a setting."""
     try:
-        projects = json.loads(PROJECTS_FILE.read_text() or "{}")
+        projects = json.loads((storage.read_text(parent, "projects.json") if parent is not None
+                               else storage.runtime_read_text(PROJECTS_FILE)) or "{}")
     except ValueError:
         return {}
     for entry in projects.values():
@@ -673,17 +680,20 @@ def _load_projects() -> dict:
     return projects
 
 
-def save_projects(projects: dict) -> None:
-    from .state import atomic_write
-    atomic_write(PROJECTS_FILE, json.dumps(projects, indent=2, sort_keys=True) + "\n")
+def save_projects(projects: dict, parent: int | None = None) -> None:
+    text = json.dumps(projects, indent=2, sort_keys=True) + "\n"
+    if parent is not None:
+        storage.atomic_write(parent, "projects.json", text)
+    else:
+        storage.runtime_atomic_write(PROJECTS_FILE, text)
 
 
 @contextmanager
 def edit_projects():
-    with projects_lock():
-        projects = _load_projects()
+    with projects_lock() as parent:
+        projects = _load_projects(parent)
         yield projects
-        save_projects(projects)
+        save_projects(projects, parent)
 
 
 def _write_project(name: str, entry: dict | None) -> None:

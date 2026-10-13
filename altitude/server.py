@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -314,9 +314,9 @@ def save_voice(body: dict) -> dict:
     """Apply the operator's voice selection through the same durable request as the CLI."""
     if body.keys() - {"backend", "selection", "url", "key", "model", "remove_key"}:
         raise ValueError("Unsupported voice settings fields.")
-    with config.projects_lock():
-        saved = config.machine_settings().get("voice")
-        current = config.voice_setting()
+    with config.projects_lock() as parent:
+        saved = config.machine_settings(parent).get("voice")
+        current = config.voice_setting(parent)
     if body.get("selection") != _voice_selection(current):
         raise VoiceInputError("Voice settings changed. Reload settings and try again.", 409)
     backend = body.get("backend")
@@ -381,8 +381,7 @@ def require_image_capability(project: str, slug: str | None = None) -> None:
 def log(msg: str) -> None:
     line = f"{S.now()} {msg}\n"
     try:
-        with open(LOG, "a") as f:
-            f.write(line)
+        storage.runtime_append(LOG, line)
     except OSError:
         pass
     print(line, end="", flush=True)
@@ -1186,7 +1185,7 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
                     if T.report_owner(live) != owner:
                         return
                     try:
-                        report = S.read_json(S.task_dir(project, slug) / "report.json", {})
+                        report = S.read_runtime_json(S.task_dir(project, slug) / "report.json", {})
                     except ValueError as e:
                         report_error = e
                         report = None
@@ -1289,7 +1288,7 @@ def resume_stranded_reports(project: str) -> None:
         if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
             continue
         report_path = S.task_dir(project, t["slug"]) / "report.json"
-        if not report_path.exists():
+        if not storage.runtime_exists(report_path):
             continue
         if t.get("report_after") and not T.report_current(t, report_path):
             continue
@@ -1308,7 +1307,7 @@ def resume_stranded_reports(project: str) -> None:
         v = t.get("verified") or {"verdict": "missing", "problems": ["no verified report on the task"], "signals": [],
                                   "spend": {}, "prs": t.get("prs", []), "report": {}}
         try:
-            report = S.read_json(report_path)
+            report = S.read_runtime_json(report_path)
         except (OSError, ValueError) as e:
             log(f"[{project}/{t['slug']}] cannot read stranded report: {e}")
             report = None
@@ -1340,7 +1339,7 @@ def dispatch_waiting(project: str) -> None:
             continue
         hold = dispatch.wip_hold(project, t)
         if hold:
-            S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
+            S.write_runtime_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
             return
         try:
             res = dispatch.run(project, t["slug"])
@@ -1352,16 +1351,16 @@ def dispatch_waiting(project: str) -> None:
         except Exception as e:  # noqa: BLE001
             log(f"[{project}/{t['slug']}] dispatch failed: {e}")
             dispatch.record_dispatch_failure(project, t["slug"], e)
-    (config.project_dir(project) / "hold.json").unlink(missing_ok=True)
+    storage.runtime_unlink(config.project_dir(project) / "hold.json", missing_ok=True)
 
 
 def drain_hook_faults() -> None:
     """Hooks run inside L2 sessions and cannot reach the server: they append to monitor/hook-faults.log; the tick raises them."""
     p = config.MONITOR_DIR / "hook-faults.log"
-    if not p.exists():
+    if not storage.runtime_exists(p):
         return
-    lines = [ln for ln in p.read_text().splitlines() if ln.strip()]
-    p.unlink()
+    lines = [ln for ln in storage.runtime_read_text(p).splitlines() if ln.strip()]
+    storage.runtime_unlink(p)
     for ln in lines[-20:]:
         incidents.system_fault("hook", ln[:400])
 
@@ -1450,7 +1449,7 @@ def tick_project(project: str) -> None:
         for task in S.list_tasks(project):
             if (task.get("ci_recheck") or {}).get("status") in ("pending", "probing", "notifying"):
                 spawn(f"ci-recheck:{project}:{task['slug']}", dispatch.run_ci_recheck, project, task["slug"])
-        if l3.queue_path(project).exists():
+        if storage.runtime_exists(l3.queue_path(project)):
             request_l3_drain(project)
         for slug in dispatch.pending_task_operations(project):
             spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
@@ -2767,7 +2766,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
                     if result["status"] != "done":
                         raise ValueError(result["note"])
-                    if l3.queue_path(o["project"]).exists():
+                    if storage.runtime_exists(l3.queue_path(o["project"])):
                         request_l3_drain(o["project"])  # a message waiting for an engine tries the changed choice now
                     return self._json(config.defaults_view(o["project"]))
                 except (ValueError, KeyError, T.TransitionError) as exc:
@@ -3095,7 +3094,7 @@ def restart_status() -> dict | None:
     """Pending backend/web activation plus what the page's early Restart button waits for."""
     if platform.containerized() or config.RELEASE is not None:
         return None  # Installed archives activate only through the explicit update transaction.
-    pending = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
+    pending = S.read_runtime_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
     if not pending:
         return None
     return {**pending, "waiting_for": restart_waiting_for()}
@@ -3127,14 +3126,14 @@ def auto_restart() -> None:
     if not status or status.get("failed"):
         return
     flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
-    pend = S.read_json(flag, {}) or {}
+    pend = S.read_runtime_json(flag, {}) or {}
     requested = pend.get("requested_at")
     if requested:
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(requested)).total_seconds()
         if age < RESTART_GRACE_SECONDS:
             return  # the restart unit is still building and swapping the bundle
         pend["failed"] = S.now()
-        S.write_json(flag, pend)
+        S.write_runtime_json(flag, pend)
         detail = (f"restart unit {pend.get('unit')} did not restart the service within "
                   f"{RESTART_GRACE_SECONDS // 60} minutes; see {platform.job_logs_hint(str(pend.get('unit')))}")
         log(f"auto-restart: {detail}; new dispatches resume")
@@ -3151,7 +3150,7 @@ def auto_restart() -> None:
         return  # work claimed the quiet point before the restart requester
     except RuntimeError as e:
         pend["failed"] = S.now()
-        S.write_json(flag, pend)
+        S.write_runtime_json(flag, pend)
         log(f"auto-restart could not start: {e}; new dispatches resume")
         incidents.system_fault("restart", f"auto-restart could not start: {e}")
         return
@@ -3190,7 +3189,7 @@ def restart_service() -> dict:
         if not quiet or restart_waiting_for(check_activity=False):
             raise RestartBusy("restart waits for dispatch, L3 turn, adversarial review, validation or report verification")
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
-        pend = S.read_json(flag, {}) or {}
+        pend = S.read_runtime_json(flag, {}) or {}
         if pend.get("requested_at") and not pend.get("failed"):
             return {"ok": True, "unit": pend.get("unit")}
         # Publish before releasing the gate, including the manual button path: no launch can race the unit.
@@ -3199,7 +3198,7 @@ def restart_service() -> dict:
             pend.pop("retries", None)  # a parked activation requested again gets its full retry bound
         pend.pop("retry_at", None)
         pend.update({"requested_at": S.now(), "unit": res["unit"]})
-        S.write_json(flag, pend)
+        S.write_runtime_json(flag, pend)
         return res
 
 
@@ -3227,9 +3226,9 @@ def change_marks() -> dict[str, tuple]:
     per registered project, its hold, project log, archive folder and every open task's status (which
     holds its questions) and event log. Writers are the daemon and `alt` processes alike, so the files
     are the signal."""
-    def mark(path: Path):
+    def mark(path: Path, *, directory: bool = False):
         try:
-            st = path.stat()
+            st = storage.runtime_directory_stat(path) if directory else storage.runtime_regular_stat(path)
         except OSError:  # absent, or archived between listing and reading
             return None
         return st.st_ino, st.st_mtime_ns, st.st_size  # atomic replacement always changes the inode
@@ -3237,8 +3236,22 @@ def change_marks() -> dict[str, tuple]:
     marks: dict[str, tuple] = {"": (mark(config.PROJECTS_FILE),)}
     for project in config.load_projects():
         d = config.project_dir(project)
-        rows = [mark(d / "hold.json"), mark(d / "events.log"), mark(S.archive_dir(project))]
-        rows += [(td.name, mark(td / "status.json"), mark(td / "events.log")) for td in sorted(S.tasks_dir(project).glob("*"))]
+        rows = [mark(d / "hold.json"), mark(d / "events.log"), mark(S.archive_dir(project), directory=True)]
+        task_root = S.tasks_dir(project)
+        if storage.runtime_exists(task_root, kind="directory"):
+            with storage.runtime_directory(storage.runtime_parts(task_root)) as parent:
+                for name in sorted(os.listdir(parent)):
+                    try:
+                        with storage.directory(parent, [name], search=True) as child:
+                            def child_mark(leaf: str):
+                                try:
+                                    st = storage.regular_stat(child, leaf)
+                                except OSError:
+                                    return None
+                                return st.st_ino, st.st_mtime_ns, st.st_size
+                            rows.append((name, child_mark("status.json"), child_mark("events.log")))
+                    except OSError:  # removed or replaced after enumeration
+                        rows.append((name, None, None))
         marks[project] = tuple(rows)
     return marks
 
@@ -3254,7 +3267,7 @@ def overview() -> dict:
             p["counts"]["waits_l3"] = sum(1 for t in ts if t["state"] == "blocked" and not t.get("fault")
                                           and not t.get("resume_after") and t.get("waiting_on") == "l3")
             p["l3"] = l3.info(p["name"])
-            p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
+            p["hold"] = S.read_runtime_json(config.project_dir(p["name"]) / "hold.json")
     # Improvement suggestions waiting for the operator: listed after Needs you's questions, never counted with them.
     suggestions = [{"project": p["name"], **run} for p in projects if p["managed"] for run in improve.waiting(p["name"])]
     return {"projects": projects, "queue": digest.queue(), "suggestions": suggestions, "wip": digest.wip(), "quota": monitor.quota(),
@@ -3295,7 +3308,7 @@ def save_model_defaults(body: dict, *, reset: bool = False) -> dict:
     if result.get("status") != "done":
         raise ValueError(result.get("note") or "Setting was not saved.")
     for name in ([project] if project else config.load_projects()):
-        if l3.queue_path(name).exists():
+        if storage.runtime_exists(l3.queue_path(name)):
             request_l3_drain(name)
     return result
 
@@ -3444,7 +3457,7 @@ MACHINE_POLL_SECONDS = 1
 
 
 def _machine_rows(runs: Path) -> list[dict]:
-    return [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
+    return [json.loads(line) for line in storage.runtime_read_text(runs).splitlines() if line.strip()] if storage.runtime_exists(runs) else []
 
 
 MACHINE_LINE = line.Line(config.MACHINE_RUNS, "a machine-run place")   # concurrent `alt task run` commands
@@ -3585,7 +3598,7 @@ def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
                 S.project_log(project, "machine-run", slug=slug, command=current["command"], unit=current["unit"],
                               exit=current["exit"], timed_out=current["timed_out"])
                 S.append_event(project, slug, "machine-run", actor="l2", **current)
-            S.atomic_write(runs, "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+            storage.runtime_atomic_write(runs, "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
     return {**current, **engines.machine_output(folder, current["unit"])}
 
 
@@ -3610,14 +3623,7 @@ def settle_interrupted_machine_commands() -> list[threading.Thread]:
     ledger that cannot be read is logged and left as it is; it never stops altd from starting."""
     threads = []
     for project in config.load_projects():
-        for runs in [*S.tasks_dir(project).glob("*/machine.jsonl"), *S.archive_dir(project).glob("*/machine.jsonl")]:
-            try:
-                # the validation runner records its own interrupted runs (validation.reconcile)
-                rows = [row for row in _machine_rows(runs) if row["finished"] is None
-                        and not row["unit"].startswith(validation.UNIT_PREFIX)]
-            except (OSError, ValueError, KeyError, TypeError) as exc:
-                log(f"machine commands: cannot read {runs}: {exc}")
-                continue
+        for runs, rows in _interrupted_machine_ledgers(project):
             for row in rows:
                 # It keeps a place, beyond the line's places if need be, taken before altd serves any request.
                 held = ExitStack()
@@ -3630,6 +3636,27 @@ def settle_interrupted_machine_commands() -> list[threading.Thread]:
                 thread.start()
                 threads.append(thread)
     return threads
+
+
+def _interrupted_machine_ledgers(project: str):
+    for parent in (S.tasks_dir(project), S.archive_dir(project)):
+        if not storage.runtime_exists(parent, kind="directory"):
+            continue
+        with storage.runtime_directory(storage.runtime_parts(parent)) as directory:
+            for name in os.listdir(directory):
+                runs = parent / name / "machine.jsonl"
+                try:
+                    with storage.directory(directory, [name], search=True) as child:
+                        if not storage.exists(child, "machine.jsonl"):
+                            continue
+                        # The validation runner records its own interrupted runs (validation.reconcile).
+                        rows = [row for line in storage.read_text(child, "machine.jsonl").splitlines() if line.strip()
+                                if (row := json.loads(line))["finished"] is None
+                                and not row["unit"].startswith(validation.UNIT_PREFIX)]
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    log(f"machine commands: cannot read {runs}: {exc}")
+                    continue
+                yield runs, rows
 
 
 def _settle_interrupted(project: str, slug: str, row: dict, held: ExitStack) -> None:
@@ -3852,8 +3879,9 @@ def project_view(name: str) -> dict:
     for t in S.list_tasks(name):
         t = task_wait_view(name, t)
         d = S.task_dir(name, t["slug"])
-        prog = (d / "progress.md").read_text()[-1500:] if (d / "progress.md").exists() else ""
-        tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
+        prog = storage.runtime_read_text(d / "progress.md")[-1500:] if storage.runtime_exists(d / "progress.md") else ""
+        tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog,
+                      "has": {f: storage.runtime_exists(d / f"{f}.md") for f in ("request", "brief", "report", "digest", "progress")}})
     order = {"blocked": 0, "running": 1, "reported": 2, "queued": 3}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
@@ -3864,9 +3892,9 @@ def project_view(name: str) -> dict:
                               key=lambda t: t["updated"], reverse=True),
             "decisions": T.decisions(name), "log": [event for event in S.read_project_log(name, 40)
                                                   if event.get("kind") != "project-message-received"],
-            "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
+            "incidents": incidents.index(name)[-10:], "hold": S.read_runtime_json(config.project_dir(name) / "hold.json"),
             "improvements": improve.view(name),
-            "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
+            "state_md": storage.runtime_read_text(config.project_dir(name) / "STATE.md") if storage.runtime_exists(config.project_dir(name) / "STATE.md") else ""}
 
 
 def project_repository(name: str) -> str | None:
@@ -3959,8 +3987,9 @@ def task_view(project: str, slug: str) -> dict:
     with S.project_lock(project):
         t = task_wait_view(project, S.load_task(project, slug))
         d = S.task_dir(project, slug)
-        report = S.read_json(d / "report.json")
-        files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
+        report = S.read_runtime_json(d / "report.json")
+        files = {f: storage.runtime_read_text(d / f"{f}.md") for f in ("request", "brief", "report", "digest", "progress")
+                 if storage.runtime_exists(d / f"{f}.md")}
         events = S.read_events(project, slug)
     try:
         activity = transcript.activity(project, slug)
@@ -4032,7 +4061,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     scheme = "https" if context is not None else "http"
     # Activation: do not release waiting launches if the replacement cannot bind its API or brokers.
     if os.environ.get("ALTITUDE_SERVICE") and config.RELEASE is None:
-        (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
+        storage.runtime_unlink(config.MONITOR_DIR / dispatch.RESTART_PENDING, missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
         SPEECH.update_installed()
         restart_notice()

@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlencode
 
-from . import config, engines, git_policy, images, platform, project_setup, route, state as S, tasks as T
+from . import config, engines, git_policy, images, platform, project_setup, route, state as S, storage, tasks as T
 
 
 class DispatchFailure(T.TransitionError):
@@ -346,13 +346,13 @@ def handoff(project: str, slug: str, request: dict) -> dict:
 def _handoff_ready(project: str, slug: str, request: dict) -> bool:
     path = S.task_dir(project, slug) / f"handoff-{request['id']}.ready.json"
     try:
-        if path.is_symlink() or path.stat().st_size > 2048:
+        if storage.runtime_regular_stat(path).st_size > 2048:
             return False
-        receipt = json.loads(path.read_text())
+        receipt = json.loads(storage.runtime_read_text(path))
     except (OSError, ValueError):
         return False
     return (receipt == {key: request[key] for key in ("id", "attempt", "agent_id", "session_id")}
-            and (S.task_dir(project, slug) / "progress.md").is_file())
+            and storage.runtime_exists(S.task_dir(project, slug) / "progress.md"))
 
 
 def _send_handoff_checkpoint(project: str, task: dict, request: dict, job_root: Path) -> None:
@@ -701,11 +701,11 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
         raise T.TransitionError(str(exc)) from exc
     if setting == "routing" and value is not None:
         value = config.parse_routing(value)
-    with config.projects_lock() if project is None else S.project_lock(project):
-        entry = config.machine_settings() if project is None else config.project(project)
+    with config.projects_lock() if project is None else S.project_lock(project) as parent:
+        entry = config.machine_settings(parent) if project is None else config.project(project)
         directory = config.ROOT if project is None else config.project_dir(project)
         path = directory / f"{setting}-request.json"
-        previous = S.read_json(path, {})
+        previous = S.read_json_at(parent, path.name, path, {})
         same = (previous.get(setting), previous.get("reason"), previous.get("actor")) == (value, reason, actor)
         if same and (previous.get("status") == "pending" or previous.get("status") == "done"
                      and previous.get(f"result_{setting}") == config.setting_value(entry, setting)):
@@ -716,7 +716,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
                    "actor": actor, "reason": reason, setting: value, "status": "pending"}
         if expected is not UNSET:
             request["expected"] = expected
-        S.write_json(path, request)
+        S.write_json_at(parent, path.name, request)
         return {"idempotent": False, "request": request}
 
 
@@ -731,14 +731,16 @@ def _run_setting(project: str | None, setting: str) -> dict:
     D7/I-20260904-062512: preserve the receipt and deduplicate the project event across a crash.
     Re-registration is deliberate: the last registry write wins, with no registration identity fence.
     """
-    with (nullcontext() if project is None else S.project_lock(project)), config.projects_lock():
+    with (nullcontext() if project is None else S.project_lock(project)) as project_parent, \
+            config.projects_lock() as registry_parent:
+        parent = registry_parent if project is None else project_parent
         directory = config.ROOT if project is None else config.project_dir(project)
         path = directory / f"{setting}-request.json"
-        request = S.read_json(path, {})
+        request = S.read_json_at(parent, path.name, path, {})
         if request.get("status") != "pending":
             return request
-        projects = config._load_projects() if project is not None else None
-        entry = projects.get(project) if projects is not None else config.machine_settings()
+        projects = config._load_projects(registry_parent) if project is not None else None
+        entry = projects.get(project) if projects is not None else config.machine_settings(registry_parent)
         unavailable = platform.container_setting_error(setting, request.get(setting)) if project is None else None
         if unavailable:
             request.update(status="refused", note=unavailable)
@@ -765,35 +767,35 @@ def _run_setting(project: str | None, setting: str) -> dict:
             else:
                 entry[setting] = request[setting]
             if projects is None:
-                S.write_json(config.ROOT / "settings.json", entry)
+                S.write_json_at(registry_parent, "settings.json", entry)
             else:
-                config.save_projects(projects)
+                config.save_projects(projects, registry_parent)
             request["status"] = "done"
         events = directory / "events.jsonl"
-        rows = events.read_text().splitlines() if events.exists() else []
+        rows = storage.read_text(parent, "events.jsonl").splitlines() if storage.exists(parent, "events.jsonl") else []
         if not any(json.loads(row).get("request_id") == request["id"] for row in rows):
             event = {"at": S.now(), "kind": request["operation"], "project": project, "request_id": request["id"],
                      "actor": request["actor"], "reason": request["reason"],
                      setting: config.voice_receipt(request[setting]) if setting == "voice" else request[setting],
                      "status": request["status"], "note": request.get("note")}
-            S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
+            storage.atomic_write(parent, "events.jsonl", "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
         request.update({f"result_{setting}": config.setting_value(entry, setting) if entry is not None else None,
                         "completed_at": S.now()})
         if setting == "voice":
             for field in ("voice", "result_voice", "expected"):
                 if field in request:
                     request[field] = config.voice_receipt(request[field])
-        S.write_json(path, request)
+        S.write_json_at(parent, path.name, request)
         return request
 
 
 def forget_speech_service() -> None:
     """Delete only untagged historical service settings/receipts. Deliberate tagged choices survive restart.
     The event names only the removal, never the URL or key."""
-    with config.projects_lock():
-        settings = config.machine_settings()
+    with config.projects_lock() as parent:
+        settings = config.machine_settings(parent)
         receipt = config.ROOT / "voice-request.json"
-        request = S.read_json(receipt, {})
+        request = S.read_json_at(parent, receipt.name, receipt, {})
         def legacy(value):
             return isinstance(value, dict) and value.get("backend") != "service"
         stale_setting = legacy(settings.get("voice"))
@@ -802,14 +804,14 @@ def forget_speech_service() -> None:
             return
         if stale_setting:
             del settings["voice"]
-            S.write_json(config.ROOT / "settings.json", settings)
+            S.write_json_at(parent, "settings.json", settings)
         if stale_receipt:
-            receipt.unlink(missing_ok=True)
+            storage.unlink(parent, receipt.name, missing_ok=True)
         events = config.ROOT / "events.jsonl"
-        rows = events.read_text().splitlines() if events.exists() else []
+        rows = storage.read_text(parent, "events.jsonl").splitlines() if storage.exists(parent, "events.jsonl") else []
         event = {"at": S.now(), "kind": "machine-set", "project": None, "actor": "altd",
                  "reason": "speech-service option removed", "voice": None, "status": "done"}
-        S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
+        storage.atomic_write(parent, "events.jsonl", "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
 
 
 def pending_task_operations(project: str) -> list[str]:
@@ -959,9 +961,9 @@ def _run_task_operation(project: str, slug: str, *, admission_held: str | None =
 @contextmanager
 def publication_settlement(project: str):
     """Serialize project fetch, deployment and explicit checkout preservation."""
-    path = config.project_dir(project) / ".publication-settlement.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as handle:
+    with storage.runtime_directory([config.require_project_name(project)], create=True,
+                                   search=True, mode=0o777) as directory, \
+            storage.lock_file(directory, ".publication-settlement.lock", truncate=True, mode=0o666) as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -1065,7 +1067,7 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
     if config.RELEASE is not None or config.SOURCE != config.REPO:
         # #348: a worktree-specific custom hook selection must not evade project guard verification.
         git_policy.require_hooks_installed(worktree)
-    task = S.read_json(S.status_path(project, slug), {}) or {}
+    task = S.read_runtime_json(S.status_path(project, slug), {}) or {}
     if adopted_head := (task.get("adopted_pr") or {}).get("head"):
         ancestry = subprocess.run(
             ["git", "-C", str(worktree), "merge-base", "--is-ancestor", adopted_head, "HEAD"],
@@ -1112,7 +1114,7 @@ def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
     task = S.load_task(project, slug)
     d = S.task_dir(project, slug)
     proj = config.project(project)
-    request = (d / "request.md").read_text()
+    request = storage.runtime_read_text(d / "request.md")
     policy = proj.get("approval", "default")
     if task.get("hold_merge"):  # a recorded hold is the explicit exception to merge-by-default
         merge_policy = (f"**Held for operator review** ({task['hold_merge']}): open a reviewed, green PR; after the "
@@ -1127,9 +1129,9 @@ def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
     overlaps = [f"`{other['slug']}` on {', '.join(shared)}" for other in other_leases
                 if (shared := shared_paths(task_paths(project, task), other["paths"]))]
     progress = d / "progress.md"
-    if task.get("attempt") and progress.exists():
+    if task.get("attempt") and storage.runtime_exists(progress):
         request += (f"\n\n---\n\nAttempt {task['attempt']} stopped before finishing. Its worktree and branch are "
-                    "kept; its `progress.md` follows.\n\n" + progress.read_text().rstrip() + "\n")
+                    "kept; its `progress.md` follows.\n\n" + storage.runtime_read_text(progress).rstrip() + "\n")
     transfer = task.get("daemon_request") or {}
     if (transfer.get("operation") == "handoff" and transfer.get("status") == "done"
             and transfer.get("attempt") == task.get("attempt")):
@@ -1171,7 +1173,7 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
                "ALTITUDE_SESSION_KEY": session_key},
         "autoCompactWindow": config.AUTOCOMPACT_WINDOW}
     p = S.task_dir(project, slug) / "settings.json"
-    S.write_json(p, settings)
+    S.write_runtime_json(p, settings)
     return p
 
 
@@ -1738,7 +1740,8 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
 @contextmanager
 def launch_lock(*, wait: bool = True):
     """Serialize machine capacity admission through worker binding, across threads and processes."""
-    with open(config.ROOT / ".launch.lock", "w") as handle:
+    with storage.runtime_directory([], search=True) as directory, \
+            storage.lock_file(directory, ".launch.lock", truncate=True, mode=0o666) as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:
@@ -1788,7 +1791,7 @@ def poll(project: str) -> list[dict]:
         # #308 continuation: a previous delivery's report cannot explain the current worker's exit.
         started = max(started or "", (t.get("delivery") or {}).get("at", ""), t.get("report_after") or "")
         try:
-            has_report = report.stat().st_mtime >= (datetime.fromisoformat(started).timestamp() if started else 0)
+            has_report = storage.runtime_regular_stat(report).st_mtime >= (datetime.fromisoformat(started).timestamp() if started else 0)
         except FileNotFoundError:
             has_report = False
         if t["state"] == "blocked" and has_report and "idle without a report" in (t.get("blocked_reason") or ""):
@@ -1807,7 +1810,7 @@ def poll(project: str) -> list[dict]:
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             # #676: an unavailable unit is not an exited worker. Keep ownership and capacity;
             # a task fault would block it and release its slot. Other tick work still proceeds.
-            S.write_json(live_p, {"at": S.now(), "agent": {"status": "unknown", "state": "unknown",
+            S.write_runtime_json(live_p, {"at": S.now(), "agent": {"status": "unknown", "state": "unknown",
                          "engine": engine}, "idle_since": None})
             unavailable.append(f"{project}/{t['slug']}: {exc}")
             continue
@@ -1820,7 +1823,7 @@ def poll(project: str) -> list[dict]:
                     current.update(metadata)
                     S.save_task(project, current)
                     t.update(metadata)
-        prev = S.read_json(live_p, {}) or {}
+        prev = S.read_runtime_json(live_p, {}) or {}
         live = ({"status": a.get("status"), "state": a.get("state"), "engine": engine,
                  "pid": a.get("pid"), "usage": a.get("usage"), **metadata} if a else None)
         idle_since = None
@@ -1834,12 +1837,12 @@ def poll(project: str) -> list[dict]:
                 continue
             if engines.temporary_capacity_in(detail):
                 finished.append({"task": t, "agent": a, "capacity": True})
-                S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "capacity": True})
+                S.write_runtime_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "capacity": True})
                 continue
             lim = engines.usage_limit_in(detail, now=at)
             if lim:
                 finished.append({"task": t, "agent": a, "limited": lim})
-                S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "limited": lim})
+                S.write_runtime_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "limited": lim})
                 continue
         if a and a.get("status") == "idle" and a.get("state") != "done" and not has_report:
             idle_since = prev.get("idle_since") or S.now()
@@ -1851,7 +1854,7 @@ def poll(project: str) -> list[dict]:
         elif idle_since and _seconds_since(idle_since) > IDLE_NEEDS_INPUT_SECONDS:
             finished.append({"task": t, "agent": a, "needs_input": True})
             idle_since = None
-        S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": idle_since})
+        S.write_runtime_json(live_p, {"at": S.now(), "agent": live, "idle_since": idle_since})
     if unavailable:
         incidents.system_fault("worker-status",
                                "Worker status unavailable. Task states and capacity reservations retained; "
@@ -1931,11 +1934,11 @@ def _self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str
     notes = [f"self-deploy: {branch} {head[:7]} → {origin_sha[:7]} ({len(files)} files)"]
     if changed and config.RELEASE is None:
         pend_p = config.MONITOR_DIR / RESTART_PENDING
-        pend = S.read_json(pend_p, {}) or {}
+        pend = S.read_runtime_json(pend_p, {}) or {}
         pending_files = sorted(set(pend.get("files", [])) | set(changed))
         components = sorted({activation_component(path) for path in pending_files} - {None})
         pend = {"since": pend.get("since") or S.now(), "head": origin_sha, "files": pending_files}
-        S.write_json(pend_p, pend)
+        S.write_runtime_json(pend_p, pend)
         subject = ("the running Altitude backend and deployed web bundle are" if len(components) == 2 else
                    "the running Altitude backend is" if components == ["backend"] else
                    "the deployed web bundle is")

@@ -33,6 +33,70 @@ class RuntimeStorage(AltitudeCase):
     def locks(self):
         return ((".lock", self.serialized), (".activity.lock", lambda: config.project_activity(self.project)))
 
+    def test_registry_and_settings_writes_fsync_the_pinned_search_parent(self):
+        config.ensure_root()
+        with config.projects_lock() as parent:
+            config.save_projects({self.project: {"path": "fictional"}}, parent)
+            S.write_json_at(parent, "settings.json", {"fictional": "é\n"})
+            self.assertEqual(config._load_projects(parent)[self.project]["path"], "fictional")
+            self.assertEqual(config.machine_settings(parent)["fictional"], "é\n")
+
+    def test_failed_atomic_write_keeps_primary_error_when_temp_cleanup_fails(self):
+        original_unlink = os.unlink
+        with storage.runtime_directory([], search=True) as parent:
+            primary = OSError("fictional replace failure")
+            def cleanup(path, *args, **kwargs):
+                if str(path).startswith(".settings.json."):
+                    raise PermissionError("fictional cleanup failure")
+                return original_unlink(path, *args, **kwargs)
+            with mock.patch.object(os, "replace", side_effect=primary), mock.patch.object(os, "unlink", side_effect=cleanup):
+                with self.assertRaises(OSError) as found:
+                    storage.atomic_write(parent, "settings.json", "fictional")
+            self.assertIs(found.exception, primary)
+        for temporary in self.runtime.glob(".settings.json.*"):
+            temporary.unlink()
+
+    def test_create_absent_does_not_follow_substituted_temp_link(self):
+        marker = self.outside / "marker"
+        marker.write_text("outside sentinel")
+        real_link = os.link
+        with storage.runtime_directory([], search=True) as parent:
+            def substitute(src, dst, *args, **kwargs):
+                os.unlink(src, dir_fd=parent)
+                os.symlink(marker, src, dir_fd=parent)
+                self.assertFalse(kwargs["follow_symlinks"])
+                return real_link(src, dst, *args, **kwargs)
+            with mock.patch.object(os, "link", side_effect=substitute):
+                storage.create_absent(parent, "restart-pending.json", "complete record")
+        self.assertTrue((self.runtime / "restart-pending.json").is_symlink())
+        self.assertEqual(marker.read_text(), "outside sentinel")
+        (self.runtime / "restart-pending.json").unlink()
+
+    def test_archive_rename_checks_source_before_creating_destination_parent(self):
+        source = self.directory / "tasks" / "fictional-task"
+        destination = self.directory / "archive" / "fictional-task"
+        storage.runtime_rename_dir(source, destination)
+        self.assertFalse(destination.parent.exists())
+        source.parent.mkdir(parents=True)
+        source.write_text("ordinary file")
+        storage.runtime_rename_dir(source, destination)
+        self.assertFalse(destination.parent.exists())
+        source.unlink()
+        source.mkdir()
+        storage.runtime_rename_dir(source, destination)
+        self.assertTrue(destination.is_dir())
+        self.assertFalse(source.exists())
+
+    def test_optional_unlink_accepts_missing_parent_but_refuses_linked_parent(self):
+        missing = self.directory / "missing" / "record.json"
+        storage.runtime_unlink(missing, missing_ok=True)
+        with self.assertRaises(FileNotFoundError):
+            storage.runtime_unlink(missing)
+        self.directory.mkdir()
+        (self.directory / "missing").symlink_to(self.outside, target_is_directory=True)
+        with self.assertRaises(OSError):
+            storage.runtime_unlink(missing, missing_ok=True)
+
     def test_creation_regular_contents_and_shared_exclusive_contention(self):
         for name, locked in self.locks():
             with locked() as acquired:

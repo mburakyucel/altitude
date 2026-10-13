@@ -101,6 +101,19 @@ class TestProjectIdentifiers(ProjectIdentifierCase):
         self.assertEqual(dispatch._run_setting(None, "terminal")["status"], "done")
         self.assertFalse(config.machine_settings()["terminal"])
 
+    def test_ordinary_file_occupying_task_slug_is_a_collision(self):
+        with config.add_project("fictional", path=self.repo):
+            pass
+        tasks = S.tasks_dir("fictional")
+        tasks.mkdir(exist_ok=True)
+        (tasks / "saved-task").write_text("ordinary collision")
+        with mock.patch.object(S, "regen_state_md"):
+            task = T.new("fictional", "Saved task", "Fictional request")
+        self.assertEqual(task["slug"], "saved-task-2")
+        self.assertEqual((tasks / "saved-task").read_text(), "ordinary collision")
+        with self.assertRaises(NotADirectoryError):
+            S.list_tasks("fictional")
+
 
 class TestProjectIdentifierHTTP(ProjectIdentifierCase):
     def setUp(self):

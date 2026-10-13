@@ -1,7 +1,7 @@
 """Compact, fault-tolerant, read-only task orientation."""
 from __future__ import annotations
 
-from . import config, dispatch, engines, git_policy, incidents, state as S, tasks as T, verify
+from . import config, dispatch, engines, git_policy, incidents, state as S, storage, tasks as T, verify
 
 
 _TASK_FIELDS = (
@@ -103,16 +103,17 @@ def task_report(project: str, slug: str) -> dict:
     except (KeyError, OSError, ValueError) as exc:
         _error(errors, "task", exc); task = {}
     try:
-        report = S.read_json(S.task_dir(project, slug) / "report.json", None)
+        report = S.read_runtime_json(S.task_dir(project, slug) / "report.json", None)
         if report is not None and not isinstance(report, dict):
             raise TypeError("report is not an object")
     except (OSError, ValueError, TypeError) as exc:
         _error(errors, "report", exc); report = None
     digest = None
     digest_path = S.task_dir(project, slug) / "digest.md"
-    if task.get("state") == "done" and digest_path.exists():
+    if task.get("state") == "done":
         try:
-            digest = digest_path.read_text().strip()
+            if storage.runtime_exists(digest_path):
+                digest = storage.runtime_read_text(digest_path).strip()
         except OSError as exc:
             _error(errors, "digest", exc)
     if report is None:
@@ -141,11 +142,11 @@ def repo(project: str) -> dict:
     except Exception as exc:  # the rest of repo inspection remains useful
         _error(errors, "dirty_files", exc)
     try:
-        restart = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
+        restart = S.read_runtime_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
     except (OSError, ValueError) as exc:
         _error(errors, "restart", exc); restart = None
     try:
-        raw_faults = S.read_json(incidents.FAULTS, {}) or {}
+        raw_faults = S.read_runtime_json(incidents.FAULTS, {}) or {}
         faults = {kind: {key: row.get(key) for key in ("count", "last", "incident")}
                   for kind, row in raw_faults.items()
                   if isinstance(row, dict) and "count" in row and row.get("project") == project}
@@ -213,12 +214,13 @@ def status(project: str, slug: str) -> dict:
         out["waiting"] = T.wait_label(project, task)
 
     counts_path = S.counts_path(project, task)
-    if counts_path is not None and counts_path.exists():
+    if counts_path is not None:
         try:
-            counts = S.read_json(counts_path, {})
-            if not isinstance(counts, dict):
-                raise TypeError("counter file is not an object")
-            out["counts"] = {"edits": counts.get("edits", 0)}
+            if storage.runtime_exists(counts_path):
+                counts = S.read_runtime_json(counts_path, {})
+                if not isinstance(counts, dict):
+                    raise TypeError("counter file is not an object")
+                out["counts"] = {"edits": counts.get("edits", 0)}
         except Exception as e:
             _error(errors, "counts", e)
 
@@ -248,8 +250,8 @@ def status(project: str, slug: str) -> dict:
     report = None
     try:
         report_path = S.task_dir(project, slug) / "report.json"
-        out["report_json"] = {"exists": report_path.exists(), "path": str(report_path)}
-        report = S.read_json(report_path, None)
+        out["report_json"] = {"exists": storage.runtime_exists(report_path), "path": str(report_path)}
+        report = S.read_runtime_json(report_path, None)
     except Exception as e:
         _error(errors, "report_json", e)
 

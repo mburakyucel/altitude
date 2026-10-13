@@ -451,7 +451,12 @@ class AltitudeCase(unittest.TestCase):
         """`mock.patch.object` for the rest of the case; returns what it installed."""
         patcher = mock.patch.object(target, name, *new, **kwargs)
         self.addCleanup(patcher.stop)
-        return patcher.start()
+        installed = patcher.start()
+        if target is config and name == "ROOT":
+            anchor = mock.patch.object(config, "RUNTIME_ROOT", Path(installed).resolve())
+            self.addCleanup(anchor.stop)
+            anchor.start()
+        return installed
 
     def fake_engines(self) -> Path:
         """Both engine executables become `tests/fake_engine.py`, which the real engine driver runs for the case."""
@@ -483,11 +488,13 @@ class AltitudeCase(unittest.TestCase):
 
     def private_ledgers(self) -> None:
         """Point the home-wide files (monitor, incident index, faults, digest) at this case's directory."""
-        (self.tmp / "monitor").mkdir(exist_ok=True)
-        self.patch(config, "MONITOR_DIR", self.tmp / "monitor")
-        self.patch(config, "INCIDENT_INDEX", self.tmp / "incidents.jsonl")
-        self.patch(config, "DIGEST_FILE", self.tmp / "DIGEST.md")
-        self.patch(incidents, "FAULTS", self.tmp / "monitor" / "faults.json")
+        private = config.ROOT / "cases" / self.tmp.name
+        (private / "monitor").mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, private, True)
+        self.patch(config, "MONITOR_DIR", private / "monitor")
+        self.patch(config, "INCIDENT_INDEX", private / "incidents.jsonl")
+        self.patch(config, "DIGEST_FILE", private / "DIGEST.md")
+        self.patch(incidents, "FAULTS", private / "monitor" / "faults.json")
 
     def fake_gh(self) -> Path:
         """Install the gh shim first on PATH; returns the directory the test writes its answers into."""

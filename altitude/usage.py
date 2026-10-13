@@ -40,7 +40,7 @@ def capture(project: str, task: dict, *, final: bool = False) -> None:
     previous = task.get("token_usage") or {}
     try:
         path = S.task_dir(project, task["slug"]) / "token-usage.json"
-        cursors = S.read_json(path, {}) or {}
+        cursors = S.read_runtime_json(path, {}) or {}
         identities = task.get("token_usage_sessions", [])
         rows, notes, statuses, helpers, helper_statuses = [], [], [], [], []
         for engine in dict.fromkeys(row["engine"] for row in identities):
@@ -107,7 +107,7 @@ def capture(project: str, task: dict, *, final: bool = False) -> None:
                                                            if row.get("observed_at")), default=None),
                     "finalized_at": at if final else None, "sessions": rows, "helpers": helper_summary,
                     "notes": list(dict.fromkeys(notes))}
-        S.write_json(path, cursors)
+        S.write_runtime_json(path, cursors)
         task["token_usage"] = snapshot
     except Exception:
         # Missing/malformed provider records or unavailable telemetry storage must not block a task.
@@ -135,7 +135,7 @@ def refresh(project: str, slug: str) -> dict:
         capture(project, task)
         try:
             # Passive observations must not reset task/decision ages or reorder work cards.
-            S.write_json(S.status_path(project, slug), task)
+            S.write_runtime_json(S.status_path(project, slug), task)
         except OSError:
             pass  # The last durable snapshot still exposes its age; telemetry cannot stop polling.
         return task

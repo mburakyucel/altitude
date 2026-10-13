@@ -157,22 +157,21 @@ UPDATE_FAILED = "Run alt update in a terminal to see why."
 def _update_record() -> tuple[Path, dict]:
     from . import config, state as S
     path = config.ROOT / "update.json"
-    return path, S.read_json(path, {})
+    return path, S.read_runtime_json(path, {})
 
 
 @contextmanager
 def _changing_update_record():
     """The daemon, the app's request and the detached update each change update.json under one lock."""
-    from . import state as S
+    from . import state as S, storage
     path, _ = _update_record()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with (path.parent / "update.lock").open("a") as lock:
+    with storage.runtime_directory([], search=True) as parent, storage.lock_file(parent, "update.lock", mode=0o666) as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        record = S.read_json(path, {})
+        record = S.read_json_at(parent, "update.json", path, {})
         before = json.dumps(record, sort_keys=True)
         yield record
         if json.dumps(record, sort_keys=True) != before:
-            S.write_json(path, record)
+            S.write_json_at(parent, "update.json", record)
 
 
 def check_for_update(now: float | None = None) -> None:
@@ -741,11 +740,11 @@ def _prepare_install(archive: Path, checksum: str, prefix: Path | None = None, *
             sys.dont_write_bytecode = True
             sys.path.insert(0, str(stage))
             __package__ = "altitude"
-        from altitude import config, platform
+        from altitude import config, platform, storage
         platform.require_native_application()
         platform.require_supported()
         platform.openssl()
-        registered = json.loads(config.PROJECTS_FILE.read_text()) if config.PROJECTS_FILE.exists() else {}
+        registered = json.loads(storage.runtime_read_text(config.PROJECTS_FILE)) if storage.runtime_exists(config.PROJECTS_FILE) else {}
         settings = _settings().resolve()
         if settings.is_relative_to(prefix):
             raise RuntimeError("Installation configuration must be outside the removable application prefix")

@@ -54,10 +54,38 @@ def read_json(path: Path, default=None):
         text = Path(path).read_text()
     except FileNotFoundError:
         return default
+    return _decode_json(text, path, default)
+
+
+def _decode_json(text: str, path: Path, default):
     try:
         return json.loads(text) if text.strip() else default
     except ValueError as e:
         raise ValueError(f"corrupt JSON in {path}: {e}") from e
+
+
+def read_runtime_json(path: Path, default=None):
+    try:
+        text = storage.runtime_read_text(path)
+    except FileNotFoundError:
+        return default
+    return _decode_json(text, path, default)
+
+
+def read_json_at(parent: int, name: str, path: Path, default=None):
+    try:
+        text = storage.read_text(parent, name)
+    except FileNotFoundError:
+        return default
+    return _decode_json(text, path, default)
+
+
+def write_runtime_json(path: Path, obj) -> None:
+    storage.runtime_atomic_write(path, json.dumps(obj, indent=2, sort_keys=True) + "\n")
+
+
+def write_json_at(parent: int, name: str, obj) -> None:
+    storage.atomic_write(parent, name, json.dumps(obj, indent=2, sort_keys=True) + "\n")
 
 
 def write_json(path: Path, obj) -> None:
@@ -72,7 +100,7 @@ def project_lock(project: str):
             storage.lock_file(directory, ".lock") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
-            yield
+            yield directory
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
 
@@ -119,10 +147,10 @@ def archive_dir(project: str) -> Path:
 def task_dir(project: str, slug: str) -> Path:
     slug = require_task_slug(slug)
     d = tasks_dir(project) / slug
-    if d.is_dir():
+    if storage.runtime_exists(d, kind="directory"):
         return d
     a = archive_dir(project) / slug
-    return a if a.is_dir() else d
+    return a if storage.runtime_exists(a, kind="directory") else d
 
 
 def status_path(project: str, slug: str) -> Path:
@@ -137,7 +165,7 @@ def load_task(project: str, slug: str) -> dict:
     """Archival only renames a live task folder into the archive, so a read that misses the live
     status after the move finds it there."""
     slug = require_task_slug(slug)
-    t = read_json(tasks_dir(project) / slug / "status.json") or read_json(archive_dir(project) / slug / "status.json")
+    t = read_runtime_json(tasks_dir(project) / slug / "status.json") or read_runtime_json(archive_dir(project) / slug / "status.json")
     if not t:
         raise TaskNotFound(f"no task {slug!r} in {project!r}")
     return t
@@ -145,39 +173,37 @@ def load_task(project: str, slug: str) -> dict:
 
 def save_task(project: str, task: dict) -> None:
     task["updated"] = now()
-    write_json(status_path(project, task["slug"]), task)
+    write_runtime_json(status_path(project, task["slug"]), task)
 
 
 def list_tasks(project: str, include_archive: bool = False) -> list[dict]:
     out = []
     dirs = [tasks_dir(project)] + ([archive_dir(project)] if include_archive else [])
     for d in dirs:
-        if not d.is_dir():
+        if not storage.runtime_exists(d, kind="directory"):
             continue
-        for td in sorted(d.iterdir()):
-            t = read_json(td / "status.json")
-            if t:
-                out.append(t)
+        with storage.runtime_directory(storage.runtime_parts(d)) as parent:
+            for name in sorted(os.listdir(parent)):
+                with storage.directory(parent, [name], search=True) as child:
+                    t = read_json_at(child, "status.json", d / name / "status.json")
+                    if t:
+                        out.append(t)
     return out
 
 
 def append_event(project: str, slug: str, kind: str, **data) -> dict:
     ev = {"at": now(), "kind": kind, **data}
     p = task_dir(project, slug) / "events.log"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(ev, sort_keys=True) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+    storage.runtime_append(p, json.dumps(ev, sort_keys=True) + "\n", sync=True)
     return ev
 
 
 def read_events(project: str, slug: str) -> list[dict]:
     p = task_dir(project, slug) / "events.log"
-    if not p.exists():
+    if not storage.runtime_exists(p):
         return []
     out = []
-    for line in p.read_text().splitlines():
+    for line in storage.runtime_read_text(p).splitlines():
         try:
             out.append(json.loads(line))
         except ValueError:
@@ -188,16 +214,14 @@ def read_events(project: str, slug: str) -> list[dict]:
 def project_log(project: str, kind: str, **data) -> None:
     """Project-level events such as L3 rotations and incidents, not tied to a task."""
     p = config.project_dir(project) / "events.log"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps({"at": now(), "kind": kind, **data}, sort_keys=True) + "\n")
+    storage.runtime_append(p, json.dumps({"at": now(), "kind": kind, **data}, sort_keys=True) + "\n")
 
 
 def read_project_log(project: str, limit: int = 200) -> list[dict]:
     p = config.project_dir(project) / "events.log"
-    if not p.exists():
+    if not storage.runtime_exists(p):
         return []
-    lines = p.read_text().splitlines()[-limit:]
+    lines = storage.runtime_read_text(p).splitlines()[-limit:]
     out = []
     for line in lines:
         try:
@@ -286,5 +310,5 @@ def regen_state_md(project: str) -> str:
     if summary := incidents.open_summary(project):
         lines += ["## Open incidents", "", summary, ""]
     text = "\n".join(lines) + "\n"
-    atomic_write(config.project_dir(project) / "STATE.md", text)
+    storage.runtime_atomic_write(config.project_dir(project) / "STATE.md", text)
     return text

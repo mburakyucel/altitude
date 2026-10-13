@@ -403,8 +403,8 @@ def _shown_available(project: str, slug: str, shown: dict) -> bool:
     folder = S.task_dir(project, slug) / SHOWN_FOLDER
     try:
         for name, size in _shown_names(shown).items():
-            saved = os.stat(folder / name, follow_symlinks=False)
-            if not stat.S_ISREG(saved.st_mode) or saved.st_size != size:
+            saved = storage.runtime_regular_stat(folder / name)
+            if saved.st_size != size:
                 return False
     except OSError:
         return False
@@ -519,7 +519,12 @@ def _attach_captures(project: str, slug: str, run: object) -> list[dict]:
     """Save run `run`'s captures in the task's `captures/` folder within `CAPTURE_TASK_LIMIT`."""
     captures, files = _run_captures(project, slug, run)
     folder = S.task_dir(project, slug) / "captures"
-    kept = {path.name: path.stat().st_size for path in folder.glob("*.gif")} if folder.is_dir() else {}
+    kept = {}
+    if storage.runtime_exists(folder, kind="directory"):
+        with storage.runtime_directory(storage.runtime_parts(folder)) as parent:
+            for name in os.listdir(parent):
+                if name.endswith(".gif"):
+                    kept[name] = storage.regular_stat(parent, name).st_size
     if sum({**kept, **{name: len(data) for name, data in files.items()}}.values()) > CAPTURE_TASK_LIMIT:
         raise TransitionError(f"this task already keeps {CAPTURE_TASK_LIMIT >> 20} MiB of attached captures")
     _save_files(project, slug, files, "captures", C.BUDGET)
@@ -638,22 +643,22 @@ def _require_daemon_fence(task: dict, slug: str, *, expected_daemon_request: str
 
 def _append_jsonl(path: Path, row: dict) -> None:
     try:
-        contents = path.read_text()
+        contents = storage.runtime_read_text(path)
     except FileNotFoundError:
         contents = ""
-    S.atomic_write(path, contents + json.dumps(row, sort_keys=True) + "\n")
+    storage.runtime_atomic_write(path, contents + json.dumps(row, sort_keys=True) + "\n")
 
 
 def _save_claim_task(project: str, task: dict) -> None:
     """Persist resume-transaction bookkeeping as one direct atomic status write."""
     task["updated"] = S.now()
-    S.write_json(S.status_path(project, task["slug"]), task)
+    S.write_runtime_json(S.status_path(project, task["slug"]), task)
 
 
 def _rows(path: Path, what: str) -> list[dict]:
     """Read one JSONL file of messages, failing loudly on a corrupt record."""
     try:
-        contents = path.read_text()
+        contents = storage.runtime_read_text(path)
     except FileNotFoundError:
         return []
     rows = []
@@ -681,7 +686,11 @@ def report_current(task: dict, path: Path) -> bool:
     """An earlier delivery or owner turn cannot report completion of follow-up work."""
     after = max(task.get("report_after") or "", task.get("worker_started_at") or "",
                 (task.get("delivery") or {}).get("at", ""))
-    return path.is_file() and (not after or path.stat().st_mtime >= datetime.fromisoformat(after).timestamp())
+    try:
+        info = storage.runtime_regular_stat(path)
+    except FileNotFoundError:
+        return False
+    return not after or info.st_mtime >= datetime.fromisoformat(after).timestamp()
 
 
 def _report_correction(task: dict, actor: str | None) -> bool:
@@ -705,7 +714,7 @@ def continue_report(project: str, task: dict, *, actor: str, reason: str, check_
     from . import verify
     slug = task["slug"]
     _require_daemon_fence(task, slug)
-    report = S.read_json(S.task_dir(project, slug) / "report.json", {})
+    report = S.read_runtime_json(S.task_dir(project, slug) / "report.json", {})
     if check_pr:
         if not reported_continuable(task, report, actor=actor):
             raise TransitionError(f"{slug}: continuation requires a reported owner with an open PR "
@@ -838,9 +847,9 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         if role in (OPERATOR_MESSAGE_ROLE, "l3"):  # an answer waits in the inbox until the worker reads it
             if not row.get("images"):
                 _append_jsonl(d / "inbox.jsonl", row)
-            if task.get("state") == "running" and (d / "report.json").exists():
+            if task.get("state") == "running" and storage.runtime_exists(d / "report.json"):
                 if report_current(task, d / "report.json"):
-                    S.append_event(project, slug, "report-superseded", report=S.read_json(d / "report.json"),
+                    S.append_event(project, slug, "report-superseded", report=S.read_runtime_json(d / "report.json"),
                                    verified=task.get("verified"), by=role)
                 task["report_after"] = datetime.now(timezone.utc).isoformat()
                 task.pop("verified", None)
@@ -1139,9 +1148,9 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
         task.pop("verified", None)  # A resumed owner must report its current work before completion.
         _save_claim_task(project, task)
         if left:
-            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
+            storage.runtime_atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
         else:
-            path.unlink(missing_ok=True)
+            storage.runtime_unlink(path, missing_ok=True)
         return claim
 
 
@@ -1206,9 +1215,9 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
         seen = {row["id"] for row in claimed}
         rows = claimed + [row for row in current if row["id"] not in seen]
         if rows:
-            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+            storage.runtime_atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
         else:
-            path.unlink(missing_ok=True)
+            storage.runtime_unlink(path, missing_ok=True)
         task.pop("resume_claim", None)
         task["dispatching"] = None
         if suppress_retry and claim.get("block_id") == task.get("block_id"):
@@ -1270,9 +1279,9 @@ def _settle_send_now(project: str, task: dict, message_id: str, outcome: str, **
     if any(row["id"] in claim["ids"] for row in rows):
         left = [row for row in rows if row["id"] not in claim["ids"]]
         if left:
-            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
+            storage.runtime_atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
         else:
-            path.unlink(missing_ok=True)
+            storage.runtime_unlink(path, missing_ok=True)
 
 
 def _recover_send_now(project: str, task: dict) -> None:
@@ -1307,9 +1316,9 @@ def take_inbox(project: str, slug: str, ids: set[str] | None = None, *, running_
         _mark_acceptance_delivered(task, {row["id"] for row in taken})
         S.save_task(project, task)
         if left:
-            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
+            storage.runtime_atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
         else:
-            path.unlink(missing_ok=True)
+            storage.runtime_unlink(path, missing_ok=True)
     return taken
 
 
@@ -1435,12 +1444,12 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         refs = image_store.lookup(project, image_ids) if image_ids else []
         base = S.slugify(title)
         slug, n = base, 1
-        while S.task_dir(project, slug).exists():
+        while storage.runtime_entry_exists(S.task_dir(project, slug)):
             n += 1
             slug = f"{base}-{n}"
         d = S.tasks_dir(project) / slug
-        d.mkdir(parents=True)
-        S.atomic_write(d / "request.md", request.rstrip() + "\n")
+        storage.runtime_mkdir(d)
+        storage.runtime_atomic_write(d / "request.md", request.rstrip() + "\n")
         task = {"slug": slug, "title": title, "state": "queued", "created": S.now(),
                 "attempt": 0, "session_id": None, "agent_id": None,
                 "worktree": None,
@@ -1471,7 +1480,7 @@ def offered_task(project: str, offer_turn: str) -> str | None:
 
 
 def _dependency_done(project: str, slug: str) -> bool:
-    return (S.read_json(S.archive_dir(project) / S.require_task_slug(slug) / "status.json", {})
+    return (S.read_runtime_json(S.archive_dir(project) / S.require_task_slug(slug) / "status.json", {})
             .get("state") == "done")
 
 
@@ -1536,7 +1545,7 @@ def reject(project: str, slug: str, reason: str, actor: str = OPERATOR_MESSAGE_R
 def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
     with S.project_lock(project):
         d = S.task_dir(project, slug)
-        S.atomic_write(d / "brief.md", brief_md.rstrip() + "\n")
+        storage.runtime_atomic_write(d / "brief.md", brief_md.rstrip() + "\n")
         S.append_event(project, slug, "brief", by=actor, bytes=len(brief_md))
         return d / "brief.md"
 
@@ -1825,7 +1834,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
                 or any(row.get("wake", True) for row in pending(project, slug))):
             raise TransitionError(f"{slug}: follow-up work requires a current report before completion")
         d = S.task_dir(project, slug)
-        tracked = _tracked_findings(slug, S.read_json(d / "report.json"), findings_tracked)
+        tracked = _tracked_findings(slug, S.read_runtime_json(d / "report.json"), findings_tracked)
         if delivery and (not delivery.get("number") or verified.get("delivery") != delivery
                          or (verified.get("verdict") != "ok"
                              and not (tracked and verified.get("problems") == [verify.OPEN_FINDINGS]))):
@@ -1837,7 +1846,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
             digest = "\n".join([digest.rstrip(), "", f"Open review findings tracked at {tracked['reference']}:",
                                 *(f"- {finding}" for finding in tracked["findings"])]).lstrip()
         if digest:
-            S.atomic_write(d / "digest.md", digest.rstrip() + "\n")
+            storage.runtime_atomic_write(d / "digest.md", digest.rstrip() + "\n")
         _archive(project, slug)
         S.regen_state_md(project)
         return task
@@ -1875,7 +1884,7 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor, requested_by="l2")
         if digest:
-            S.atomic_write(d / "digest.md", digest.rstrip() + "\n")
+            storage.runtime_atomic_write(d / "digest.md", digest.rstrip() + "\n")
         _archive(project, slug)
         S.regen_state_md(project)
     fyi(project, slug, " ".join(filter(None, (f"{task['title']} completed without code changes.", digest.strip(),
@@ -1895,10 +1904,8 @@ def _remove_tool_cache(project: str, slug: str) -> None:
 
 def _archive(project: str, slug: str) -> None:
     src = S.tasks_dir(project) / slug
-    if src.is_dir():
-        dst = S.archive_dir(project) / slug
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        src.rename(dst)
+    dst = S.archive_dir(project) / slug
+    storage.runtime_rename_dir(src, dst)
 
 
 def set_spend(project: str, slug: str, **spend) -> dict:
@@ -2418,7 +2425,7 @@ def question_views(project: str, slug: str) -> list[dict]:
             task = S.load_task(project, slug)
             if _ensure_question(project, task):
                 # A one-time durable anchor migration is not new worker or conversation activity.
-                S.write_json(S.status_path(project, slug), task)
+                S.write_runtime_json(S.status_path(project, slug), task)
     return [question_view(project, task, q) for q in task.get("questions", [])]
 
 
@@ -2441,7 +2448,7 @@ def _decision_messages(project: str, slug: str, source: str, *, resumes: bool = 
     if source != "project":
         raise TransitionError("resolution source must be task or project")
     path = config.project_dir(project) / "chat.jsonl"
-    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
+    rows = [json.loads(line) for line in storage.runtime_read_text(path).splitlines() if line.strip()] if storage.runtime_exists(path) else []
     messages = [{**r, "id": r.get("turn_id"), "role": OPERATOR_MESSAGE_ROLE,
                  "by": r.get("by", OPERATOR_MESSAGE_ROLE)} for r in rows
                 if r.get("role") == "user" and r.get("trigger", "chat") in (None, "", "chat")]
@@ -3100,7 +3107,7 @@ def start_machine_run(project: str, slug: str, fields) -> dict:
     a command that restarts altd keeps its number and unit. `fields(n)` gives the row's purpose, command and unit."""
     runs = S.task_dir(project, slug) / "machine.jsonl"
     with S.project_lock(project):
-        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
+        rows = [json.loads(line) for line in storage.runtime_read_text(runs).splitlines() if line.strip()] if storage.runtime_exists(runs) else []
         row = {"n": len(rows) + 1, **fields(len(rows) + 1), "exit": None, "timed_out": False, "started": S.now(), "finished": None,
                "error": "still running or interrupted with altd"}
         _append_jsonl(runs, row)
@@ -3121,9 +3128,9 @@ def finish_machine_run(project: str, slug: str, row: dict) -> dict:
                           exit=row["exit"], timed_out=row["timed_out"], purpose=row["purpose"])
         else:
             row = {key: value for key, value in recorded.items() if key not in ("at", "kind", "actor")}
-        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()]
-        S.atomic_write(runs, "".join(json.dumps(row if r["n"] == row["n"] else r, sort_keys=True) + "\n"
-                                     for r in rows))
+        rows = [json.loads(line) for line in storage.runtime_read_text(runs).splitlines() if line.strip()]
+        storage.runtime_atomic_write(runs, "".join(json.dumps(row if r["n"] == row["n"] else r, sort_keys=True) + "\n"
+                                                    for r in rows))
         return row
 
 
@@ -3153,7 +3160,7 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                     raise ValueError("approval evidence needs timezone-aware timestamps")
                 # Hold events keep whole seconds, as in `approved_pr`: an approval must come in a later second.
                 return parsed.replace(microsecond=0)
-            events = [json.loads(line) for line in (S.task_dir(project, slug) / "events.log").read_text().splitlines()
+            events = [json.loads(line) for line in storage.runtime_read_text(S.task_dir(project, slug) / "events.log").splitlines()
                       if line.strip()]  # a corrupt later hold must not disappear from authorization evidence
             hold = next((event for event in reversed(events)
                          if event["kind"] in ("new", "hold-merge", "release-merge")), {})

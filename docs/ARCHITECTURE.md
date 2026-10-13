@@ -1796,12 +1796,18 @@ configured root's display spelling and legitimate startup aliases. Missing proje
 created relative to pinned parents. Search-only traversal supports execute-only ancestors; callers
 that create durable task documents use readable descriptors for directory fsync.
 
-The same walk serves task documents and copies, and the non-resume transcript prompt's fixed
-`brief.md`. Brief reads retain complete UTF-8 text and universal newlines without the task-document
-size quota. An existing live task with no brief never borrows an archived brief. Linked ancestors,
-linked leaves and nonregular briefs are unavailable. This boundary does not cover ordinary task-view
-document reads, status/registry or invocation discovery, invocation output, native session selection
-or other runtime readers. It supplies no authority over regular records modified in place.
+The same storage owner serves runtime project registration, machine settings, task selection and
+records, status and event observations, setup and update records, and restart and publication locks.
+Task-directory enumeration keeps its parent open through child reads. Registry, update and setting
+transactions read and replace through the parent held by their lock. Atomic writes use a unique
+regular temporary file, sync its contents, replace the leaf and sync the pinned final directory;
+append opens a regular leaf without following links. The non-resume transcript prompt's fixed
+`brief.md` retains complete UTF-8 text and universal newlines without the task-document size quota.
+An existing live task with no brief never borrows an archived brief. Linked ancestors and nonregular
+read or append leaves are refused; atomic replacement may replace a linked leaf entry without reading
+its target. Generic JSON helpers remain available for separately owned nonruntime outputs.
+This boundary does not establish hardlink or in-place writer exclusion, native source provenance,
+or authority over mutable regular-record contents. Other runtime readers remain separately scoped.
 
 ### Times
 

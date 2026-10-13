@@ -9,7 +9,7 @@ def sessions() -> list[dict]:
     """The sessions Altitude runs: each project's L3 and its live task owners (L2)."""
     out = []
     for name in config.load_projects():
-        inf = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
+        inf = S.read_runtime_json(config.project_dir(name) / "l3.json", {}) or {}
         if inf:
             out.append({"kind": "l3", "project": name, "session_id": inf.get("session_id"), "context_percent": inf.get("context_percent"),
                     "model": inf.get("engine_model"), "engine_reasoning_effort": inf.get("engine_reasoning_effort"),
@@ -19,8 +19,8 @@ def sessions() -> list[dict]:
         for t in S.list_tasks(name):
             if t["state"] in ("running", "blocked", "reported"):
                 counts_p = S.counts_path(name, t)
-                counts = (S.read_json(counts_p, {}) if counts_p else {}) or {}
-                live = S.read_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
+                counts = (S.read_runtime_json(counts_p, {}) if counts_p else {}) or {}
+                live = S.read_runtime_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
                 engine = t.get("l2_engine") or "claude"
                 cp = ((t.get("token_usage") or {}).get("context") or {}).get("percent")
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
@@ -38,7 +38,7 @@ def sessions() -> list[dict]:
 
 def quota() -> dict:
     """The unattended seat reading; expired observations retain their figures as stale."""
-    reading = S.read_json(config.MONITOR_DIR / route.QUOTA_CLAUDE, {}) or {}
+    reading = S.read_runtime_json(config.MONITOR_DIR / route.QUOTA_CLAUDE, {}) or {}
     if not reading.get("known"):
         return reading or {"known": False, "why": "Waiting for the daemon's quota refresh"}
     fresh = 0 <= time.time() - reading.get("at", 0) <= route.FRESH_SECONDS
@@ -55,7 +55,7 @@ def routing() -> list[dict]:
     """
     rows = []
     for name, project in config.load_projects().items():
-        info = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
+        info = S.read_runtime_json(config.project_dir(name) / "l3.json", {}) or {}
         current = info.get("engine_last")
         rows.append({"role": "l3", "project": name, "pin": None, "current": current,
                      **route.pick_engine("l3", project=project, current=current,

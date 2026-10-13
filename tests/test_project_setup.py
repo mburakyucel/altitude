@@ -14,6 +14,7 @@ from altitude import config, dispatch, engines, git_policy, l3, platform, projec
 class ProjectSetup(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.fixture_boot_identity()
         self.private_ledgers()
         self.quiet_engines()
         make_repo(self.repo)
