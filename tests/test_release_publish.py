@@ -104,7 +104,7 @@ class InstallScript(unittest.TestCase):
         self.assertEqual(list(self.tmp.glob("altitude-install.*")), [], "the download folder is removed")
         on_path = self.run_script(PATH=f"{self.bin}:{self.tmp}/home/.local/bin")
         self.assertNotIn("Put alt on your PATH", on_path.stdout)
-        self.assertIn("1. Run: alt doctor", on_path.stdout)
+        self.assertIn("Check tools and sign-ins with alt doctor.", on_path.stdout)
 
     def test_says_whether_altitude_keeps_running_without_a_login(self):
         refused = ("Altitude stops when alice's last login session ends and starts again only at the next login. "
