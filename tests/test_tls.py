@@ -16,7 +16,7 @@ from altitude import access, config, installation, platform, tls
 ORIGINAL_STATUS = platform.status
 
 # A validity period already over. OpenSSL 3.4 and newer refuse negative -days but take explicit dates.
-_help = subprocess.run(["openssl", "x509", "-help"], capture_output=True, text=True)
+_help = tls._openssl("x509", "-help", allow_failure=True)
 EXPIRED = (["-not_before", "20200101000000Z", "-not_after", "20200102000000Z"]
            if "-not_after" in _help.stdout + _help.stderr else ["-days", "-1"])
 
@@ -82,7 +82,8 @@ class TestTLS(unittest.TestCase):
 
     def test_doctor_names_the_ca_fingerprint_url_and_device_steps(self):
         self.create()
-        with mock.patch.object(installation.shutil, "which", return_value=None), \
+        openssl = platform.openssl()
+        with mock.patch.object(installation.shutil, "which", side_effect=lambda name, **kwargs: openssl if name == "openssl" else None), \
              mock.patch("altitude.platform.status", side_effect=RuntimeError("no service in tests")), \
              mock.patch("altitude.platform.lingering", return_value=None):
             trust = installation.doctor()["certificate_trust"]

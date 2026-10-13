@@ -157,6 +157,17 @@ class InstallationCase(unittest.TestCase):
 
 
 class Installation(InstallationCase):
+    def test_installer_refuses_missing_tool_before_persistent_effects(self):
+        archive, checksum = self.archive()
+        with mock.patch.object(platform, "openssl", side_effect=RuntimeError("brew install openssl@3")):
+            with self.assertRaisesRegex(RuntimeError, "brew install openssl@3"):
+                installation.install(archive, checksum, self.prefix)
+        self.assertFalse(self.prefix.exists())
+        self.assertFalse(self.settings.exists())
+        self.assertFalse(self.launcher.exists())
+        self.assertFalse(self.certificates.exists())
+        self.assertEqual(self.actions, [])
+
     def test_install_update_and_uninstall_keep_settings_trust_and_user_data(self):
         retained = self.retained_data()
         first = self.install()
@@ -233,8 +244,10 @@ class Installation(InstallationCase):
     def test_install_preserves_discovered_custom_nvm_tools_in_clean_service_environment(self):
         from tests.test_toolchain import nvm_fixture
 
+        openssl = platform.openssl()
         with mock.patch.dict(os.environ, {"ALTITUDE_TASK": "transient-task", "ALTITUDE_SESSION_KEY": "transient-session"}):
             node_bin = nvm_fixture(SimpleNamespace(tmp=self.tmp, setenv=os.environ.__setitem__))
+            (Path(os.environ["PATH"]) / "openssl").symlink_to(openssl)
             engine = node_bin / "fixture-engine"
             engine.write_text("#!/bin/sh\necho provider invocation forbidden >&2\nexit 86\n")
             engine.chmod(0o755)

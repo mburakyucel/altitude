@@ -47,6 +47,29 @@ def _darwin() -> bool:
     return sys.platform == "darwin"
 
 
+_MAC_OPENSSL = ("/opt/homebrew/opt/openssl@3/bin/openssl", "/usr/local/opt/openssl@3/bin/openssl")
+
+
+def openssl() -> str:
+    """The TLS/signing tool, without changing the caller's PATH. macOS needs OpenSSL 3's
+    certificate verification options; Homebrew's keg need not be linked into its bin directory."""
+    found = shutil.which("openssl")
+    if not _darwin():
+        if found:
+            return found
+        raise RuntimeError("Install OpenSSL and put it on the service PATH, then retry.")
+    for candidate in dict.fromkeys(filter(None, (found, *_MAC_OPENSSL))):
+        try:
+            version = subprocess.run([candidate, "version"], capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        match = re.match(r"OpenSSL (\d+)\.", version.stdout)
+        if version.returncode == 0 and match and int(match[1]) >= 3:
+            return candidate
+    raise RuntimeError("OpenSSL 3 or newer was not found on PATH or in Homebrew's standard locations. "
+                       "Install it with brew install openssl@3, then retry; no shell-profile change is needed.")
+
+
 _GH_PACKAGES = "https://cli.github.com/packages"
 #: Each tool's own installation page, for a Linux system whose package manager install_command() does not know.
 INSTALL_PAGES = {"gh": "https://github.com/cli/cli#installation", "git": "https://git-scm.com/downloads/linux"}

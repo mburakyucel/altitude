@@ -29,6 +29,53 @@ class TestPlannedTasks(AltitudeCase):
         T.report(self.project, task["slug"], {"verdict": "ok"})
         T.done(self.project, task["slug"])
 
+    def test_supplied_sibling_evidence_reaches_ready_owner_with_merge_hold(self):
+        # Exercise the instructed handoff, not a model's choice or a filesystem resolver.
+        audit = self.repo.parent / "fictional-audit"
+        audit.mkdir()
+        supplied = {
+            "REQUEST.txt": "Repair the fictional setup handoff.",
+            "NOTES.txt": "The fictional walkthrough cannot identify its next action.",
+        }
+        for name, text in supplied.items():
+            (audit / name).write_text(text)
+        references = [f"fictional-audit/{name}" for name in supplied]
+        self.assertTrue(all(not (self.repo / ref).exists() for ref in references))
+        evidence = "\n".join(f"{ref}: {(self.repo.parent / ref).read_text()}" for ref in references)
+        brief = f"Authorized setup repair. Supplied private evidence:\n{evidence}\nDo not publish the audit."
+        result = self.alt("--project", self.project, "task", "new", "--title", "Repair setup",
+                          brief, "--hold-merge", "Operator review", env={"ALTITUDE_ACTOR": "l3"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        task = json.loads(result.stdout)
+        self.assertFalse(task.get("planned_wait"))
+        server.dispatch_waiting(self.project)
+        saved = S.load_task(self.project, task["slug"])
+        self.assertEqual(saved["state"], "running")
+        self.assertEqual(saved["hold_merge"], "Operator review")
+        self.assertIn(brief, self.engine.calls[0]["prompt"])
+        self.assertEqual(len(self.engine.calls), 1)
+
+    def test_unavailable_reference_waits_only_when_indispensable_to_progress(self):
+        reference = self.repo.parent / "unavailable-audit" / "NOTES.txt"
+        with self.assertRaises(FileNotFoundError):
+            reference.read_text()  # Verified absence at the supplied location; no broader search.
+        actionable = self.create("Investigate known setup failure")
+        context = T.message(self.project, actionable["slug"], "l3",
+                            "The supplied notes are unavailable at the named location. Investigate the "
+                            "reported setup failure within scope; do not guess the notes or broaden access.")
+        indispensable = self.create("Repair findings known only to the audit", "--wait", "the audit findings")
+        T.message(self.project, indispensable["slug"], "l3",
+                  "The named audit is absent at the supplied location and contains the only repair scope. "
+                  "No useful investigation is defined. The operator supplies its contents or corrects "
+                  "the location; L3 verifies the evidence and releases this wait.")
+        server.dispatch_waiting(self.project)
+        self.assertEqual(S.load_task(self.project, actionable["slug"])["state"], "running")
+        self.assertIn(context["text"], self.engine.calls[0]["prompt"])
+        waiting = S.load_task(self.project, indispensable["slug"])
+        self.assertEqual((waiting["state"], waiting["attempt"], waiting["worktree"]), ("queued", 0, None))
+        self.assertEqual(waiting["planned_wait"]["reason"], "the audit findings")
+        self.assertEqual(len(self.engine.calls), 1)
+
     def test_manual_wait_is_visible_without_wip_or_worker_and_does_not_starve_ready_work(self):
         task = self.create("A planned task", "--wait", "the rollout window")
         slug = task["slug"]

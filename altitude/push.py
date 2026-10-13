@@ -48,11 +48,12 @@ def _b64(raw: bytes) -> str:
 
 
 def _openssl(*args, stdin: bytes | None = None) -> bytes:
+    from . import platform
     try:
-        result = subprocess.run(["openssl", *map(str, args)], input=stdin, capture_output=True,
+        result = subprocess.run([platform.openssl(), *map(str, args)], input=stdin, capture_output=True,
                                 timeout=30, check=False)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise PushFailure(f"push signing needs OpenSSL on PATH: {exc}") from exc
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        raise PushFailure(f"push signing needs OpenSSL: {exc}") from exc
     if result.returncode:
         raise PushFailure(f"push signing failed: {result.stderr.decode(errors='replace').strip()[:300]}")
     return result.stdout

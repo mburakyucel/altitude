@@ -579,9 +579,13 @@ def doctor() -> dict:
     checks = [{"name": "Python", "state": "tested" if sys.version_info >= (3, 12) else "unavailable",
                "detail": sys.version.split()[0]}]
     for name in ("git", "gh", "openssl"):
-        binary = shutil.which(name)
+        try:
+            binary = platform.openssl() if name == "openssl" else shutil.which(name)
+            detail = binary or f"Install {name} and put it on the service PATH"
+        except RuntimeError as exc:
+            binary, detail = None, str(exc)
         checks.append({"name": name, "state": "configured" if binary else "unavailable",
-                       "detail": binary or f"Install {name} and put it on the service PATH"})
+                       "detail": detail})
     try:
         native = platform.status()
         checks.append({"name": "user service", "state": "tested", "detail": native})
@@ -747,6 +751,7 @@ def _prepare_install(archive: Path, checksum: str, prefix: Path | None = None, *
         from altitude import config, platform
         platform.require_native_application()
         platform.require_supported()
+        platform.openssl()
         registered = json.loads(config.PROJECTS_FILE.read_text()) if config.PROJECTS_FILE.exists() else {}
         settings = _settings().resolve()
         if settings.is_relative_to(prefix):

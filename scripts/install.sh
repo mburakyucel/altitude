@@ -53,6 +53,20 @@ older_python() {
     return 1
 }
 
+# Match platform.openssl() before downloading any application code. Homebrew's keg-only tool
+# is used directly by Altitude; the installing shell and saved service PATH stay unchanged.
+find_openssl() {
+    if [ "$system" != Darwin ]; then command -v openssl; return; fi
+    for candidate in openssl /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl; do
+        path=$(command -v "$candidate" 2>/dev/null) || continue
+        version=$("$path" version 2>/dev/null) || continue
+        case "$version" in
+            "OpenSSL "[3-9].* | "OpenSSL "[1-9][0-9]*.*) printf '%s\n' "$path"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
 # How to install a package with this system's own package manager; never another distribution's command.
 package_hint() {
     if command -v apt-get >/dev/null 2>&1; then printf 'sudo apt install %s' "$1"
@@ -101,19 +115,18 @@ main() {
     python=$(find_python) || stop "Python 3.12 or newer was not found ($(older_python || echo 'no python3'))." "$python_fix"
     command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
         stop "no SHA-256 tool (sha256sum or shasum) is installed." "Install coreutils, then run this again."
-    for tool in curl openssl; do
-        command -v "$tool" >/dev/null 2>&1 || stop "$tool is not installed." \
-            "Install it first ($(package_hint "$tool")), then run this again."
-    done
+    command -v curl >/dev/null 2>&1 || stop "curl is not installed." \
+        "Install it first ($(package_hint curl)), then run this again."
+    if [ "$system" = Darwin ]; then
+        find_openssl >/dev/null || stop "OpenSSL 3 or newer was not found on PATH or in Homebrew's standard locations." \
+            "Install it (brew install openssl@3), then run this again; no shell-profile change is needed."
+    else
+        find_openssl >/dev/null || stop "openssl is not installed." \
+            "Install it first ($(package_hint openssl)), then run this again."
+    fi
     [ "$system" != Linux ] || systemctl --user show-environment >/dev/null 2>&1 || stop "no systemd user manager is reachable." \
         "Altitude runs as a systemd user service. Run this from a login or SSH session where systemctl --user works."
     if [ "$system" = Darwin ]; then
-        # macOS's own openssl is LibreSSL, which cannot check a certificate's host name.
-        case "$(openssl version 2>/dev/null)" in
-            "OpenSSL "[3-9]*) ;;
-            *) stop "the openssl on PATH is $(openssl version 2>/dev/null || echo missing), not OpenSSL 3." \
-                "Install it (brew install openssl@3), put it ahead of /usr/bin (export PATH=\"\$(brew --prefix openssl@3)/bin:\$PATH\", also in your shell profile), then run this again." ;;
-        esac
         launchctl print "gui/$(id -u)" >/dev/null 2>&1 || stop "no logged-in desktop session of this account is reachable." \
             "Altitude runs as a LaunchAgent in your desktop session. Log in to this Mac's desktop, then run this again."
     fi

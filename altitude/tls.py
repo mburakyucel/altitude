@@ -12,7 +12,7 @@ import ssl
 import subprocess
 import tempfile
 
-from . import config, state as S
+from . import config, platform, state as S
 
 RENEW_SECONDS = 30 * 24 * 60 * 60
 LABEL_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"  # no 0/O or 1/I/L to misread
@@ -57,10 +57,12 @@ class TLSFailure(ValueError):
 
 def _openssl(*args: str, allow_failure: bool = False) -> subprocess.CompletedProcess:
     try:
-        result = subprocess.run(["openssl", *map(str, args)], capture_output=True, text=True,
+        result = subprocess.run([platform.openssl(), *map(str, args)], capture_output=True, text=True,
                                 timeout=30, check=False)
+    except RuntimeError as exc:
+        raise TLSFailure(f"HTTPS requires OpenSSL. {exc}") from exc
     except FileNotFoundError as exc:
-        raise TLSFailure("HTTPS requires OpenSSL on PATH. Install OpenSSL, then retry alt tls-init.") from exc
+        raise TLSFailure("HTTPS requires OpenSSL. Install OpenSSL, then retry alt tls-init.") from exc
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise TLSFailure(f"OpenSSL could not complete HTTPS validation: {exc}. Fix it and retry.") from exc
     if result.returncode and not allow_failure:
