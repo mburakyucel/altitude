@@ -79,6 +79,15 @@ export type Listen = (stream: MediaStream, samples: (chunk: Int16Array) => void)
 export const listenWithWorklet: Listen = async (stream, samples) => {
   const context = new AudioContext();
   try {
+    // The worklet is added once the context renders: Linux WebKit's audio deadlocks the page when a context
+    // first starts after its worklet was requested. A playback error can leave resume pending (#396), so the
+    // capture waits for the context itself; a refused resume still fails it.
+    if (context.state !== "running") {
+      await new Promise<void>((resolve, reject) => {
+        context.onstatechange = () => { if (context.state === "running") resolve(); };
+        context.resume().catch(reject);
+      });
+    }
     const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
     try {
       await context.audioWorklet.addModule(url);
@@ -93,7 +102,6 @@ export const listenWithWorklet: Listen = async (stream, samples) => {
     const mute = context.createGain();
     mute.gain.value = 0;
     node.connect(mute).connect(context.destination);
-    if (context.state !== "running") await context.resume();
     return () => {
       node.port.onmessage = null;
       source.disconnect();

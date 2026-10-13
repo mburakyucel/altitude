@@ -490,3 +490,45 @@ describe("HostCapture", () => {
     expect(calls.at(-1)!.path).toBe("/api/voice/live/late/cancel");
   });
 });
+
+describe("listenWithWorklet", () => {
+  /** An audio context that starts suspended and runs when `run` is called, recording when its worklet loads. */
+  function context(resume: () => Promise<void>) {
+    const made: { state: string; onstatechange: (() => void) | null; loaded: string[]; close: ReturnType<typeof vi.fn>; run: () => void }[] = [];
+    class FakeContext {
+      state = "suspended";
+      onstatechange: (() => void) | null = null;
+      loaded: string[] = [];
+      close = vi.fn(async () => undefined);
+      destination = {};
+      audioWorklet = { addModule: async () => { this.loaded.push(this.state); } };
+      resume = resume;
+      run = () => { this.state = "running"; this.onstatechange?.(); };
+      createMediaStreamSource = () => ({ connect: vi.fn(), disconnect: vi.fn() });
+      createGain = () => ({ gain: { value: 1 }, connect: (node: unknown) => node });
+      constructor() { made.push(this); }
+    }
+    vi.stubGlobal("AudioContext", FakeContext);
+    vi.stubGlobal("AudioWorkletNode", class { port = { onmessage: null }; connect = (node: unknown) => node; });
+    vi.stubGlobal("URL", Object.assign(Object.create(URL), { createObjectURL: () => "blob:worklet", revokeObjectURL: vi.fn() }));
+    return made;
+  }
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("loads its worklet only once the context runs, without waiting on a pending resume", async () => {
+    const made = context(() => new Promise(() => {}));
+    const listening = listenWithWorklet({} as MediaStream, () => {});
+    await Promise.resolve();
+    expect(made[0]!.loaded).toEqual([]);
+    made[0]!.run();
+    await listening;
+    expect(made[0]!.loaded).toEqual(["running"]);
+  });
+
+  it("fails and closes the context when resume is refused", async () => {
+    const made = context(() => Promise.reject(new DOMException("No output", "InvalidStateError")));
+    await expect(listenWithWorklet({} as MediaStream, () => {})).rejects.toThrow("No output");
+    expect(made[0]!.loaded).toEqual([]);
+    expect(made[0]!.close).toHaveBeenCalled();
+  });
+});
