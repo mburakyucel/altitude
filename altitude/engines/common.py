@@ -783,7 +783,20 @@ def transcript_sources(task: dict, *, job_root: Path) -> list[tuple[Path, dict]]
 
 def transcript_rows(engine: str, record: dict, worktree: str) -> list[dict]:
     """Project only public text/tools; the caller also uses this sanitized record for Raw events."""
+    _hide_reasoning(record)
     return implementation(engine).transcript_rows(record, worktree) if engine in config.ENGINES else []
+
+
+def _hide_reasoning(record: dict) -> dict:
+    """Reasoning stays off both public rows and the caller's Raw events copy."""
+    message = record.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), list):
+        message["content"] = [b for b in message["content"]
+                              if not (isinstance(b, dict) and str(b.get("type") or "").endswith("thinking"))]
+    item = record.get("item")
+    if isinstance(item, dict) and item.get("type") == "reasoning":
+        record["item"] = {k: v for k, v in item.items() if k in ("id", "type", "status")}
+    return record
 
 
 def activity_source(task: dict, *, job_root: Path) -> tuple[Path, dict] | None:

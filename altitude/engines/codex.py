@@ -640,9 +640,6 @@ def transcript_sources(task, *, job_root):
 
 
 def transcript_rows(record, worktree):
-    item = record.get("item")
-    if isinstance(item, dict) and item.get("type") == "reasoning":
-        record["item"] = {k: v for k, v in item.items() if k in ("id", "type", "status")}
     rows = _codex_rows(record, worktree)
     for row in rows:
         row["at"] = record.get("timestamp")

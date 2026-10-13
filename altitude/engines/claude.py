@@ -691,10 +691,6 @@ def transcript_sources(task, *, job_root):
 
 
 def transcript_rows(record, worktree):
-    message = record.get("message")
-    if isinstance(message, dict) and isinstance(message.get("content"), list):
-        message["content"] = [b for b in message["content"]
-                              if not (isinstance(b, dict) and str(b.get("type") or "").endswith("thinking"))]
     return _claude_rows(record, worktree)
 
 

@@ -43,6 +43,17 @@ class _CodexTranscriptCase(AltitudeCase):
 
 
 class TestCodexTranscript(_CodexTranscriptCase):
+    def test_raw_record_hides_recognized_reasoning_fields_before_native_projection(self):
+        self.new.write_text('\n'.join(map(json.dumps, [
+            {"type": "thread.started", "thread_id": "thread-1"},
+            {"type": "item.completed", "item": {"id": "reply", "type": "agent_message", "text": "Public reply"},
+             "message": {"content": [{"type": "thinking", "thinking": "private reasoning"}]}},
+        ])) + '\n')
+        event = next(e for e in self._view(raw=True)["events"] if e.get("kind") == "message" and e["source"] == "codex")
+        record = self._view(raw=True, mode="record", record=event["id"])
+        self.assertNotIn("private reasoning", json.dumps(record))
+        self.assertEqual(json.loads(record["text"])["message"]["content"], [])
+
     def test_every_turn_in_time_order_with_prompts_commands_and_file_changes(self):
         T.brief(self.project, self.slug, "# Brief\nDo it")
         message = T.message(self.project, self.slug, "burak", "Prefer the smaller diff")
