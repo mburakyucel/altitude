@@ -115,6 +115,40 @@ class ContainerBrowserGuestTests(AltitudeCase):
             guest.cleanup()
         invoke.assert_not_called()
 
+    def test_two_release_images_share_only_one_disposable_build_store(self):
+        fixture = guest.fixture
+        archive = self.tmp / 'altitude-v0.1.0-rc.2.tar.gz'
+        archive.write_bytes(b'fictional old release')
+        archive.with_name('altitude-v0.1.0-rc.3.tar.gz').write_bytes(b'fictional new release')
+        root = self.tmp / 'build'
+        root.mkdir()
+        (root / 'store').mkdir()
+        calls = []
+        def build(source, checksum, tag, **options):
+            calls.append((source, checksum, options))
+            (root / 'context').mkdir()
+            (root / 'image.tar').touch()
+            return {'Id': tag}
+        self.patch(fixture.container, 'build', side_effect=build)
+        images = fixture.build_base_pair(root, 'fictional-build.service', archive)
+        self.assertNotEqual(images['old']['id'], images['new']['id'])
+        self.assertNotEqual(images['old']['archive_sha256'], images['new']['archive_sha256'])
+        self.assertEqual([c[2] for c in calls], [{'delegated': 'fictional-build.service', 'root': root}] * 2)
+        self.assertTrue((root / 'store').exists())
+        self.assertFalse((root / 'context').exists())
+
+    def test_failed_paired_build_retires_its_owned_store(self):
+        fixture = guest.fixture
+        self.patch(fixture, 'ROOT', self.tmp / 'runtime')
+        self.patch(fixture.platform, 'container_job', side_effect=RuntimeError('fictional build failure'))
+        self.patch(fixture.platform, 'container_user_environment', return_value={})
+        self.patch(fixture.platform, 'job_active', return_value=False)
+        cleanup = self.patch(fixture.container, 'cleanup_build', side_effect=lambda root: __import__('shutil').rmtree(root))
+        with self.assertRaisesRegex(RuntimeError, 'fictional build failure'):
+            fixture.prepare_bases()
+        cleanup.assert_called_once()
+        self.assertEqual(list(fixture.ROOT.glob('build-pair-*')), [])
+
     def test_offline_prepare_refuses_missing_base_without_building(self):
         fixture = guest.fixture
         root = self.tmp / 'runtime'

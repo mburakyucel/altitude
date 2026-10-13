@@ -1,9 +1,12 @@
 """Guest-only controls for the real daemon/browser fixture; no fixture HTTP routes."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
+import tempfile
+import uuid
 
 SOURCE=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(SOURCE))
@@ -39,15 +42,45 @@ def fixture_image(archive, suffix, base=None):
     return fixture,image['Id']
 
 
+def build_base_pair(root, unit, archive):
+    """The two fictional versions share one disposable delegated build store."""
+    images={}
+    for suffix,source in [('old',archive),('new',archive.with_name('altitude-v0.1.0-rc.3.tar.gz'))]:
+        checksum=hashlib.sha256(source.read_bytes()).hexdigest()
+        image=container.build(source,checksum,'localhost/altitude:browser-base-'+suffix,
+                              delegated=unit,root=root)
+        images[suffix]={'id':image['Id'],'archive_sha256':checksum}
+        shutil.rmtree(root/'context')
+        (root/'image.tar').unlink()
+    return images
+
+
 def prepare_bases():
     """Online build phase: no fixture code runs or production container boots."""
     ROOT.mkdir(exist_ok=True)
     with container_acceptance.environment(ROOT,reuse=True):
-        images={}
-        for suffix,archive in [('old',ARCHIVE),('new',ARCHIVE.with_name('altitude-v0.1.0-rc.3.tar.gz'))]:
-            checksum=hashlib.sha256(archive.read_bytes()).hexdigest()
-            image=container.build(archive,checksum,'localhost/altitude:browser-base-'+suffix)
-            images[suffix]={'id':image['Id'],'archive_sha256':checksum}
+        root=Path(tempfile.mkdtemp(prefix='build-pair-',dir=ROOT))
+        unit='altitude-container-build-'+uuid.uuid4().hex+'.service'
+        (root/'storage.conf').write_text('[storage]\ndriver="overlay"\n'+
+            'graphroot='+json.dumps(str(root/'store'))+'\nrunroot='+json.dumps(str(root/'run'))+'\n')
+        (root/'runtime').mkdir(mode=0o700)
+        (root/'runtime/bus').symlink_to(f'/run/user/{os.getuid()}/bus')
+        command=[sys.executable,'-c','import json,sys;from pathlib import Path;'
+                 'from tests.container_browser_probe import build_base_pair;'
+                 'print(json.dumps(build_base_pair(Path(sys.argv[1]),sys.argv[2],Path(sys.argv[3]))))',
+                 str(root),unit,str(ARCHIVE)]
+        cleanup=[sys.executable,'-c','import sys;from pathlib import Path;'
+                 'from scripts.container import cleanup_build;cleanup_build(Path(sys.argv[1]))',str(root)]
+        try:
+            images=json.loads(platform.container_job(unit,command,wait=True,after_stop=cleanup))
+        finally:
+            if root.exists():
+                environment=platform.container_user_environment()
+                if platform.job_active(unit,environment):
+                    platform.container_stop_unit(unit,environment)
+                    if platform.job_active(unit,environment):
+                        raise RuntimeError('Paired build remains active; retain private evidence')
+                container.cleanup_build(root)
         BASES.write_text(json.dumps(images))
         return images
 
