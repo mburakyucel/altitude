@@ -95,10 +95,15 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   };
   const label = uncertain ? "Switch unconfirmed" : active ? stopping ? `Switching to ${request?.target_label}` : "Preparing switch"
     : request?.status === "done" && task.state === "queued" ? `Waiting for ${request.target_label}` : "";
+  // Names what the switch changes, so an effort-only change on the same engine reads as such.
+  const destination = info?.targets.find((item) => item.engine === request?.engine);
+  const selectedName = destination?.models.find((item) => item.model === request?.selection?.model && item.value !== "default")?.label || request?.selection?.model;
+  const selectedEffort = destination?.efforts.find((item) => item.value === (request?.selection?.effort ?? "native"))?.label;
+  const switchingTo = selectedName ? `${selectedName} · ${selectedEffort || "Native"}` : request?.target_label;
   const focusCard = () => document.querySelector<HTMLElement>(".transfer-card")?.focus();
   const quotaOffer = Boolean(task.state === "blocked" && info?.quota_limited && info.resume_hold && info.targets.length && !active && !uncertain && !error);
   return { info, shown, request, active, stopping, queued, label, dialog, setDialog: openDialog, target, setTarget, selected,
-    pending, uncertain, error, unavailable, blocked, disabled, quotaOffer, start, perform, recheck, focusCard,
+    pending, uncertain, error, unavailable, blocked, disabled, quotaOffer, switchingTo, start, perform, recheck, focusCard,
     model, setModel, effort, setEffort, pickEngine, selectedModel, changed,
     controls: active && !stopping || uncertain,
     close: () => { if (!submitting.current) {
@@ -115,8 +120,8 @@ export function TransferModelButton({ transfer: t }: { transfer: Transfer }) {
   const effort = t.info.current_model ? t.info.current_effort_label : "";
   // While a switch prepares, the pill leads to its card instead of opening the chooser over it.
   if (t.active && !t.stopping) return <button type="button" className="models-pill task-model-pill"
-    aria-label={`Task model: switching to ${t.request?.target_label}. Show the switch`} onClick={t.focusCard}>
-    L2 · <StatusMark label={`Switching to ${t.request?.target_label}`} announce={false} /> <strong>Switching to {t.request?.target_label}</strong>
+    aria-label={`Task model: switching to ${t.switchingTo}. Show the switch`} onClick={t.focusCard}>
+    L2 · <StatusMark label={`Switching to ${t.switchingTo}`} announce={false} /> <strong>Switching to {t.switchingTo}</strong>
   </button>;
   return <button type="button" className="models-pill task-model-pill" aria-haspopup="dialog"
     aria-label={`Task model: ${label}${effort ? ` · ${effort}` : ""}`} disabled={t.blocked || t.stopping || t.queued} onClick={t.start}>
@@ -142,11 +147,8 @@ export function TransferCard({ transfer: t }: { transfer: Transfer }) {
   const warning = quota || t.uncertain || Boolean(t.error) || ["failed", "refused"].includes(t.request?.status ?? "");
   const tone = warning ? "warn" : busy ? "run" : t.request?.status === "done" ? "ok" : "wait";
   const title = quota ? "Engine usage limit" : t.active && !t.stopping && !t.uncertain ? "Preparing change" : "Task change";
-  const destination = t.info?.targets.find((item) => item.engine === t.request?.engine);
-  const selectedName = destination?.models.find((item) => item.model === t.request?.selection?.model && item.value !== "default")?.label || t.request?.selection?.model;
-  const selectedEffort = destination?.efforts.find((item) => item.value === (t.request?.selection?.effort ?? "native"))?.label;
   const status = quota ? `${t.info?.current_label} reached its usage limit.`
-    : t.active && !t.stopping && !t.uncertain ? selectedName ? `${selectedName} · ${selectedEffort || "Native"}` : t.request?.target_label
+    : t.active && !t.stopping && !t.uncertain ? t.switchingTo
     : t.label || (t.request?.status === "cancelled" ? "Switch cancelled." : t.request?.status === "done" ? `Switched to ${t.request.target_label}.`
       : t.request ? "Switch failed." : t.info?.current_label);
   return <section className="review-box transfer-card" aria-label={title} tabIndex={-1}

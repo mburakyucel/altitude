@@ -66,7 +66,7 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   await confirm.getByRole("button", { name: "Prepare change", exact: true }).click();
   await expect(card(page)).toBeVisible();
   // While it prepares, the pill leads to the switch's card; it never reopens the chooser over it.
-  await page.getByRole("button", { name: `Task model: switching to ${target.label}. Show the switch`, exact: true }).click();
+  await page.getByRole("button", { name: /^Task model: switching to .+\. Show the switch$/ }).click();
   await expect(card(page)).toBeFocused();
   await walk.state("03b-pill-leads-to-own-switch", { visible: [card(page), card(page).getByText("Started by you", { exact: true })], hidden: [confirm] });
   const response = await request.post("/fixture/transfer", { data: { slug, ready: true, launch: true } });
@@ -94,9 +94,8 @@ test("a switch the coordinator started says so and why, and the pill shows it wi
   expect((await request.post("/fixture/transfer", { data: { slug, l3_switch: true } })).ok()).toBe(true);
   await expect(chooser).toBeHidden();
   await expect(card(page).getByText(/^Started by the coordinator · The operator asked for existing tasks to run on /)).toBeVisible();
-  const target = (await read()).transfer.request.target_label;
   await walk.state("01-coordinator-switch-names-its-source", { visible: [card(page), card(page).getByRole("button", { name: "Cancel switch", exact: true })], hidden: [chooser] });
-  await page.getByRole("button", { name: `Task model: switching to ${target}. Show the switch`, exact: true }).click();
+  await page.getByRole("button", { name: /^Task model: switching to .+\. Show the switch$/ }).click();
   await expect(card(page)).toBeFocused();
   await expect(chooser).toBeHidden();
   const after = await read();
@@ -129,7 +128,7 @@ test("explicit switch now replaces a running owner and preserves the merge hold"
   await walk.state("03-new-attempt-hold-kept", { visible: [page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm] });
 });
 
-test("same-engine effort change shows the current tuple until the fresh attempt runs", async ({ page, request }, info) => {
+test("same-engine effort change names the new effort while it prepares and applies with the fresh attempt", async ({ page, request }, info) => {
   const slug="transfer-running-work";
   const read=async ()=>(await (await request.get(path(slug))).json());
   const before=await read();
@@ -144,7 +143,8 @@ test("same-engine effort change shows the current tuple until the fresh attempt 
   await walk.state("01-same-engine-effort-confirmation",{visible:[page.getByRole("dialog",{name:"This task’s model"})],hidden:[]});
   await page.getByRole("button",{name:"Prepare change",exact:true}).click();
   await expect.poll(async ()=>(await read()).daemon_request?.selection).toEqual({model:before.transfer.current_model,effort:"medium"});
-  await expect(page.getByRole("button",{name:/^Task model:/})).toContainText("High");
+  await expect(page.getByRole("button",{name:/^Task model: switching to .* · Medium\. Show the switch$/})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Preparing change"})).toContainText("Started by you");
   expect((await request.post("/fixture/transfer",{data:{slug,ready:true}})).ok()).toBe(true);
   await expect.poll(async ()=>(await read()).state).toBe("queued");
   await expect(page.getByRole("button",{name:/^Task model:/})).toContainText("High");

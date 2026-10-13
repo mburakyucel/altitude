@@ -1149,7 +1149,7 @@ evidence. A current quota offer uses secondary **Change model…** and no duplic
 Preparation has no timeout. Switch now confirms stopping pending work without a note; now/cancel
 vanish once stopping commits. Stop stays in its existing location. **Switch controls ↓** leads back
 from history; return to Conversation from Live session/Terminal to use the chooser. During preparation the
-pill reads **Switching to <engine>** with a progress mark and moves focus to that card; it never opens
+pill reads **Switching to <model · effort>** (the engine when no model is named) with a progress mark and moves focus to that card; it never opens
 the chooser over a switch, and a switch started elsewhere closes an open chooser. Uncertain
 responses offer **Check status**, never a duplicate mutation. Outcomes become conversation messages.
 Draft, selection, recording and view survive; polling never steals focus. Escape closes the active
