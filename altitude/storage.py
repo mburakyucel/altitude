@@ -112,8 +112,9 @@ def open_runtime(path: Path, flags: int, *, truncate: bool = False) -> int:
     Truncation happens only after the leaf is known to be this root's own regular file."""
     *parents, name = _runtime_parts(path)
     _component(name)
+    truncate = truncate or bool(flags & os.O_TRUNC)
     with runtime_directory(parents, create=bool(flags & os.O_CREAT), search=True) as directory:
-        fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
+        fd = os.open(name, flags & ~os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
     try:
         _regular(fd)
         if truncate:
@@ -167,6 +168,23 @@ def replace(path: Path, data: bytes) -> None:
                 pass
             raise
         os.fsync(directory)
+
+
+def create(folder: int, parts: list[str], data: bytes) -> None:
+    """Write a new file below an open runtime folder, creating the folders on the way; nothing is followed or
+    replaced, so a link planted while the folder fills makes the write fail."""
+    *parents, name = parts
+    _component(name)
+    with directory(folder, parents, create=True, search=True) as parent:
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(data)
+
+
+def read_text(path: Path) -> str:
+    """A whole UTF-8 text file in the runtime root, with universal newlines."""
+    with os.fdopen(open_runtime(path, os.O_RDONLY), "r", encoding="utf-8") as stream:
+        return stream.read()
 
 
 def tail(path: Path, size: int) -> str:

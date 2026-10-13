@@ -1818,20 +1818,23 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
-Workers can write the runtime root, so the daemon never writes there through a link: a planted link
-would let a sandboxed worker have Altitude write outside its sandbox. Every record replacement, log
-append and lock in the runtime root goes through `storage.py`, which walks from the runtime root
-fixed at startup without following a link at any component and opens a leaf only when it is one
-singly linked regular file. Record replacement writes a new file and renames it over the leaf, so a
-planted leaf link is replaced, never followed. A refused file is an error, not a fallback. Locks never
+Workers can write the runtime root, so the daemon never writes its records there through a link: a
+planted link would let a sandboxed worker have Altitude write outside its sandbox. Every record
+replacement, log append and lock in the runtime root, worker output and review snapshots go through
+`storage.py`. It walks from the runtime root fixed at startup without following a link at any
+component and opens a leaf only when it is one singly linked regular file, truncating only after
+that check. Record replacement writes a new file and renames it over the leaf, so a planted leaf link
+is replaced, never followed; a review snapshot creates every folder and file relative to its review
+folder and refuses anything already there. A refused file is an error, not a fallback. Locks never
 truncate; serialization waits for the current writer and the activity fence keeps shared/exclusive
-nonblocking contention.
+nonblocking contention. New folders and files are private to the operator.
 
 Reads that reach another engine or the task record use the same walk: the task's `brief.md` and
 `request.md` for reviews and the transcript, task documents, invocation output and a failed worker's
 error tail. Brief reads keep complete UTF-8 text and universal newlines; a live task without a brief
-never borrows an archived one. Other runtime reads still open by path, and a worker can change the
-contents of any regular record it can write.
+never borrows an archived one. Other runtime reads still open by path, image preparation still
+writes by path inside its fresh staging folder in the project's `images` folder, and a worker can
+change the contents of any regular record it can write.
 
 ### Times
 

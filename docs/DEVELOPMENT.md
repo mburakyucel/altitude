@@ -90,7 +90,7 @@ repair through L3; an unavailable safe repair remains an explicit task-local dep
 The configured runtime home may itself be a symlink; its resolved root anchors cleanup, while
 links below it are refused.
 
-Runtime files a test writes (speech, monitor and incident ledgers) live under `self.runtime_tmp`,
+Runtime files a test writes (speech, monitor, incident ledgers and worker jobs) live under `self.runtime_tmp`,
 inside the test runtime root, because runtime writes refuse paths outside it.
 `tests/test_runtime_storage.py` plants leaf links, hard links and linked folders under every runtime
 writer and reader and checks that nothing outside the root changes or leaks.

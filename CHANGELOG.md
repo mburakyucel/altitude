@@ -5,8 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
-- Altitude never writes through a link placed in its data folder, so a sandboxed agent cannot have it
-  write a file outside the sandbox.
+- Altitude's records, logs, locks, agent output and review snapshots are never written through a link
+  placed in its data folder, so a sandboxed agent cannot use them to have Altitude write a file
+  outside the sandbox.
 
 ## v0.6.0 — 2026-10-13
 

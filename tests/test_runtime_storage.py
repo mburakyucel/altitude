@@ -6,7 +6,7 @@ import subprocess
 import sys
 import unittest
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from unittest import mock
 
 from tests.support import AltitudeCase
@@ -162,9 +162,14 @@ class RuntimeStorage(AltitudeCase):
             (self.runtime / "monitor" / "restart.lock", lambda: config.restart_lock()),
             (self.runtime / "monitor" / "faults.lock", lambda: incidents._fault_lock()),
             (self.runtime / "incidents.jsonl", lambda: called(incidents._index_append, {"id": "x"})),
+            (self.runtime / "speech" / ".control", lambda: closing(speech._guard())),
             (self.runtime / "speech" / ".lock", lambda: entered(speech._lock())),
             (self.runtime / "speech" / ".use", lambda: entered(speech._lease(False))),
             (self.runtime / "speech" / "worker.log", lambda: storage.runtime_log(self.runtime / "speech" / "worker.log")),
+            (slug / "l2-engine" / "w.stdout.jsonl",
+             lambda: open(slug / "l2-engine" / "w.stdout.jsonl", "ab", opener=storage.opener)),
+            (slug / "l2-engine" / "w.stderr.log",  # an opener never truncates before the regular-file check
+             lambda: open(slug / "l2-engine" / "w.stderr.log", "wb", opener=storage.opener)),
         )
 
     def test_runtime_writers_never_write_through_planted_links(self):
@@ -227,6 +232,26 @@ class RuntimeStorage(AltitudeCase):
             S.write_json(record, {"text": "$(planted)"})
         self.assertEqual(sorted(p.name for p in self.outside.iterdir()), ["shell-startup"])
 
+    def test_fixed_runtime_records_replace_a_planted_link(self):
+        self.patch(config, "MONITOR_DIR", self.runtime / "monitor")
+        self.patch(config, "PROJECTS_FILE", self.runtime / "projects.json")
+        self.patch(config, "RELEASE", {"repository": "https://example.invalid/altitude"})
+        self.patch(installation, "update_status", return_value={"available": {"version": "v9.9.9"},
+                                                               "automatic_pending": False})
+        victim = self.outside / "shell-startup"  # not there yet: a writer following the link would create it
+        writers = ((engines.common.usage_limit_path(), lambda: engines.common.note_usage_limit("2099-01-01T00:00Z")),
+                   (self.runtime / "claude-settings.json", engines.claude.claude_settings),
+                   (self.runtime / "projects.json", config.ensure_root),
+                   (self.runtime / "update-notice", installation.update_notice))
+        for leaf, write in writers:
+            with self.subTest(leaf=leaf.name):
+                leaf.parent.mkdir(parents=True, exist_ok=True)
+                leaf.unlink(missing_ok=True)
+                leaf.symlink_to(victim)
+                write()
+                self.assertFalse(leaf.is_symlink())
+                self.assertEqual(list(self.outside.iterdir()), [])
+
     def test_server_log_drops_a_line_rather_than_follow_a_link(self):
         self.patch(server, "LOG", self.runtime / "altd.log")
         victim = self.outside / "shell-startup"
@@ -243,13 +268,19 @@ class RuntimeStorage(AltitudeCase):
         (folder / "request.md").write_text("request\n")
         (folder / "brief.md").symlink_to(secret)
         self.patch(reviews.T, "task_messages", return_value=[])
-        with self.assertRaises((OSError, ValueError)):
+        with self.assertRaises(reviews.T.TransitionError):
             reviews._context(self.project, {"slug": "demo"})
         (folder / "brief.md").unlink()
         self.assertEqual(reviews._context(self.project, {"slug": "demo"})["brief"], "")
         jobs = folder / "l2-engine"
         jobs.mkdir()
         S.write_json(jobs / "w1.json", {"id": "w1", "engine": "codex", "unit": "", "started_at": S.now()})
+        (jobs / "w1.stdout.jsonl").write_text("")
+        (jobs / "w1.stdout.jsonl").unlink()
+        os.link(secret, jobs / "w1.stdout.jsonl")
+        with self.assertRaises(ValueError):
+            storage.tail(jobs / "w1.stdout.jsonl", 500)
+        (jobs / "w1.stdout.jsonl").unlink()
         (jobs / "w1.stdout.jsonl").write_text("")
         (jobs / "w1.stderr.log").symlink_to(secret)
         self.patch(platform, "job_active", return_value=False)
