@@ -547,7 +547,8 @@ while True:
 - **Results.** Regular files that the command writes to `$VALIDATION_RESULTS` are copied to the task
   folder's `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches
   that folder from Altitude's home without following links. Across the whole results tree, JSON/JSONL
-  receipts are copied first, then LOG/TXT failure logs, then other artifacts such as traces and images,
+  receipts are copied first, then LOG/TXT logs and Markdown failure contexts such as Playwright's
+  `error-context.md`, then other artifacts such as traces and images,
   all sharing the same budget. Each group visits files before subfolders, in name order. Evidence must
   itself fit the limit; links and files that exceed the remaining budget are skipped and listed without
   truncation. The run's container or processes, clone and area are removed afterwards, including after a

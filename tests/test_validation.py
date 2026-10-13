@@ -23,7 +23,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest import TestCase, mock
+from unittest import TestCase, mock, skipIf
 
 from tests.support import AltitudeCase, make_repo
 from tests.test_grant import SHIM, wait_for
@@ -35,9 +35,9 @@ RUNNER_HOME = validation.home
 class TestValidationResults(TestCase):
     def test_receipts_and_failure_logs_precede_traces_across_the_whole_tree(self):
         files = {
-            "artifacts/a.trace": b"t" * 100,
+            "artifacts/a.trace": b"t" * 10,  # would fit what the context leaves if it came first
             "artifacts/b.zip": b"z" * 100,
-            "artifacts/error-context.txt": b"failed journey",
+            "artifacts/error-context.md": b"failed journey",
             "journeys.log": b"journey timed out",
             "preflight.json": b'{"passed":true}',
             "preflight.log": b"sandbox checked",
@@ -64,7 +64,7 @@ class TestValidationResults(TestCase):
                         for p in (root / "copy").rglob("*") if p.is_file()}
                 overflow = limit < sum(map(len, files.values()))
                 self.assertEqual(kept, essential if overflow else files)
-                self.assertEqual(skipped, [f"{p}: over the 0 MiB results limit"
+                self.assertEqual(skipped, [f"{p}: exceeds what remains of the 0 MiB results limit"
                                            for p in ("artifacts/a.trace", "artifacts/b.zip")] if overflow else [])
                 self.assertLessEqual(sum(map(len, kept.values())), limit)
 
@@ -90,9 +90,23 @@ class TestValidationResults(TestCase):
             self.assertEqual({p.name: p.read_bytes() for p in (root / "copy").iterdir()},
                              {"result.json": b"{}", "failure.log": b"bad"})
             self.assertEqual(set(skipped), {
-                "large.json: over the 0 MiB results limit", "trace.zip: over the 0 MiB results limit",
+                "large.json: exceeds what remains of the 0 MiB results limit", "trace.zip: exceeds what remains of the 0 MiB results limit",
                 "linked.json: not a regular file or folder", "linked-folder: not a regular file or folder",
                 "pipe.log: not a regular file or folder"})
+
+    @skipIf(os.geteuid() == 0, "root reads any folder")
+    def test_an_unreadable_folder_is_listed_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "results" / "locked").mkdir(parents=True)
+            (root / "results" / "locked").chmod(0)
+            parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                skipped = validation.copy_results(root / "results", parent, "copy")
+            finally:
+                os.close(parent)
+                (root / "results" / "locked").chmod(0o700)
+            self.assertEqual(skipped, ["locked/: Permission denied"])
 
 
 class TestValidationImage(TestCase):
@@ -549,7 +563,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         with mock.patch.object(validation, "RESULTS_LIMIT", 5):
             skipped = validation.copy_results(source, parent, "copy")
         self.assertEqual(sorted(p.name for p in (self.tmp / "copy").iterdir()), ["small"])
-        self.assertEqual(skipped, ["big: over the 0 MiB results limit", "pipe: not a regular file or folder"])
+        self.assertEqual(skipped, ["big: exceeds what remains of the 0 MiB results limit", "pipe: not a regular file or folder"])
         elsewhere = self.tmp / "elsewhere"
         elsewhere.mkdir()
         (self.tmp / "planted").symlink_to(elsewhere)
@@ -567,7 +581,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         evidence = Path(result["results"])
         self.assertEqual(json.loads((evidence / "ui-validation.json").read_text()), {"passed": False})
         self.assertEqual((evidence / "journeys.log").read_text(), "timeout")
-        self.assertEqual(result["results_skipped"], ["artifacts/trace.zip: over the 0 MiB results limit"])
+        self.assertEqual(result["results_skipped"], ["artifacts/trace.zip: exceeds what remains of the 0 MiB results limit"])
         self.assertIn("failed-run", Path(result["log"]).read_text())
         self.assertEqual(self.rows()[-1]["exit"], 124)
         self.assertEqual(list((validation.home() / "runs").iterdir()), [])
