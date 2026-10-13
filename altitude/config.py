@@ -311,7 +311,7 @@ def validate_incident_repository(value) -> None:
     if value is None or value is False:
         return
     if isinstance(value, str):
-        owner, separator, name = value.partition("/")
+        owner, separator, name = str.partition(value, "/")
         allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
         if separator and owner and name and all(character in allowed for part in (owner, name) for character in part):
             return
