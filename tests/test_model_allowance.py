@@ -38,13 +38,13 @@ class TestNativeModelRows(AltitudeCase):
         super().setUp()
         self.private_ledgers()
         self.output = ""
-        self.patch(engines.subprocess, "run", side_effect=lambda command, **kwargs: subprocess.CompletedProcess(
+        self.patch(engines.common.subprocess, "run", side_effect=lambda command, **kwargs: subprocess.CompletedProcess(
             command, 0, "2.1.280 (Claude Code)" if command[1:] == ["--version"] else self.output, ""))
 
     def test_model_rows_are_kept_beside_shared_windows_with_zero_and_unknown_reset(self):
         self.output = usage(row("session", 55), row("weekly_all", 55), row("weekly_scoped", 100, "Fable", None),
                             row("weekly_scoped", 0, "Opus"), row("weekly_scoped", 40, surface="Design"))
-        reading = engines._claude_quota()
+        reading = engines.claude._claude_quota()
         self.assertTrue(reading["known"])
         self.assertEqual((reading["five_hour"], reading["seven_day"]), (55, 55))
         self.assertEqual(reading["models"], [
@@ -54,7 +54,7 @@ class TestNativeModelRows(AltitudeCase):
 
     def test_a_model_row_alone_is_a_reading_without_account_windows(self):
         self.output = usage(row("weekly_scoped", 20, "Fable"))
-        reading = engines._claude_quota()
+        reading = engines.claude._claude_quota()
         self.assertTrue(reading["known"])
         self.assertNotIn("seven_day", reading)
         self.assertEqual(reading["models"][0]["seven_day"], 20)
@@ -66,11 +66,11 @@ class TestNativeModelRows(AltitudeCase):
                                               if k != "severity"})):
             with self.subTest(rows=rows):
                 self.output = usage(*rows)
-                self.assertFalse(engines._claude_quota()["known"])
+                self.assertFalse(engines.claude._claude_quota()["known"])
 
     def test_an_unrecognized_model_label_is_shown_but_matches_no_configured_model(self):
         self.output = usage(row("weekly_all", 5), row("weekly_scoped", 100, "Future Model"))
-        reading = engines._claude_quota()
+        reading = engines.claude._claude_quota()
         self.assertEqual(reading["models"], [{"model": None, "label": "Future Model", "seven_day": 100,
                                               "seven_day_resets": datetime.fromisoformat(RESET).timestamp()}])
         self.assertIsNone(route.model_reading(reading, "fable"))

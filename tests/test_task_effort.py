@@ -165,15 +165,15 @@ class TestTaskEffort(AltitudeCase):
         native_launches = []
         real_popen = subprocess.Popen
         def popen(cmd, **kwargs):
-            if cmd[-len(engines._driver_command()):] != engines._driver_command():
+            if cmd[-len(engines.common._driver_command()):] != engines.common._driver_command():
                 return real_popen(cmd, **kwargs)
             proc = FakeProcess(cmd, stdout=kwargs["stdout"], thread="conversation")
             native_launches.append(proc)
             kwargs["stdout"].write((json.dumps({"type": "turn.failed", "error": {"message": error}}) + "\n").encode())
             proc.alive = False
             return proc
-        with mock.patch.object(engines.subprocess, "Popen", side_effect=popen) as launch, \
-             mock.patch.object(engines, "_git_dirs", return_value=[]), \
+        with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen) as launch, \
+             mock.patch.object(engines.common, "_git_dirs", return_value=[]), \
              mock.patch.object(platform, "job_active", return_value=False):
             dispatch.run(self.project, task["slug"])
             finished = dispatch.poll(self.project)
@@ -205,7 +205,7 @@ class TestEffortCommand(AltitudeCase):
     def test_claude_worker_fresh_and_resume_honor_effort_without_inherited_override(self):
         self.quiet_engines()
         self.patch(platform, "job_active", return_value=False)
-        self.patch(engines, "_codex_processes", {})
+        self.patch(engines.common, "_codex_processes", {})
         self.setenv("CLAUDE_CODE_EFFORT_LEVEL", "low")
         for resume in (False, True):
             for effort in (None, "medium", "xhigh", "max"):
@@ -214,7 +214,7 @@ class TestEffortCommand(AltitudeCase):
                     def popen(cmd, **kwargs):
                         processes.append(ClaudeWorker(kwargs["stdout"], session="conversation"))
                         return processes[-1]
-                    with mock.patch.object(engines.subprocess, "Popen", side_effect=popen) as launch:
+                    with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen) as launch:
                         kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model="opus",
                                       effort=effort, settings=self.tmp / "settings.json", extra_env={},
                                       job_root=self.tmp / "jobs")
@@ -241,12 +241,12 @@ class TestEffortCommand(AltitudeCase):
                 with self.subTest(resume=resume, effort=effort):
                     event = {"type": "result", "session_id": "conversation", "result": "done"}
                     process = PrintProcess(json.dumps(event) + "\n")
-                    with mock.patch.object(engines.subprocess, "Popen", return_value=process) as launch:
+                    with mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as launch:
                         result = engines.claude_print("request", cwd=self.repo, effort=effort, resume=resume,
                                                       settings=self.tmp / "settings.json")
                     self.assertIsNone(result["error"])
-                    self.assertEqual(launch.call_args.args[0][-len(engines._driver_command()):],
-                                     engines._driver_command())
+                    self.assertEqual(launch.call_args.args[0][-len(engines.common._driver_command()):],
+                                     engines.common._driver_command())
                     command = launch_spec(process)["command"]
                     self.assertEqual(command[0], config.CLAUDE_BIN)
                     self.assertEqual("--resume" in command, resume is not None)
@@ -263,8 +263,8 @@ class TestEffortCommand(AltitudeCase):
                     def popen(cmd, **kwargs):
                         processes.append(FakeProcess(cmd, stdout=kwargs["stdout"], thread="conversation"))
                         return processes[-1]
-                    with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
-                         mock.patch.object(engines, "_git_dirs", return_value=[]), \
+                    with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen), \
+                         mock.patch.object(engines.common, "_git_dirs", return_value=[]), \
                          mock.patch.object(platform, "job_active", return_value=False):
                         kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model=None,
                                       effort=effort, settings=self.tmp / "settings.json", extra_env={},
@@ -286,7 +286,7 @@ class TestEffortCommand(AltitudeCase):
             for effort in (None, "high", "ultra"):
                 with self.subTest(resume=resume, effort=effort):
                     process = SimpleNamespace(pid=123, returncode=0, stdin=io.StringIO(), communicate=lambda *args, **kwargs: (output, ""))
-                    with mock.patch.object(engines.subprocess, "Popen", return_value=process) as launch:
+                    with mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as launch:
                         result = engines.codex_exec("request", cwd=self.repo, effort=effort, resume=resume)
                     self.assertIsNone(result["error"])
                     command = launch.call_args.args[0]
@@ -295,7 +295,7 @@ class TestEffortCommand(AltitudeCase):
                     self.assertEqual(selected, [] if effort is None else [f'model_reasoning_effort="{effort}"'])
 
     def test_unsupported_engine_is_refused_before_external_effects(self):
-        with mock.patch.object(engines.subprocess, "Popen") as launch:
+        with mock.patch.object(engines.common.subprocess, "Popen") as launch:
             with self.assertRaisesRegex(ValueError, "does not support reasoning effort"):
                 engines.start_l2("claude", "task", "request", cwd=self.repo, persona=config.PERSONAS / "l2.md",
                                  model="opus", effort="ultra", settings=self.tmp / "settings.json",

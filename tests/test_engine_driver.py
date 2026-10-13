@@ -24,14 +24,14 @@ class TestEngineDriver(AltitudeCase):
 
     def drive(self, engine, *, tool=True, ask=False, task=None, helpers=False, end="completed", output=None):
         command = [sys.executable, str(FAKE), *(["app-server"] if engine == "codex" else [])]
-        spec = {"engine": engine, "command": command, "input": engines._engine_input(engine, "Start the work.", ()),
+        spec = {"engine": engine, "command": command, "input": engines.common._engine_input(engine, "Start the work.", ()),
                 "cwd": str(self.repo), "sends": str(self.sends), "worker_id": "worker", "task": task}
         env = {**os.environ, "FAKE_ENGINE_LOG": str(self.log), **({"FAKE_ENGINE_TOOL": str(self.tool)} if tool else {}),
                **({"FAKE_ENGINE_ASK": "1"} if ask else {}),
                **({"FAKE_ENGINE_HELPERS": str(helpers)} if helpers else {}), "FAKE_ENGINE_END": end}
-        proc = subprocess.Popen(engines._driver_command(), stdin=subprocess.PIPE, stdout=output or subprocess.PIPE,
+        proc = subprocess.Popen(engines.common._driver_command(), stdin=subprocess.PIPE, stdout=output or subprocess.PIPE,
                                 stderr=subprocess.PIPE, env=env)
-        proc.stdin.write(engines._driver_input(spec).encode())
+        proc.stdin.write(engines.common._driver_input(spec).encode())
         proc.stdin.close()
         proc.stdin = None
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
@@ -141,7 +141,7 @@ class TestEngineDriver(AltitudeCase):
                     {"type": "turn.failed", "error": {"message": f"Codex turn {end}"}}])
 
     def test_helper_notifications_leave_owner_identity_usage_and_output_intact(self):
-        driver = object.__new__(engines._CodexDriver)
+        driver = object.__new__(engines.codex._CodexDriver)
         driver.session_id, driver.turn = "owner", "owner-turn"
         driver.usage = {"input_tokens": 7}
         driver.emit = mock.Mock()
@@ -156,11 +156,11 @@ class TestEngineDriver(AltitudeCase):
         driver.emit.assert_not_called()
 
     def test_item_times_record_notification_receipt_and_survive_projection(self):
-        driver = object.__new__(engines._CodexDriver)
+        driver = object.__new__(engines.codex._CodexDriver)
         driver.session_id = "owner"
         driver.emit = mock.Mock()
         moments = [datetime(2026, 9, 3, 10, 0, second, tzinfo=timezone.utc) for second in (1, 5)]
-        with mock.patch.object(engines, "datetime") as clock:
+        with mock.patch.object(engines.codex, "datetime") as clock:
             clock.now.side_effect = moments
             for method, status in (("item/started", "inProgress"), ("item/completed", "completed")):
                 driver.notify(method, {"threadId": "owner", "item": {
@@ -174,7 +174,7 @@ class TestEngineDriver(AltitudeCase):
             self.assertEqual(row["kind"], "command")
 
     def test_intermediate_and_final_messages_wait_for_the_owner_turn_completion(self):
-        driver = object.__new__(engines._CodexDriver)
+        driver = object.__new__(engines.codex._CodexDriver)
         driver.session_id, driver.turn = "owner", "owner-turn"
         driver.completed, driver.usage = False, {}
         driver.lock, driver.done = threading.RLock(), threading.Event()
@@ -196,8 +196,8 @@ class TestEngineDriver(AltitudeCase):
         self.assertIsNone(driver.turn)
         events = [call.args[0] for call in driver.emit.call_args_list]
         self.assertEqual([event["type"] for event in events], ["item.completed"] * 4 + ["turn.completed"])
-        self.assertEqual(engines._agent_messages(events), ["Checking.", "Finished."])
-        self.assertEqual(engines._codex_usage(events), {"input_tokens": 200})
+        self.assertEqual(engines.common._agent_messages(events), ["Checking.", "Finished."])
+        self.assertEqual(engines.common._codex_usage(events), {"input_tokens": 200})
 
     def test_poll_keeps_waiting_owner_then_recovers_its_actual_clean_exit(self):
         self.private_ledgers()
@@ -206,7 +206,7 @@ class TestEngineDriver(AltitudeCase):
                     hold_merge="Review before merge")
         S.save_task(self.project, task)
         root = dispatch.l2_job_root(self.project, task["slug"])
-        paths = engines._codex_paths(root, "worker")
+        paths = engines.common._codex_paths(root, "worker")
         S.write_json(paths["record"], {"id": "worker", "engine": "codex", "unit": "fixture.service",
                                       "session_id": "fake-thread", "started_at": S.now()})
         paths["stderr"].write_text("")
@@ -255,7 +255,7 @@ class TestEngineDriver(AltitudeCase):
         self.assertEqual(engines.recover_send(self.sends, "never-written"), "returned")
 
     def test_a_delayed_initial_echo_cannot_acknowledge_a_later_message(self):
-        driver = object.__new__(engines._ClaudeDriver)
+        driver = object.__new__(engines.claude._ClaudeDriver)
         driver.lock = threading.Lock()
         driver.waiting = {"initial": None, "send": "m1"}
         driver.ended_at = None
@@ -272,11 +272,11 @@ class TestEngineDriver(AltitudeCase):
 
     def test_a_completed_turn_with_no_steer_reply_closes_without_replaying_the_message(self):
         spec = {"engine": "codex", "command": [sys.executable, str(FAKE), "app-server"],
-                "input": engines._engine_input("codex", "Start.", ()), "sends": str(self.sends),
+                "input": engines.common._engine_input("codex", "Start.", ()), "sends": str(self.sends),
                 "cwd": str(self.repo)}
         engines.send_into_turn(self.sends, "m1", TEXT)
         env = {**os.environ, "FAKE_ENGINE_TOOL": str(self.tool), "FAKE_ENGINE_DROP_STEER_ACK": "1"}
-        driver = engines._CodexDriver(spec, env)
+        driver = engines.codex._CodexDriver(spec, env)
         self.addCleanup(lambda: driver.child.poll() is None and driver.child.kill())
         self.addCleanup(driver.child.stdout.close)
         events = []
@@ -284,7 +284,7 @@ class TestEngineDriver(AltitudeCase):
         timeout = threading.Timer(5, lambda: driver.child.poll() is None and driver.child.kill())
         timeout.start()
         try:
-            with mock.patch.object(engines, "SEND_ECHO_WAIT", 0.05):
+            with mock.patch.object(engines.common, "SEND_ECHO_WAIT", 0.05):
                 self.assertEqual(driver.run(), 0)
         finally:
             timeout.cancel()
@@ -314,9 +314,9 @@ class TestEngineDriver(AltitudeCase):
             "        reply = {'result': {'thread': {'id': 'thread-1'}}}\n"
             "    print(json.dumps({'id': message['id'], **reply}), flush=True)\n"))
         script.chmod(0o755)
-        spec = {"engine": "codex", "command": [str(script)], "input": engines._engine_input("codex", "Start.", ()),
+        spec = {"engine": "codex", "command": [str(script)], "input": engines.common._engine_input("codex", "Start.", ()),
                 "cwd": str(self.repo)}
-        proc = subprocess.run(engines._driver_command(), input=engines._driver_input(spec).encode(),
+        proc = subprocess.run(engines.common._driver_command(), input=engines.common._driver_input(spec).encode(),
                               capture_output=True, timeout=30)
         events = [json.loads(line) for line in proc.stdout.decode().splitlines()]
         self.assertEqual(events, [{"type": "error", "message": "turn/start: turn refused"}])
@@ -341,7 +341,7 @@ class TestEngineDriver(AltitudeCase):
         self.assertNotIn(message["id"], [row["id"] for row in T.pending(self.project, task["slug"])])
 
     def test_missing_launch_input_starts_no_engine(self):
-        proc = subprocess.run(engines._driver_command(), input=b"", capture_output=True, timeout=30)
+        proc = subprocess.run(engines.common._driver_command(), input=b"", capture_output=True, timeout=30)
         self.assertEqual(proc.returncode, 125)
         self.assertIn(b"the engine was not started", proc.stderr)
 
@@ -358,7 +358,7 @@ class TestChatTurns(AltitudeCase):
         self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
         # macOS refuses a Seatbelt profile inside another one, as a confined worker or validation run would apply.
         self.patch(platform, "confined", side_effect=lambda command, writable: command)
-        self.patch(engines, "_codex_session_model", return_value={"engine_model": "fake-model"})
+        self.patch(engines.codex, "_codex_session_model", return_value={"engine_model": "fake-model"})
 
     def test_a_delivered_message_splits_the_native_coordinator_reply(self):
         self.tool.unlink(missing_ok=True)

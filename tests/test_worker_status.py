@@ -13,7 +13,7 @@ class TestWorkerStatus(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
-        self.patch(engines, "_codex_processes", {})
+        self.patch(engines.common, "_codex_processes", {})
         self.real_publish = incidents.publish_issue
         self.publish = self.patch(incidents, "publish_issue", return_value={"pending": "fictional publisher"})
         self.patch(dispatch, "resume_engine_hold", return_value=None)
@@ -24,8 +24,8 @@ class TestWorkerStatus(AltitudeCase):
         task.update(state="running", attempt=3, l2_engine=engine, agent_id=slug,
                     session_id=f"session-{slug}", hold_merge="Retain review hold")
         S.save_task(self.project, task)
-        paths = engines._codex_paths(dispatch.l2_job_root(self.project, slug), slug)
-        unit = engines._codex_unit(slug) if engine == "codex" else engines._claude_unit(slug)
+        paths = engines.common._codex_paths(dispatch.l2_job_root(self.project, slug), slug)
+        unit = engines.codex._codex_unit(slug) if engine == "codex" else engines.claude._claude_unit(slug)
         record = {"id": slug, "engine": engine, "unit": unit, "session_id": task["session_id"],
                   "engine_model": "fictional-model", "started_at": S.now(), "input_delivered": True}
         S.write_json(paths["record"], record)
@@ -52,7 +52,7 @@ class TestWorkerStatus(AltitudeCase):
                         (S.task_dir(self.project, slug) / "report.json").write_text("{}")
                         T.message(self.project, slug, config.OPERATOR_ACTOR, "Keep this steering")
                         if exited:
-                            engines._codex_processes[slug] = mock.Mock(poll=mock.Mock(return_value=0))
+                            engines.common._codex_processes[slug] = mock.Mock(poll=mock.Mock(return_value=0))
                         before = S.load_task(self.project, slug)
                         inbox = T.pending(self.project, slug)
                         with mock.patch.object(platform, "job_stop") as stop, \
@@ -200,13 +200,13 @@ class TestWorkerStatus(AltitudeCase):
             self.assertIn(task["slug"], l3.queued(self.project)[0]["text"])
 
     def test_legacy_missing_job_name_is_unknown_without_stop_or_relaunch(self):
-        self.patch(engines, "JOBS_DIR", self.tmp / "legacy-jobs")
+        self.patch(engines.claude, "JOBS_DIR", self.tmp / "legacy-jobs")
         task, paths, _ = self.worker("legacy", "claude")
         paths["record"].unlink()
         for job in ({}, {"state": "working"}, {"name": None}, {"name": ""}, {"name": "  "}, ["malformed"]):
             with self.subTest(job=job), mock.patch.object(platform, "job_active") as active, \
                  mock.patch.object(platform, "job_stop") as stop:
-                S.write_json(engines.JOBS_DIR / task["agent_id"] / "state.json", job)
+                S.write_json(engines.claude.JOBS_DIR / task["agent_id"] / "state.json", job)
                 self.assertEqual(dispatch.poll(self.project), [])
                 self.assertIsNone(engines.worker_termination(task, job_root=paths["record"].parent))
                 with self.assertRaisesRegex(RuntimeError, "identity is unavailable"):

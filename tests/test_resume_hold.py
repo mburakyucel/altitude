@@ -36,7 +36,7 @@ class TestResumeHold(AltitudeCase):
 
     def test_usage_window_hold_uses_generic_waiting_wording(self):
         blocked = self._task("usage held", "blocked", "altitude/free.py", "2026-01-02T00:00:00+00:00")
-        with mock.patch.object(engines, "usage_hold", return_value="2099-01-03T00:00:00+00:00"):
+        with mock.patch.object(engines.common, "usage_hold", return_value="2099-01-03T00:00:00+00:00"):
             result = dispatch.resume(self.project, blocked["slug"])
             self.assertEqual(dispatch.resume_due(self.project), [])
 
@@ -86,7 +86,7 @@ class TestResumeHold(AltitudeCase):
                          "the required reason survives in the daemon request")
         self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "blocked",
                          "the CLI request does not launch the worker")
-        with mock.patch.object(engines, "usage_hold", return_value="2099-01-03T00:00:00+00:00"):
+        with mock.patch.object(engines.common, "usage_hold", return_value="2099-01-03T00:00:00+00:00"):
             held = dispatch.run_task_operation(self.project, blocked["slug"])
             held_retry = dispatch.run_task_operation(self.project, blocked["slug"])
         self.assertTrue(held["held"].startswith("usage limit"), held)

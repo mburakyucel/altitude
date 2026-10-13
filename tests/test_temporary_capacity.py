@@ -39,7 +39,7 @@ class TestTemporaryCapacity(AltitudeCase):
             "detail": engines.TEMPORARY_CAPACITY_TEXT,
         }
         with mock.patch.object(S, "list_tasks", return_value=[task]), \
-                mock.patch.object(engines, "codex_worker", return_value=worker):
+                mock.patch.object(engines.common, "codex_worker", return_value=worker):
             out = dispatch.poll(self.project)
 
         self.assertEqual(len(out), 1)
@@ -55,7 +55,7 @@ class TestTemporaryCapacity(AltitudeCase):
             "detail": "You've hit your usage limit · resets 8pm (America/Los_Angeles)",
         }
         with mock.patch.object(S, "list_tasks", return_value=[task]), \
-                mock.patch.object(engines, "codex_worker", return_value=worker):
+                mock.patch.object(engines.common, "codex_worker", return_value=worker):
             out = dispatch.poll(self.project)
 
         self.assertEqual(len(out), 1)
@@ -90,7 +90,7 @@ class TestTemporaryCapacity(AltitudeCase):
         worker = {"id": task["agent_id"], "sessionId": task["session_id"], "state": "failed", "status": "exited",
                   "detail": "You've hit your usage limit · resets 8pm (America/Los_Angeles)"}
         with mock.patch.object(S, "list_tasks", return_value=[task]), \
-                mock.patch.object(engines, "codex_worker", return_value=worker):
+                mock.patch.object(engines.common, "codex_worker", return_value=worker):
             out = dispatch.poll(self.project)
         with mock.patch.object(incidents, "system_fault") as fault, \
                 mock.patch.object(engines, "note_usage_limit") as global_hold:

@@ -14,7 +14,7 @@ class TestWorkerStatusResume(AltitudeCase):
         make_repo(self.repo)
         self.private_ledgers()
         self.quiet_engines()
-        self.patch(engines, "_codex_processes", {})
+        self.patch(engines.common, "_codex_processes", {})
 
     def owner(self, engine, title):
         task = T.new(self.project, title, "Finish the delivery report", paths=["README.md"])
@@ -24,10 +24,10 @@ class TestWorkerStatusResume(AltitudeCase):
                     hold_merge="Recorded review hold", prs=[101], fault="l2-resume")
         S.save_task(self.project, task)
         root = dispatch.l2_job_root(self.project, slug)
-        paths = engines._codex_paths(root, slug)
+        paths = engines.common._codex_paths(root, slug)
         S.write_json(paths["record"], {"id": slug, "engine": engine, "session_id": task["session_id"],
                      "engine_model": "fixture", "started_at": "2026-01-01T00:00:00+00:00",
-                     "unit": engines._codex_unit(slug) if engine == "codex" else engines._claude_unit(slug)})
+                     "unit": engines.codex._codex_unit(slug) if engine == "codex" else engines.claude._claude_unit(slug)})
         paths["stdout"].write_text('{"type":"turn.completed"}\n' if engine == "codex" else
                                   '{"type":"result","is_error":false}\n')
         report = S.task_dir(self.project, slug) / "report.json"
@@ -72,7 +72,7 @@ class TestWorkerStatusResume(AltitudeCase):
             return {"returncode": 0, "agent": {"id": f"new-{slug}", "sessionId": session,
                                                "input_delivered": True}}
 
-        with mock.patch.object(engines.subprocess, "run", side_effect=systemctl), \
+        with mock.patch.object(engines.common.subprocess, "run", side_effect=systemctl), \
              mock.patch.object(engines, "resume_l2", side_effect=launch) as resumed:
             if success:
                 dispatch.run_task_operation(self.project, slug)

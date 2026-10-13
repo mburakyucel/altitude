@@ -39,7 +39,7 @@ class ContainerWorkflow(AltitudeCase):
         if not path or not path.exists():
             return False
         pid = int(path.read_text())
-        for process in engines._codex_processes.values():
+        for process in engines.common._codex_processes.values():
             if process.pid == pid:
                 return process.poll() is None
         return False  # synchronous coordinator turns have already been reaped
@@ -48,7 +48,7 @@ class ContainerWorkflow(AltitudeCase):
         path = self.units.get(unit)
         if path and path.exists() and self.active(unit):
             os.killpg(int(path.read_text()), signal.SIGTERM)
-            for process in engines._codex_processes.values():
+            for process in engines.common._codex_processes.values():
                 if process.pid == int(path.read_text()):
                     process.wait(timeout=5)
 

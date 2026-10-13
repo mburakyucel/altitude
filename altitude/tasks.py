@@ -1257,7 +1257,7 @@ def send_now_ids(task: dict) -> set[str]:
 
 def claim_send_now(project: str, task: dict, rows: list[dict], sends: Path, *, once: bool = False) -> None:
     """Called under the project lock: the running worker's driver takes the messages into its current turn, in order,
-    as one hand-off named by the first (see `engines._Driver`). They stay in the inbox, out of the owner's notices,
+    as one hand-off named by the first (see `engines.common._Driver`). They stay in the inbox, out of the owner's notices,
     until the driver settles them."""
     ids = [row["id"] for row in rows]
     task["send_now"] = {"id": ids[0], "ids": ids, "agent_id": task["agent_id"], "sends": str(sends), "at": S.now()}

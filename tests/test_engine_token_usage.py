@@ -11,7 +11,7 @@ class TestEngineTokenUsage(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.home = self.tmp / "provider"
-        self.patch(engines, "_TOKEN_ROLLOUT_INDEX", {})
+        self.patch(engines.codex, "_TOKEN_ROLLOUT_INDEX", {})
 
     def write(self, path, events, *, append=False):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ class TestEngineTokenUsage(AltitudeCase):
         prior_offset = first["cursor"]["files"][str(path)]["offset"]
         self.write(path, [self.response("owner", "response-2", turn="turn-2", inp=70, out=5)], append=True)
         cursor = json.loads(json.dumps(first["cursor"]))
-        with mock.patch.object(engines, "_token_read", wraps=engines._token_read) as read:
+        with mock.patch.object(engines.common, "_token_read", wraps=engines.common._token_read) as read:
             result = self.observe("codex", cursor=cursor)
         self.assertGreater(result["cursor"]["files"][str(path)]["offset"], prior_offset)
         self.assertEqual(read.call_args.args[1]["identity"], cursor["files"][str(path)]["identity"])
@@ -124,7 +124,7 @@ class TestEngineTokenUsage(AltitudeCase):
         self.assertEqual(result["sessions"][0]["total_tokens"], 110)
         self.assertEqual(result["helper_status"], "unknown")  # An owned total does not prove helper discovery.
         self.rollout("owner", [self.response("owner", "response", inp=300)])
-        engines._TOKEN_ROLLOUT_INDEX.clear()
+        engines.codex._TOKEN_ROLLOUT_INDEX.clear()
         result = self.observe("codex", cursor=result["cursor"], job_root=jobs)
         self.assertEqual(result["sessions"][0]["total_tokens"], 320)
 
@@ -134,7 +134,7 @@ class TestEngineTokenUsage(AltitudeCase):
         self.write(jobs / "worker.stdout.jsonl", [{"type": "turn.completed", "usage": {"input_tokens": 500, "output_tokens": 100}}])
         first = self.observe("codex", job_root=jobs)
         self.rollout("owner", [self.response("owner", "resumed-response", inp=50, out=10)])
-        engines._TOKEN_ROLLOUT_INDEX.clear()
+        engines.codex._TOKEN_ROLLOUT_INDEX.clear()
         row = self.observe("codex", cursor=first["cursor"], job_root=jobs)["sessions"][0]
         self.assertEqual(row["total_tokens"], 600)
         self.assertEqual((row["role"], row["status"]), ("provider", "partial"))
@@ -286,7 +286,7 @@ class TestEngineTokenUsage(AltitudeCase):
         response = self.response("owner", "request", inp=200)
         response["payload"]["thread_token_usage"] = response["payload"]["usage"].copy()
         self.rollout("owner", [response])
-        engines._TOKEN_ROLLOUT_INDEX.clear()
+        engines.codex._TOKEN_ROLLOUT_INDEX.clear()
         row = self.observe("codex", cursor=first["cursor"], job_root=jobs)["sessions"][0]
         self.assertEqual((row["role"], row["total_tokens"]), ("owner", 220))
 
@@ -310,7 +310,7 @@ class TestEngineTokenUsage(AltitudeCase):
         response = self.response("owner", "request")
         response["payload"]["thread_token_usage"] = response["payload"]["usage"].copy()
         self.rollout("owner", [response])
-        engines._TOKEN_ROLLOUT_INDEX.clear()
+        engines.codex._TOKEN_ROLLOUT_INDEX.clear()
         row = self.observe("codex", cursor=first["cursor"], job_root=jobs)["sessions"][0]
         self.assertEqual((row["role"], row["total_tokens"]), ("provider", 160))
 
@@ -398,8 +398,8 @@ class TestEngineTokenUsage(AltitudeCase):
         event = self.message("owner", "msg")
         event["message"]["content"] = [{"text": "private transcript must not persist"}]
         self.write(self.home / "projects/project/owner.jsonl", [event])
-        with mock.patch.object(engines.subprocess, "run", side_effect=AssertionError("no subprocess")), \
-             mock.patch.object(engines.subprocess, "Popen", side_effect=AssertionError("no subprocess")):
+        with mock.patch.object(engines.common.subprocess, "run", side_effect=AssertionError("no subprocess")), \
+             mock.patch.object(engines.common.subprocess, "Popen", side_effect=AssertionError("no subprocess")):
             result = self.observe("claude")
         self.assertNotIn("private transcript", json.dumps(result))
 
@@ -448,7 +448,7 @@ class TestEngineTokenUsage(AltitudeCase):
                 self.assertEqual(self.observe(engine)["helper_status"], "unknown")
         self.rollout("owner", [])
         self.write(self.home / "projects/project/owner.jsonl", [self.message("owner", "own")])
-        engines._TOKEN_ROLLOUT_INDEX.clear()
+        engines.codex._TOKEN_ROLLOUT_INDEX.clear()
         for engine in ("codex", "claude"):
             with self.subTest(engine=engine):
                 result = self.observe(engine)

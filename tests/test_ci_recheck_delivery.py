@@ -410,7 +410,7 @@ class TestCoordinatorJob(AltitudeCase):
     host = "linux"  # systemd fixtures
 
     def test_codex_coordinator_turn_is_a_job_bounded_by_its_timeout(self):
-        with mock.patch.object(engines.subprocess, "Popen",
+        with mock.patch.object(engines.common.subprocess, "Popen",
                                side_effect=RuntimeError("fixture: execution intercepted")) as popen:
             with self.assertRaisesRegex(RuntimeError, "intercepted"):
                 engines.codex_exec("Probe evidence", cwd=self.repo, timeout=37)

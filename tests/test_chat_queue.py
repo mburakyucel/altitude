@@ -1204,7 +1204,7 @@ class TestChatQueue(AltitudeCase):
 
     @staticmethod
     def driver_settles(options, outcome, text):
-        """What the engine driver does with each Send now drop at this point of the turn (`engines._Driver`): claim it
+        """What the engine driver does with each Send now drop at this point of the turn (`engines.common._Driver`): claim it
         by renaming, write it to the engine, then name the outcome and report it with the reply streamed so far.
         `writing` is a driver that ended mid-write; None leaves the drop unclaimed, as a turn that ends first does."""
         for drop in sorted(options["sends"].glob("*.json")):
@@ -1262,7 +1262,7 @@ class TestChatQueue(AltitudeCase):
         with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
              mock.patch.object(engines, "claude_print", side_effect=lambda *a, **o: provider("claude", *a, **o)), \
              mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **o: provider("codex", *a, **o)), \
-             mock.patch.object(engines.platform, "job_stop", side_effect=AssertionError("Send now cannot stop a job")), \
+             mock.patch.object(engines.common.platform, "job_stop", side_effect=AssertionError("Send now cannot stop a job")), \
              mock.patch.object(server, "request_l3_drain"):
             page = threading.Thread(target=lambda: stream.append(self.request(
                 "POST", "/api/chat", {"project": self.project, "text": "Current instruction"})), daemon=True)

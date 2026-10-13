@@ -64,7 +64,7 @@ class TestCodexAdapter(AltitudeCase):
     def test_sandbox_roots_are_the_worktree_both_git_dirs_and_altitude_home(self):
         # Codex leaves a linked worktree's own metadata read-only unless it is a root of its own, which blocked
         # `git fetch` for task give-the-chat-section-its-own-scrollbar on 2026-09-03.
-        settings = engines.codex_sandbox(self.worktree, extra_roots=engines._git_dirs(self.worktree))
+        settings = engines.codex_sandbox(self.worktree, extra_roots=engines.common._git_dirs(self.worktree))
         parsed = tomllib.loads("\n".join(settings))
         self.assertEqual(parsed["default_permissions"], "altitude-task")
         profile = parsed["permissions"]["altitude-task"]
@@ -119,9 +119,9 @@ class TestCodexAdapter(AltitudeCase):
             return ["svc", unit, *command]
 
         settings = engines.codex_sandbox(self.worktree, extra_roots=[self.repo / ".git"]) if actual_settings else ["s1", "s2"]
-        with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(engines, "codex_sandbox", return_value=settings), \
-             mock.patch.object(engines, "_git_dirs", return_value=[self.repo / ".git"]), \
+        with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen), \
+             mock.patch.object(engines.codex, "codex_sandbox", return_value=settings), \
+             mock.patch.object(engines.common, "_git_dirs", return_value=[self.repo / ".git"]), \
              mock.patch.object(platform, "job_command", side_effect=job_command), \
              mock.patch.object(platform, "job_active", return_value=False):
             res = engines.codex_bg("door/t-1", "brief", cwd=self.worktree, job_root=self.job_root,
@@ -169,7 +169,7 @@ class TestCodexAdapter(AltitudeCase):
         # In the job's environment, without the bus, GitHub accepts the engine only after the driver exports the
         # token; an ambient token never reaches it, and the engine reads its turn, not the token.
         driver = command[2:]
-        self.assertEqual(driver, engines._driver_command())
+        self.assertEqual(driver, engines.common._driver_command())
         log = self.tmp / "engine.log"
         env = {**self.job_env, "PATH": os.environ["PATH"], "FAKE_GH_DIR": str(state), "GH_TOKEN": "ambient-fixture-token",
                "FAKE_ENGINE_LOG": str(log)}
@@ -198,7 +198,7 @@ class TestCodexAdapter(AltitudeCase):
         res, procs = self._launch(persona=persona, model="gpt-6.1-sol")
         self.assertEqual(res["returncode"], 0)
         row = res["agent"]
-        self.assertEqual(procs[0].cmd, ["svc", engines._codex_unit(row["id"]), *engines._driver_command()])
+        self.assertEqual(procs[0].cmd, ["svc", engines.codex._codex_unit(row["id"]), *engines.common._driver_command()])
         spec = launch_spec(procs[0])
         self.assertEqual(spec["command"], [config.CODEX_BIN, "app-server", "--strict-config", "-c", "s1", "-c", "s2"])
         self.assertEqual((spec["engine"], spec["cwd"], spec["model"], spec["resume"], spec["github_token"]),
@@ -226,7 +226,7 @@ class TestCodexAdapter(AltitudeCase):
         self.assertIn(str(config.PERSONAS / "l1.md"), prompt)
         self.assertEqual((res["returncode"], res["agent"]["sessionId"]), (0, "thr-1"))
 
-        with mock.patch.object(engines, "codex_stop", return_value="stopped") as stop:
+        with mock.patch.object(engines.common, "codex_stop", return_value="stopped") as stop:
             res, _ = self._launch(resume="thr-1", thread="thr-2")
         self.assertEqual(res["returncode"], 1)
         self.assertIn("different Codex thread", res["stderr"])
@@ -245,7 +245,7 @@ class TestCodexAdapter(AltitudeCase):
 
     def test_worker_row_states_follow_the_unit_and_the_events(self):
         wid = "w-states"
-        paths = engines._codex_paths(self.job_root, wid)
+        paths = engines.common._codex_paths(self.job_root, wid)
         S.write_json(paths["record"], {"id": wid, "name": "n", "pid": 1, "unit": "u.service", "started_at": "t",
                                        "session_id": None, "stopped": None})
         paths["stdout"].write_text('{"type":"thread.started","thread_id":"thr-9"}\n')
@@ -265,17 +265,17 @@ class TestCodexAdapter(AltitudeCase):
 
     def test_stop_ends_the_unit_and_stamps_the_record(self):
         wid = "w-stop"
-        paths = engines._codex_paths(self.job_root, wid)
+        paths = engines.common._codex_paths(self.job_root, wid)
         S.write_json(paths["record"], {"id": wid, "engine": "codex", "name": "n", "pid": 1, "unit": "altitude-codex-w-stop.service",
                                        "started_at": "t", "session_id": "thr-3", "stopped": None})
         paths["stdout"].write_text("")
         done = subprocess.CompletedProcess([], 0, "", "")
-        with mock.patch.object(engines.subprocess, "run", return_value=done) as run, \
+        with mock.patch.object(engines.common.subprocess, "run", return_value=done) as run, \
              mock.patch.object(platform, "job_active", return_value=False):
             self.assertEqual(engines.codex_stop(wid, job_root=self.job_root), "Codex worker stopped")
             self.assertEqual(engines.codex_worker(wid, job_root=self.job_root)["state"], "stopped")
         self.assertEqual(run.call_args.args[0], [platform.SYSTEMCTL, "--user", "stop", "altitude-codex-w-stop.service"])
-        with mock.patch.object(engines.subprocess, "run", return_value=done), \
+        with mock.patch.object(engines.common.subprocess, "run", return_value=done), \
              mock.patch.object(platform, "job_active", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "still running"):
                 engines.codex_stop(wid, job_root=self.job_root)
@@ -283,7 +283,7 @@ class TestCodexAdapter(AltitudeCase):
     def test_a_timed_out_turn_stops_its_unit_with_the_inherited_environment(self):
         proc = mock.Mock(pid=4242, stdin=io.StringIO())
         proc.communicate.side_effect = [subprocess.TimeoutExpired("codex", 0), ("", "")]
-        with mock.patch.object(engines.subprocess, "Popen", return_value=proc), \
+        with mock.patch.object(engines.common.subprocess, "Popen", return_value=proc), \
              mock.patch.object(platform, "job_stop") as stop, self.assertRaises(subprocess.TimeoutExpired):
             engines.codex_exec("Prompt", cwd=self.worktree, timeout=0)
         stop.assert_called_once()
@@ -362,7 +362,7 @@ class TestCodexAdapter(AltitudeCase):
         self.assert_prompt_writer_ends()
 
     def test_window_hold_belongs_to_claude_only(self):
-        with mock.patch.object(engines, "usage_hold", return_value="2030-01-01T00:00:00+00:00"):
+        with mock.patch.object(engines.common, "usage_hold", return_value="2030-01-01T00:00:00+00:00"):
             self.assertEqual(engines.window_hold("claude"), "2030-01-01T00:00:00+00:00")
             self.assertIsNone(engines.window_hold("codex"))
 

@@ -174,13 +174,13 @@ class ContainerAdmission(AltitudeCase):
         invocations = [
             lambda: engines.claude_print("fixture", cwd=self.tmp),
             lambda: engines.codex_exec("fixture", cwd=self.tmp),
-            lambda: engines._start_worker("claude", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
-            lambda: engines._start_worker("codex", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
+            lambda: engines.common._start_worker("claude", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
+            lambda: engines.common._start_worker("codex", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
             lambda: engines.improvement_review("fixture", "fixture", {}, model="claude-sonnet-5-5", timeout=1),
             lambda: engines.review("fixture", engine="codex", snapshot=self.tmp, runtime=self.tmp),
         ]
-        with mock.patch.object(engines.subprocess, "Popen", side_effect=AssertionError("provider launch")), \
-             mock.patch.object(engines, "review_capability", side_effect=AssertionError("capability side effect")):
+        with mock.patch.object(engines.common.subprocess, "Popen", side_effect=AssertionError("provider launch")), \
+             mock.patch.object(engines.common, "review_capability", side_effect=AssertionError("capability side effect")):
             for call in invocations:
                 with self.subTest(call=call), self.assertRaises(config.AdmissionPaused):
                     call()

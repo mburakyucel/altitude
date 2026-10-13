@@ -403,16 +403,16 @@ class TestInputHandoff(AltitudeCase):
             def wait(self, timeout=None):
                 return 0
 
-        self.patch(engines, "_codex_processes", {})
+        self.patch(engines.common, "_codex_processes", {})
         for engine in ("claude", "codex"):
             for failure in (None, "write", "close", "short"):
                 with self.subTest(engine=engine, failure=failure), \
-                     mock.patch.object(engines, "claude_agents", return_value=[]), \
-                     mock.patch.object(engines, "_codex_session_model", return_value={}), \
+                     mock.patch.object(engines.claude, "claude_agents", return_value=[]), \
+                     mock.patch.object(engines.codex, "_codex_session_model", return_value={}), \
                      mock.patch.object(platform, "job_active", return_value=False), \
-                     mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
-                     mock.patch.object(engines.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
-                    result = engines._start_worker(engine, "fixture", "Exact input", cwd=self.repo,
+                     mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                     mock.patch.object(engines.common.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
+                    result = engines.common._start_worker(engine, "fixture", "Exact input", cwd=self.repo,
                                                    settings=self.tmp / "settings.json", job_root=self.tmp / "jobs")
                     self.assertEqual(result["returncode"], 1 if failure else 0)
                     self.assertEqual(result["agent"]["input_delivered"], failure is None)
@@ -439,16 +439,16 @@ class TestInputHandoff(AltitudeCase):
             def wait(self, timeout=None):
                 return 0
 
-        self.patch(engines, "_codex_processes", {})
+        self.patch(engines.common, "_codex_processes", {})
         for engine in ("claude", "codex"):
             for session in (None, "wrong-session"):
                 with self.subTest(engine=engine, session=session), \
-                     mock.patch.object(engines, "claude_agents", return_value=[]), \
-                     mock.patch.object(engines, "_codex_session_model", return_value={}), \
+                     mock.patch.object(engines.claude, "claude_agents", return_value=[]), \
+                     mock.patch.object(engines.codex, "_codex_session_model", return_value={}), \
                      mock.patch.object(platform, "job_active", return_value=False), \
-                     mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
-                     mock.patch.object(engines.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
-                    result = engines._start_worker(engine, "fixture", "Exact resume input", cwd=self.repo,
+                     mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                     mock.patch.object(engines.common.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
+                    result = engines.common._start_worker(engine, "fixture", "Exact resume input", cwd=self.repo,
                                                    settings=self.tmp / "settings.json", job_root=self.tmp / "jobs",
                                                    resume="original-session", start_timeout=0)
                 self.assertEqual(result["returncode"], 1)
@@ -457,7 +457,7 @@ class TestInputHandoff(AltitudeCase):
                 self.assertEqual(record["session_id"], "original-session")
                 self.assertFalse(record["input_delivered"])
                 self.assertTrue(record["stopped"])
-                self.assertNotIn(result["agent"]["id"], engines._codex_processes)
+                self.assertNotIn(result["agent"]["id"], engines.common._codex_processes)
 
 
 class TestStopEvidence(AltitudeCase):
@@ -466,14 +466,14 @@ class TestStopEvidence(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.root = self.tmp / "stop-jobs"
-        self.paths = engines._codex_paths(self.root, "worker")
-        self.patch(engines, "_codex_processes", {})
-        self.patch(engines, "JOBS_DIR", self.tmp / "adopted-jobs")
+        self.paths = engines.common._codex_paths(self.root, "worker")
+        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.claude, "JOBS_DIR", self.tmp / "adopted-jobs")
 
     def record(self, engine):
         row = {"id": "worker", "engine": engine, "session_id": "session", "started_at": START,
-               "engine_model": "fixture", "unit": engines._codex_unit("worker") if engine == "codex"
-               else engines._claude_unit("worker")}
+               "engine_model": "fixture", "unit": engines.codex._codex_unit("worker") if engine == "codex"
+               else engines.claude._claude_unit("worker")}
         S.write_json(self.paths["record"], row)
         self.paths["stdout"].write_text("")
         self.paths["stderr"].write_text("")
@@ -484,7 +484,7 @@ class TestStopEvidence(AltitudeCase):
                                        (3, "inactive", False), (4, "inactive", False), (3, "failed", False),
                                        (4, "active", None), (4, "failed", None), (1, "inactive", None),
                                        (1, "", None), (4, "unknown", None), (0, "unrecognized", None)):
-            with self.subTest(code=code, state=state), mock.patch.object(engines.subprocess, "run",
+            with self.subTest(code=code, state=state), mock.patch.object(engines.common.subprocess, "run",
                     return_value=subprocess.CompletedProcess([], code, state, "")):
                 if expected is None:
                     with self.assertRaisesRegex(RuntimeError, "status is unavailable"):
@@ -493,7 +493,7 @@ class TestStopEvidence(AltitudeCase):
                     self.assertIs(platform.job_active("worker.service", {}), expected)
 
     def test_missing_corrupt_or_wrong_owned_unit_never_confirms_or_stops_another_unit(self):
-        with mock.patch.object(engines.subprocess, "run") as run:
+        with mock.patch.object(engines.common.subprocess, "run") as run:
             with self.assertRaisesRegex(RuntimeError, "ownership record"):
                 engines.codex_stop("worker", job_root=self.root)
             self.paths["record"].parent.mkdir(parents=True, exist_ok=True)
@@ -513,7 +513,7 @@ class TestStopEvidence(AltitudeCase):
         for engine in ("claude", "codex"):
             for stop_code, status_code, state in ((1, 0, "active"), (0, 1, ""), (0, 4, "unknown")):
                 self.record(engine)
-                with self.subTest(engine=engine, state=state), mock.patch.object(engines.subprocess, "run", side_effect=[
+                with self.subTest(engine=engine, state=state), mock.patch.object(engines.common.subprocess, "run", side_effect=[
                         subprocess.CompletedProcess([], stop_code, "", "stop failed"),
                         subprocess.CompletedProcess([], status_code, state, "")]):
                     with self.assertRaises(RuntimeError):
@@ -526,7 +526,7 @@ class TestStopEvidence(AltitudeCase):
             row["stopped"] = START
             S.write_json(self.paths["record"], row)
             task = {"agent_id": "worker", "l2_engine": engine, "session_id": "session"}
-            with self.subTest(engine=engine), mock.patch.object(engines.subprocess, "run", side_effect=[
+            with self.subTest(engine=engine), mock.patch.object(engines.common.subprocess, "run", side_effect=[
                     subprocess.CompletedProcess([], 5, "", "unit already collected"),
                     subprocess.CompletedProcess([], 4, "inactive", "")]):
                 engines.stop_l2_worker(engine, "worker", job_root=self.root)
@@ -534,7 +534,7 @@ class TestStopEvidence(AltitudeCase):
             before = self.paths["record"].read_bytes()
             for code, state, expected in ((3, "inactive", True), (4, "inactive", True),
                                           (0, "active", False), (1, "", None), (4, "unknown", None)):
-                with mock.patch.object(engines.subprocess, "run", return_value=
+                with mock.patch.object(engines.common.subprocess, "run", return_value=
                         subprocess.CompletedProcess([], code, state, "")) as run:
                     self.assertIs(engines.worker_termination(task, job_root=self.root), expected)
                     self.assertEqual(run.call_args.args[0][2], "is-active")
@@ -546,19 +546,19 @@ class TestStopEvidence(AltitudeCase):
 
     def test_adopted_job_requires_both_identity_and_unit_termination(self):
         task = {"agent_id": "legacy", "l2_engine": "claude", "session_id": "session"}
-        with mock.patch.object(engines, "claude_stop") as stop:
+        with mock.patch.object(engines.claude, "claude_stop") as stop:
             self.assertIsNone(engines.worker_termination(task, job_root=self.root))
             with self.assertRaisesRegex(RuntimeError, "ownership record"):
                 engines.stop_l2_worker("claude", "legacy", job_root=self.root)
             for name in (None, 42, " "):
-                S.write_json(engines.JOBS_DIR / "legacy" / "state.json", {"name": name})
+                S.write_json(engines.claude.JOBS_DIR / "legacy" / "state.json", {"name": name})
                 self.assertIsNone(engines.worker_termination(task, job_root=self.root))
                 with self.assertRaisesRegex(RuntimeError, "ownership record"):
                     engines.stop_l2_worker("claude", "legacy", job_root=self.root)
             stop.assert_not_called()
-        S.write_json(engines.JOBS_DIR / "legacy" / "state.json", {"name": "fixture/legacy", "state": "working"})
+        S.write_json(engines.claude.JOBS_DIR / "legacy" / "state.json", {"name": "fixture/legacy", "state": "working"})
         for alive in (True, False):
-            with mock.patch.object(engines, "claude_stop", return_value="stopped"), \
+            with mock.patch.object(engines.claude, "claude_stop", return_value="stopped"), \
                  mock.patch.object(platform, "job_active", return_value=alive):
                 self.assertIs(engines.worker_termination(task, job_root=self.root), not alive)
                 if alive:

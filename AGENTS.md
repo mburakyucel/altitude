@@ -24,7 +24,7 @@ the underlying approach instead of accumulating exceptions, redundant checks or 
 Altitude is built for one operator on one machine, and everything that encodes that operator, their
 providers, or their hardware sits behind a named seam. The operator seam is one
 configured name and role: personas, docs, and UI text say "the operator" or read the configured name.
-The engine seam is `altitude/engines.py`, `altitude/route.py`, and `altitude/config.py`: no other
+The engine seam is `altitude/engines/`, `altitude/route.py`, and `altitude/config.py`: no other
 file spells a provider name or assumes a given engine exists, Altitude runs with any single engine
 alone, and adding or removing an engine touches only the seam. The capability seam is optional
 services (a configured speech service, `ffmpeg`, a GPU): detected or configured, and degrading to an

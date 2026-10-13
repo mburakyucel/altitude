@@ -32,17 +32,17 @@ class ReviewEngineTests(AltitudeCase):
         (self.snapshot / "link").symlink_to(private)
         (self.snapshot / "outside").symlink_to(self.tmp, target_is_directory=True)
         os.mkfifo(self.snapshot / "pipe")
-        self.assertEqual(engines._review_read(self.snapshot, {"operation": "list"})["files"], ["code.py"])
-        self.assertEqual(engines._review_read(self.snapshot, {"operation": "search", "path": "code.py", "query": "two"})["lines"],
+        self.assertEqual(engines.common._review_read(self.snapshot, {"operation": "list"})["files"], ["code.py"])
+        self.assertEqual(engines.common._review_read(self.snapshot, {"operation": "search", "path": "code.py", "query": "two"})["lines"],
                          [{"line": 2, "text": "two"}])
-        self.assertEqual(engines._review_read(self.snapshot, {"operation": "read", "path": "code.py", "line": 3})["lines"],
+        self.assertEqual(engines.common._review_read(self.snapshot, {"operation": "read", "path": "code.py", "line": 3})["lines"],
                          [{"line": 3, "text": "three"}])
         for name in ("../private.txt", str(private), "link", "outside/private.txt", "pipe"):
             with self.subTest(path=name), self.assertRaises((ValueError, OSError)):
-                engines._review_read(self.snapshot, {"operation": "read", "path": name})
+                engines.common._review_read(self.snapshot, {"operation": "read", "path": name})
         for operation in ("exec", "write", "network", "delegate"):
             with self.assertRaises(ValueError):
-                engines._review_read(self.snapshot, {"operation": operation})
+                engines.common._review_read(self.snapshot, {"operation": operation})
 
     def test_long_captured_line_is_readable_in_full_through_continuation(self):
         # I-20260924-132135: a 6887-character JSON proposal line was clipped at 2000 characters with no way on.
@@ -51,7 +51,7 @@ class ReviewEngineTests(AltitudeCase):
         (self.snapshot / "context.json").write_text("{\n" + json.dumps({"proposal": proposal}) + "\n}\n")
         read, chunks = {"operation": "read", "path": "context.json"}, []
         while True:
-            reply = engines._review_read(self.snapshot, read)
+            reply = engines.common._review_read(self.snapshot, read)
             chunks.extend(reply["lines"])
             if not reply["truncated"]:
                 self.assertNotIn("next", reply)
@@ -61,21 +61,21 @@ class ReviewEngineTests(AltitudeCase):
         self.assertEqual("".join(chunk["text"] for chunk in chunks if chunk["line"] == 2), json.dumps({"proposal": proposal}))
         self.assertEqual([(chunk["line"], chunk.get("column", 1)) for chunk in chunks], [(1, 1), (2, 1), (2, 16384), (3, 1)])
         self.assertTrue(all(chunk["text"] for chunk in chunks if chunk["line"] == 2))
-        search = engines._review_read(self.snapshot, {"operation": "search", "path": "context.json", "query": "section 99"})
+        search = engines.common._review_read(self.snapshot, {"operation": "search", "path": "context.json", "query": "section 99"})
         self.assertEqual([(chunk["line"], chunk.get("column", 1)) for chunk in search["lines"]], [(2, 1)])
         self.assertTrue(search["truncated"], "a match longer than one response says so instead of silently clipping")
-        rest = engines._review_read(self.snapshot, {"operation": "search", "path": "context.json", "query": "section 99",
+        rest = engines.common._review_read(self.snapshot, {"operation": "search", "path": "context.json", "query": "section 99",
                                                     **search["next"]})
         self.assertEqual(search["lines"][0]["text"] + rest["lines"][0]["text"], json.dumps({"proposal": proposal}))
         self.assertEqual(rest["lines"][0]["column"], search["next"]["column"])
         (self.snapshot / "many.txt").write_text("\n".join(f"row {n}" for n in range(1, 251)) + "\n")
-        page = engines._review_read(self.snapshot, {"operation": "read", "path": "many.txt", "line": 51})
+        page = engines.common._review_read(self.snapshot, {"operation": "read", "path": "many.txt", "line": 51})
         self.assertEqual((page["lines"][0]["line"], page["lines"][-1]["line"], len(page["lines"])), (51, 150, 100))
         self.assertEqual((page["truncated"], page["next"]), (True, {"line": 151, "column": 1}))
-        self.assertFalse(engines._review_read(self.snapshot, {"operation": "read", "path": "many.txt", "line": 151})["truncated"])
+        self.assertFalse(engines.common._review_read(self.snapshot, {"operation": "read", "path": "many.txt", "line": 151})["truncated"])
 
     def test_mcp_exposes_only_captured_read_tool_and_redacts_path_failures(self):
-        served = engines._review_served(self.runtime)
+        served = engines.common._review_served(self.runtime)
         requests = [{"id": 1, "method": "tools/list"},
                     {"id": 2, "method": "tools/call", "params": {"name": "captured_input", "arguments":
                      {"operation": "read", "path": "/private/credential"}}},
@@ -99,14 +99,14 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_commands_disable_native_tools_and_user_configuration_for_both_engines(self):
         features = ("shell_tool", "apps", "plugins", "multi_agent", "view_image", "code_mode_host", "skip_host_skill_discovery")
-        self.patch(engines, "_review_native", return_value=(True, features, True))
-        first = engines._review_command("claude", self.snapshot, self.runtime, "selected")
+        self.patch(engines.common, "_review_native", return_value=(True, features, True))
+        first = engines.common._review_command("claude", self.snapshot, self.runtime, "selected")
         for flag in ("--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"):
             self.assertIn(flag, first)
         self.assertNotIn("--safe-mode", first, "safe mode disconnects the captured adapter (I-20260924-080541)")
         self.assertEqual(first[first.index("--tools") + 1], "")
         self.assertEqual(first[first.index("--allowedTools") + 1], "mcp__captured__captured_input")
-        second = engines._review_command("codex", self.snapshot, self.runtime, "selected")
+        second = engines.common._review_command("codex", self.snapshot, self.runtime, "selected")
         for flag in ("--ignore-user-config", "--ignore-rules", "--ephemeral", "--strict-config"):
             self.assertIn(flag, second)
         for setting in ('approval_policy="never"', 'web_search="disabled"', 'permissions.captured-review.network.enabled=false',
@@ -126,13 +126,13 @@ class ReviewEngineTests(AltitudeCase):
             self.assertNotIn("altitude-l3", " ".join(command))
 
     def test_requested_review_effort_reaches_native_command_without_changing_confinement(self):
-        self.patch(engines, "_review_native", return_value=(True, (), True))
-        first = engines._review_command("claude", self.snapshot, self.runtime, "selected", effort="max")
+        self.patch(engines.common, "_review_native", return_value=(True, (), True))
+        first = engines.common._review_command("claude", self.snapshot, self.runtime, "selected", effort="max")
         self.assertEqual(first[first.index("--effort") + 1], "max")
-        second = engines._review_command("codex", self.snapshot, self.runtime, "selected", effort="ultra")
+        second = engines.common._review_command("codex", self.snapshot, self.runtime, "selected", effort="ultra")
         self.assertIn('model_reasoning_effort="ultra"', second)
         for engine in config.ENGINES:
-            native = engines._review_command(engine, self.snapshot, self.runtime, "selected")
+            native = engines.common._review_command(engine, self.snapshot, self.runtime, "selected")
             self.assertNotIn("--effort", native)
             self.assertFalse(any(value.startswith("model_reasoning_effort=") for value in native))
 
@@ -143,12 +143,12 @@ class ReviewEngineTests(AltitudeCase):
         (self.snapshot / "design" / "desktop.jpg").write_bytes(JPEG)
         images = [{"title": "Phone — idle", "file": "design/phone.png"}, {"title": "Desktop — error", "file": "design/desktop.jpg"}]
         attached = [(image["title"], self.snapshot.resolve() / image["file"]) for image in images]
-        self.patch(engines, "_review_native", return_value=(True, ("code_mode_host",), True))
-        codex = engines._review_command("codex", self.snapshot, self.runtime, None, attached)
+        self.patch(engines.common, "_review_native", return_value=(True, ("code_mode_host",), True))
+        codex = engines.common._review_command("codex", self.snapshot, self.runtime, None, attached)
         self.assertEqual([item for item in codex if item.startswith("--image")],
                          [f"--image={self.snapshot.resolve() / 'design/phone.png'}", f"--image={self.snapshot.resolve() / 'design/desktop.jpg'}"])
         self.assertEqual(codex[-1], "-", "the prompt still arrives on stdin after the attached images")
-        claude = engines._review_command("claude", self.snapshot, self.runtime, None, attached)
+        claude = engines.common._review_command("claude", self.snapshot, self.runtime, None, attached)
         self.assertEqual(claude[claude.index("--input-format") + 1], "stream-json")
         self.assertFalse(any(item.startswith("--image") for item in claude))
 
@@ -157,7 +157,7 @@ class ReviewEngineTests(AltitudeCase):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
                 service = self.fixture()
-                command = self.patch(engines, "_review_command", return_value=["fixture-only"])
+                command = self.patch(engines.common, "_review_command", return_value=["fixture-only"])
                 program = service.return_value[-1].replace("sys.stdin.read()", f"open({str(received)!r}, 'w').write(sys.stdin.read())")
                 if engine == "codex":
                     stdout = "\n".join(map(json.dumps, [{"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(
@@ -213,19 +213,19 @@ class ReviewEngineTests(AltitudeCase):
         with patch.dict(os.environ, {"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": "owner", "ALTITUDE_SESSION_KEY": "key",
                                      "GH_TOKEN": "secret", "ANTHROPIC_API_KEY": "secret", "OPENAI_API_KEY": "secret",
                                      "DBUS_SESSION_BUS_ADDRESS": "private", "SSH_AUTH_SOCK": "private"}):
-            env = engines._review_env()
+            env = engines.common._review_env()
         self.assertEqual(set(env) - {"HOME", "USER", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}, set())
         self.assertNotIn("secret", env.values())
 
     def test_environment_names_the_login_for_keychain_sign_in(self):
         with patch.dict(os.environ, {"USER": "fictional-login"}):
-            self.assertEqual(engines._review_env()["USER"], "fictional-login")
+            self.assertEqual(engines.common._review_env()["USER"], "fictional-login")
 
     def fixture(self, *, result=None, answer=None, exitcode=0, served=True):
         if served:
-            engines._review_served(self.runtime).touch()
-        self.patch(engines, "review_capability", return_value={"available": True})
-        self.patch(engines, "_review_command", return_value=["fixture-only"])
+            engines.common._review_served(self.runtime).touch()
+        self.patch(engines.common, "review_capability", return_value={"available": True})
+        self.patch(engines.common, "_review_command", return_value=["fixture-only"])
         self.patch(platform, "job_active", return_value=False)
         payload = result if result is not None else {"text": "Needs a fix", "findings": [
             {"severity": "high", "title": "Missing check", "body": "Evidence", "path": "code.py", "line": 2}],
@@ -254,7 +254,7 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_startup_failure_keeps_sanitized_exception_and_errno(self):
         self.fixture()
-        self.patch(engines.subprocess, "Popen", side_effect=FileNotFoundError(
+        self.patch(engines.common.subprocess, "Popen", side_effect=FileNotFoundError(
             2, "missing executable api_key=fictional-secret-value", "/Users/fictional/private/tool"))
         result = engines.review("Private assignment", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         evidence = result["diagnostics"]
@@ -268,8 +268,8 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_command_preparation_failure_keeps_diagnostics_before_spawn(self):
         self.fixture()
-        self.patch(engines, "_review_command", side_effect=FileNotFoundError(2, "review executable disappeared"))
-        spawn = self.patch(engines.subprocess, "Popen")
+        self.patch(engines.common, "_review_command", side_effect=FileNotFoundError(2, "review executable disappeared"))
+        spawn = self.patch(engines.common.subprocess, "Popen")
         result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertEqual(result["diagnostics"]["errno"], 2)
         self.assertIn("executable disappeared", result["diagnostics"]["stderr"])
@@ -286,15 +286,15 @@ class ReviewEngineTests(AltitudeCase):
         self.assertIn("[REDACTED]", result["diagnostics"]["stderr"])
         self.assertNotIn("fictional", json.dumps(result))
         self.assertNotIn("with spaces", json.dumps(result))
-        self.patch(engines.subprocess, "Popen", side_effect=OSError(2, "startup failed " + credential))
+        self.patch(engines.common.subprocess, "Popen", side_effect=OSError(2, "startup failed " + credential))
         result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertEqual(result["diagnostics"]["errno"], 2)
         self.assertIn("startup failed", result["diagnostics"]["stderr"])
         self.assertNotIn("fictional", json.dumps(result))
         self.assertNotIn("with spaces", json.dumps(result))
-        capture = engines._BoundedRawCapture()
+        capture = engines.common._BoundedRawCapture()
         capture.add(quote(credential, safe=""))
-        self.assertIn("withheld", engines._review_diagnostics(capture)["stderr"])
+        self.assertIn("withheld", engines.common._review_diagnostics(capture)["stderr"])
 
     def test_nonzero_exit_keeps_stderr_and_status_without_stdout_transcript(self):
         service = self.fixture()
@@ -351,23 +351,23 @@ class ReviewEngineTests(AltitudeCase):
             ('{"is_error":true,"errors":{"message":"PRIVATE SOURCE"}}', "unrecognized_error"),
         ]
         for stdout, expected in cases:
-            evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout, engine="claude")
+            evidence = engines.common._review_diagnostics(engines.common._BoundedRawCapture(), stdout=stdout, engine="claude")
             self.assertEqual(evidence["stdout_state"], expected)
             self.assertEqual(evidence["stdout_errors"], [])
             self.assertNotIn("PRIVATE", json.dumps(evidence))
         stdout = json.dumps({"is_error": True, "errors": ["MCP connection refused"]})
         for flags, expected in (({"stdout_truncated": True}, "truncated"),
                                 ({"capture_complete": False}, "incomplete")):
-            evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout,
+            evidence = engines.common._review_diagnostics(engines.common._BoundedRawCapture(), stdout=stdout,
                                                    engine="claude", **flags)
             self.assertEqual(evidence["stdout_state"], expected)
             self.assertEqual(evidence["stdout_errors"], [])
         for stdout in ('{"type":"error","message":"permission denied PRIVATE"}\nnot json',
                        '{"type":"turn.failed","error":"PRIVATE"}'):
-            state, labels, facts = engines._review_stdout_errors("codex", stdout)
+            state, labels, facts = engines.common._review_stdout_errors("codex", stdout)
             self.assertIn(state, ("malformed", "unrecognized_error"))
             self.assertEqual((labels, facts), ([], {}))
-        state, labels, facts = engines._review_stdout_errors("codex", json.dumps(
+        state, labels, facts = engines.common._review_stdout_errors("codex", json.dumps(
             {"type": "error", "message": "authentication failed " + "PRIVATE" * 10000}))
         self.assertEqual((state, labels, facts), ("recognized_error", ["authentication"], {}))
 
@@ -405,17 +405,17 @@ class ReviewEngineTests(AltitudeCase):
         for record, expected in cases:
             with self.subTest(record=record):
                 stdout = json.dumps({"type": "result", "is_error": True, "result": "PRIVATE", **record})
-                evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout, engine="claude")
+                evidence = engines.common._review_diagnostics(engines.common._BoundedRawCapture(), stdout=stdout, engine="claude")
                 self.assertEqual(evidence["stdout_state"], "unrecognized_error")
                 self.assertEqual(evidence.get("stdout_facts", {}), expected)
                 self.assertNotIn("PRIVATE", json.dumps(evidence))
         stdout = json.dumps({"type": "result", "is_error": True, "terminal_reason": "api_error", "num_turns": 1})
         for flags in ({"stdout_truncated": True}, {"capture_complete": False}):
-            evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout,
+            evidence = engines.common._review_diagnostics(engines.common._BoundedRawCapture(), stdout=stdout,
                                                    engine="claude", **flags)
             self.assertNotIn("stdout_facts", evidence)
-        self.assertNotIn("stdout_facts", engines._review_diagnostics(
-            engines._BoundedRawCapture(), stdout=json.dumps({"is_error": True, "num_turns": 1}), engine="claude"))
+        self.assertNotIn("stdout_facts", engines.common._review_diagnostics(
+            engines.common._BoundedRawCapture(), stdout=json.dumps({"is_error": True, "num_turns": 1}), engine="claude"))
 
     def test_fixed_cli_failure_phrases_map_to_categories(self):
         cases = {
@@ -431,7 +431,7 @@ class ReviewEngineTests(AltitudeCase):
         }
         for message, expected in cases.items():
             with self.subTest(message=message):
-                state, labels, _ = engines._review_stdout_errors(
+                state, labels, _ = engines.common._review_stdout_errors(
                     "claude", json.dumps({"type": "result", "is_error": True, "result": message}))
                 self.assertEqual((state, labels), ("recognized_error", expected))
 
@@ -441,7 +441,7 @@ class ReviewEngineTests(AltitudeCase):
             "import sys; sys.stdin.read(); print('PRIVATE TRANSCRIPT' * 1000); "
             "sys.stderr.write('startup diagnostic\\napi_key=fictional-secret-value\\n' + 'x' * 20000 + "
             "'\\nlast diagnostic\\n'); sys.exit(0)"]
-        with patch.object(engines, "RAW_CAPTURE_CAP", 1024):
+        with patch.object(engines.common, "RAW_CAPTURE_CAP", 1024):
             result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertIn("capture limit", result["error"])
         evidence = result["diagnostics"]
@@ -456,15 +456,15 @@ class ReviewEngineTests(AltitudeCase):
         self.assertLessEqual(len(evidence["stderr"].encode()), 8192)
 
     def test_diagnostic_bound_and_raw_cuts_do_not_expose_partial_credentials(self):
-        capture = engines._BoundedRawCapture(128)
+        capture = engines.common._BoundedRawCapture(128)
         capture.add("useful start\napi_key=" + "s" * 400 + "\nuseful end\n")
-        evidence = engines._review_diagnostics(capture)
+        evidence = engines.common._review_diagnostics(capture)
         self.assertEqual(evidence["stderr"], "useful start\n[capture limit: stderr tail withheld]\n")
         self.assertTrue(evidence["stderr_truncated"])
-        capture = engines._BoundedRawCapture(128)
+        capture = engines.common._BoundedRawCapture(128)
         capture.add("useful start\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
                     + "-----END PRIVATE KEY-----\nuseful end\n")
-        evidence = engines._review_diagnostics(capture)
+        evidence = engines.common._review_diagnostics(capture)
         self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
         self.assertNotIn("PRIVATE KEY", evidence["stderr"])
         self.assertIn("useful start", evidence["stderr"])
@@ -472,30 +472,30 @@ class ReviewEngineTests(AltitudeCase):
         for private in ("prefix\n-----BEGIN PRIVATE KEY-----\nPRIVATE MATERIAL\n",
                         "prefix\n" + "x" * 200 + "\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
                         + "-----END PRIVATE KEY-----\nuseful end\n"):
-            capture = engines._BoundedRawCapture(128)
+            capture = engines.common._BoundedRawCapture(128)
             capture.add(private)
-            evidence = engines._review_diagnostics(capture)
+            evidence = engines.common._review_diagnostics(capture)
             self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
             self.assertNotIn("PRIVATE KEY", evidence["stderr"])
-        capture = engines._BoundedRawCapture(128)
+        capture = engines.common._BoundedRawCapture(128)
         capture.add("useful start\n" + "benign padding\n" * 100 + "-----BEGIN PRIVATE KEY-----\n"
                     + "PRIVATE MATERIAL\n" * 100)
-        evidence = engines._review_diagnostics(capture)
+        evidence = engines.common._review_diagnostics(capture)
         self.assertIn("useful start", evidence["stderr"])
         self.assertIn("stderr tail withheld", evidence["stderr"])
         self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
         self.assertNotIn("PRIVATE KEY", evidence["stderr"])
-        capture = engines._BoundedRawCapture()
+        capture = engines.common._BoundedRawCapture()
         capture.add("useful start\n" + "é" * 10000 + "\nuseful end\n")
-        evidence = engines._review_diagnostics(capture)
+        evidence = engines.common._review_diagnostics(capture)
         self.assertTrue(evidence["stderr_truncated"])
         self.assertLessEqual(len(evidence["stderr"].encode()), 8192)
         self.assertIn("useful start", evidence["stderr"])
         self.assertIn("useful end", evidence["stderr"])
-        capture = engines._BoundedRawCapture()
+        capture = engines.common._BoundedRawCapture()
         capture.add('connection refused\n"password": "fictional secret with spaces"\n'
                     'cookie=session=fictional-cookie\nAuthorization: Bearer fictional-access-token\n')
-        evidence = engines._review_diagnostics(capture)
+        evidence = engines.common._review_diagnostics(capture)
         self.assertIn("connection refused", evidence["stderr"])
         self.assertNotIn("fictional", evidence["stderr"])
         self.assertEqual(evidence["stderr"].count("[REDACTED]"), 1)
@@ -521,7 +521,7 @@ class ReviewEngineTests(AltitudeCase):
                     self.assertIn("[REDACTED]", evidence["stderr"])
                     for private in ("fictional", "with spaces", "unterminated", "following diagnostic"):
                         self.assertNotIn(private, evidence["stderr"])
-                    with patch.object(engines.subprocess, "Popen", side_effect=OSError(2, stderr)):
+                    with patch.object(engines.common.subprocess, "Popen", side_effect=OSError(2, stderr)):
                         result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
                     self.assertEqual(result["diagnostics"]["errno"], 2)
                     self.assertIn("adapter startup failed", result["diagnostics"]["stderr"])
@@ -530,8 +530,8 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_incomplete_stderr_capture_is_named_in_failure_evidence(self):
         self.fixture(exitcode=4)
-        self.patch(engines, "review_stop", return_value=True)
-        spawn = engines.subprocess.Popen
+        self.patch(engines.common, "review_stop", return_value=True)
+        spawn = engines.common.subprocess.Popen
         class FailedReader:
             def readline(self, size):
                 raise OSError("private reader failure")
@@ -543,7 +543,7 @@ class ReviewEngineTests(AltitudeCase):
             reader.stream = process.stderr
             process.stderr = reader
             return process
-        self.patch(engines.subprocess, "Popen", side_effect=with_failed_stderr)
+        self.patch(engines.common.subprocess, "Popen", side_effect=with_failed_stderr)
         result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertEqual(result["diagnostics"]["exit_status"], 4)
         self.assertFalse(result["diagnostics"]["capture_complete"])
@@ -552,7 +552,7 @@ class ReviewEngineTests(AltitudeCase):
     def test_stderr_overflow_does_not_fail_a_successful_review(self):
         service = self.fixture()
         service.return_value[-1] = service.return_value[-1].replace("sys.exit(0)", "sys.stderr.write('x' * 10000); sys.exit(0)")
-        with patch.object(engines, "RAW_CAPTURE_CAP", 4096):
+        with patch.object(engines.common, "RAW_CAPTURE_CAP", 4096):
             result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertIsNone(result["error"])
         self.assertEqual(result["findings"][0]["id"], "F1")
@@ -571,7 +571,7 @@ class ReviewEngineTests(AltitudeCase):
     def test_prose_around_the_json_result_keeps_findings_intact(self):
         # I-20260924-132135: a Claude reviewer opened with a sentence before its fenced JSON and the review failed.
         payload = {"text": "Two material risks.", "findings": [
-            {"severity": "high", "title": "Reader clips", "body": "Line 2161 clips at 2000.", "path": "altitude/engines.py", "line": 2161},
+            {"severity": "high", "title": "Reader clips", "body": "Line 2161 clips at 2000.", "path": "altitude/engines/common.py", "line": 2161},
             {"severity": "medium", "title": "Parser strict", "body": "Only a leading fence is stripped."}],
             "limitations": ["Tests were not executed."]}
         answer = ("Here is my review of the captured input {as requested}.\n\n```json\n" + json.dumps(payload, indent=2)
@@ -625,8 +625,8 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_callback_failure_retains_unknown_termination_evidence(self):
         self.fixture()
-        self.patch(engines, "review_stop", return_value=False)
-        self.patch(engines, "review_active", return_value=None)
+        self.patch(engines.common, "review_stop", return_value=False)
+        self.patch(engines.common, "review_active", return_value=None)
         def failed(worker):
             if worker["pid"] is not None:
                 raise ValueError("private callback detail")
@@ -638,8 +638,8 @@ class ReviewEngineTests(AltitudeCase):
     def test_unavailable_inspection_refuses_before_launch_or_prompt(self):
         self.fixture()
         self.patch(platform, "job_active", side_effect=RuntimeError("user bus unavailable"))
-        spawn = self.patch(engines.subprocess, "Popen")
-        started = self.patch(engines, "review_stop")
+        spawn = self.patch(engines.common.subprocess, "Popen")
+        started = self.patch(engines.common, "review_stop")
         result = engines.review("No model call", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertTrue(result["unavailable"])
         self.assertEqual(result["diagnostics"]["exception_type"], "RuntimeError")
@@ -652,8 +652,8 @@ class ReviewEngineTests(AltitudeCase):
     def test_interrupt_stops_unit_even_if_inspection_becomes_unavailable(self):
         service = self.fixture()
         service.return_value = [sys.executable, "-I", "-c", "import sys,time; sys.stdin.read(); time.sleep(30)"]
-        stop = self.patch(engines, "review_stop", return_value=False)
-        self.patch(engines, "review_active", return_value=None)
+        stop = self.patch(engines.common, "review_stop", return_value=False)
+        self.patch(engines.common, "review_active", return_value=None)
         workers = []
         def interrupted():
             raise KeyboardInterrupt()
@@ -661,20 +661,20 @@ class ReviewEngineTests(AltitudeCase):
             engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
                            on_start=lambda worker: workers.append(worker), on_wait=interrupted)
         stop.assert_called_once_with(workers[-1])
-        self.assertFalse(engines._review_launcher(workers[-1]))
+        self.assertFalse(engines.common._review_launcher(workers[-1]))
 
     def test_capture_setup_interruption_cannot_orphan_a_launched_process(self):
         self.fixture()
-        spawn = self.patch(engines.subprocess, "Popen")
-        self.patch(engines, "_BoundedRawCapture", side_effect=KeyboardInterrupt)
+        spawn = self.patch(engines.common.subprocess, "Popen")
+        self.patch(engines.common, "_BoundedRawCapture", side_effect=KeyboardInterrupt)
         with self.assertRaises(KeyboardInterrupt):
             engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         spawn.assert_not_called()
 
     def test_failed_launcher_stops_independent_unit_and_retains_unknown_cleanup(self):
         self.fixture(exitcode=1)
-        stop = self.patch(engines, "review_stop", return_value=False)
-        active = self.patch(engines, "review_active", return_value=None)
+        stop = self.patch(engines.common, "review_stop", return_value=False)
+        active = self.patch(engines.common, "review_active", return_value=None)
         for state in (None, False):
             with self.subTest(remaining=state):
                 active.return_value = state
@@ -687,7 +687,7 @@ class ReviewEngineTests(AltitudeCase):
     def test_system_exit_in_started_callback_stops_unit_and_launcher(self):
         self.fixture()
         workers = []
-        stop = self.patch(engines, "review_stop", return_value=False)
+        stop = self.patch(engines.common, "review_stop", return_value=False)
         def interrupted(worker):
             workers.append(worker)
             if worker["pid"] is not None:
@@ -695,7 +695,7 @@ class ReviewEngineTests(AltitudeCase):
         with self.assertRaises(SystemExit):
             engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime, on_start=interrupted)
         stop.assert_called_once_with(workers[-1])
-        self.assertFalse(engines._review_launcher(workers[-1]))
+        self.assertFalse(engines.common._review_launcher(workers[-1]))
 
     def test_review_survives_wait_intervals_past_former_deadline(self):
         service = self.fixture()
@@ -707,7 +707,7 @@ class ReviewEngineTests(AltitudeCase):
                 raise subprocess.TimeoutExpired(proc.args, timeout)
             return real_wait(proc, timeout=timeout)
         # Waiting wakes for connection/lifecycle checks, never to enforce total elapsed time.
-        with patch.object(subprocess.Popen, "wait", wait), patch.object(engines.time, "monotonic", return_value=86400):
+        with patch.object(subprocess.Popen, "wait", wait), patch.object(engines.common.time, "monotonic", return_value=86400):
             result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
                                     on_wait=lambda: True)
         self.assertIsNone(result["error"])
@@ -718,7 +718,7 @@ class ReviewEngineTests(AltitudeCase):
     def test_disconnected_caller_stops_unit_and_cannot_return_success(self):
         service = self.fixture()
         service.return_value = [sys.executable, "-I", "-c", "import sys,time; sys.stdin.read(); time.sleep(30)"]
-        stop = self.patch(engines, "review_stop", return_value=False)
+        stop = self.patch(engines.common, "review_stop", return_value=False)
         result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
                                 on_wait=lambda: False)
         self.assertIn("cancelled", result["error"])
@@ -745,7 +745,7 @@ class ReviewEngineTests(AltitudeCase):
             while not received.exists() and time.monotonic() < until:
                 time.sleep(0.01)
             return False
-        stop = self.patch(engines, "review_stop", side_effect=fixture_stop)
+        stop = self.patch(engines.common, "review_stop", side_effect=fixture_stop)
         result = engines.review("Must not be delivered", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
                                 on_start=cancel_when_ready)
         self.assertIn("cancelled", result["error"])
@@ -761,7 +761,7 @@ class ReviewEngineTests(AltitudeCase):
             self.assertIsNone(receipts[0]["pid"])
             self.assertRegex(receipts[0]["unit"], r"^altitude-review-[a-f0-9]{32}\.service$")
             raise OSError("fixture refused spawn")
-        self.patch(engines.subprocess, "Popen", side_effect=spawn)
+        self.patch(engines.common.subprocess, "Popen", side_effect=spawn)
         result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
                                 on_start=lambda worker: receipts.append(worker))
         self.assertTrue(result["termination_confirmed"])
@@ -770,7 +770,7 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_cancel_or_callback_error_before_spawn_never_launches(self):
         self.fixture()
-        spawn = self.patch(engines.subprocess, "Popen")
+        spawn = self.patch(engines.common.subprocess, "Popen")
         for callback in (lambda worker: False, lambda worker: (_ for _ in ()).throw(ValueError("cannot save"))):
             result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
                                     on_start=callback)
@@ -781,9 +781,9 @@ class ReviewEngineTests(AltitudeCase):
     def test_unit_only_restart_receipt_keeps_unknown_until_terminal_evidence(self):
         worker = {"unit": "altitude-review-" + "b" * 32 + ".service", "pid": None, "started_ticks": None}
         active = self.patch(platform, "job_active", return_value=False)
-        status = self.patch(engines, "service_status", return_value={"load_state": "not-found", "state": "inactive"})
+        status = self.patch(engines.common, "service_status", return_value={"load_state": "not-found", "state": "inactive"})
         self.assertIsNone(engines.review_active(worker))
-        stop = self.patch(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", ""))
+        stop = self.patch(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", ""))
         self.assertFalse(engines.review_stop(worker))
         self.assertEqual(stop.call_args.args[0][-1], worker["unit"])
         status.return_value = {"load_state": "loaded", "state": "failed"}
@@ -811,14 +811,14 @@ class ReviewEngineTests(AltitudeCase):
             with self.subTest(state=state):
                 self.assertEqual(platform.process_start(4242), "777")
                 worker = {"unit": "altitude-review-" + "c" * 32 + ".service", "pid": 4242, "started_ticks": "777"}
-                self.assertIs(engines._review_launcher(worker), running)
-                self.assertIsNone(engines._review_launcher({**worker, "started_ticks": "Z"}))
+                self.assertIs(engines.common._review_launcher(worker), running)
+                self.assertIsNone(engines.common._review_launcher({**worker, "started_ticks": "Z"}))
         stat.unlink()
-        self.assertIs(engines._review_launcher(worker), False)
+        self.assertIs(engines.common._review_launcher(worker), False)
 
     def test_missing_adapter_refuses_without_process(self):
-        self.patch(engines, "review_capability", return_value={"available": False, "why": "Unsupported confinement"})
-        spawn = self.patch(engines.subprocess, "Popen")
+        self.patch(engines.common, "review_capability", return_value={"available": False, "why": "Unsupported confinement"})
+        spawn = self.patch(engines.common.subprocess, "Popen")
         result = engines.review("Review", engine="absent", snapshot=self.snapshot, runtime=self.runtime)
         self.assertTrue(result["unavailable"])
         self.assertTrue(result["termination_confirmed"])

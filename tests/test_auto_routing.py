@@ -3,7 +3,8 @@ from unittest import mock
 import time
 
 from tests.support import AltitudeCase, set_project_setting
-from altitude import config, digest, dispatch, engines, incidents, l3, monitor, quota_codex, route, server, state as S, tasks as T
+from altitude import config, digest, dispatch, engines, incidents, l3, monitor, route, server, state as S, tasks as T
+from altitude.engines import codex as quota_codex
 
 
 REJECTION = {"scope": "model", "why": "provider rejected the selected model as inaccessible"}
@@ -218,10 +219,10 @@ class TestAutoIntegration(AltitudeCase):
     def test_quota_refresh_changes_fresh_dispatch_without_changing_running_or_resumed_sessions(self):
         self.policy("codex,claude:opus")
         self.quota.side_effect, self.other_quota.side_effect = self.read_quota, self.read_other_quota
-        self.patch(engines, "_last_quota_refresh", None)
-        native = self.patch(engines, "_claude_quota", return_value={
+        self.patch(engines.common, "_last_quota_refresh", None)
+        native = self.patch(engines.claude, "_claude_quota", return_value={
             "known": True, "at": time.time(), "seven_day": 5, "five_hour": 1})
-        self.patch(quota_codex, "read", return_value={
+        self.patch(quota_codex, "read_quota", return_value={
             "known": True, "read_at": S.now(), "primary_used": 60,
             "primary_window_minutes": route.WEEK_MINUTES})
         engines.refresh_quotas(min_interval=0)
@@ -254,7 +255,7 @@ class TestAutoIntegration(AltitudeCase):
             dispatch.run(self.project, task["slug"])
         running = S.load_task(self.project, task["slug"])
         with mock.patch.object(engines, "remove_l2_worker") as remove:
-            server.on_l2_finished(self.project, {"task": running, "limited": engines._usage_limit("2099-01-01T00:00:00+00:00"),
+            server.on_l2_finished(self.project, {"task": running, "limited": engines.common._usage_limit("2099-01-01T00:00:00+00:00"),
                 "agent": {"id": "worker", "state": "failed"}})
         remove.assert_not_called()
         saved = S.load_task(self.project, task["slug"])
@@ -267,7 +268,7 @@ class TestAutoIntegration(AltitudeCase):
             dispatch.run(self.project, task["slug"], model="opus")
         running = S.load_task(self.project, task["slug"])
         with mock.patch.object(engines, "remove_l2_worker") as remove:
-            server.on_l2_finished(self.project, {"task": running, "limited": engines._usage_limit("2099-01-01T00:00:00+00:00"),
+            server.on_l2_finished(self.project, {"task": running, "limited": engines.common._usage_limit("2099-01-01T00:00:00+00:00"),
                 "agent": {"id": "worker", "state": "failed"}})
         remove.assert_not_called()
         self.assertEqual(S.load_task(self.project, task["slug"])["session_id"], "conversation")
@@ -334,7 +335,7 @@ class TestAutoIntegration(AltitudeCase):
     def test_a_limit_met_mid_turn_on_l3_s_chosen_engine_answers_on_the_other_and_says_so(self):
         self.policy("claude:fable > codex", l3_choice={"engine": "claude", "model": "opus"})
         failure = {"session_id": "session", "text": "", "error": "usage window exhausted", "tools": [],
-                   "limited": engines._usage_limit("2099-01-01T00:00:00+00:00"), "safe_to_retry": True}
+                   "limited": engines.common._usage_limit("2099-01-01T00:00:00+00:00"), "safe_to_retry": True}
         with mock.patch.object(engines, "claude_print", return_value=failure) as execute, \
              mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **k: self.answered("Codex answer")) as other:
             result = l3.turn(self.project, "Continue")
@@ -457,7 +458,7 @@ class TestAutoIntegration(AltitudeCase):
         stdout = revoked_stream()
         return {"session_id": "session", "text": "", "error": REVOKED, "tools": [], "turns": 1,
                 "rejection": engines.rejection("claude", {"raw_stdout": stdout}),
-                "safe_to_retry": engines._safe_output("claude", stdout)}
+                "safe_to_retry": engines.common._safe_output("claude", stdout)}
 
     @staticmethod
     def answered(text):

@@ -116,20 +116,20 @@ class PersonaLoading(AltitudeCase):
         for role in ("l1", "l2", "l3"):
             (self.personas / f"{role}.md").write_text((config.PERSONAS / f"{role}.md").read_text())
         self.patch(config, "PERSONAS", self.personas)
-        self.patch(engines, "_codex_processes", {})
+        self.patch(engines.common, "_codex_processes", {})
         self.patch(platform, "job_active", return_value=False)
-        self.patch(engines, "window_hold", return_value=None)
+        self.patch(engines.common, "window_hold", return_value=None)
         self.processes = []
         real_popen = subprocess.Popen
 
         def popen(command, **kwargs):
-            if config.CODEX_BIN not in command and command[-len(engines._driver_command()):] != engines._driver_command():
+            if config.CODEX_BIN not in command and command[-len(engines.common._driver_command()):] != engines.common._driver_command():
                 return real_popen(command, **kwargs)  # Real local Git fixtures still validate task provenance.
             process = _ProviderProcess(command, kwargs, len(self.processes))
             self.processes.append(process)
             return process
 
-        self.patch(engines.subprocess, "Popen", side_effect=popen)
+        self.patch(engines.common.subprocess, "Popen", side_effect=popen)
 
     def assert_persona(self, process, engine, role, text, *, resumed):
         if engine == "claude":

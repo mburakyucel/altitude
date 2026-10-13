@@ -23,7 +23,7 @@ class TestRepositoryInstructions(AltitudeCase):
         super().setUp()
         self.private_ledgers()
         git("init", "-q", cwd=self.repo)
-        self.patch(engines, "_codex_processes", {})
+        self.patch(engines.common, "_codex_processes", {})
 
     def layout(self, kind):
         for name in ("AGENTS.md", "CLAUDE.md"):
@@ -53,10 +53,10 @@ class TestRepositoryInstructions(AltitudeCase):
                 for resume in (False, True):
                     with self.subTest(kind=kind, engine=engine, resume=resume):
                         processes = []
-                        real_popen = engines.subprocess.Popen
+                        real_popen = engines.common.subprocess.Popen
 
                         def execute(cmd, **kwargs):
-                            if cmd[-len(engines._driver_command()):] != engines._driver_command():
+                            if cmd[-len(engines.common._driver_command()):] != engines.common._driver_command():
                                 return real_popen(cmd, **kwargs)
                             event = ({"type": "thread.started", "thread_id": "session"} if engine == "codex"
                                      else {"type": "system", "subtype": "init", "session_id": "session"})
@@ -70,9 +70,9 @@ class TestRepositoryInstructions(AltitudeCase):
                         kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model=None,
                                       settings=self.tmp / "settings.json", job_root=self.tmp / "jobs",
                                       extra_env={"ALTITUDE_TASK": "fixture"})
-                        with mock.patch.object(engines, "claude_agents", return_value=[]), \
+                        with mock.patch.object(engines.claude, "claude_agents", return_value=[]), \
                              mock.patch.object(platform, "job_active", return_value=True), \
-                             mock.patch.object(engines.subprocess, "Popen", side_effect=execute):
+                             mock.patch.object(engines.common.subprocess, "Popen", side_effect=execute):
                             if resume:
                                 result = engines.resume_l2(engine, "fixture", "session", "Continue task.", **kwargs)
                             else:
