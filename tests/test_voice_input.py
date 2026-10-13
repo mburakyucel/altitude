@@ -515,6 +515,12 @@ class TestServiceTransport(VoiceCase):
             self.assertNotIn("private", str(caught.exception))
             self.assertEqual(len(self.received), before + 1)
 
+    def test_an_unusable_address_is_unavailable_without_a_connection(self):
+        with self.assertRaises(speech.ServiceError) as caught:
+            speech.transcribe_service({**self.setting, "url": "http://127.0.0.1:invalid/transcribe"}, b"\0\0")
+        self.assertEqual(caught.exception.code, "service_unavailable")
+        self.assertEqual(self.received, [])
+
     def test_a_service_that_never_answers_times_out(self):
         silent = socket.create_server(("127.0.0.1", 0))
         self.addCleanup(silent.close)

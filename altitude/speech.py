@@ -78,9 +78,12 @@ def transcribe_service(setting: dict, pcm: bytes) -> str:
             parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     parts.extend([f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="recording.wav"\r\n'
                   'Content-Type: audio/wav\r\n\r\n'.encode(), wav.getvalue(), f'\r\n--{boundary}--\r\n'.encode()])
-    parsed = urlsplit(setting["url"])
-    connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-    connection = connection_type(parsed.hostname, parsed.port, timeout=SERVICE_RESPONSE_SECONDS)
+    try:
+        parsed = urlsplit(setting["url"])
+        connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        connection = connection_type(parsed.hostname, parsed.port, timeout=SERVICE_RESPONSE_SECONDS)
+    except ValueError:
+        raise ServiceError("service_unavailable") from None
     try:
         headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
         if setting.get("key"):
