@@ -17,7 +17,7 @@
  * the browser was paired again as another device. The words shown hold still until the replay catches up. After Stop, the capture waits two minutes
  * at most for the connection, then ends with the words shown.
  */
-import { ApiError, cancelHostVoice, sendHostVoice, startHostVoice } from "../data/api";
+import { ApiError, UNPAIRED_EVENT, cancelHostVoice, sendHostVoice, sendServiceVoice, startHostVoice } from "../data/api";
 import { traceVoice, voiceError } from "./voiceTrace";
 
 const RATE = 16000;
@@ -37,6 +37,14 @@ export const WAIT_MS = 120_000;
 /** One capture sending its last words and one recording. */
 export const MAX_RETAINED = 2;
 export const UNREACHED = "Couldn't reach this computer: your recording's last words weren't added.";
+export const serviceFailures = {
+  service_auth: "The speech service rejected its key. Update it in Voice settings.",
+  service_unavailable: "Transcription did not finish. Check your connection and service address in Voice settings.",
+  service_response: "The speech service returned no usable transcription. Check its endpoint and model.",
+  service_empty: "No words were returned. Try recording again.",
+  selection_changed: "Voice settings changed. Record again using the current choice.",
+} as const;
+export type ServiceFailure = keyof typeof serviceFailures;
 
 /** Resample the microphone to 16 kHz 16-bit samples: the average of each output sample's input window. */
 const WORKLET = `
@@ -114,6 +122,7 @@ export class HostCapture {
   /** "failed" when the recording stopped before its final words; `reason` says why. */
   failure: "denied" | "failed" | null = null;
   reason = "";
+  serviceFailure: ServiceFailure | null = null;
   /** The host refused this recording's setting or setup (409): the page's voice settings are out of date. */
   outdated = false;
   /** The connection did not come back within WAIT_MS of Stop: the last words were not added. */
@@ -153,7 +162,7 @@ export class HostCapture {
   private request: AbortController | null = null;
   private readonly selection: string;
 
-  constructor(stream: MediaStream, selection: string) {
+  constructor(stream: MediaStream, selection: string, readonly serviceOwner?: string) {
     this.stream = stream;
     this.selection = selection;
   }
@@ -162,6 +171,7 @@ export class HostCapture {
     traceVoice("host.start", this);
     this.state = "recording";
     HostCapture.retained.add(this);
+    if (this.serviceOwner) window.addEventListener(UNPAIRED_EVENT, this.unpaired);
     for (const track of this.stream.getAudioTracks()) {
       // A call or a locked screen takes the microphone: what was recorded still lands.
       track.addEventListener("ended", () => {
@@ -190,7 +200,7 @@ export class HostCapture {
     if (this.state !== "recording" || this.stopping) return;
     this.stopping = true;
     this.release();
-    this.deadline = setTimeout(() => this.expire(), WAIT_MS);
+    this.deadline = setTimeout(() => this.serviceOwner ? this.serviceFail("service_unavailable") : this.expire(), this.serviceOwner ? WAIT_MS * 2 : WAIT_MS);
     this.pump();
   }
 
@@ -210,14 +220,17 @@ export class HostCapture {
       traceVoice("host.samples", this);
       this.onlistening?.();
     }
-    this.audio.push(chunk);
-    this.recorded += chunk.length;
+    const take = this.serviceOwner ? chunk.subarray(0, Math.max(0, RATE * 600 - this.recorded)) : chunk;
+    this.audio.push(take);
+    this.recorded += take.length;
+    if (this.serviceOwner && this.recorded === RATE * 600) (this.oninterrupted ?? (() => this.stop()))();
     this.pump();
   }
 
   /** Open a host recording, or send the next chunk once enough is gathered, or the rest once stopping. */
   private pump() {
     if (this.request || this.retry || this.finished || this.state !== "recording") return;
+    if (this.serviceOwner) { if (this.stopping) void this.sendService(); return; }
     if (!this.id) { void this.open(); return; }
     if (!this.inflight) {
       const waiting = this.recorded - this.covered;
@@ -226,6 +239,37 @@ export class HostCapture {
       this.inflight = { seq: this.seq + 1, pcm: this.slice(this.covered, take), final: this.stopping && take === waiting };
     }
     void this.send(this.id, this.inflight);
+  }
+
+  private unpaired = () => this.serviceFail("selection_changed");
+
+  /** A fresh Settings read invalidates retained service audio before it can use a new route or owner. */
+  checkServiceSelection(selection: string, owner?: string) {
+    if (this.serviceOwner && (selection !== this.selection || owner !== this.serviceOwner)) this.serviceFail("selection_changed");
+  }
+
+  private serviceFail(code: ServiceFailure) {
+    this.serviceFailure = code;
+    this.outdated = code === "selection_changed";
+    this.fail(serviceFailures[code]);
+  }
+
+  private async sendService() {
+    const request = this.begin(WAIT_MS * 2);
+    try {
+      const answer = await sendServiceVoice(this.selection, this.serviceOwner!, this.slice(0, this.recorded), request.signal);
+      if (this.state === "inactive") return;
+      // The upload response already verifies owner and selection on the server.
+      // Local Settings and unpairing events invalidate this capture while it waits.
+      if (!answer.text.trim()) { this.serviceFail("service_empty"); return; }
+      this.text = answer.text;
+      this.finished = true;
+      this.end();
+    } catch (error) {
+      if (this.state === "inactive") return;
+      const code = error instanceof ApiError ? error.code : undefined;
+      this.serviceFail(code && Object.hasOwn(serviceFailures, code) ? code as ServiceFailure : "service_unavailable");
+    } finally { this.finish(request); }
   }
 
   /** `count` recorded samples starting at `from`. */
@@ -348,7 +392,7 @@ export class HostCapture {
 
   private fail(reason: string, error?: unknown) {
     if (this.state === "inactive") return;
-    this.outdated = error instanceof ApiError && error.status === 409;
+    this.outdated ||= error instanceof ApiError && error.status === 409;
     traceVoice("host.failed", this);
     this.failure = "failed";
     this.reason = reason;
@@ -373,6 +417,7 @@ export class HostCapture {
     this.audio = [];
     this.state = "inactive";
     HostCapture.retained.delete(this);
+    window.removeEventListener(UNPAIRED_EVENT, this.unpaired);
     this.watch("ok");
     this.onstop?.();
   }

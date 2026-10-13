@@ -2386,6 +2386,7 @@ a.irc-name { color: var(--accent-text); text-decoration: underline; text-underli
 .composer-timer[data-danger] {
   color: var(--danger);
 }
+.composer-destination { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; overflow-wrap: anywhere; text-decoration: underline; }
 .composer-hint {
   margin: 0;
   padding: 0 18px;

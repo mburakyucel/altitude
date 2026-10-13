@@ -1861,7 +1861,11 @@ Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
 
-The voice page offers two choices, This computer and Browser recognition, each saved immediately.
+The voice page offers This computer, Browser recognition and Your speech service with explicit
+Save/Cancel. A radio changes only the draft; switching away from a saved service uses **Save and remove
+service**, deleting its URL/key/model. Built-in setup/remove/cancel actions are immediate, independent
+of the draft choice; Cancel discards the form choice without cancelling a download. Setup does not
+automatically select the built-in backend.
 Descriptions state where audio goes and any setup. This computer shows its setup below the choice:
 "Needs a one-time download of about 698 MB, checked against this release." with **Set up voice**;
 while setting up, a progress bar, "Setting up… X MB of Y MB" and **Cancel setup**; when ready,
@@ -1887,6 +1891,34 @@ next capture; a recording keeps the selection it started with and stops when it 
 | Saved host | Chosen radio, a check named Saved. and the setup panel in its current state; while setting up, progress refreshes every second. The overview reads This computer, with " · not set up" until ready. |
 | Saving | A spinner named Saving… and disabled choices until the request answers. |
 | Failed/denied save | Server explanation and Retry; the saved choice is preserved. A choice changed elsewhere offers Reload settings. |
+
+**Your speech service** says “Words appear after you stop. Audio passes through this computer to
+the service you choose. Its privacy policy and charges apply.” It shows **Transcription URL**, a full
+endpoint input, and “Use a compatible audio transcription endpoint reachable from the computer
+running Altitude.” **How to run one** links to setup guidance. **Key or model (optional)** expands an
+API key password field and Model. Saved keys are not returned: the placeholder says “Key saved —
+leave blank to keep”, with a 44px **Remove saved key** label. Changing the address clears the key
+association and shows a muted key hint, “Enter a key for the new address, if needed.” HTTP endpoints
+show “This connection is unencrypted. Audio and any key travel over HTTP.” before saving.
+
+First save is **Save and use service**, later edits **Save changes**, alongside **Cancel**. Invalid
+URLs show “Enter a complete http:// or https:// transcription URL.” The form says once, “If
+transcription fails, record again. Recordings are not kept.” Phone fields fill the card and scroll
+naturally; desktop keeps the 680px maximum. Controls have 44px targets. Hints associate with their
+fields; errors announce without moving focus. No endpoint probing or autosave occurs.
+
+The service composer keeps microphone/image and recording controls. A 44px underlined destination
+link shows **Voice: speech.example.test**, wrapping the hostname/port without exposing a path or key.
+Stop releases the microphone and shows **Transcribing…** with Cancel; Send shows **Transcribing to
+send…**. Pending service transcription hides waveform/timer and disables editing/microphone/send.
+Success removes transient UI. Errors keep typed text/images and offer one Voice settings link,
+omitting the separate destination link. Failed audio is discarded; no recording retry appears.
+Switching conversations cancels unsent recording; an explicit Send completes only for its captured
+conversation. This service presentation does not change live host/browser recognition.
+An interrupted upload says “Transcription did not finish. Check your connection and service
+address.” with the Voice settings link. Malformed saved configuration says “Your speech service
+settings are invalid. Re-enter them in Voice settings.” in Settings; the composer replaces the
+last words with the same Settings link and keeps the microphone closed until repaired.
 
 The project page `/settings/projects/<name>` has a labelled **Settings** back button, the line
 "Applies to this project only. A model or effort L3 sets for one task wins over these." and its

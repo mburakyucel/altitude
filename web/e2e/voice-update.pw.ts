@@ -169,12 +169,14 @@ test("voice update presentation: choosing browser leaves cancellation visible wh
   const browser = page.getByRole("radio", { name: "Browser recognition", exact: true });
   const computer = page.getByRole("radio", { name: "This computer", exact: true });
   await browser.click();
+  await button(page, "Save changes").click();
   await expect(browser).toBeChecked();
   await walk.state("01-browser-shows-cancelled-host-update", {
     visible: [page.getByText("Update cancelled.", { exact: true }), button(page, "Retry update"), button(page, "Remove voice")],
     hidden: [button(page, "Cancel update"), page.getByRole("progressbar")],
   });
   await computer.click();
+  await button(page, "Save changes").click();
   await expect(computer).toBeChecked();
   await walk.state("02-host-keeps-manual-retry", {
     visible: [page.getByText("Update cancelled.", { exact: true }), button(page, "Retry update")],
