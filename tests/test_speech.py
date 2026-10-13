@@ -14,12 +14,16 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 import urllib.error
 import zipfile
 from pathlib import Path
 
 from tests.support import AltitudeCase
-from altitude import access, config, platform, server, speech, speech_worker, state as S, terminal
+from altitude import access, config, engines, platform, server, speech, speech_worker, state as S, terminal
+
+#: Where this process keeps voice's runtime, before any test patches it.
+RUNTIME_HOME = speech.ROOT
 
 #: Answers like the worker: the text is how many samples the recording holds. `argv[1]` picks a failure.
 FAKE_WORKER = r'''
@@ -788,6 +792,103 @@ class TestSetup(SpeechCase):
         self.wait(lambda: host.setup_attempt is None)
         self.assertEqual(speech.status()["state"], "ready")
         self.assertTrue(any("set up" in line for line in self.logs))
+
+    # Task workers can write Altitude's home; the speech worker imports the runtime's code outside any sandbox.
+
+    def worktree(self) -> Path:
+        repo, tree = self.tmp / "project", self.tmp / "project-task"
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                        "commit", "-q", "--allow-empty", "-m", "fictional"], check=True)
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "task", str(tree)], check=True)
+        return tree
+
+    def writable_roots(self, tree: Path) -> dict[str, list[Path]]:
+        """What the real launch code gives each engine's task worker: Codex's sandbox on both hosts, Claude's
+        Seatbelt profile on macOS (which matches resolved paths)."""
+        codex = tomllib.loads("\n".join(engines.codex.codex_sandbox(tree, extra_roots=engines.common._git_dirs(tree))))
+        self.patch(engines.claude, "claude_agents", return_value=[])
+        _, _, claude = engines.claude.prepare_worker("task", "Fictional.", cwd=tree, persona=None, model=None,
+                                                     settings=self.tmp / "settings.json", effort=None, resume=None,
+                                                     images=())
+        return {"codex": [Path(root) for root in codex["permissions"]["altitude-task"]["workspace_roots"]],
+                "claude": [Path(os.path.realpath(str(root).rstrip("*"))) for root in claude]}
+
+    def test_no_task_worker_can_write_the_runtime(self):
+        self.assertEqual(RUNTIME_HOME, config.beside_root("speech"))
+        tree = self.worktree()
+        real = self.tmp / "volume" / "altitude"
+        real.mkdir(parents=True)
+        (self.tmp / "linked").symlink_to(real)
+        for home in (config.ROOT, self.tmp / "linked", self.tmp / "custom-home"):
+            with self.subTest(home=home.name):
+                self.patch(config, "ROOT", home)
+                runtime = config.beside_root("speech")
+                self.assertFalse(runtime.is_relative_to(home.resolve()))
+                for engine, roots in self.writable_roots(tree).items():
+                    self.assertIn(home.resolve(), roots, engine)
+                    for root in roots:
+                        self.assertFalse(runtime.is_relative_to(root), f"{engine} may write {runtime} through {root}")
+
+    def old_runtime(self, home: Path, finished: bool = True) -> Path:
+        old = home / "speech"
+        runtime = old / "runtime-earlier"
+        (runtime / "site").mkdir(parents=True)
+        (runtime / "site" / "numpy.py").write_text("raise SystemExit('planted')\n")
+        if finished:
+            S.write_json(runtime / "complete.json", {"digest": "earlier"})
+        for name in ("installation.json", ".control", ".lock", ".use", "worker.log", "verification.log"):
+            (old / name).write_text("{}" if name.endswith(".json") else "")
+        return old
+
+    def test_startup_deletes_the_home_runtime_and_sets_host_voice_up_again_beside_it(self):
+        home = self.tmp / "home"
+        self.patch(config, "ROOT", home)
+        old = self.old_runtime(home)
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (outside / "kept").write_text("operator file\n")
+        (old / ".staging").symlink_to(outside)
+        self.assertTrue(speech.remove_home_runtime())
+        self.assertFalse(old.exists())
+        self.assertTrue((outside / "kept").is_file())
+        self.assertFalse(speech.remove_home_runtime())
+        self.patch(config, "voice_setting", return_value={"backend": "host"})
+        host = self.host()
+        host.update_installed(True)
+        self.wait(lambda: host.setup_attempt is None)
+        self.assertTrue(speech.runtime().is_relative_to(speech.ROOT))
+        self.assertIn("voice: setting up again beside Altitude's home", self.logs)
+
+    def test_voice_is_set_up_again_only_for_a_finished_runtime_and_host_voice(self):
+        home = self.tmp / "home"
+        self.patch(config, "ROOT", home)
+        self.old_runtime(home, finished=False)
+        self.assertFalse(speech.remove_home_runtime())
+        self.old_runtime(home)
+        self.assertTrue(speech.remove_home_runtime())
+        self.patch(config, "voice_setting", return_value={"backend": "browser"})
+        host = self.host()
+        host.update_installed(True)
+        self.assertIsNone(host.setup_attempt)
+        self.assertEqual(self.fetched, [])
+
+    def test_a_project_sharing_the_name_keeps_its_state(self):
+        home = self.tmp / "home"
+        self.patch(config, "ROOT", home)
+        old = self.old_runtime(home)
+        (old / "tasks" / "fictional").mkdir(parents=True)
+        self.assertTrue(speech.remove_home_runtime())
+        self.assertEqual(sorted(path.name for path in old.iterdir()), ["tasks"])
+
+    def test_a_link_in_place_of_the_folder_is_never_followed(self):
+        home = self.tmp / "home"
+        home.mkdir()
+        self.patch(config, "ROOT", home)
+        target = self.old_runtime(self.tmp / "elsewhere").parent
+        (home / "speech").symlink_to(target / "speech")
+        self.assertFalse(speech.remove_home_runtime())
+        self.assertTrue((target / "speech" / "runtime-earlier" / "complete.json").is_file())
 
 
 class TestWorkerCuts(AltitudeCase):

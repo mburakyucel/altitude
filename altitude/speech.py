@@ -35,7 +35,8 @@ from typing import Callable
 
 from . import config, platform, state as S
 
-ROOT = config.ROOT / "speech"
+# Beside Altitude's home: task workers can write the home, and this process imports the runtime's code.
+ROOT = config.beside_root("speech")
 WORKER = Path(__file__).resolve().parent / "speech_worker.py"
 
 SERVICE_PCM_LIMIT = 600 * 16000 * 2
@@ -300,6 +301,36 @@ def installation_id() -> str:
         return state["generation"]
     installed = _installed()
     return installed[0].name if installed else ""
+
+
+def remove_home_runtime() -> bool:
+    """Delete what voice kept in Altitude's home in earlier releases, where task workers could write it; nothing of
+    it is reused. Only voice's own entries go: a project named `speech` shares that folder. No link is followed: one in
+    place of the folder stays, one inside it is removed. Returns whether a finished runtime was there, so host voice
+    is set up again beside the home."""
+    old = config.ROOT / "speech"
+    if old.is_symlink() or not old.is_dir():
+        return False
+    try:
+        entries = [path for path in old.iterdir() if path.name.startswith("runtime-") or path.name in (
+            ".staging", "installation.json", ".control", ".lock", ".use", "worker.log", "verification.log")]
+    except OSError:
+        return False
+    finished = any(path.name.startswith("runtime-") and (path / "complete.json").is_file() for path in entries)
+    # Nothing reads what a failed removal leaves, so it must not keep the daemon from starting.
+    for path in entries:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+    try:
+        old.rmdir()
+    except OSError:
+        pass  # left in place, or a project's state shares it
+    return finished
 
 
 def _setting_up() -> bool:
@@ -797,8 +828,17 @@ class Host:
 
         threading.Thread(target=run, name="speech-setup", daemon=True).start()
 
-    def update_installed(self) -> None:
-        """One durable automatic attempt for this target, only at daemon startup."""
+    def update_installed(self, reinstall: bool = False) -> None:
+        """One durable automatic attempt for this target, only at daemon startup. `reinstall`: host voice was set up
+        in the folder `remove_home_runtime` deleted, so it is set up again here."""
+        if reinstall and config.voice_setting()["backend"] == "host":
+            try:
+                self.start_setup()
+            except SpeechError as exc:
+                self.log(f"voice: setting up again beside Altitude's home is unavailable: {exc}")
+            else:
+                self.log("voice: setting up again beside Altitude's home")
+            return
         try:
             self.start_setup(automatic=True)
         except SpeechError as exc:

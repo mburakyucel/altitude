@@ -107,13 +107,13 @@ folder on a Mac or an external drive on Linux. Never commit it to a repository: 
 and evidence. Encrypt the file before it leaves storage you trust.
 
 ```sh
-(umask 077 && tar -czf ~/Backups/altitude-2026-10-10.tar.gz -C ~ --exclude=.altitude/speech .altitude)
+(umask 077 && tar -czf ~/Backups/altitude-2026-10-10.tar.gz -C ~ .altitude)
 tar -tzf ~/Backups/altitude-2026-10-10.tar.gz > /dev/null && echo complete
 ```
 
 The first command writes an archive only you can read; the second reads the whole archive and fails
-on a truncated or damaged file. Both assume the default `ALTITUDE_HOME`. The exclusion skips the
-voice runtime, which downloads again when needed. Records are replaced whole, so a copy taken while
+on a truncated or damaged file. Both assume the default `ALTITUDE_HOME`. The voice runtime lives beside it in
+`~/.altitude-speech` and downloads again when needed, so the copy leaves it out. Records are replaced whole, so a copy taken while
 Altitude runs holds intact files, but activity during the copy can leave one record without its
 counterpart, such as an incident index line without its incident. For an exact copy, take it while
 no task runs and the coordinator is idle. Task folders keep their check evidence, so
@@ -703,10 +703,13 @@ alt machine set --voice host --reason 'Transcribe on this computer'
 ```
 
 Setup downloads the model from Hugging Face and its runtime (onnxruntime, numpy and the onnx-asr
-decoder) from PyPI, pinned by checksum in the Altitude release, into `~/.altitude/speech`. Nothing is
-installed elsewhere and Altitude's own Python stays standard-library only. Settings shows progress and
+decoder) from PyPI, pinned by checksum in the Altitude release, into `~/.altitude-speech`, beside
+Altitude's home and outside the folders task workers may write. Nothing is installed elsewhere and
+Altitude's own Python stays standard-library only. Settings shows progress and
 **Cancel setup**; a failed setup shows its reason and **Retry**. At startup after a release changes
 the runtime, Altitude makes one automatic update attempt for already-installed, selected host voice.
+A runtime that earlier releases kept in `~/.altitude/speech` is deleted at startup, not reused; when
+host voice is selected, it sets up again in `~/.altitude-speech`, one download of about 700 MB.
 Supported voice stays ready while Settings shows update progress. The update waits for recordings to
 finish, checks that the replacement model runs, then switches and removes superseded files. An unsafe
 or incompatible runtime cannot keep serving; Settings and the composer say that it needs an update.
@@ -744,7 +747,7 @@ When a recording stops early for another reason (the speech process fails, this 
 recording, or the microphone gives no audio), the words already shown stay in the draft and the
 composer says "Voice stopped: <reason>. Typing works." A screen lock or call that takes the microphone
 stops the recording as Stop would, landing what was recorded. The speech process's own errors go to
-`~/.altitude/speech/worker.log`, and starts, stops and their reasons to altd's log.
+`~/.altitude-speech/worker.log`, and starts, stops and their reasons to altd's log.
 
 For a device check, dictate on the iPhone in Safari and as a Home Screen app, and on a desktop
 browser: a first capture, repeated Cancel and restart, Stop, Send, and a screen lock or call during a

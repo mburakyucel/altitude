@@ -815,6 +815,14 @@ def project_dir(name: str) -> Path:
     return ROOT / require_project_name(name)
 
 
+def beside_root(name: str) -> Path:
+    """`~/.altitude-<name>`: beside Altitude's home rather than in it. Task workers can write the home, so what altd
+    runs, mounts or writes as its own must not sit at a path a worker could have replaced. Derived from the resolved
+    home, so no worker's resolved writable root contains it."""
+    root = ROOT.resolve()
+    return root.with_name(f"{root.name}-{name}")
+
+
 def discover_projects() -> list[dict]:
     """The immediate subfolders of the projects folder, marked managed/unmanaged, and managed projects elsewhere."""
     managed = load_projects()
