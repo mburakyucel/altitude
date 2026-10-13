@@ -59,7 +59,7 @@ def prepare_bases():
     """Online build phase: no fixture code runs or production container boots."""
     ROOT.mkdir(exist_ok=True)
     with container_acceptance.environment(ROOT,reuse=True):
-        root=Path(tempfile.mkdtemp(prefix='build-pair-',dir=ROOT))
+        root=Path(tempfile.mkdtemp(prefix='acp-'))
         unit='altitude-container-build-'+uuid.uuid4().hex+'.service'
         (root/'storage.conf').write_text('[storage]\ndriver="overlay"\n'+
             'graphroot='+json.dumps(str(root/'store'))+'\nrunroot='+json.dumps(str(root/'run'))+'\n')

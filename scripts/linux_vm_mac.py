@@ -245,8 +245,12 @@ class Machine:
             time.sleep(5)
         raise RuntimeError("The guest was not ready in time; see console.log")
 
-    def halt(self) -> None:
+    def halt(self, *, force: bool = False) -> None:
         if self.process and self.process.poll() is None:
+            if force:
+                self.process.kill()
+                self.process.wait(10)
+                return
             try:
                 self.process.stdin.write("stop\n")
                 self.process.stdin.flush()

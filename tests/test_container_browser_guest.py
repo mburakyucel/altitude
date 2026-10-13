@@ -147,7 +147,7 @@ class ContainerBrowserGuestTests(AltitudeCase):
         with self.assertRaisesRegex(RuntimeError, 'fictional build failure'):
             fixture.prepare_bases()
         cleanup.assert_called_once()
-        self.assertEqual(list(fixture.ROOT.glob('build-pair-*')), [])
+        self.assertFalse(cleanup.call_args.args[0].exists())
 
     def test_offline_prepare_refuses_missing_base_without_building(self):
         fixture = guest.fixture

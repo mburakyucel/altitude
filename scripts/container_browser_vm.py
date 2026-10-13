@@ -68,7 +68,7 @@ class Budget:
                 self.observe(machine)
             except Exception as error:
                 self.error = repr(error)
-                machine.halt()
+                machine.halt(force=True)
                 return
             self.closed.wait(1)
 

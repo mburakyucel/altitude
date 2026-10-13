@@ -27,7 +27,7 @@ class ContainerBrowserControllerTests(AltitudeCase):
         machine = mock.Mock()
         machine.ssh.side_effect = TimeoutError('counter unavailable')
         budget.watch(machine)
-        machine.halt.assert_called_once_with()
+        machine.halt.assert_called_once_with(force=True)
         self.assertIn('counter unavailable', budget.error)
 
     def test_cleanup_does_not_signal_recycled_process(self):
