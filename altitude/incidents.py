@@ -234,7 +234,7 @@ def open_summary(project: str) -> str:
 
 # ---- what an incident says about the failure and the machine -------------------------------------------------
 _MESSAGE = re.compile(r"""["'](?:message|error)["']\s*:\s*["']((?:[^"'\\]|\\.)+)["']""")
-_JSON_START = re.compile(r'\{"|\w*":')   # an event line, or a stream chunk cut mid-event
+_JSON_START = re.compile(r'\{"|(?<!\w)\w*+":')  # an event line, or a stream chunk cut mid-event
 
 
 def _event_message(event: dict) -> str:

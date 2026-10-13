@@ -43,6 +43,14 @@ class TestTextParity(AltitudeCase):
              mock.patch.object(platform, "local_names", return_value={}):
             self.assertEqual(incidents.sanitize("serial token=FICTION123456789"), "serial [REDACTED]")
 
+    def test_failure_summary_outputs_and_prefix_spans(self):
+        for case in CORPUS["failures"]:
+            with self.subTest(text=case["text"]):
+                self.assertEqual(incidents.failure_line(case["text"]), case["output"])
+                self.assertEqual(incidents._JSON_START.split(case["text"], 1), case["split"])
+                self.assertEqual([list(match.span()) for match in incidents._JSON_START.finditer(case["text"])],
+                                 case["spans"])
+
     def test_long_incomplete_text_finishes_within_each_child_deadline(self):
         # These exercise real recognition, not provider or runtime state. Each independent child has a deadline.
         code = """
@@ -67,9 +75,12 @@ elif kind == 'serial':
     assert not list(incidents._serials('serial-' * size))
     assert not list(incidents._serials('serial-' * size + ' 1234'))
     assert list(incidents._serials('serial-' * size + ' serial 12345'))
+elif kind == 'failure':
+    assert incidents.failure_line('0' * size) == '0' * 300
+    assert incidents.failure_line('word' * size + '":') == ''
 """
         root = Path(__file__).resolve().parent.parent
-        for kind in ("labels", "inline", "recommendation", "serial"):
+        for kind in ("labels", "inline", "recommendation", "serial", "failure"):
             for size in (16384, 65536):
                 with self.subTest(kind=kind, size=size):
                     completed = subprocess.run([sys.executable, "-B", "-c", code, str(size), kind],

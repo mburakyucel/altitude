@@ -1455,7 +1455,8 @@ service, LaunchAgents, keychains, trust stores or network configuration.
 
 Text parsing keeps complete fictional output and span fixtures in `tests/fixtures/text-parity.json`.
 `tests/test_text_parsing.py` checks option and recommendation forms, malformed delimiters, whitespace,
-duplicate keys and precedence, plus shared serial recognition, redaction and publication rejection.
+duplicate keys and precedence, failure-summary outputs and JSON-prefix spans, plus shared serial
+recognition, redaction and publication rejection.
 Its long-input probes run the actual parsers in separate Python children with a two-second deadline
 per child. Parser changes preserve the accepted language and full input; they do not truncate text
 or relax publication checks.
