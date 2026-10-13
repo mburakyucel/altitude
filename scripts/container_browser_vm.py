@@ -308,6 +308,8 @@ def run(args):
                 record.setdefault('stages', []).append({'name': name, 'exit': result.returncode, 'seconds': time.monotonic() - before})
                 budget.observe(machine)
                 if result.returncode:
+                    diagnostics = machine.ssh('podman info --debug; podman ps --all --external; journalctl --user --no-pager --lines=100; sudo -n dmesg | tail -60', timeout=30, check=False)
+                    (results / (name + '-runtime.log')).write_text(diagnostics.stdout + diagnostics.stderr)
                     raise RuntimeError('Guest stage failed: ' + name)
                 if name == 'browser-image':
                     identity_record['browser_image'] = machine.ssh("podman image inspect --format '{{.Id}}' localhost/altitude-browser").stdout.strip()
