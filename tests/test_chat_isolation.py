@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, engines, l3, server, state as S, tasks as T, transcript
+from altitude import config, dispatch, engines, l3, platform, server, state as S, tasks as T, transcript
 
 
 class TestChatIsolation(AltitudeCase):
@@ -45,7 +45,9 @@ class TestChatIsolation(AltitudeCase):
         def provider(prompt, **kwargs):
             project = kwargs["extra_env"]["ALTITUDE_PROJECT"]
             other = next(p for p in self.projects if p != project)
-            self.assertEqual(Path(kwargs["cwd"]).parent, config.project_dir(project))
+            self.assertEqual(Path(kwargs["cwd"]).parent, platform.coordinator_directory())
+            self.assertEqual(l3.turn_unit(project), kwargs["unit"], "the socket serves only this turn's job")
+            self.assertNotEqual(l3.turn_unit(other), kwargs["unit"])
             self.assertNotIn(f"message::{other}::", prompt)
             calls[project].append((prompt, kwargs["resume"]))
             number = len(calls[project])

@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, set_project_setting
-from altitude import config, engines, l3
+from altitude import config, engines, l3, platform
 
 
 class TestL3Sessions(AltitudeCase):
@@ -67,8 +67,8 @@ class TestL3Sessions(AltitudeCase):
             out = l3.turn(self.project, "coordinate this")
 
         runtime = Path(seen["cwd"])
-        self.assertEqual(runtime.parent, config.project_dir(self.project),
-                         "altd creates the fresh runtime inside this project's state directory")
+        self.assertEqual(runtime.parent, platform.coordinator_directory(),
+                         "altd creates the fresh runtime in the coordinator folder no worker can write")
         self.assertTrue(runtime.name.startswith("l3-codex-") and seen["runtime_was_real"],
                         "the daemon handoff never trusts a reusable or symlinked runtime path")
         self.assertFalse(runtime.exists(), "the fresh runtime is removed after the Codex turn")

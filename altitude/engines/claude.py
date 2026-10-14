@@ -300,14 +300,14 @@ def claude_settings() -> Path:
 
 
 @config.admitted_provider
-def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
+def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
                  effort: str | None = None,
                  settings: Path | None = None, extra_env: dict | None = None, on_text=None, on_start=None,
                  timeout: int = config.L3_TURN_TIMEOUT, restricted: bool = False,
                  add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None,
-                 durable_timeout: bool = False, images: list[dict] | tuple = (),
+                 images: list[dict] | tuple = (),
                  sends: Path | None = None, on_send=None) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
     raw_stdout/raw_stderr; `limited` (scope and optional reset) when an allowance is exhausted — the call is not even
@@ -316,8 +316,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     A message placed in `sends` joins the running turn (see `_Driver`); `on_send(message_id, outcome, text)` is called
     at that point of the turn with the reply streamed since the previous one, and `text` holds only what follows.
 
-    `on_start(pid)` is called the moment the child exists. The turn outlives altd, so its pid lets a
-    restarted server distinguish an in-flight turn from a dead one."""
+    The turn runs as the job `unit`, which holds every process it starts and ends it after `timeout` seconds.
+    `on_start(pid)` is called the moment the job's launcher exists."""
     config.task_effort("claude", effort, role="l3")
     content = common._engine_input("claude", prompt, images)
     held = common.usage_hold()
@@ -356,13 +356,9 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     if effort is not None:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     writable = _claude_writable(Path(cwd), config.ROOT)
-    unit = _claude_unit(f"sync-{uuid.uuid4().hex}")
-    driver = common._driver_command()
-    if durable_timeout or sends is not None:
-        driver = platform.job_command(unit, driver, common.launch_env(env), runtime_max=timeout, writable=writable)
-        env = common.launch_env(env, retain_user_bus=True)
-    else:
-        driver = platform.confined(driver, writable)
+    driver = platform.job_command(unit, common._driver_command(), common.launch_env(env), runtime_max=timeout,
+                                  writable=writable)
+    env = common.launch_env(env, retain_user_bus=True)
     # prompt goes through the driver's input: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(driver, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env)
@@ -378,9 +374,6 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
 
     drain = threading.Thread(target=drain_stderr, daemon=True)
     drain.start()
-    killer = threading.Timer(timeout, proc.kill) if not durable_timeout and sends is None else None
-    if killer:
-        killer.start()
     out = {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0,
            "turns": 0, "structured": None, "error": None, "tools": []}
     parts: list[str] = []
@@ -447,8 +440,6 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         failure = exc
         raise
     finally:
-        if killer:
-            killer.cancel()
         proc.stdout.close()
         drain.join(timeout=2)
         proc.stderr.close()

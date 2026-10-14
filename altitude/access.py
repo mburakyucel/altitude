@@ -1,8 +1,9 @@
 """Who may use Altitude: browsers paired with a one-time code, and this machine's own `alt` CLI.
 
 Everything lives in one private folder beside the TLS material (`~/.config/altitude/access`), outside every
-runtime, source and project root. `machine.key` is the CLI's credential: only the operator's account can read
-it, so being able to read it is the proof of being on this machine as the operator. `devices.json` holds each
+runtime, source and project root, and every sandbox Altitude applies refuses to read it. `machine.key` is the CLI's
+credential: only the operator's account can read it, and none of Altitude's sandboxed agents, so being able to read
+it is the proof of being the operator on this machine. `devices.json` holds each
 paired browser's name, times and the SHA-256 of its random key (never the key itself), plus at most one
 pairing code, also hashed. `alt pair` writes a code here directly, so pairing and lockout recovery need no
 running browser, no particular bind address and nothing platform-specific.
@@ -24,6 +25,9 @@ from pathlib import Path
 from . import config, state as S
 
 DIR = config.HOME / ".config/altitude/access"
+#: Raised when every earlier machine key must be taken as known to an agent: the first start replaces it.
+#: 2: Altitude's sandboxes stopped being able to read this folder.
+GENERATION = 2
 COOKIE = "altitude_device"
 KEY_HEADER = "X-Altitude-Key"
 CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"  # no 0/O or 1/I/L to misread
@@ -81,10 +85,48 @@ def machine_key() -> str | None:
 
 
 def prepare() -> None:
-    """Create the private folder and the machine key when altd starts."""
+    """Create the private folder and the machine key when altd starts. A key of an earlier generation is replaced,
+    with any pairing code in flight, and the jobs running now are noted: they started under sandboxes that could read
+    this folder, so `settle` replaces the key once more when they have all ended."""
     with _locked():
         if machine_key() is None:
-            S.atomic_write(DIR / "machine.key", secrets.token_urlsafe(32) + "\n")
+            _replace_key([])
+        elif _generation().get("generation") != GENERATION:
+            _replace_key(_jobs())
+            record = _read()
+            if record.get("code"):
+                _write({**record, "code": None})
+
+
+def settle() -> None:
+    """Replace the key once every job noted by the last replacement has ended."""
+    if not _generation().get("after"):
+        return
+    with _locked():
+        after = _generation().get("after")
+        if after and not set(after) & set(_jobs()):
+            _replace_key([])
+
+
+def _generation() -> dict:
+    try:
+        record = json.loads((DIR / "key.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def _replace_key(after: list[str]) -> None:
+    S.atomic_write(DIR / "machine.key", secrets.token_urlsafe(32) + "\n")
+    S.atomic_write(DIR / "key.json", json.dumps({"generation": GENERATION, "after": after}) + "\n")
+
+
+def _jobs() -> list[str]:
+    """The agent jobs running now: task workers, coordinator turns and reviews, whose sandboxes are what changed.
+    Long-lived jobs that run no agent (terminal shells, the container's volume holder) do not hold the key back."""
+    from . import engines, platform
+    return sorted({part for _, groups in platform.process_table().values() for part in groups
+                   if engines.agent_unit(part)})
 
 
 def is_machine(presented: str | None) -> bool:

@@ -405,9 +405,9 @@ class TestChatTurns(AltitudeCase):
         self.tool = self.tmp / "tool"
         os.environ["FAKE_ENGINE_TOOL"] = str(self.tool)
         self.addCleanup(os.environ.pop, "FAKE_ENGINE_TOOL", None)
+        # The job's Seatbelt profile too: macOS refuses one inside another, as a confined worker or validation run
+        # would apply.
         self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
-        # macOS refuses a Seatbelt profile inside another one, as a confined worker or validation run would apply.
-        self.patch(platform, "confined", side_effect=lambda command, writable: command)
         self.patch(engines.codex, "_codex_session_model", return_value={"engine_model": "fake-model"})
 
     def test_a_delivered_message_splits_the_native_coordinator_reply(self):
@@ -424,7 +424,7 @@ class TestChatTurns(AltitudeCase):
                 engines.send_into_turn(sends, "m1", TEXT)
             threading.Thread(target=send, daemon=True).start()
 
-        result = engines.claude_print("Start the work.", cwd=self.repo, timeout=60, sends=sends, on_send=on_send,
+        result = engines.claude_print("Start the work.", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=60, sends=sends, on_send=on_send,
                                      on_start=started)
         self.assertIsNone(result["error"], result)
         self.assertEqual(calls[0][:2], ("m1", "delivered"))
@@ -436,7 +436,7 @@ class TestChatTurns(AltitudeCase):
         script.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('codex: not signed in\\n')\nsys.exit(3)\n")
         script.chmod(0o755)
         with mock.patch.object(config, "CODEX_BIN", str(script)):
-            result = engines.codex_exec("hello", cwd=self.repo, timeout=30)
+            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=30)
         self.assertEqual(result["returncode"], 3)
         self.assertEqual(result["error"], "codex: not signed in")
 
@@ -447,4 +447,4 @@ class TestChatTurns(AltitudeCase):
                           "print(json.dumps({'type': 'result', 'result': 'whole', 'session_id': 's'}))\n")
         script.chmod(0o755)
         with mock.patch.object(config, "CLAUDE_BIN", str(script)):
-            self.assertEqual(engines.claude_print("hello", cwd=self.repo, timeout=30)["text"], "whole")
+            self.assertEqual(engines.claude_print("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=30)["text"], "whole")

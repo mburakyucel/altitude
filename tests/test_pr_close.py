@@ -231,6 +231,7 @@ class TestPrClose(AltitudeCase):
 
     def test_runtime_shims_on_each_engine_use_project_bound_broker(self):
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
@@ -252,6 +253,7 @@ class TestPrClose(AltitudeCase):
 
     def test_mcp_coordinator_closes_and_denies_cross_project_or_raw_write(self):
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         runtime = l3._l3_runtime(self.project, "codex")
         self.addCleanup(l3._remove_runtime, runtime)

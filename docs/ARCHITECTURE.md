@@ -495,17 +495,29 @@ Then `access.py` decides who is asking. The page and its files, `GET /api/health
 needs a paired browser or this machine's key, and otherwise gets 401 with `"pair": true`. Everything
 lives in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside every runtime,
 source and project root). altd creates `machine.key` there when it starts; the `alt` CLI and the
-restart script send it as `X-Altitude-Key`. The CLI finds altd through the service record: as the
-service instance (`ALTITUDE_SERVICE=1`) starts serving, it writes `service.json` beside the key with
-its PID, address, port, scheme and TLS directory, replacing the previous record. It decides where
-`alt` sends the key and which CA it trusts, so it lives in this store rather than in the runtime home
-that task folders share. `alt` reads it for its altd calls instead of its own launch environment, so a worker started before a restart onto
-another certificate folder or port reaches the new service without relaunching. It verifies altd with
-that folder's `ca.crt` (the system trust store when the folder has none) and refuses, naming the CA,
-an altd that does not prove its identity; there is no unverified fallback, and a missing record is
-named. Serve-only instances write no record. The key is compared in constant time. Only the operator's
-account can read it, so it proves a caller runs on this machine as the operator; Altitude's workers
-share that account, as they share its files. `alt pair` (operator only) writes one pairing code
+restart script send it as `X-Altitude-Key`, each only to an altd that proves itself with the installation's CA
+(the system trust store for an external certificate). The key is compared in constant time. Only the operator's
+account can read it, and no Altitude sandbox can: the Codex worker, coordinator and reviewer profiles
+and the macOS Seatbelt profiles deny the access and TLS folders (`platform.secret_places`), so the key
+proves a caller is the operator's own CLI rather than a confined agent. A Claude worker on Linux has no
+OS sandbox and still shares the operator's account and files. `key.json` records the key's
+generation: when altd starts with a key from an earlier generation, whose sandboxes could still read
+this folder, it replaces the key, drops a pairing code in flight and notes the agent jobs then running
+(task workers, coordinator turns and reviews); once all of them have ended, the tick replaces the key once
+more (`access.settle`). Each replacement also ends open design-board links and the replay of a voice
+recording in flight, which are signed with the key.
+
+The CLI finds altd through the service record, `~/.config/altitude/service.json`, outside the hidden
+folders so a sandboxed `alt` can read it: as the service instance (`ALTITUDE_SERVICE=1`) starts
+serving, it writes its PID, address, port, scheme, TLS directory and the public CA certificate it
+serves from (null for an external certificate), replacing the previous record. It decides where `alt`
+sends its requests and which CA it trusts, so it lives with Altitude's private configuration rather
+than in the runtime home that task folders share. `alt` reads it for its altd calls instead of its own
+launch environment, so a worker started before a restart onto another certificate folder or port
+reaches the new service without relaunching. It verifies altd with the recorded CA (the system trust
+store when there is none) and refuses, naming the CA, an altd that does not prove its identity; there
+is no unverified fallback, and a missing record is named. Serve-only instances write no record.
+`alt pair` (operator only) writes one pairing code
 straight to `devices.json`: eight characters from an alphabet without look-alikes, valid ten minutes,
 stored as a SHA-256 hash. A new code replaces the old, and five wrong codes from anyone cancel it, so
 pairing works over SSH, with any bind address and without a running page. Redeeming the code gives
@@ -555,6 +567,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Operator-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
+| Coordinator socket admission | in the per-user runtime folder; the peer's pidfd (Linux 6.5 or newer) and cgroup | beside Altitude's private configuration; the peer's audit token, pinned by its pid version, and its job coalition | Isolation and landing |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
 | Native libraries, tools | system packages (apt, dnf, pacman or zypper) | Homebrew; OpenSSL 3 from PATH or Homebrew's `openssl@3` | Setup |
 | Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |
@@ -1351,9 +1364,14 @@ not one that works against it. The unit writes its output and exit status to the
 and adds a task event and a project event per command. The ledger is also the one-at-a-time record: at startup
 altd follows every unfinished row's unit to its end (`server.settle_interrupted_machine_commands`) and completes it
 from the saved status, or as uncertain without one, and the owner's CLI reconnects with its request id for the result. The owner, L3 and the operator can revoke
-the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
-on this single-account host can reach; the task record and the per-command log are the boundary,
-not caller identity. Both engines share the verb; only the launcher is host-specific.
+the grant; nobody can widen it. Both engines share the verb; only the launcher is host-specific.
+
+The commands a task's owner sends to altd over HTTP (`POST /api/task/run`, `task/validate`,
+`task/terminal` and `task/review/run`) are its own task's door. altd admits them by the caller, not
+by the machine key: the body's project, task and attempt must name a running task's current attempt,
+and the client end of the connection must be held by a process in that attempt's worker job
+(`terminal.owner_connection`). Any other caller, including one holding the machine key, gets the same
+403 before anything is queued or run, and the owner's `alt` sends no key for these commands.
 Ordinary candidate checks need no grant; the fixed Mac guest browser lane requires its standing VM-policy grant:
 `POST /api/task/validate` lets the running owner's current attempt, from a process in its own worker
 job, run one command against a throwaway clone of its committed `HEAD`. On Linux the command runs in a
@@ -1389,8 +1407,8 @@ temporary directories, and neither read nor write macOS's [private places](DEVEL
 launchd refuses service control to any sandboxed process. The profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
 whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
-Events, which script running apps with only macOS's Automation consent in the way. A Claude L3 turn that
-runs as altd's child rather than as a job starts under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
+Events, which script running apps with only macOS's Automation consent in the way. Every Claude L3 turn
+also runs as a job of its own under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
 roots and the same read-only Git parts. The session bus and manager runtime directory (including its direct private socket) are denied;
 other runtime-directory paths retain their policy. The generated profile also supplies provider-free
 confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
@@ -1427,6 +1445,7 @@ The CLI, broker and read shims authorize their operations without a duplicate na
 Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
 re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command.
+The socket and every per-turn runtime directory live in the installation's coordinator folder (`platform.coordinator_directory`: the per-user runtime folder on Linux, Altitude's private configuration on macOS), mode 0700 and outside every root a task worker may write. Each coordinator turn runs as a job of its own, whose unit altd records before launch; altd serves a connection only when the process at its other end is in that project's running turn's job (`platform.peer_groups`), so a task worker, another project's coordinator or the operator's shell is refused before its request is read.
 Its [GitHub reads](CLI.md#coordinator-github-reads) admit any read-only `gh` command, including GET-only
 `gh api`, against any repository altd's login can see, and refuse writes and browser launches. Content
 read this way is untrusted evidence; retaining another private repository's content in this project's
@@ -1589,9 +1608,9 @@ connection in
 since an IPv6 socket can reach an IPv4 address. A
 client whose row is missing is refused when its address belongs to this host (it can be bound). A
 local client is allowed only when a process outside Altitude visibly holds
-that socket and none of altd, anything altd started (a Claude L3 turn runs as altd's child in altd's
-own cgroup) or any process in an `altitude*.service` unit (workers, reviews, machine commands, terminal
-shells; on macOS the job coalition recorded under that unit name) does.
+that socket and none of altd, anything altd started or any process in an `altitude*.service` unit
+(workers, coordinator turns, reviews, machine commands, terminal shells; on macOS the job coalition
+recorded under that unit name) does.
 A holder whose descriptors or unit cannot be read identifies nothing, so an agent process that hides
 its descriptors is refused. A client on another host is the operator's browser. The Vite dev server
 does not proxy any path altd could route to the terminal (`terminalRequest` reads the raw path as

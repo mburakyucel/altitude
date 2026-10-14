@@ -50,15 +50,14 @@ class TestForegroundUnits(AltitudeCase):
         return engines.start_l2("claude", "project/worker-1", "brief", **kw)
 
     def test_ci_coordinator_and_private_review_timeouts_survive_daemon_exit_on_both_engines(self):
-        """A CI-recheck coordinator turn (Claude; a Codex coordinator turn is always a job) and a private Codex
-        review stop with their unit, not with altd."""
-        for engine, execute, options in (("claude", engines.claude_print, {"durable_timeout": True}),
-                                         ("codex", engines.codex_exec, {})):
+        """A coordinator turn on either engine runs as the job it is given and stops with that job, not with altd."""
+        for engine, execute in (("claude", engines.claude_print), ("codex", engines.codex_exec)):
             with self.subTest(engine=engine), mock.patch.object(engines.common.subprocess, "Popen",
                     side_effect=RuntimeError("fixture: execution intercepted")) as popen:
                 with self.assertRaisesRegex(RuntimeError, "intercepted"):
-                    execute("Probe evidence", cwd=self.repo, timeout=37, **options)
+                    execute("Probe evidence", cwd=self.repo, timeout=37, unit="altitude-coordinator-fixture.service")
                 cmd = popen.call_args.args[0]
+                self.assertIn("--unit=altitude-coordinator-fixture.service", cmd)
                 if engine == "codex":
                     self.assertIn("--ignore-user-config", cmd)
                 self.assertEqual(cmd[0], platform.SYSTEMD_RUN)
@@ -151,8 +150,8 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                         if host == "darwin":
                             specification = json.loads(command[-1])
                             wrapped, environment = specification["command"], specification["env"]
-                            self.assertIn(str(self.worktree), specification["writable"])
-                            self.assertIn(str(config.ROOT), specification["writable"])
+                            self.assertIn(f'(subpath "{os.path.realpath(self.worktree)}")', specification["profile"])
+                            self.assertIn(f'(subpath "{os.path.realpath(config.ROOT)}")', specification["profile"])
                         else:
                             child = command[command.index("--") + 1:]
                             driver_index = len(child) - len(engines.common._driver_command())
@@ -403,7 +402,7 @@ class TestWorkerTokenInput(AltitudeCase):
             with self.subTest(engine=engine):
                 command, sent = self.launched(engine, "darwin")
                 spec = json.loads(command[-1])
-                spec["writable"] = None  # Seatbelt replaces itself with the command; confinement has its own tests
+                spec["profile"] = None  # Seatbelt replaces itself with the command; confinement has its own tests
                 out.write_bytes(b""), err.write_bytes(b"")
                 kept = []
 

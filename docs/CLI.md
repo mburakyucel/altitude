@@ -795,7 +795,9 @@ phone can reach it, and the CA's name and the last eight pairs of its SHA-256 to
 installing it. The code never appears in a link. It writes the code straight to the private access store, so it
 works over SSH and without a browser; only the operator runs it, and L2 and L3 are refused. A code
 works once, for ten minutes; a new code cancels the previous one and five wrong codes cancel it.
-Every other `alt` command that calls altd sends the machine key from the same store. See
+Every other `alt` command that calls altd sends the machine key from the same store, except the commands
+an owner sends for its own task (`alt task run`, `validate`, `terminal` and `review run`), which altd
+admits from that owner's worker job instead. No Altitude sandbox can read the store. See
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
@@ -2193,9 +2195,8 @@ and any other end without an exit status, including one that happened unseen whi
 as an explicit uncertainty with its reason, never as success. When altd cannot be reached at all,
 the CLI fails at once. `alt task status <slug> --brief` shows the active purpose.
 
-The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
-can reach, the same surface that answers questions and posts messages. altd checks the task record,
-not which local process calls; the grant record and its per-command log are the boundary.
+altd admits the command by its caller and the task record, never by the machine key, which the CLI
+does not send for it; the grant record and its per-command log bound what runs.
 
 ### Validation runs
 

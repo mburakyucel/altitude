@@ -95,6 +95,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         # Git's transport rewrite supports local landing; the broker observes the canonical origin.
         git("remote", "set-url", "origin", "git@github.com:team/demo.git", cwd=self.repo)
         broker = server.start_l3_verb_broker(self.project, self.tmp / "approval.sock")
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         return broker
 

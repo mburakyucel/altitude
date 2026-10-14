@@ -37,11 +37,14 @@ class ContainerAdmission(AltitudeCase):
         listing.assert_not_called()
 
     def test_container_broker_is_ephemeral_and_validation_refusal_is_specific(self):
-        self.assertEqual(l3.verb_socket_path('fictional').parent, Path('/run/user/1000/altitude-l3'))
+        self.patch(platform.sys, 'platform', 'linux')  # a container is Linux on any host
+        runtime = Path(os.environ['XDG_RUNTIME_DIR'])
+        self.assertEqual(l3.verb_socket_path('fictional').parent.parent, runtime)
         self.assertNotEqual(l3.verb_socket_path('fictional'),l3.verb_socket_path('other'))
         self.assertEqual(platform.container_unavailable('Validation'), platform.validation_unavailable())
-        with mock.patch.object(platform, 'containerized', return_value=False):
-            self.assertEqual(l3.verb_socket_path('fictional').parent,config.ROOT/'l3-verbs')
+        with mock.patch.dict(os.environ) as environment:
+            environment.pop('XDG_RUNTIME_DIR')
+            self.assertEqual(l3.verb_socket_path('fictional').parent.parent, Path(f'/run/user/{os.getuid()}'))
 
     def test_paused_stranded_reports_stay_due_without_repeated_work_or_logs(self):
         self.change('pause')
@@ -172,8 +175,8 @@ class ContainerAdmission(AltitudeCase):
     def test_every_provider_primitive_refuses_before_launch_or_capability_side_effects(self):
         self.change("pause")
         invocations = [
-            lambda: engines.claude_print("fixture", cwd=self.tmp),
-            lambda: engines.codex_exec("fixture", cwd=self.tmp),
+            lambda: engines.claude_print("fixture", unit="altitude-coordinator-fixture.service", cwd=self.tmp),
+            lambda: engines.codex_exec("fixture", unit="altitude-coordinator-fixture.service", cwd=self.tmp),
             lambda: engines.common._start_worker("claude", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
             lambda: engines.common._start_worker("codex", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
             lambda: engines.improvement_review("fixture", "fixture", {}, model="claude-sonnet-5-5", timeout=1),

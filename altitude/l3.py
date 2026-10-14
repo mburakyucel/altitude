@@ -47,7 +47,7 @@ def _write_executable(path: Path, text: str) -> None:
 def verb_socket_path(project: str) -> Path:
     """One capability socket per project; the pathname, not model-supplied JSON, binds its authority."""
     name = hashlib.sha256(project.encode()).hexdigest()[:20]
-    return platform.coordinator_socket_directory() / f"{name}.sock"
+    return platform.coordinator_directory() / f"{name}.sock"
 
 
 def _remove_runtime(runtime: Path) -> None:
@@ -66,10 +66,11 @@ def _l3_runtime(project: str, engine: str) -> Path:
 
     Claude's deny-by-default permission rules approve only these command names. The shims keep variable Git and
     journal arguments read-only while still resolving them against the project named in the turn header. Codex has
-    the same cwd and shims in addition to its native filesystem sandbox.
+    the same cwd and shims in addition to its native filesystem sandbox. They live beside the coordinator sockets,
+    where no task worker can write.
     """
-    parent = config.project_dir(project)
-    parent.mkdir(parents=True, exist_ok=True)
+    parent = platform.coordinator_directory()
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     # I-20260903-075410: a fresh unpredictable directory is created by altd after the previous turn exits.
     # Reusing a model-writable pathname would let one turn replace it with a checkout symlink for the next.
     runtime = Path(tempfile.mkdtemp(prefix=f"l3-{engine}-", dir=parent))
@@ -287,6 +288,12 @@ def chat_turn(project: str) -> str:
         if not turn or turn["trigger"] != "chat":
             raise ValueError("this applies only while L3 answers the operator's chat message")
         return turn["id"]
+
+
+def turn_unit(project: str) -> str | None:
+    """The job the project's running turn runs in: the only one its coordinator socket serves."""
+    with _lifecycle_guard(project):
+        return (_active.get(project) or {}).get("unit")
 
 
 def active_offer(project: str) -> str | None:
@@ -1834,7 +1841,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         runtime = _l3_runtime(project, "claude")
         try:
             res = engines.claude_print(
-                text, cwd=runtime, resume=None if fresh else sid,
+                text, cwd=runtime, unit=_turn_job(project, active_turn), resume=None if fresh else sid,
                 persona=config.PERSONAS / "l3.md", allowed_tools=engines.L3_ALLOWED_TOOLS, tools=L3_TOOLS,
                 permission_mode="dontAsk", permission_prompts="none", restricted=True,
                 add_dirs=(config.project_path(project), config.ROOT),
@@ -1842,7 +1849,6 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
                 **_send_options(project, active_turn, choice["engine"], on_split),
                 **({"images": images} if images else {}),
                 timeout=_ci_turn_timeout(project, slug, trigger, config.L3_TURN_TIMEOUT),
-                **({"durable_timeout": True} if trigger == "ci-recheck" else {}),
                 extra_env=_l3_env(project, runtime))
         finally:
             _remove_runtime(runtime)
@@ -1876,6 +1882,14 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         res.update({"context_percent": pct, "completed": not bool(res.get("error")),
                     "turn_id": turn_id})
     return res
+
+
+def _turn_job(project: str, active_turn: dict) -> str:
+    """A fresh job name for this launch of the turn, recorded with the turn before the job exists, so the
+    coordinator socket serves the turn's processes from their first request."""
+    with _lifecycle_guard(project):
+        active_turn["unit"] = engines.coordinator_unit()
+        return active_turn["unit"]
 
 
 def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: float | None,
@@ -1920,7 +1934,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, a
     S.project_log(project, "l3-codex", reason=choice["why"], trigger=trigger, resume=bool(sid))
     try:
         result = engines.codex_exec(
-            body, cwd=runtime, timeout=_ci_turn_timeout(project, slug, trigger, config.L3_CODEX_TURN_TIMEOUT), model=model,
+            body, cwd=runtime, unit=_turn_job(project, active_turn), timeout=_ci_turn_timeout(project, slug, trigger, config.L3_CODEX_TURN_TIMEOUT), model=model,
             effort=choice.get("effort"), resume=sid, on_start=on_start,
             **({"images": images} if images else {}),
             extra_env=_l3_env(project, runtime),

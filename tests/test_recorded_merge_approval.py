@@ -76,6 +76,7 @@ class TestRecordedMergeApproval(AltitudeCase):
         self.setenv("GH_REPO", "foreign/repository")
         S.write_json(self.gh / "prs.json", {"235": self.pull})
         broker = server.start_l3_verb_broker(self.project, self.tmp / "approval.sock")
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         conversation = (self.directory / "conversation.jsonl").read_bytes()
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:

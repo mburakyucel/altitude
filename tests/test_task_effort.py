@@ -277,7 +277,7 @@ class TestEffortCommand(AltitudeCase):
                     event = {"type": "result", "session_id": "conversation", "result": "done"}
                     process = PrintProcess(json.dumps(event) + "\n")
                     with mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as launch:
-                        result = engines.claude_print("request", cwd=self.repo, effort=effort, resume=resume,
+                        result = engines.claude_print("request", unit="altitude-coordinator-fixture.service", cwd=self.repo, effort=effort, resume=resume,
                                                       settings=self.tmp / "settings.json")
                     self.assertIsNone(result["error"])
                     self.assertEqual(launch.call_args.args[0][-len(engines.common._driver_command()):],
@@ -321,7 +321,7 @@ class TestEffortCommand(AltitudeCase):
                 with self.subTest(resume=resume, effort=effort):
                     process = SimpleNamespace(pid=123, returncode=0, stdin=io.StringIO(), communicate=lambda *args, **kwargs: (output, ""))
                     with mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as launch:
-                        result = engines.codex_exec("request", cwd=self.repo, effort=effort, resume=resume)
+                        result = engines.codex_exec("request", unit="altitude-coordinator-fixture.service", cwd=self.repo, effort=effort, resume=resume)
                     self.assertIsNone(result["error"])
                     command = launch.call_args.args[0]
                     self.assertEqual("resume" in command, resume is not None)

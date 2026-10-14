@@ -1125,7 +1125,7 @@ prompts, no Edit/Write/NotebookEdit tools, and native admission for trusted shim
 log/diff/show shims, including full patches and historical files with external diff/text-conversion helpers
 disabled, and the altitude journal. Claude's runtime shims and the MCP tool send every `alt` invocation and
 GitHub/service read through the project-bound socket, where altd supplies the project, rejects path-shaped task ids and
-daemon-side file inputs, and re-applies the L3 command door. [GitHub reads](CLI.md#coordinator-github-reads)
+daemon-side file inputs, and re-applies the L3 command door. The socket and every per-turn runtime directory live in the installation's coordinator folder (`platform.coordinator_directory`: the per-user runtime folder on Linux, Altitude's private configuration on macOS), mode 0700 and outside every root a task worker may write. Each coordinator turn runs as a job of its own, whose unit altd records before launch; altd serves a connection only when the process at its other end is in that project's running turn's job (`platform.peer_groups`), so a task worker, another project's coordinator or the operator's shell is refused before its request is read. [GitHub reads](CLI.md#coordinator-github-reads)
 admit read-only `gh` commands against any repository altd's login can see; checkout, direct GitHub,
 and service write commands are absent. `alt issue new` and `alt issue comment` publish requested backlog
 through altd after its private-evidence check, and `alt issue label` adds or removes an issue's labels. Read content is untrusted, potentially private evidence:
@@ -1199,9 +1199,9 @@ missing grant refuses with the reason. Revoking the grant also stops a command s
 launch and resume rewrites a Claude owner's session settings with the allow rule for its own `alt task run`,
 so a grant recorded or revoked mid-session takes effect without a resume: altd, not the rule, decides.
 When Altitude restarts during a command, the unit continues, the next
-altd completes its row from the saved exit status, or stops the unit if its grant was revoked meanwhile, and the CLI reconnects and prints that command's result. The door is altd's
-operator-trusted HTTP surface, reachable by every worker on this single-account host; altd checks the task
-record, not the calling process.
+altd completes its row from the saved exit status, or stops the unit if its grant was revoked meanwhile, and the CLI reconnects and prints that command's result. altd admits the
+command only from a process in the running owner's own worker job, for its current attempt, and refuses
+every other caller, the machine key notwithstanding (see [task door](ARCHITECTURE.md#isolation-and-landing)).
 
 The September 7 coordinator outage is verified with the real Codex Linux sandbox, not profile assertions:
 `ALTITUDE_TEST_CODEX_SANDBOX=1 python3 -m unittest tests.test_l3_privilege` runs the broker transport tests

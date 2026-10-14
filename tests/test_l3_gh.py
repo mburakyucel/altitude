@@ -99,6 +99,7 @@ class TestCoordinatorGhReads(AltitudeCase):
 
     def test_runtime_shim_reaches_the_real_project_broker(self):
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         runtime = l3._l3_runtime(self.project, "claude")
         self.addCleanup(l3._remove_runtime, runtime)

@@ -93,7 +93,7 @@ class TestAvailability(AltitudeCase):
                             stdin=io.StringIO())
         with mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
              mock.patch.object(engines.common, "usage_hold", return_value=None):
-            result = engines.claude_print("hello", cwd=self.repo)
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo)
         self.assertTrue(result["rejection"]["sign_in"])
         self.assertTrue(result["safe_to_retry"])
         self.assertEqual(result["text"], "")
@@ -147,7 +147,7 @@ class TestFailureEvidence(AltitudeCase):
         self.private_ledgers()
         with mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
              mock.patch.object(engines.common, "usage_hold", return_value=None):
-            result = engines.claude_print("hello", cwd=self.repo, model="fable")
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, model="fable")
         self.assertEqual((result["limited"]["scope"], result["limited"]["model"], result["limited"]["until"]),
                          ("model", "fable", None))
         self.assertFalse(engines.usage_limit_path().exists())
@@ -159,7 +159,7 @@ class TestFailureEvidence(AltitudeCase):
         process.communicate.return_value = (stdout, "")
         with mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
              mock.patch.object(engines.codex, "_codex_session_model", return_value={}):
-            result = engines.codex_exec("hello", cwd=self.repo, model="missing")
+            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, model="missing")
         self.assertIn("model_not_found", result["error"])
         self.assertEqual(result["rejection"]["scope"], "model")
         self.assertTrue(result["safe_to_retry"])
@@ -172,7 +172,7 @@ class TestFailureEvidence(AltitudeCase):
             process.communicate.return_value = (stdout, "")
             with self.subTest(activity=activity), mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
                  mock.patch.object(engines.codex, "_codex_session_model", return_value={}):
-                result = engines.codex_exec("hello", cwd=self.repo)
+                result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo)
             self.assertTrue(result["limited"])
             self.assertIsNone(result["rejection"])
             self.assertEqual(result["safe_to_retry"], not activity)
@@ -188,7 +188,7 @@ class TestFailureEvidence(AltitudeCase):
                  mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
                  mock.patch.object(engines.common, "usage_hold", return_value=None), \
                  mock.patch.object(engines.common, "RAW_CAPTURE_CAP", 80):
-                result = engines.claude_print("hello", cwd=self.repo, model="fable")
+                result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, model="fable")
             self.assertEqual(result["rejection"]["scope"], "model")
             self.assertEqual(result["safe_to_retry"], not activity)
             self.assertTrue(result["raw_stdout_truncated"])

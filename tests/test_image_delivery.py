@@ -123,9 +123,9 @@ class TestNativeImages(ImageDeliveryCase):
                      mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as popen:
                     common = dict(cwd=self.repo, model="original-model", resume="session" if resume else None,
                                   images=[self.image])
-                    result = (engines.claude_print("inspect the screenshot", settings=self.tmp / "settings.json", **common)
+                    result = (engines.claude_print("inspect the screenshot", unit="altitude-coordinator-fixture.service", settings=self.tmp / "settings.json", **common)
                               if engine == "claude" else
-                              engines.codex_exec("inspect the screenshot", sandbox_settings=[], **common))
+                              engines.codex_exec("inspect the screenshot", unit="altitude-coordinator-fixture.service", sandbox_settings=[], **common))
                 self.assertEqual(result["session_id"], "session")
                 command = popen.call_args.args[0]
                 process.received.ended.wait(10)

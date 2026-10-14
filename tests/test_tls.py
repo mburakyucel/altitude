@@ -440,7 +440,7 @@ class ServiceCase(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.service_tls = self.root / "service-configuration" / "tls"
-        for name, value in {"TLS_DIR": self.service_tls, "HOST": "127.0.0.1",
+        for name, value in {"TLS_DIR": self.service_tls, "HOST": "127.0.0.1", "HOME": self.root / "home",
                             "ROOT": self.root / "runtime", "SOURCE": self.root / "source",
                             "PROJECT_ROOTS": [self.root / "projects"],
                             "PROJECTS_FILE": self.root / "runtime" / "projects.json"}.items():
@@ -497,6 +497,7 @@ class HealthServer:
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                keys.append(self.headers.get(access.KEY_HEADER))
                 body = json.dumps({"pid": pid}).encode() if self.path == "/api/health" else b"{}"
                 self.send_response(200 if self.path == "/api/health" else 404)
                 self.send_header("Content-Length", str(len(body)))
@@ -515,7 +516,7 @@ class HealthServer:
             def log_message(self, *args):
                 pass
 
-        self.answered = answered = []
+        self.answered, self.keys = answered, keys = [], []
         with mock.patch.object(config, "TLS_DIR", directory):
             context = tls.check(renew=False)
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -555,6 +556,34 @@ class TestIdentity(ServiceCase):
         (self.service_tls / "ca.crt").unlink()
         with self.assertRaisesRegex(tls.TLSFailure, "Cannot read the Altitude service's CA certificate"):
             tls._proven(self.found(health.port))
+
+
+class TestRestartProbe(ServiceCase):
+    """The restart job sends the machine key only to a service that proves it is this installation's, never to
+    whatever answers on the port while altd restarts."""
+
+    def test_the_key_goes_only_to_a_service_the_installations_ca_certifies(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("restart_altitude", ALT.parent.parent / "scripts" / "restart_altitude.py")
+        restart = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(restart)
+        access.prepare()
+        other = self.root / "another-installation" / "tls"
+        with mock.patch.object(config, "TLS_DIR", other):
+            tls.initialize()
+        for directory, proven in ((self.service_tls, True), (other, False)):
+            with self.subTest(proven=proven):
+                answering = HealthServer(self, directory, 4242)
+                network = {"host": "127.0.0.1", "port": answering.port, "public_host": "localhost",
+                           "tls_dir": self.service_tls, "tls": True}
+                with mock.patch.object(restart, "service", return_value=network):
+                    if proven:
+                        self.assertEqual(restart.fetch("/api/health"), b'{"pid": 4242}')
+                        self.assertEqual(answering.keys, [access.machine_key()])
+                    else:
+                        with self.assertRaisesRegex(restart.RestartError, "CERTIFICATE_VERIFY_FAILED"):
+                            restart.fetch("/api/health")
+                        self.assertEqual(answering.keys, [], "the impostor never receives a request")
 
 
 class TestWorkerReach(ServiceCase):
@@ -734,7 +763,7 @@ class TestShareCommand(unittest.TestCase):
         self.root = Path(temporary.name)
 
     def service(self, settings: dict) -> None:
-        with mock.patch.object(access, "DIR", self.root / "home" / ".config" / "altitude" / "access"):
+        with mock.patch.object(config, "HOME", self.root / "home"):
             tls.publish({"host": "127.0.0.1", "port": 8890, "tls": True, "tls_dir": self.root / "service-tls",
                          **settings})
 
@@ -790,7 +819,7 @@ class TestShareCommand(unittest.TestCase):
             refused = self.alt("tls-share", ALTITUDE_ACTOR=actor)
             self.assertEqual((refused.returncode, refused.stdout), (1, ""))
             self.assertNotIn("service", refused.stderr)
-        (self.root / "home" / ".config" / "altitude" / "access" / "service.json").unlink()
+        (self.root / "home" / ".config" / "altitude" / "service.json").unlink()
         self.assertIn("alt tls-share: The Altitude service has not recorded where it listens",
                       self.alt("tls-share").stderr)
         paired = self.alt("pair")

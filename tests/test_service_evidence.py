@@ -240,6 +240,7 @@ class TestServiceEvidence(AltitudeCase):
 
     def test_real_coordinator_broker_returns_filtered_evidence_with_fixed_authority(self):
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         result = SimpleNamespace(returncode=0, stderr="", stdout="".join(
             f"{key}={value}\n" for key, value in self.native.items()))

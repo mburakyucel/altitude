@@ -654,7 +654,7 @@ class TestOwnerHttp(TerminalCase):
         self.read({**body, "data": "rm -rf ~\n"}, status=400)  # a read carries no input
         self.owner.return_value = False
         refused = self.read(body, status=403)
-        self.assertEqual(refused["error"], "alt task terminal: only this task's owner may read its terminal")
+        self.assertEqual(refused["error"], server.TASK_DOOR_REFUSED)
         task = S.load_task(self.project, self.slug)
         task["state"] = "blocked"
         S.save_task(self.project, task)
@@ -687,6 +687,7 @@ class TestCoordinatorReader(TerminalCase):
         super().setUp()
         self.turn(True)
         self.broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, self.broker)
 
     def coordinator(self, project, *args):
@@ -741,6 +742,7 @@ class TestCoordinatorReader(TerminalCase):
         self.register(other, path=other_repo)
         broker = server.start_l3_verb_broker(other)
         self.addCleanup(server.stop_l3_verb_broker, broker)
+        self.coordinator_turn(self.project, other)
         self.assertNotIn("project-42", self.coordinator(other)["stdout"])
         forged = self.coordinator(other, "--project", self.project)
         self.assertNotIn("project-42", json.dumps(forged))

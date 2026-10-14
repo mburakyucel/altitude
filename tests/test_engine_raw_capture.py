@@ -37,13 +37,13 @@ class TestEngineRawCapture(AltitudeCase):
     def claude_print(self, process):
         self.patch(engines.common, "usage_hold", return_value=None)
         self.patch(engines.common.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: process)
-        return engines.claude_print("prompt", cwd=self.tmp, settings=self.tmp / "settings.json")
+        return engines.claude_print("prompt", unit="altitude-coordinator-fixture.service", cwd=self.tmp, settings=self.tmp / "settings.json")
 
     def test_codex_exec_returns_both_complete_raw_streams(self):
         stdout = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n"
         process = SimpleNamespace(pid=1, returncode=0, stdin=io.StringIO(), communicate=lambda *_a, **_k: (stdout, "codex diagnostic\n"))
         with mock.patch.object(engines.common.subprocess, "Popen", return_value=process):
-            result = engines.codex_exec("prompt", cwd=self.tmp)
+            result = engines.codex_exec("prompt", unit="altitude-coordinator-fixture.service", cwd=self.tmp)
 
         self.assertEqual(result["raw_stdout"], stdout)
         self.assertEqual(result["raw_stderr"], "codex diagnostic\n")
