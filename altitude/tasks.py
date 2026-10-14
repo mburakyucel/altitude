@@ -1659,7 +1659,7 @@ def reject(project: str, slug: str, reason: str, actor: str = OPERATOR_MESSAGE_R
                 ) from exc
             S.append_event(project, slug, "session-stopped", agent_id=task["agent_id"],
                            engine=engine, note=note[:200])
-        _remove_tool_cache(project, slug)
+        _remove_scratch(project, slug)
         _clear_block(project, task)
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
@@ -1968,7 +1968,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
                              and not (tracked and verified.get("problems") == [verify.OPEN_FINDINGS]))):
             raise TransitionError("; ".join([f"{slug}: current delivery requires a verified report before completion",
                                              *(verified.get("problems") or [])]))
-        _remove_tool_cache(project, slug)
+        _remove_scratch(project, slug)
         task = _move(project, task, "done", actor, **({"findings_tracked": tracked} if tracked else {}))
         if tracked:
             digest = "\n".join([digest.rstrip(), "", f"Open review findings tracked at {tracked['reference']}:",
@@ -2007,7 +2007,7 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
             continue_report(project, task, actor=actor, reason="Follow-up messages await the owner", check_pr=False)
             raise TransitionError(f"{slug}: pending messages require continuation before completion")
         _require_no_code_change(project, task)
-        _remove_tool_cache(project, slug)
+        _remove_scratch(project, slug)
         digest = str(request.get("digest") or "")
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor, requested_by="l2")
@@ -2020,14 +2020,14 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
     return task
 
 
-def _remove_tool_cache(project: str, slug: str) -> None:
-    """Dispose tool data before a terminal state is saved, under the caller's project lock."""
+def _remove_scratch(project: str, slug: str) -> None:
+    """Delete the task's scratch folder, drafts and tool caches, before a terminal state is saved, under the caller's
+    project lock. Its worker could write it, so nothing here follows a link."""
     try:
-        relative = (S.tasks_dir(project) / slug / "l2-engine").relative_to(config.ROOT)
-        with storage.runtime_directory(list(relative.parts)) as directory:
-            shutil.rmtree("tool-cache", dir_fd=directory)
+        with storage.directory(config.SCRATCH.parent.resolve(), [config.SCRATCH.name, project]) as directory:
+            shutil.rmtree(S.require_task_slug(slug), dir_fd=directory)
     except FileNotFoundError:
-        pass  # Tasks that never launched have no tool caches.
+        pass  # Tasks that never launched have no scratch folder.
 
 
 def _archive(project: str, slug: str) -> None:

@@ -40,9 +40,13 @@ task = T.new('fixture', 'Confined status fixture', 'Provider-free image identity
 task.update(worktree=str(workspace), branch='task')
 S.save_task('fixture', task)
 git_roots, git_read_only = git_policy.worker_git_access(workspace)
+scratch = config.task_scratch('fixture', task['slug'])
 targets = {'workspace': workspace, 'git_common': git_roots[0], 'git_worktree': git_roots[-1],
            **{'git_' + name: git_roots[0] / name for name in ('hooks', 'info', 'modules', 'worktrees')},
-           'state': config.ROOT, 'project': project, 'sibling': sibling,
+           'state': config.ROOT, 'task_record': S.task_dir('fixture', task['slug']),
+           'worker_record': S.task_dir('fixture', task['slug']) / 'l2-engine',
+           'reviews': S.task_dir('fixture', task['slug']) / 'reviews', 'image_staging': config.project_dir('fixture') / 'images',
+           'scratch': scratch, 'project': project, 'sibling': sibling,
            'deployment': config.SOURCE, 'tls': tls, 'runtime': runtime,
            'image_metadata': platform.CONTAINER_MARKER.parent, 'image_etc': Path('/etc'), 'image_root': Path('/'),
            'guard_consent': platform.container_git_guards()[1],
@@ -59,9 +63,14 @@ tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_server.bind(('127.0.0.1', 0)); tcp_server.listen(8)
 assert tcp_server.getsockname()[1] not in (8890, 8891)
 (git_roots[0] / 'commondir').write_text(str(sibling / '.git') + '\n')  # a read-only file in the shared folder
-git_files = {'git_commondir': git_roots[0] / 'commondir', 'git_config_worktree_absent': git_roots[0] / 'config.worktree'}
+git_files = {'git_commondir': git_roots[0] / 'commondir', 'git_config_worktree_absent': git_roots[0] / 'config.worktree',
+             'git_gitdir_absent': git_roots[0] / 'gitdir'}
+T.message('fixture', task['slug'], T.OPERATOR_MESSAGE_ROLE, 'A fictional message, so the conversation exists.')
+home_files = {'task_status': S.status_path('fixture', task['slug']), 'projects': config.PROJECTS_FILE,
+              'conversation': S.task_dir('fixture', task['slug']) / 'conversation.jsonl'}
 spec = {'targets': {k: str(v) for k, v in targets.items()},
-        'git_files': {k: str(v) for k, v in git_files.items()}, 'broker': str(broker),
+        'git_files': {k: str(v) for k, v in git_files.items()},
+        'home_files': {k: str(v) for k, v in home_files.items()}, 'broker': str(broker),
         'credentials': {'access': str(access.DIR), 'tls': str(tls)},
         'task': task['slug'],
         'port': tcp_server.getsockname()[1],
@@ -99,10 +108,13 @@ for name, directory in spec['targets'].items():
         out['writes'][name] = {'allowed': True}
     except OSError as e:
         out['writes'][name] = {'allowed': False, 'errno': e.errno}
-for name, file in spec.get('git_files', {}).items():
+for name, file in {**spec.get('git_files', {}), **spec.get('home_files', {})}.items():
+    existed = os.path.lexists(file)
     try:
         fd = os.open(file, os.O_WRONLY | os.O_CREAT, 0o600)  # existing or absent; never truncates
         os.close(fd)
+        if not existed:
+            os.unlink(file)  # an absent path stays absent for the next role
         out['writes'][name] = {'allowed': True}
     except OSError as e:
         out['writes'][name] = {'allowed': False, 'errno': e.errno}
@@ -145,7 +157,7 @@ print(json.dumps(out))
 records = {}
 records['unsandboxed_control'] = json.loads(command(
     ['/usr/bin/python3', '-c', child, json.dumps(spec), 'control']).stdout)
-profiles = {'task': engines.codex_sandbox(workspace, extra_roots=git_roots, read_only=git_read_only),
+profiles = {'task': engines.codex_sandbox(workspace, extra_roots=(*git_roots, scratch), read_only=git_read_only),
             'coordinator': engines.codex_l3_permissions(runtime, project='fixture')}
 for role, settings in profiles.items():
     args = [str(binary), 'sandbox']
@@ -185,7 +197,7 @@ if not all(r['connected'] for r in control['connections'].values()):
     failures.append('unsandboxed socket controls failed')
 if not all(r['allowed'] for r in control['reads'].values()):
     failures.append('unsandboxed credential folder controls failed')
-for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'state', 'temporary'}),
+for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'scratch', 'temporary'}),
                        ('coordinator', {'runtime'})]:
     row = records[role]
     if row.get('exit') != 0 or 'observed' not in row:
@@ -212,6 +224,9 @@ for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'sta
     for name in spec.get('git_files', {}):
         if observed['writes'].get(name, {}).get('allowed', True):
             failures.append(role + ': a read-only file in the shared Git folder was writable: ' + name)
+    for name in spec.get('home_files', {}):
+        if observed['writes'].get(name, {}).get('allowed', True):
+            failures.append(role + ': a record in Altitude\'s home was writable: ' + name)
     if role == 'task' and observed['git_commit']['exit'] != 0:
         failures.append('task: git commit failed')
     if role == 'task':

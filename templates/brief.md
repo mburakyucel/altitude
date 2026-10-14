@@ -2,7 +2,8 @@
 
 **Goal:** {title}
 
-**Task:** {engine} ({model}) owns this in branch `{branch}` of `{repo}`; task folder `{task_dir}`.
+**Task:** {engine} ({model}) owns this in branch `{branch}` of `{repo}`; task folder `{task_dir}`, read-only:
+its records change through `alt`. Write drafts, patches and logs in your scratch folder `{scratch}`.
 Expected files: {paths}. Other current tasks: {leases}.{overlaps}
 The repository's Git settings, hooks and worktree records are read-only: create branches with `--no-track` and
 pass a one-off setting with `git -c`.

@@ -18,6 +18,7 @@ EXPECTED_FIELDS = {
     "report_schema",
     "request",
     "repo",
+    "scratch",
     "slug",
     "task_dir",
     "title",

@@ -811,14 +811,20 @@ def project_dir(name: str) -> Path:
 
 
 def beside_root(name: str) -> Path:
-    """`~/.altitude-<name>`: beside Altitude's home rather than in it. Task workers can write the home, so what altd
-    runs, mounts or writes as its own must not sit at a path a worker could have replaced."""
+    """`~/.altitude-<name>`: beside Altitude's home rather than in it, so what altd runs, mounts or writes as its own
+    sits outside every folder an agent session may write."""
     return ROOT.with_name(f"{ROOT.name}-{name}")
 
 
 # A source install's own copy of Altitude's repository (bare), the only Git store Altitude trusts for its own code:
 # task workers write the checkout's shared Git store, never this one.
 SOURCE_COPY = beside_root("repository")
+# Each task worker's own writable folder for drafts and tool caches. altd makes and deletes it and never reads it.
+SCRATCH = beside_root("scratch")
+
+
+def task_scratch(name: str, slug: str) -> Path:
+    return SCRATCH / require_project_name(name) / slug
 
 
 def managed_addresses(managed: dict) -> dict[str, str]:

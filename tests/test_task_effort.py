@@ -251,7 +251,7 @@ class TestEffortCommand(AltitudeCase):
                         return processes[-1]
                     with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen) as launch:
                         kwargs = dict(cwd=self.worktree, persona=config.PERSONAS / "l2.md", model="opus",
-                                      effort=effort, settings=self.tmp / "settings.json", extra_env={},
+                                      effort=effort, settings=self.tmp / "settings.json", extra_env=self.worker_env("task"),
                                       job_root=self.runtime_tmp / "jobs")
                         result = (engines.resume_l2("claude", "task", "conversation", "message", **kwargs) if resume
                                   else engines.start_l2("claude", "task", "request", **kwargs))
@@ -301,7 +301,7 @@ class TestEffortCommand(AltitudeCase):
                     with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen), \
                                      mock.patch.object(platform, "job_active", return_value=False):
                         kwargs = dict(cwd=self.worktree, persona=config.PERSONAS / "l2.md", model=None,
-                                      effort=effort, settings=self.tmp / "settings.json", extra_env={},
+                                      effort=effort, settings=self.tmp / "settings.json", extra_env=self.worker_env("task"),
                                       job_root=self.runtime_tmp / "jobs")
                         result = (engines.resume_l2("codex", "task", "conversation", "message", **kwargs) if resume
                                   else engines.start_l2("codex", "task", "request", **kwargs))

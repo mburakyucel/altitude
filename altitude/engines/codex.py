@@ -438,16 +438,17 @@ def _codex_home(env: dict) -> Path:
 def codex_sandbox(cwd: Path, *, extra_roots: tuple[Path, ...] = (), read_only: tuple[Path, ...] = ()) -> list[str]:
     """The task's native permissions, shared by launch and the provider-free sandbox diagnostic.
 
-    Writable roots must exist because Codex bind-mounts them: the working directory, any extra root (a worker's
-    Git directories so it can fetch, commit, and push), and the Altitude home so `alt` can record what the turn
-    reports. `read_only` paths inside them stay read-only, existing or not (a worker's Git settings, hooks and
-    worktree records). The workspace base retains protected configuration paths and temporary directories.
+    Writable roots must exist because Codex bind-mounts them: the working directory and any extra root (a worker's
+    Git directories so it can fetch, commit, and push, and its scratch folder). Altitude's home is not among them:
+    `alt` changes the task's records through altd. `read_only` paths inside them stay read-only, existing or not (a
+    worker's Git settings, hooks and worktree records). The workspace base retains protected configuration paths and
+    temporary directories.
     Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets, macOS's private
     places and Altitude's credentials stay denied.
     The sandboxed shell inherits the launch environment, so the identity variables reach `alt` and a worker's
     GitHub token (`github_token`) reaches `gh` unchanged.
     """
-    roots = dict.fromkeys([Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()])
+    roots = dict.fromkeys([Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots)])
     profile = "altitude-task"
     workspace_roots = "{" + ",".join(f"{json.dumps(str(root))}=true" for root in roots) + "}"
     rules = ",".join([*(f'{json.dumps(str(Path(path).resolve()))}="read"' for path in read_only),
@@ -631,12 +632,12 @@ def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, t
     return result
 
 
-def prepare_worker(name, prompt, *, cwd, persona, model, settings, effort, resume, images):
+def prepare_worker(name, prompt, *, cwd, scratch, persona, model, settings, effort, resume, images):
     cmd = [config.CODEX_BIN, "app-server", "--strict-config"]
     if effort is not None:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
     writable, read_only = git_policy.worker_git_access(cwd)
-    for setting in codex_sandbox(cwd, extra_roots=writable, read_only=read_only):
+    for setting in codex_sandbox(cwd, extra_roots=(*writable, scratch), read_only=read_only):
         cmd += ["-c", setting]
     in_container = platform.containerized()
     patch_note = CODEX_CONTAINER_PATCH_NOTE if in_container else CODEX_PATCH_NOTE

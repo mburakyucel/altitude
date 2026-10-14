@@ -454,6 +454,7 @@ class AltitudeCase(unittest.TestCase):
         self.runtime_tmp.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.runtime_tmp, True)
         self.patch(config, "SOURCE_COPY", self.tmp / "source-copy")
+        self.patch(config, "SCRATCH", self.tmp / "task-scratch")
         if self.host == "linux" and NATIVE_PLATFORM != "linux":
             self.linux_process_facts()
         self.repo = self.tmp / "repo"
@@ -521,6 +522,10 @@ class AltitudeCase(unittest.TestCase):
         patcher = mock.patch.object(target, name, *new, **kwargs)
         self.addCleanup(patcher.stop)
         return patcher.start()
+
+    def worker_env(self, slug: str, **env: str) -> dict:
+        """A worker launch's task environment for `slug`, naming its scratch folder as `dispatch.l2_env` does."""
+        return {"ALTITUDE_TASK": slug, "ALTITUDE_SCRATCH": str(config.task_scratch(self.project, slug)), **env}
 
     def task_worktree(self, slug: str = "task", *args) -> Path:
         """The case project's task worktree for `slug`, made with the project's repository when missing; the extra

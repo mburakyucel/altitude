@@ -61,17 +61,19 @@ class TestCodexAdapter(AltitudeCase):
         self.worktree = add_worktree(self.repo, "wt")
         self.job_root = self.runtime_tmp / "jobs"
 
-    def test_sandbox_roots_are_the_worktree_both_git_dirs_and_altitude_home(self):
+    def test_sandbox_roots_are_the_worktree_both_git_dirs_and_the_scratch_folder(self):
         # Codex leaves a linked worktree's own metadata read-only unless it is a root of its own, which blocked
         # `git fetch` for task give-the-chat-section-its-own-scrollbar on 2026-09-03.
         git_roots, read_only = git_policy.worker_git_access(self.worktree)
-        settings = engines.codex_sandbox(self.worktree, extra_roots=git_roots, read_only=read_only)
+        scratch = config.task_scratch(self.project, "wt")
+        scratch.mkdir(parents=True)
+        settings = engines.codex_sandbox(self.worktree, extra_roots=(*git_roots, scratch), read_only=read_only)
         parsed = tomllib.loads("\n".join(settings))
         self.assertEqual(parsed["default_permissions"], "altitude-task")
         profile = parsed["permissions"]["altitude-task"]
         roots = list(profile["workspace_roots"])
         common, record = (self.repo / ".git").resolve(), (self.repo / ".git" / "worktrees" / "wt").resolve()
-        self.assertEqual(roots, [str(self.worktree.resolve()), str(common), str(record), str(config.ROOT.resolve())])
+        self.assertEqual(roots, [str(self.worktree.resolve()), str(common), str(record), str(scratch.resolve())])
         self.assertTrue(all(Path(r).is_dir() for r in roots), "Codex bind-mounts writable roots; they must exist")
         self.assertTrue(all(profile["workspace_roots"].values()))
         self.assertEqual(profile["extends"], ":workspace", "retain native protected paths and temporary roots")
@@ -134,7 +136,7 @@ class TestCodexAdapter(AltitudeCase):
              mock.patch.object(platform, "job_command", side_effect=job_command), \
              mock.patch.object(platform, "job_active", return_value=False):
             res = engines.codex_bg("door/t-1", "brief", cwd=self.worktree, job_root=self.job_root,
-                                   extra_env={"ALTITUDE_TASK": "t", "ALTITUDE_ATTEMPT": "1"}, **kw)
+                                   extra_env=self.worker_env("t", ALTITUDE_ATTEMPT="1"), **kw)
         return res, procs
 
     def test_fresh_and_resumed_tasks_select_the_generated_profile(self):

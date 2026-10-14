@@ -413,7 +413,7 @@ class TestInputHandoff(AltitudeCase):
                      mock.patch.object(platform, "job_active", return_value=False), \
                      mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                      mock.patch.object(engines.common.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
-                    result = engines.common._start_worker(engine, "fixture", "Exact input", cwd=worktree,
+                    result = engines.common._start_worker(engine, "fixture", "Exact input", cwd=worktree, extra_env=self.worker_env("fixture"),
                                                    settings=self.tmp / "settings.json", job_root=self.runtime_tmp / "jobs")
                     self.assertEqual(result["returncode"], 1 if failure else 0)
                     self.assertEqual(result["agent"]["input_delivered"], failure is None)
@@ -450,7 +450,7 @@ class TestInputHandoff(AltitudeCase):
                      mock.patch.object(platform, "job_active", return_value=False), \
                      mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                      mock.patch.object(engines.common.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
-                    result = engines.common._start_worker(engine, "fixture", "Exact resume input", cwd=worktree,
+                    result = engines.common._start_worker(engine, "fixture", "Exact resume input", cwd=worktree, extra_env=self.worker_env("fixture"),
                                                    settings=self.tmp / "settings.json", job_root=self.runtime_tmp / "jobs",
                                                    resume="original-session", start_timeout=0)
                 self.assertEqual(result["returncode"], 1)

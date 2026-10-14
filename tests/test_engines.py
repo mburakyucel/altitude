@@ -53,7 +53,7 @@ class TestForegroundUnits(AltitudeCase):
 
     def launch(self, *, resume=False, model=None):
         kw = dict(cwd=self.worktree, persona=self.persona, model=model, settings=self.settings,
-                  extra_env={"ALTITUDE_TASK": "worker"}, job_root=self.job_root)
+                  extra_env=self.worker_env("worker"), job_root=self.job_root)
         if resume:
             return engines.resume_l2("claude", "project/worker-1", "session", "continue", **kw)
         return engines.start_l2("claude", "project/worker-1", "brief", **kw)
@@ -154,6 +154,7 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                     task.update(state="running", attempt=1, session_id="session", hold_merge="Operator security review")
                     S.save_task(self.project, task)
                     processes = []
+                    scratch = config.task_scratch(self.project, task["slug"])
 
                     def popen(command, **options):
                         if command[2:3] == [str(config.SOURCE / "bin" / "alt")]:
@@ -162,12 +163,14 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                             specification = json.loads(command[-1])
                             wrapped, environment = specification["command"], specification["env"]
                             self.assertIn(f'(subpath "{os.path.realpath(self.worktree)}")', specification["profile"])
-                            self.assertIn(f'(subpath "{os.path.realpath(config.ROOT)}")', specification["profile"])
+                            self.assertIn(f'(subpath "{os.path.realpath(scratch)}")', specification["profile"])
+                            self.assertNotIn(f'(subpath "{os.path.realpath(config.ROOT)}")', specification["profile"])
                         else:
                             child = command[command.index("--") + 1:]
-                            for root in (self.worktree, config.ROOT):
+                            for root in (self.worktree, scratch):
                                 self.assertIn(f"--bind {os.path.realpath(root)} {os.path.realpath(root)}",
                                               " ".join(child))
+                            self.assertNotIn(f"--bind {os.path.realpath(config.ROOT)} ", " ".join(child))
                             child = _unconfined(child)
                             driver_index = len(child) - len(engines.common._driver_command())
                             environment = dict(argument.split("=", 1) for argument in child[2:driver_index])
@@ -380,7 +383,7 @@ class TestWorkerTokenInput(AltitudeCase):
              mock.patch.object(engines.codex, "codex_sandbox", return_value=[]):
             result = engines.start_l2(engine, "project/worker-1", "brief", cwd=self.worktree, persona=self.tmp / "persona.md",
                                       model=None, settings=self.tmp / "settings.json",
-                                      extra_env={"ALTITUDE_TASK": "worker", "FAKE_ENGINE_LOG": str(self.log)},
+                                      extra_env=self.worker_env("worker", FAKE_ENGINE_LOG=str(self.log)),
                                       job_root=self.runtime_tmp / "jobs")
         self.assertEqual(result["returncode"], 0, result)
         return launches[0][0], launches[0][1].stdin.getvalue()

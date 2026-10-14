@@ -1155,7 +1155,7 @@ def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
         overlaps=(f" Shared with {'; '.join(overlaps)}: rebase onto main before landing and keep shared-doc "
                   "edits to your own sections." if overlaps else ""),
         paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the request's scope)",
-        task_dir=d, merge_policy=merge_policy,
+        task_dir=d, scratch=config.task_scratch(project, slug), merge_policy=merge_policy,
         repo=config.project_path(project),
         branch=worktree_branch(slug, worktree), request=request)
     if questions := T.open_questions(task):
@@ -1342,7 +1342,8 @@ def worker_name(project: str, slug: str, attempt: int) -> str:
 def l2_env(project: str, slug: str, attempt: int) -> dict:
     """What every L2 process needs to name its task and attempt to `alt`."""
     return {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug,
-            "ALTITUDE_ACTOR": "l2", "ALTITUDE_ATTEMPT": str(attempt)}
+            "ALTITUDE_ACTOR": "l2", "ALTITUDE_ATTEMPT": str(attempt),
+            "ALTITUDE_SCRATCH": str(config.task_scratch(project, slug))}
 
 
 def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> dict:

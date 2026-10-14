@@ -28,7 +28,7 @@ With repository access, clone it, then use the commands below from its root.
 Owners and helpers run tests relevant to their changes during development. The required PR
 check runs the full suite; a local full run is available for investigation but is not a landing prerequisite.
 A Claude owner or helper on Linux runs these inside Altitude's bubblewrap sandbox, as on macOS inside its
-Seatbelt profile: tools write their caches to the task's own folders, and a program that starts a sandbox or
+Seatbelt profile: tools write their caches to the task's scratch folder, and a program that starts a sandbox or
 container of its own (Chromium's sandbox, rootless Podman) cannot start there, so those checks run through
 `alt task validate`.
 
@@ -69,7 +69,7 @@ lanes), and `WORKERS=N` sets the Python process count. The hosted check runs its
 Serial `python3 -m unittest discover -v tests` and `make test` remain available.
 Dependency and browser installation are explicit prerequisites, so a warm run need not
 fetch packages. L2 workers on either host export writable npm, pnpm, pip and XDG tool-cache
-paths under their task's `l2-engine/tool-cache`. XDG supplies the GitHub CLI's downloaded CI-log
+paths under `tool-cache` in their task's scratch folder (`~/.altitude-scratch/<project>/<task>`). XDG supplies the GitHub CLI's downloaded CI-log
 cache too. Corepack keeps its original installed-manager location through `COREPACK_HOME`;
 the pinned pnpm must already be available there. A missing manager remains a toolchain
 prerequisite. When a worktree's existing `node_modules` uses another pnpm store, run
@@ -78,21 +78,21 @@ ordinary frozen installs then reuse it. This replaces the shared temporary-store
 Each task starts with an empty package store, so its first install downloads the locked dependencies
 and requires registry/network access; package downloads are not shared between tasks. The forced
 frozen reinstall also requires those packages in the task store or network access. It changes no lockfile.
-Tool caches last through task resumptions and are removed before task archival; they are not
+Tool caches last through task resumptions and are removed with the scratch folder before task archival; they are not
 archived as review evidence. Existing package-tool content/version checks and GitHub CLI log
 cache rules apply; delivery still reads current candidate checks. The tools create their own
-directories within the existing writable runtime root. Outside an L2 worker, select a writable
+directories within the scratch folder. Outside an L2 worker, select a writable
 store explicitly if your shell's defaults are restricted. Do not alter the lockfile to work around an installation failure. On a clean
 Linux CI host, `playwright install --with-deps chromium` also installs browser OS dependencies.
 
 Rejection confirms worker termination before cache disposal. If cleanup is refused, completion
 or rejection retains its prior state instead of claiming success. The owner repairs only its
-task's cache entry: unlink a replaced `l2-engine`/`tool-cache` link without following its target,
-or restore write/search permissions on task-owned cache directories, then retry the same action.
+task's scratch folder: unlink a replaced link there without following its target, or restore
+write/search permissions on task-owned folders in it, then retry the same action.
 Never change unrelated target data or confinement. A terminated owner requests that bounded
 repair through L3; an unavailable safe repair remains an explicit task-local dependency.
-The configured runtime home may itself be a symlink; its resolved root anchors cleanup, while
-links below it are refused.
+The folder holding the scratch folders may itself be a symlink; its resolved location anchors cleanup,
+while links below it are refused.
 
 Runtime files a test writes (monitor, incident ledgers and worker jobs) live under `self.runtime_tmp`,
 inside the test runtime root, because runtime writes refuse paths outside it.
@@ -560,8 +560,8 @@ while True:
   A command still running when altd restarts keeps a place until it ends. A task still runs one
   command at a time.
 - **Storage.** The image, Podman's storage, the cloud-image cache and each run's area live in
-  `~/.altitude-validation`, beside Altitude's home rather than in it. Workers can write Altitude's
-  home, and a path a worker replaced must not become a mount or a place the run writes.
+  `~/.altitude-validation`, beside Altitude's home rather than in it and outside every folder a task
+  worker writes, so no path a worker replaced becomes a mount or a place the run writes.
 - **Results.** Regular files that the command writes to `$VALIDATION_RESULTS` are copied to the task
   folder's `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches
   that folder from Altitude's home without following links. Across the whole results tree, JSON/JSONL
