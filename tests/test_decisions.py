@@ -146,6 +146,11 @@ class TestDecisions(AltitudeCase):
         labels = {slug: T.block_status(self.project, S.load_task(self.project, slug))
                   for slug in (step["slug"], several["slug"], coordinator["slug"])}
         self.assertEqual(labels[step["slug"]], ("waiting-operator", f"{name}'s turn · Run `example-tool sign-in` in this task's terminal."))
+        # The web's `headline` (decisions.test.tsx) cuts these same examples to the same text.
+        long = "Restore the checkout to 1a2b3c4d5e from the step posted in project chat, then " + "wait " * 20
+        self.assertEqual([T.headline(text) for text in ("Run this in the task terminal: `example-tool sign-in`.\nThen wait.", long)],
+                         ["Run this in the task terminal: `example-tool sign-in`.",
+                          "Restore the checkout to 1a2b3c4d5e from the step posted in project chat, then wait wait wait wait wait wait wait wait…"])
         self.assertEqual(labels[several["slug"]], ("waiting-operator", f"{name}'s turn · 2 questions"))
         self.assertEqual(labels[coordinator["slug"]], ("waiting-l3", "waiting on L3"))
         self.assertEqual({row["slug"] for row in T.decisions(self.project)}, {step["slug"], several["slug"]},
@@ -207,7 +212,7 @@ class TestDecisions(AltitudeCase):
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks"],
                          "a freeform question and an Approve card must not compete for the same PR")
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)),
-                         f"{name}'s turn · Merge the checkout fix?")
+                         f"{name}'s turn · Merge the checkout fix? {url}")
         T.resume(self.project, slug)
         T.block(self.project, slug, "Merge the checkout fix?", actor="l2", updates={"waiting_on": "burak"},
                 questions=approve(f"Merge the checkout fix? {url}"))

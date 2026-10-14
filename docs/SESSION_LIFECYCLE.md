@@ -576,7 +576,7 @@ authorizes another turn. An L2's question goes to L3 first: L3's `alt task messa
 daemon resume, or `alt task escalate` turns it into a Needs you card for the operator. `--for-operator`
 places operator questions there immediately and also notifies L3. A wait on the operator's own action, such as
 a command for the task terminal or a step posted in project chat, is such a plain question with the step as its
-first sentence and a terminal step's `run` block; while the task waits, the operator's turn names that sentence.
+first line and a terminal step's `run` block; while the task waits, the operator's turn names that line.
 Their reply, the Terminal notice or L3's message wakes the owner, which verifies the step and resolves the
 question. A block that publishes or revises questions
 queues one notification with open members, revisions and required authority; re-parking unchanged members

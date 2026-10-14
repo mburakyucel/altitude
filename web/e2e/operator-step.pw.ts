@@ -14,7 +14,7 @@ test("a wait on the operator's step names the step until the owner is woken", as
   const walk = walkthrough(page, info);
   const rows = page.getByRole("region", { name: "Work", exact: true });
   const row = (title: string) => rows.getByRole("link", { name: new RegExp(`^${title} ·`) });
-  const step = "Your turn · Run the sign-in command in the task terminal";
+  const step = "Your turn · Run the sign-in command in the task terminal.";
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const command = conversation.getByRole("group", { name: "Command", exact: true });
 

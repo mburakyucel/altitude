@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Decision } from "./api";
-import { attentionSummary, decisionKind, turnLabel } from "./decisions";
+import { attentionSummary, decisionKind, headline, turnLabel } from "./decisions";
 
 const question = (id: string): Decision => ({ project: "atlas", slug: "landing-window", id, kind: "asks" });
 const review: Decision = { project: "atlas", slug: "landing-window", kind: "review", pr: 12, question: "Review PR #12 before merge" };
@@ -16,8 +16,14 @@ describe("the operator's turn", () => {
 
   it("names a lone question on a task card, so a wait on the operator's step says the step", () => {
     const step = { ...question("sign-in"), question: "Run `example-tool sign-in` in this task's terminal.\n\n```run\nexample-tool sign-in\n```" };
-    expect(turnLabel([step], true)).toBe("Your turn · Run `example-tool sign-in` in this task's terminal");
-    expect(turnLabel([step, review], true)).toBe("Your turn · Run `example-tool sign-in` in this task's terminal · review PR #12");
+    expect(turnLabel([step], true)).toBe("Your turn · Run `example-tool sign-in` in this task's terminal.");
+    expect(turnLabel([step, review], true)).toBe("Your turn · Run `example-tool sign-in` in this task's terminal. · review PR #12");
+    // altitude/tasks.py `headline` (tests/test_decisions.py) cuts these same examples to the same text.
+    const long = `Restore the checkout to 1a2b3c4d5e from the step posted in project chat, then ${"wait ".repeat(20)}`;
+    expect(["Run this in the task terminal: `example-tool sign-in`.\nThen wait.", long].map(headline)).toEqual([
+      "Run this in the task terminal: `example-tool sign-in`.",
+      "Restore the checkout to 1a2b3c4d5e from the step posted in project chat, then wait wait wait wait wait wait wait wait…",
+    ]);
     expect(turnLabel([step, question("region")], true)).toBe("Your turn · 2 questions");
     expect(turnLabel([step])).toBe("Your turn · 1 question");
     const choice = { ...step, options: [{ key: "a", label: "Approve", text: "Approve it." }] };
