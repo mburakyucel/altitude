@@ -210,7 +210,10 @@ class TestBubblewrapProfile(AltitudeCase):
         mounts = self.mounts(argv)
         masks = [("--ro-bind", "/dev/null", str(self.bus)), ("--tmpfs", str(self.manager)),
                  ("--tmpfs", os.path.realpath(access.DIR))]
-        self.assertEqual(mounts[-len(masks):], masks, "no root a job may write reopens a hidden place")
+        hidden = [mount for mount in mounts if mount[0] == "--tmpfs" or mount[1] == "/dev/null"]
+        self.assertEqual(mounts[-len(hidden):], hidden, "no root a job may write reopens a hidden place")
+        for mask in masks:
+            self.assertIn(mask, hidden)
 
 
 class TestKeyGenerations(AltitudeCase):
