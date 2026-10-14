@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { Command } from "../components/Onboarding";
 import { Stamp } from "../components/Stamp";
 import { StatusMark } from "../components/StatusMark";
 import { ApiError, usePrerequisites, useSetup, useSetupAction } from "../data/api";
@@ -8,7 +9,7 @@ import type { Setup } from "../data/api";
 import { Overlay } from "../shell/Overlay";
 
 const statuses: Record<string, string> = {
-  pending: "Pending", running: "In progress", complete: "Complete", reused: "Already configured",
+  pending: "Pending", running: "In progress", complete: "Complete", reused: "Already configured", waiting: "Waiting",
   not_applicable: "Not applicable", input_needed: "Needs attention", failed: "Failed", unknown: "Recheck needed",
 };
 const attention = (status: string) => ["failed", "input_needed", "unknown"].includes(status);
@@ -18,6 +19,7 @@ function summary(setup?: Setup) {
     case "ready": return "Ready";
     case "conversation_ready": return "Conversation ready";
     case "attention": return "Needs attention";
+    case "waiting": return "Waiting";
     case "checking": return "Checking";
     default: return "Recheck needed";
   }
@@ -102,7 +104,7 @@ export function ProjectSetup({ name }: { name: string }) {
         </header>
         <div className="setup-intro">
           <p className="setup-summary" data-status={stale ? "unknown" : data?.status} role="status">{label}</p>
-          <p className="text-muted">Setup runs automatically. If a step fails, L3 can help.</p>
+          <p className="text-muted">Setup runs automatically. If a step fails, the coordinator can help.</p>
         </div>
         {stale ? <div className="setup-notice" role="alert">
           <p>{data ? "Showing saved results. Current setup could not be checked." : "Could not read project setup."}</p>
@@ -120,7 +122,7 @@ export function ProjectSetup({ name }: { name: string }) {
         <ol className="setup-steps" aria-live="polite" aria-relevant="text">
           {steps.map((step) => <li key={step.id} className="setup-step" data-status={step.status}>
             <span className={`setup-mark${step.status === "running" ? " spinner" : ""}`} aria-hidden>
-              {step.status === "complete" || step.status === "reused" ? "✓" : attention(step.status) ? "!" : step.status === "running" ? "" : "−"}
+              {step.status === "complete" || step.status === "reused" ? "✓" : attention(step.status) ? "!" : step.status === "waiting" ? "…" : step.status === "running" ? "" : "−"}
             </span>
             <div className="setup-step-body">
               <div className="setup-step-heading"><h3>{step.label}</h3><span className="setup-step-status">{statuses[step.status] ?? "Recheck needed"}</span></div>
@@ -128,7 +130,9 @@ export function ProjectSetup({ name }: { name: string }) {
               {step.action === "repair" ? <button type="button" className="btn" disabled={busy || stale} onClick={() => run("repair")}>
                 {step.status === "failed" || step.status === "unknown" ? "Retry" : "Repair"}
               </button> : null}
-              {step.action === "discuss" ? <button type="button" className="btn" onClick={() => close(true)}>Discuss with L3</button> : null}
+              {step.command ? <Command text={step.command} /> : null}
+              {step.action === "tools" ? <Link className="btn" to="/settings/prerequisites">Coding tools</Link> : null}
+              {step.action === "discuss" ? <button type="button" className="btn" onClick={() => close(true)}>Ask the coordinator</button> : null}
               {step.action === "combine" ? <>
                 {integration !== step.id ? <button type="button" className="btn" disabled={busy || stale} onClick={() => setIntegration(step.id)}>Review integration</button> : <div className="setup-integration">
                   <p>Use your existing hooks together with Altitude’s guards? Original hook files stay intact. Either set can reject a Git operation.</p>
@@ -143,7 +147,7 @@ export function ProjectSetup({ name }: { name: string }) {
             </div>
           </li>)}
         </ol>
-        {failed ? <div className="setup-help"><p className="text-meta text-muted">Retry runs setup again. Discuss with L3 opens your project conversation.</p><button type="button" className="btn" onClick={() => close(true)}>Discuss with L3</button></div> : null}
+        {failed ? <div className="setup-help"><p className="text-meta text-muted">Retry runs setup again. Ask the coordinator opens your project conversation.</p><button type="button" className="btn" onClick={() => close(true)}>Ask the coordinator</button></div> : null}
         <footer className="setup-footer">
           {projectReady ? prerequisites.isPending || prerequisites.isFetching ? <p><StatusMark label="Checking coding tools…" /></p>
             : !toolsReady ? <div className="setup-notice">

@@ -27,6 +27,8 @@
 .onboarding-unmet { background: var(--danger); color: var(--on-accent); }
 .onboarding-optional { border: 1.5px solid var(--border); color: var(--text-muted); }
 .onboarding-command { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 6px 6px 6px 12px; border-radius: 8px; background: var(--bubble); font-family: var(--font-mono, monospace); font-size: var(--text-meta); }
+.onboarding-option { margin-top: 10px; }
+.onboarding-option .onboarding-command { margin-top: 4px; }
 .onboarding-command code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .onboarding-command .btn { min-height: 36px; font-family: var(--font-ui, inherit); }
 .onboarding-note { padding: 10px 12px; border-radius: var(--radius-card); background: var(--bubble); color: var(--text-secondary); font-size: var(--text-meta); line-height: 1.5; }

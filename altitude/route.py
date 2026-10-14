@@ -109,9 +109,10 @@ def seats() -> list[dict]:
 
 
 def engine_readouts() -> list[dict]:
-    """One row per configured engine for the shell's engine readout: display name, weekly percent used,
-    whether the reading is current, and when it was taken (ISO). ``week`` is None with no reading at all;
-    ``stale`` keeps an old figure and says so. The rail renders these rows without knowing which is which."""
+    """One row per configured engine for the shell's engine readout: display name, whether it is installed, weekly
+    percent used, whether the reading is current, and when it was taken (ISO). ``week`` is None with no reading at
+    all; ``stale`` keeps an old figure and says so. The rail renders these rows without knowing which is which."""
+    from . import engines
     readings = _readings()
     claude, codex = readings["claude"], readings["codex"]
     at = claude.get("at")
@@ -125,6 +126,7 @@ def engine_readouts() -> list[dict]:
     for engine in config.ENGINES:
         week, observed, data = weeks[engine]
         rows.append({"engine": engine, "label": config.ENGINE_LABELS[engine], "week": week,
+                     "installed": engines.installation(engine)["available"] is not False,
                      "known": bool(data.get("known")), "stale": bool(data.get("stale")), "at": observed})
     return rows
 
@@ -405,6 +407,14 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
         return {**empty, "why": "No reviewer is available. " + why, "fallback_reason": fallback_reason}
     except ValueError as exc:
         return {**empty, "why": str(exc)}
+
+
+def routed_engines(role: str, project: dict) -> list[str]:
+    """The engines this role's choice, pin or routing tiers may use, in configured engine order."""
+    pin = config.pinned_option(role, project)
+    choice = config.role_choice(role, project) or {}
+    named = {option["engine"] for tier in ([[pin]] if pin else config.role_routing(role, project)) for option in tier}
+    return [engine for engine in config.ENGINES if engine in named or engine == choice.get("engine")]
 
 
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,

@@ -105,13 +105,14 @@ def install_command(engine: str) -> str:
 
 
 def sign_in(engine: str) -> dict:
-    """Whether an installed engine CLI reports a signed-in account; the status command reads local credentials only."""
+    """Whether an installed engine CLI reports a signed-in account; the status command reads local credentials only.
+    None when the status command itself could not run or answer, which says nothing about the account."""
     binary = implementation(engine).binary()
     status, command = implementation(engine).SIGN_IN
     try:
         signed_in = subprocess.run([binary, *status], capture_output=True, timeout=15, env=clean_env()).returncode == 0
     except (OSError, subprocess.SubprocessError):
-        signed_in = False
+        signed_in = None
     return {"signed_in": signed_in, "command": command}
 
 

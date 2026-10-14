@@ -83,7 +83,7 @@ class TestTLS(unittest.TestCase):
     def test_doctor_names_the_ca_fingerprint_url_and_device_steps(self):
         self.create()
         openssl = platform.openssl()
-        hosting = {"host": config.HOST, "tls_dir": str(self.directory), "url": tls.url()}
+        hosting = {"host": config.HOST, "tls_dir": str(self.directory), "url": tls.url(), "verified": False}
         with mock.patch.object(installation.shutil, "which", side_effect=lambda name, **kwargs: openssl if name == "openssl" else None), \
              mock.patch.object(installation, "hosting_status", return_value=hosting), \
              mock.patch("altitude.platform.status", side_effect=RuntimeError("no service in tests")), \
@@ -823,6 +823,10 @@ class TestShareCommand(unittest.TestCase):
             refused = self.alt("tls-share", ALTITUDE_ACTOR=actor)
             self.assertEqual((refused.returncode, refused.stdout), (1, ""))
             self.assertNotIn("service", refused.stderr)
+        local = self.alt("pair")
+        self.assertEqual(local.returncode, 0, local.stderr)
+        self.assertIn("\nOther devices can't reach this address yet — see Settings → Network.\n", local.stdout)
+        self.assertNotIn("only this computer can open", local.stdout)
         (self.root / "home" / ".config" / "altitude" / "service.json").unlink()
         self.assertIn("alt tls-share: The Altitude service has not recorded where it listens",
                       self.alt("tls-share").stderr)

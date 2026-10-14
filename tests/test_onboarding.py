@@ -132,10 +132,12 @@ class TestIncidentReports(OnboardingCase):
 
 
 class TestPrerequisites(OnboardingCase):
-    def items(self, *, gh: bool, signed: dict, installed: dict, git: bool = True, lacks: tuple | None = ()) -> dict:
+    def items(self, *, gh: bool, signed: dict, installed: dict, git: bool = True, lacks: tuple | None = (),
+              sandbox: dict | None = None) -> dict:
         which = {"gh": "/fixture/gh", "git": "/fixture/git" if git else None}
         with mock.patch.object(installation.shutil, "which", side_effect=lambda name: which.get(name)), \
              mock.patch.object(platform, "package_manager", return_value="apt"), \
+             mock.patch.object(platform, "sandbox_tool", return_value=sandbox), \
              mock.patch.object(installation, "_gh_signed_in", return_value=gh), \
              mock.patch.object(installation, "_gh_lacks", return_value=None if lacks is None else list(lacks)), \
              mock.patch.object(engines, "installation",
@@ -148,15 +150,54 @@ class TestPrerequisites(OnboardingCase):
         items = self.items(gh=False, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": True})
         self.assertEqual(list(items)[0], "github")
         self.assertEqual((items["github"]["state"], items["github"]["command"]), ("unmet", "gh auth login"))
+        self.assertEqual(items["github"]["step"], "Sign in to the GitHub CLI", "alt doctor's Next names the action")
 
     def test_a_missing_tool_shows_the_command_that_installs_it(self):
         with mock.patch.object(installation.shutil, "which", return_value=None), \
              mock.patch.object(platform, "package_manager", return_value="apt"), \
+             mock.patch.object(platform, "sandbox_tool", return_value=None), \
              mock.patch.object(engines, "installation", return_value={"available": False, "why": ""}):
             items = {item["key"]: item for item in installation.prerequisites()}
             commands = {"github": ("unmet", platform.install_command("gh")), "git": ("unmet", platform.install_command("git"))}
         self.assertEqual({key: (item["state"], item["command"]) for key, item in items.items()},
-                         {**commands, **{engine: ("unmet", engines.INSTALL[engine]) for engine in config.ENGINES}})
+                         {**commands, "agents": ("unmet", None)})
+
+    def test_with_no_agent_installed_one_row_offers_each_agents_installer(self):
+        items = self.items(gh=True, signed={"claude": False, "codex": False}, installed={"claude": False, "codex": False})
+        self.assertEqual(list(items), ["github", "agents", "git"])
+        self.assertEqual((items["agents"]["label"], items["agents"]["state"]),
+                         ("Install at least one coding agent: Claude or Codex", "unmet"))
+        self.assertEqual(items["agents"]["options"], [{"label": "Claude", "command": "curl -fsSL https://claude.ai/install.sh | bash"},
+                                                      {"label": "Codex", "command": engines.INSTALL["codex"]}])
+        with mock.patch.object(config, "ENGINES", ("claude",)):
+            one = self.items(gh=True, signed={"claude": False}, installed={"claude": False})
+        self.assertEqual(one["agents"]["label"], "Install a coding agent: Claude")
+
+    def test_the_agent_sandbox_row_follows_the_agents_that_need_it(self):
+        missing = {"enabled": False, "command": "sudo apt install bubblewrap", "detail": "Install bubblewrap"}
+        fresh = self.items(gh=True, signed={"claude": False, "codex": False}, installed={"claude": False, "codex": False},
+                           sandbox=missing)
+        self.assertEqual(list(fresh), ["github", "agents", "sandbox", "git"])
+        self.assertEqual((fresh["sandbox"]["label"], fresh["sandbox"]["state"], fresh["sandbox"]["command"]),
+                         ("Agent sandbox", "unmet", "sudo apt install bubblewrap"))
+        confined = self.items(gh=True, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": False},
+                              sandbox=missing)
+        self.assertEqual(confined["sandbox"]["state"], "unmet", "a job Altitude confines cannot start without it")
+        own = self.items(gh=True, signed={"claude": False, "codex": True}, installed={"claude": False, "codex": True},
+                         sandbox=missing)
+        self.assertEqual(own["sandbox"]["state"], "optional", "an agent with its own sandbox does not need it")
+        mixed = self.items(gh=True, signed={"claude": False, "codex": True}, installed={"claude": True, "codex": True},
+                           sandbox=missing)
+        self.assertEqual(mixed["sandbox"]["state"], "optional", "a signed-in agent with its own sandbox is enough, as setup judges")
+        waiting = self.items(gh=True, signed={"claude": False, "codex": False}, installed={"claude": True, "codex": False},
+                             sandbox=missing)
+        self.assertEqual(waiting["sandbox"]["state"], "unmet", "the only installed agent is confined")
+        unknown = self.items(gh=True, signed={"claude": True, "codex": True}, installed={"claude": True, "codex": True},
+                             sandbox={**missing, "command": None})
+        self.assertIn("package manager", unknown["sandbox"]["detail"])
+        ready = self.items(gh=True, signed={"claude": True, "codex": True}, installed={"claude": True, "codex": True},
+                           sandbox={"enabled": True, "command": "sudo apt install bubblewrap", "detail": "/usr/bin/bwrap"})
+        self.assertEqual((ready["sandbox"]["state"], ready["sandbox"]["command"]), ("met", None))
 
     def test_a_github_cli_that_cannot_land_shows_the_command_that_replaces_it(self):
         items = self.items(gh=True, lacks=("baseRefOid",), signed={"claude": True, "codex": True},
@@ -279,8 +320,10 @@ class TestPrerequisites(OnboardingCase):
         self.assertEqual((items["github"]["label"], items["github"]["command"]), ("GitHub CLI signed in", "gh auth login"))
 
     def test_one_signed_in_agent_is_enough_and_others_become_optional(self):
-        items = self.items(gh=True, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": False})
+        items = self.items(gh=True, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": True})
         self.assertEqual([items[k]["state"] for k in ("github", "claude", "codex", "git")], ["met", "met", "optional", "met"])
+        alone = self.items(gh=True, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": False})
+        self.assertEqual(list(alone), ["github", "claude", "git"], "an agent that is not installed is not listed")
         self.assertFalse(items["codex"]["detail"].startswith("Optional"), "the optional state is shown once, not repeated in its detail")
 
     def test_with_no_signed_in_agent_each_shows_its_sign_in_command(self):
@@ -297,3 +340,6 @@ class TestPrerequisites(OnboardingCase):
             script.chmod(0o755)
             with self.subTest(code=code), mock.patch.object(config, "CLAUDE_BIN", str(script)):
                 self.assertEqual(engines.sign_in("claude"), {"signed_in": expected, "command": "claude auth login"})
+        with mock.patch.object(config, "CLAUDE_BIN", str(self.tmp / "absent")):
+            self.assertEqual(engines.sign_in("claude"), {"signed_in": None, "command": "claude auth login"},
+                             "a status command that cannot run says nothing about the account")

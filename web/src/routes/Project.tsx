@@ -3,7 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useLocation, useMatch, useNavigate, useParams, useSearchParams } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { BusyLabel } from "../components/StatusMark";
-import { useChat, useL3Reset, useL3Start, useOverview, useProject } from "../data/api";
+import { useChat, useL3Reset, useL3Start, useOverview, useProject, useWaitsForTool } from "../data/api";
 import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
 import { agoText } from "../data/observed";
 import { attentionSummary } from "../data/decisions";
@@ -317,15 +317,18 @@ function ProjectHeader({
   const sessionId = str(dict(project.data?.l3).session_id);
   const neverStarted =
     project.isSuccess && chat.isSuccess && !sessionId && chat.data.history.length === 0 && !chat.data.active;
+  const waiting = useWaitsForTool(name) && neverStarted;
   const status = project.isError
     ? project.error.message
-    : neverStarted
-      ? "L3 has not started"
+    : waiting
+      ? "L3 waits for a coding tool"
+      : neverStarted
+        ? "L3 has not started"
       : statusParts(chat.data, project.data, overview.isSuccess ? decisions : [], engines).join(" · ");
   const engine = engines.find((e) => e.engine === chat.data?.engine)?.label;
-  const compactStatus = project.isError ? "Could not read project" : neverStarted ? "L3 · Not started"
+  const compactStatus = project.isError ? "Could not read project" : waiting ? "L3 · Waiting" : neverStarted ? "L3 · Not started"
     : !chat.data ? "L3 · Loading…" : chat.data.active ? chat.data.active.trigger === "chat" ? "L3 · Answering" : `L3 · Handling ${handling(chat.data.active.trigger)}` : chat.data.busy ? "L3 · Busy" : "L3 · Ready";
-  const startButton = neverStarted ? <button type="button" className="btn btn-primary" disabled={start.isPending} onClick={() => start.mutate()}>
+  const startButton = neverStarted && !waiting ? <button type="button" className="btn btn-primary" disabled={start.isPending} onClick={() => start.mutate()}>
     <BusyLabel busy={start.isPending} label="Start L3" working="Starting…" />
   </button> : null;
   const menu = <HeaderMenu key={name} name={name} designViewer={project.data?.design_viewer ?? ""} starting={start.isPending} />;

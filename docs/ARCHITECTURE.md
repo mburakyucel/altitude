@@ -619,7 +619,7 @@ A still-running record under the free lock exposes an interrupted runner; a busy
 checking. Only the runner waits for the lock: a read in flight delays an accepted repair rather
 than losing its wake, and a request accepted while the previous run is finishing runs before that
 runner exits. Retry rechecks completed effects before writing.
-Pending, running, created, reused, not-applicable, failed and input-needed results come from
+Pending, running, waiting, created, reused, not-applicable, failed and input-needed results come from
 observed work. A queued notification or saved start request never proves an agent is running.
 Recorded task worktrees expose their own hook overrides; inherited healthy guards share the
 project result. Launch repair checks only the project and the launching task's checkout.
@@ -632,10 +632,18 @@ provenance and lifecycle fences before launching. Actual setup/provenance errors
 while the current observation needs attention (running, unmet or unreadable), with no stored
 dismissal. Programmatic repair installs or
 refreshes owned guards and establishes the coordinator command connection. **Retry** requests that
-same bounded work. Configuration faults notify the existing L3; **Discuss with L3** opens its conversation
+same bounded work. Only a repair that leaves its own Git guards unmet is Altitude's fault and files
+an incident; guidance the operator acts on, such as a local repository without a GitHub remote (shown
+with `gh repo create --source . --push`), is input-needed and files none. Configuration faults notify the
+existing L3; **Ask the coordinator** opens its conversation
 without sending a message or launching another repair agent. L3 investigates with its existing
 tools and can request project-scoped daemon repair through `alt project setup`, independently of
 worker dispatch. An agent's claim of repair does not complete a step: current checks verify it.
+Until a coding tool the coordinator's routing may use is ready (`project_setup.missing_tool`: installed,
+signed in through `engines.sign_in`, and on Linux the agent sandbox for an engine Altitude confines itself),
+the coordinator step is waiting, names the missing step and links Coding tools; the first turn does not
+run, `server._start_l3` records the start request instead of failing, and the header offers no Start L3.
+Each maintenance tick starts an unclaimed first turn once the tool is ready, so setup continues by itself.
 Failed or interrupted introductory calls wait for an explicit Retry, including during routine
 guard maintenance; timer checks do not repeat model calls. The runner starts the introductory
 workflow before completing its operation, and the coordinator reads as running while that workflow
@@ -1410,7 +1418,8 @@ purpose `validation`, its commit and tree, host OS and architecture and isolatio
 task folder without following links. Cleanup precedes the record, so a run whose cleanup did not finish
 is recorded as `cleanup failed`, never as a success. The worker's own
 confinement is unchanged. The Settings switch **Validation runs** (on by default, kept in the runner's
-storage so a worker cannot turn it back on) stops running runs and refuses new ones. At startup, before
+storage so a worker cannot turn it back on, and absent where this computer cannot run them) stops running
+runs and refuses new ones. At startup, before
 admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted
 and removes their scratch files. Failed evidence delivery retains the original area and keeps the
 runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
@@ -2327,9 +2336,11 @@ not completion. Name, incident reporting and voice are optional Settings links. 
 reads `GET /api/prerequisites`, `installation.prerequisites()`: the
 doctor's GitHub CLI checks (the pull request fields `alt land` reads, from the list `gh pr view --json` prints
 without a repository, sign-in or network request, then sign-in), each engine's local sign-in status through the
-engine seam (`engines.sign_in`) and Git, as met, unmet with the terminal command to run (the install command from
+engine seam (`engines.sign_in`), on Linux the agent sandbox (`platform.sandbox_tool`, optional when a signed-in agent
+brings its own sandbox) and Git, as met, unmet with the terminal command to run (the install command from
 `platform.install_command` or `engines.install_command` for a missing tool or a GitHub CLI too old to land, else
-its sign-in command), or optional once one engine is signed in. The projects step lists the folders under the projects folder
+its sign-in command), or optional once one engine is signed in. With no engine installed, one row asks for at least
+one coding agent and lists each engine's install command as an option. The projects step lists the folders under the projects folder
 (`config.project_roots()`: the machine setting `projects_folder`, else `ALTITUDE_ROOTS`), changes
 that folder in place and starts L3 for one or all of them through `POST /api/project/add`, in order,
 staying up until L3's first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work

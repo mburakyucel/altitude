@@ -180,7 +180,7 @@ repeats the read; "Empty" is a sentence in `--text-muted`, never a blank area.
 
 Anatomy, top to bottom: brand; **Needs you** with a count badge; "Projects" section head with **+**
 (add a folder); one row per managed project with a state dot and the name;
-"N folders not managed" line; engine readout; **New tasks**; **Monitor**; the operator row with the
+"N folders found — add them" line; engine readout; **New tasks**; **Monitor**; the operator row with the
 configured name and the theme toggle.
 
 The brand is the Altitude mark, 24px, then "Altitude" in card-title type. The mark is an A whose left
@@ -207,8 +207,8 @@ hard-codes one, and one configured engine means one row.
 | Project row | selected (tint background, `--text-primary`); unselected (`--text-secondary`); hover (tint at half) |
 | State dot | running (accent: a running L2, a task blocked waiting on L3, or a landed report L3 is handling); waits for the operator (`--data-claimed`: a decision in the queue); blocked by a fault or stopped (`--danger`); idle, nothing active (`--text-muted` at 45%) |
 | Needs you badge | unanswered operator questions plus operational attention items across projects; hidden at known zero; unknown or stale reads are explicit |
-| Unmanaged folders line | N folders found in the projects folder; click opens First run for the picked folder; hidden at zero |
-| Engine readout | one row per engine: name, "N% of week", a 4px meter; the meter turns `--danger` past the 70% reserve line; "no reading" in muted text when `quota.known` is false; "reading 2h old" appended when `stale` |
+| Unmanaged folders line | "1 folder found — add it" or "N folders found — add them" for folders in the projects folder that are not managed; click opens First run for the picked folder; hidden at zero |
+| Engine readout | one row per engine: name, "N% of week", a 4px meter; the meter turns `--danger` past the 70% reserve line; "not installed" in muted text with an empty meter when the engine's executable is missing, else "no reading" in muted text when `quota.known` is false; "reading 2h old" appended when `stale` |
 | New tasks | "New tasks · Auto", "New tasks · Fable · High", or "New tasks · Fable unavailable · Auto meanwhile" with a chevron, under the engine readout because quota belongs to the account; tinted while a choice is active; opens global model and effort Settings (§3.6.1); disabled while the overview loads |
 | Operator row | name from configuration; theme toggle (light default, dark, persisted per browser) |
 
@@ -245,7 +245,8 @@ The menu holds actions only; no engine, model or effort control appears in it. O
 the first item; arrow keys, Home and End move between items; an inline confirmation takes focus and
 **Cancel** returns it to its item; Escape closes the menu and returns focus to the three dots.
 
-States: normal; L3 never started ("L3 has not started" and a **Start L3** button); error reading
+States: normal; L3 never started ("L3 has not started" and a **Start L3** button); setup waiting for a
+coding tool ("L3 waits for a coding tool", phone "L3 · Waiting", no Start L3, §3.12); error reading
 the project (status line shows the error sentence; the conversation still renders from cache).
 
 Removing a project means detaching its L3 (§3.15 Remove project). Success removes the managed row and
@@ -365,7 +366,8 @@ every other trigger is a system turn. The assistant row of a turn that created t
 slugs (`tasks: [slug]`, added in slice 2) and the card reads the task from `GET /api/task/<project>/<slug>`.
 
 States: loading (three prose-shaped skeleton rows); empty ("L3 has not started. Start L3 to begin
-the conversation." beside the header's Start L3 when L3 never ran,
+the conversation." beside the header's Start L3 when L3 never ran, "L3 starts by itself once a coding tool
+is ready." while setup waits for one,
 otherwise "Say what you want done. L3 answers or creates one task."); error ("Could not load the
 conversation." and Retry, cached rows still shown); a turn in progress (§4.2); a queued message
 (§4.2); a reply that failed ("L3 could not answer this turn." in muted text under the prompt, with
@@ -1620,8 +1622,14 @@ wherever none is known.
 - **Welcome to Altitude**: the actual daemon's hosting computer, URL and listener scope (§3.15
   Network); loading and read failure have explicit Retry, never inferred browser-origin facts.
   Continue opens coding tools. Optional preference links remain visible.
-- **What the agents need**: one row per doctor check (GitHub CLI, each coding agent, Git), a green
-  tick when met, a red mark when unmet, a hollow mark when optional (another agent is signed in).
+- **What the agents need**: one row per doctor check (GitHub CLI, each installed coding agent, on Linux
+  **Agent sandbox**, Git), a green tick when met, a red mark when unmet, a hollow mark when optional
+  (another agent is signed in; the sandbox when a signed-in agent brings its own). With no
+  coding agent installed, one red row reads "Install at least one coding agent: Claude or Codex" (the
+  seam's names in its order; "Install a coding agent: <name>" with one engine) with "Then sign in to it."
+  and, under it, each agent's label and install command with **Copy**. A missing sandbox reads "Altitude
+  runs agents inside bubblewrap on Linux." with the package manager's command (`sudo apt install
+  bubblewrap` on Ubuntu), or adds "Install it with this computer's package manager." without one.
   An unmet row explains itself and shows the terminal command with **Copy** (then Copied); no field
   asks for a password or token. **Check again** reads again (Checking…). The primary action reads
   **Continue** when nothing is unmet, else a secondary **Continue anyway**. States: checking, read
@@ -1665,7 +1673,16 @@ until focus leaves it, so closing the checklist returns focus there; after resol
 disappears. There is no dismissal or seen-state: the current checks alone decide. Both open
 a focused desktop overlay or full-height phone sheet with folder, repository, instructions, Git
 guards and coordinator rows. Problems appear before healthy checks. Text and icons distinguish
-pending/running, completed, reused, not applicable, failed and input-needed results. Completed rows
+pending/running, waiting, completed, reused, not applicable, failed and input-needed results.
+Until a coding tool the coordinator may use is ready (installed, signed in, and on Linux its sandbox when
+Altitude confines it), the coordinator row is **Waiting** with the amber "…" mark, a **Coding tools**
+button to Settings → Prerequisites and "Waiting for a coding tool. <step> (Coding tools), and setup
+continues by itself.", where <step> is "Install Claude", "Sign in to Claude" (the first engine the
+coordinator's routing may use, in the seam's order) or "Install the agent sandbox". No turn runs and no
+incident is filed; the next setup check starts the first conversation once the tool is ready, without a
+click. A local repository without an `origin` remote reads **Needs attention** with "This repository
+isn't on GitHub yet. Agents deliver through pull requests:" and a copyable `gh repo create --source .
+--push`; it is guidance, not a fault. Completed rows
 have green checks and readable labels. No percentage, simulated progress or second attention count
 is introduced. A non-Git folder says conversation is available and Git tasks are unavailable.
 Current project integration and coding-tool readings support **Open conversation** only when ready;
@@ -1675,9 +1692,9 @@ For an observed non-Git **Conversation ready** folder, Git and GitHub checks con
 delivery; coding-agent checks still gate readiness. The endpoint opens the existing conversation
 and never suggests Git delivery is available without a repository.
 
-The concise explanation reads: **Setup runs automatically. If a step fails, L3 can help.**
+The concise explanation reads: **Setup runs automatically. If a step fails, the coordinator can help.**
 **Check again** refreshes observations. **Retry** repeats supported programmatic setup;
-**Discuss with L3** opens the existing project conversation without sending or launching a new agent.
+**Ask the coordinator** opens the existing project conversation without sending or launching a new agent.
 Notification, investigation and verified repair remain distinct. A step becomes complete only when
 programmatic checks confirm it. Existing projects show newly applicable requirements without
 reattachment. See [project setup](../../docs/ARCHITECTURE.md#project-setup) for responsibilities.
@@ -1694,10 +1711,13 @@ Walkthrough states at phone and desktop: fresh registration, healthy/reused proj
 requirement, stale guards, custom-hook review, active progress, interruption, failed/denied repair
 and successful retry. Also cover the quiet healthy header, menu access, the header appearing for a new
 requirement and leaving after repair, empty folder discovery, initial loading, failed read with Retry,
-offline observations and non-Git outcomes. Status changes use a polite live region, errors an alert,
+offline observations and non-Git outcomes. `web/e2e/first-timer.pw.ts` walks a fresh computer: one
+coding-agent row and the sandbox row, setup waiting for a tool with the unpublished-repository guidance
+and no Start L3, waiting for the sandbox once the agent is installed, and continuing by itself, with no
+incident filed. Status changes use a polite live region, errors an alert,
 and controls 44px targets. The sheet contains focus and scrolling, closes with Escape/Back, and
 restores focus to the Setup control or menu button it was opened from. Conversation/draft and reading position survive. Listening belongs to
-the existing conversation opened by **Discuss with L3**, including its recording/cancel/error states.
+the existing conversation opened by **Ask the coordinator**, including its recording/cancel/error states.
 
 ### 3.13 Restart banner
 
@@ -1929,8 +1949,8 @@ it off closes every open terminal.
 A **Validation runs** switch row (on after install) follows it and says "Agents test installs,
 containers and browsers in throwaway containers on this computer, and each run is recorded on its task.
 Turning this off stops a running one." It saves like Terminal; turning it off stops the running run and
-refuses new ones. Where Terminal or the validation runner is unavailable the switch looks off and disabled; its accessible description and a press reveal "Not available here: <reason>." `web/e2e/validation-switch.pw.ts` walks on, off, a refused change and
-unavailable at both widths.
+refuses new ones. Where Terminal is unavailable its switch looks off and disabled; its accessible description and a press reveal "Not available here: <reason>." Where this computer cannot run validation the row is absent. `web/e2e/validation-switch.pw.ts` walks on, off, a refused change and
+the absent row at both widths.
 An installed copy adds a **Version** row: the installed version, with "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
 new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
 release. Nothing else is sent. Turning this off also stops automatic updates." An **Automatic
@@ -2121,8 +2141,9 @@ The installer leads with whether Altitude is installed and running on this compu
 here)" for a network listener) and that closing the terminal or browser leaves it running, then
 **Next:** — 1. trust the certificate, with its name, full SHA-256, file and the versioned guide; 2. open
 the private link — then "For a phone or another computer, see Settings → Network." and the optional
-terminal setup. In an SSH session with a local-only address, step 2 adds "Over SSH, use a browser on
-this computer: on the computer you are typing from, this address is not Altitude." The link occupies one unbroken line, followed by "Works once, for 10 minutes. Keep it
+terminal setup. In an SSH session with a local-only address, step 2 adds "Over SSH, from your own
+computer run `ssh -L <port>:127.0.0.1:<port> <this server>`, then open the link there." with the
+installed port. The link occupies one unbroken line, followed by "Works once, for 10 minutes. Keep it
 private." and "If it expires, run ~/.local/bin/alt pair." Normal terminal/OS link handlers choose
 the browser on the viewing device; over SSH, loopback refers to that device. The installer
 launches no browser and changes no trust stores.

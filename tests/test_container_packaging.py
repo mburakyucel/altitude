@@ -203,7 +203,11 @@ class TestContainerLauncher(AltitudeCase):
         self.patch(config, "RELEASE", {"version": "v0.1.0"})
         self.assertEqual(engines.clean_env()["PATH"].split(":")[0], str(config.SOURCE / "bin"))
         for engine in config.ENGINES:
-            self.assertIn("--prefix ~/.local", engines.install_command(engine))
+            command = engines.install_command(engine)
+            # npm installs under the persistent home's ~/.local; a vendor installer already writes ~/.local/bin.
+            self.assertTrue("--prefix ~/.local" in command or "npm" not in command, command)
+            self.assertNotIn("sudo", command)
+        self.assertIn("/home/altitude/.local/bin", platform.CONTAINER_USER_PATH.split(":"))
 
     def test_operator_shell_and_exec_find_persistent_user_tools_without_login_profile(self):
         self.patch(platform, "containerized", return_value=True)

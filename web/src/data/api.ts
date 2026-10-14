@@ -388,6 +388,8 @@ export const EngineReadoutSchema = z
     engine: z.string(),
     label: z.string(),
     week: z.number().nullish(),
+    /** False only when the engine's executable is missing on the computer running Altitude. */
+    installed: z.boolean().nullish(),
     known: z.boolean(),
     stale: z.boolean().nullish(),
     at: z.string().nullish(),
@@ -1110,6 +1112,8 @@ const PrerequisitesSchema = z.object({
   items: z.array(z.object({
     key: z.string(), label: z.string(), state: z.enum(["met", "unmet", "optional"]),
     detail: z.string().nullish(), command: z.string().nullish(),
+    /** Alternatives that each satisfy the row, such as one coding agent of several, with their own commands. */
+    options: z.array(z.object({ label: z.string(), command: z.string() })).nullish(),
   })),
 });
 export type Prerequisite = z.infer<typeof PrerequisitesSchema>["items"][number];
@@ -1550,7 +1554,7 @@ export const SetupSchema = z.object({
   project: z.string(), status: z.string(), checked_at: z.string().nullish(),
   steps: z.array(z.object({
     id: z.string(), label: z.string(), status: z.string(), detail: z.string(),
-    action: z.string().nullish(), fingerprint: z.string().nullish(),
+    action: z.string().nullish(), fingerprint: z.string().nullish(), command: z.string().nullish(),
     custom_hooks: z.object({ path: z.string(), events: z.array(z.string()) }).optional(),
   }).passthrough()),
   operation: z.object({ id: z.string(), state: z.string(), action: z.string() }).passthrough().nullish(),
@@ -1566,6 +1570,11 @@ export function useSetup(project: string) {
     refetchOnMount: "always",
     enabled: Boolean(project),
   });
+}
+
+/** Whether setup holds the first conversation until a coding tool is ready; Start L3 would only wait the same way. */
+export function useWaitsForTool(project: string) {
+  return useSetup(project).data?.steps.find((step) => step.id === "coordinator")?.status === "waiting";
 }
 
 export function useSetupAction(project: string) {

@@ -449,12 +449,11 @@ function TerminalSwitch({ machine }: { machine: Machine | undefined }) {
   </>;
 }
 
-/** The agents' validation runs, on after install. */
-function ValidationSwitch({ machine }: { machine: Machine | undefined }) {
+/** The agents' validation runs, on after install; absent where this computer cannot run them. */
+function ValidationSwitch({ machine }: { machine: Machine }) {
   const client = useQueryClient();
   return <>
-    <MachineSwitch id="validation-switch" title="Validation runs" enabled={machine?.validation}
-      unavailable={machine?.validation_unavailable}
+    <MachineSwitch id="validation-switch" title="Validation runs" enabled={machine.validation}
       detail="Agents test their unmerged changes in throwaway, isolated runs on this computer, and each run is recorded on its task. Turning this off stops a running one."
       save={async (on) => { client.setQueryData(["machine"], await saveValidationAccess(on)); }} />
   </>;
@@ -817,7 +816,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
             <Link className="settings-row" to="/settings/prerequisites" state={state}>
               <span><strong>Prerequisites</strong>{" "}<small>GitHub CLI sign-in, coding agents and Git</small></span><span aria-hidden>›</span>
             </Link>
-            <ValidationSwitch machine={machine.data} />
+            {machine.data && !machine.data.validation_unavailable ? <ValidationSwitch machine={machine.data} /> : null}
             <Link className="settings-row" to="/settings/incident-reports" state={state}>
               <span><strong>Incident reports</strong>{" "}<small>{machine.data ? machine.data.incident_repository ? `Published to ${machine.data.incident_repository}` : "Kept on this computer" : "Loading…"}</small></span><span aria-hidden>›</span>
             </Link>

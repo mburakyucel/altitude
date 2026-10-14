@@ -110,7 +110,8 @@ class InstallScript(unittest.TestCase):
         self.assertIn(f"{REPOSITORY}/blob/v0.1.0/docs/SETUP.md#trust-https-on-each-device", out)
         self.assertEqual(list(self.tmp.glob("altitude-install.*")), [], "the download folder is removed")
         over_ssh = self.run_script(SSH_CONNECTION="192.0.2.10 50000 192.0.2.20 22").stdout
-        self.assertLess(over_ssh.index("2. Open Altitude"), over_ssh.index("Over SSH, use a browser on this computer"))
+        tunnel = "Over SSH, from your own computer run `ssh -L 8443:127.0.0.1:8443 <this server>`, then open the link there."
+        self.assertLess(over_ssh.index("2. Open Altitude"), over_ssh.index(tunnel))
         on_path = self.run_script(PATH=f"{self.bin}:{self.tmp}/home/.local/bin")
         self.assertNotIn("To use alt by name", on_path.stdout)
         self.assertIn("alt doctor shows where Altitude runs", on_path.stdout)

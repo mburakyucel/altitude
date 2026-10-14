@@ -69,6 +69,8 @@ def configure(*, expected_error=lambda _message: False):
     # First run's prerequisites: the installed engine is signed in and the GitHub CLI is not.
     engines.sign_in = lambda engine: {"signed_in": engine == config.ENGINES[0], "command": engines.SIGN_IN[engine][1]}
     installation._gh_signed_in = lambda: False
+    # Linux's agent sandbox is installed, so every host renders the same prerequisites and starts coordinators.
+    platform.sandbox_tool = lambda: {"enabled": True, "command": "sudo apt install bubblewrap", "detail": "/usr/bin/bwrap"}
     installation._gh_lacks = lambda: []
     engines.image_capability = lambda _engine: {"available": True, "why": "deterministic image fixture"}
     engines.common.image_capability = engines.image_capability

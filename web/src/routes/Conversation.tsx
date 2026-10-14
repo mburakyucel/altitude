@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { ApiError, imageSendRefused, sendCreateTask, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
+import { ApiError, imageSendRefused, sendCreateTask, sendImageChat, streamChat, useChatDequeue, useSendNow, useWaitsForTool } from "../data/api";
 import { SendNow, SendNowError } from "../components/SendNow";
 import type { ChatMessage, ChatSent, ChatView, ProjectView, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
@@ -346,6 +346,7 @@ export default function Conversation({
   });
 
   const neverStarted = project.isSuccess && !project.data.l3?.session_id && view && view.history.length === 0 && !view.active;
+  const toolWait = useWaitsForTool(name);
   const queued = view?.queued ?? [];
   // A kept message is already in the conversation: its queued state shows under its own bubble, or in the list
   // when that bubble is older than the loaded history.
@@ -554,7 +555,8 @@ export default function Conversation({
           ) : null}
           {empty ? (
             <p className="convo-empty text-muted">
-              {neverStarted ? "L3 has not started. Start L3 to begin the conversation." : "Say what you want done. L3 answers or creates one task."}
+              {neverStarted ? toolWait ? "L3 starts by itself once a coding tool is ready." : "L3 has not started. Start L3 to begin the conversation."
+                : "Say what you want done. L3 answers or creates one task."}
             </p>
           ) : null}
           {rows}

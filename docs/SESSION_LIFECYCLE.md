@@ -103,7 +103,7 @@ operator explicitly chooses supported integration.
 
 **Retry** repeats the supported programmatic operation. L3 receives configuration faults and can
 investigate or request repair through `alt project setup <name> --repair --reason '…'` even when
-no task can start. **Discuss with L3** opens the existing conversation; it sends no message and
+no task can start. **Ask the coordinator** opens the existing conversation; it sends no message and
 starts no extra repair agent. Source fixes follow the ordinary task and PR path. Programmatic
 checks verify every repair before the checklist reports completion.
 

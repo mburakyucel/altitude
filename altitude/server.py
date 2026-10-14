@@ -773,6 +773,11 @@ def _start_l3(project: str) -> None:
         if l3.has_queued_turn(project):
             request_l3_drain(project)
         return
+    if project_setup.missing_tool(project):
+        # Setup shows the first conversation waiting and starts it once a coding tool is ready; a failure it
+        # supersedes is cleared, so the start continues by itself.
+        project_setup.save(project, start_requested=True, intro=None)
+        return
     # The start reply belongs to the operator's conversation.
     project_setup.save(project, intro={"state": "running", "at": S.now()})
     result = server_l3_turn(project, "You have just been started for this project. Read the repository rules named in this turn, the state file, and the repo's README (skim), "

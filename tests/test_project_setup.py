@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import config, dispatch, engines, git_policy, l3, platform, project_setup as setup, server, state as S, tasks as T
+from altitude import config, dispatch, engines, git_policy, incidents, l3, platform, project_setup as setup, route, server, state as S, tasks as T
 
 
 class ProjectSetup(AltitudeCase):
@@ -530,6 +530,79 @@ class ProjectSetup(AltitudeCase):
             self.assertEqual(call.call_count, 2)
             self.assertEqual(self.step("coordinator")["status"], "complete")
             self.assertEqual(l3.info(self.project)["session_id"], "repaired-session")
+
+    def test_a_missing_coding_tool_waits_without_a_fault_and_setup_continues_by_itself(self):
+        installed = set()
+        self.patch(engines, "installation", side_effect=lambda engine: {"available": None if engine in installed else False,
+                                                                        "why": "fixture"})
+        fault = self.patch(incidents, "system_fault")
+        setup.save(self.project, start_requested=True)
+        def spawn(_key, fn, *args):
+            fn(*args)
+            return True
+        with mock.patch.object(server, "spawn", side_effect=spawn), \
+             mock.patch.object(engines, "claude_print", return_value={"text": "Ready", "session_id": "first-session"}) as provider:
+            view = self.perform()
+            coordinator = self.step("coordinator", view)
+            self.assertEqual((view["status"], coordinator["status"], coordinator["action"]), ("waiting", "waiting", "tools"))
+            self.assertEqual(coordinator["detail"],
+                             "Waiting for a coding tool. Install Claude (Coding tools), and setup continues by itself.")
+            server.start_l3(self.project)  # the header's Start L3 waits the same way
+            for _ in range(2):
+                setup.maintain(self.project)
+            provider.assert_not_called()
+            self.assertIsNone(setup.read(self.project).get("intro"))
+            self.assertFalse([row for row in l3.chat_history(self.project) if row.get("role") == "error"])
+            installed.add("claude")
+            setup.maintain(self.project)
+            setup.maintain(self.project)
+        provider.assert_called_once()
+        self.assertEqual(setup.read(self.project)["intro"]["state"], "complete")
+        self.assertEqual(setup.observe(self.project)["status"], "ready")
+        fault.assert_not_called()
+
+    def test_waiting_lasts_until_a_tool_the_coordinator_may_use_is_ready(self):
+        self.perform()
+        setup.save(self.project, start_requested=True)
+        detail = lambda: self.step("coordinator")["detail"]
+        with mock.patch.object(engines, "installation", return_value={"available": False, "why": "fixture"}):
+            self.assertIn("Install Claude (Coding tools)", detail())
+            with mock.patch.object(route, "routed_engines", return_value=["codex"]):
+                self.assertIn("Install Codex (Coding tools)", detail(), "only an engine the coordinator may use is named")
+        with mock.patch.object(engines, "sign_in", return_value={"signed_in": False, "command": "fixture login"}):
+            self.assertIn("Sign in to Claude (Coding tools)", detail())
+        sandbox = {"enabled": False, "command": "sudo apt install bubblewrap", "detail": "fixture"}
+        with mock.patch.object(platform, "sandbox_tool", return_value=sandbox):
+            with mock.patch.object(route, "routed_engines", return_value=["claude"]):
+                self.assertIn("Install the agent sandbox (Coding tools)", detail())
+            with mock.patch.object(route, "routed_engines", return_value=["codex"]):
+                self.assertEqual(self.step("coordinator")["status"], "pending", "an agent with its own sandbox is ready")
+        with mock.patch.object(engines, "sign_in", return_value={"signed_in": None, "command": "fixture login"}):
+            self.assertEqual(self.step("coordinator")["status"], "pending", "a status command that cannot answer holds nothing")
+
+    def test_a_first_conversation_that_failed_for_a_missing_tool_waits_on_retry(self):
+        self.patch(engines, "installation", return_value={"available": False, "why": "fixture"})
+        self.perform()
+        setup.save(self.project, start_requested=True, intro={"state": "failed", "error": "engine hold: no configured option"})
+        def spawn(_key, fn, *args):
+            fn(*args)
+            return True
+        with mock.patch.object(server, "spawn", side_effect=spawn):
+            view = self.perform()
+        self.assertEqual(self.step("coordinator", view)["status"], "waiting")
+        self.assertIsNone(setup.read(self.project).get("intro"))
+
+    def test_a_repository_not_on_github_gets_guidance_and_no_fault(self):
+        fault = self.patch(incidents, "system_fault")
+        git("remote", "remove", "origin", cwd=self.repo)
+        view = self.perform()
+        repository = self.step("repository", view)
+        self.assertEqual((repository["status"], repository["command"]), ("input_needed", "gh repo create --source . --push"))
+        self.assertEqual(repository["detail"], "This repository isn't on GitHub yet. Agents deliver through pull requests:")
+        self.assertEqual(self.step("guards", view)["status"], "complete")
+        fault.assert_not_called()
+        git("remote", "add", "origin", str(self.repo.parent / "origin.git"), cwd=self.repo)
+        self.assertIn("missing origin/main", self.step("repository")["detail"], "an origin that is not fetched keeps its own advice")
 
     def test_container_paused_intro_is_maintained_once_after_global_continue(self):
         self.perform()

@@ -125,7 +125,7 @@ describe("Project setup", () => {
     await user.click(await within(panel).findByRole("button", { name: "Retry" }));
     await within(panel).findByText("Request refused. No action was accepted.");
     expect(within(panel).getByText("Setup was interrupted")).toBeInTheDocument();
-    await user.click(within(panel).getByRole("button", { name: "Discuss with L3" }));
+    await user.click(within(panel).getByRole("button", { name: "Ask the coordinator" }));
     expect(router.state.location.search).toBe("");
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });

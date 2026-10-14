@@ -64,10 +64,12 @@ and one authenticated coding CLI. Agent work uses your coding account's allowanc
    [certificate guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device),
    comparing its name and full SHA-256 with the installer's output. Then open the private link the
    installer prints. It pairs this browser and opens [First run](docs/SETUP.md#first-run-in-the-browser),
-   which checks your coding tools and adds your first project. The link works once, for ten minutes;
-   if it expires, run `~/.local/bin/alt pair` on the computer running Altitude.
+   which checks your coding tools and adds your first project. A project added before a coding tool is
+   ready waits and starts by itself once one is. Over SSH, the installer prints the `ssh -L` tunnel to
+   open the link from your own computer. The link works once, for ten minutes; if it expires, run
+   `~/.local/bin/alt pair` on the computer running Altitude.
 3. For terminal use, put `~/.local/bin` on your PATH. `alt doctor` shows where Altitude runs, its
-   address and what is left to set up. [Pair additional devices](docs/SETUP.md#pair-each-device) with
+   address and the next thing to set up. [Pair additional devices](docs/SETUP.md#pair-each-device) with
    `alt pair` or Settings → Devices.
 
 Altitude runs as a per-user background service on the computer you installed it on; closing the

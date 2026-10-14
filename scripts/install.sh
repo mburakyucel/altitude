@@ -147,6 +147,7 @@ main() {
 
     "$python" - "$workdir/result.json" "$REPOSITORY/blob/$VERSION/docs/SETUP.md#trust-https-on-each-device" <<'EOF'
 import json, os, sys
+from urllib.parse import urlsplit
 result = json.load(open(sys.argv[1]))
 home = os.path.expanduser("~")
 tilde = lambda path: "~" + path[len(home):] if path.startswith(home + "/") else path
@@ -189,7 +190,8 @@ else:
         print("     If it asks for a code, use a still-valid code or run ~/.local/bin/alt pair.")
         print("     Making a new code replaces any earlier one.")
 if local and os.environ.get("SSH_CONNECTION"):
-    print("     Over SSH, use a browser on this computer: on the computer you are typing from, this address is not Altitude.")
+    port = urlsplit(result["url"]).port or 443
+    print(f"     Over SSH, from your own computer run `ssh -L {port}:127.0.0.1:{port} <this server>`, then open the link there.")
 print("\nFor a phone or another computer, see Settings → Network.")
 print("\nTerminal (optional):")
 if os.path.join(home, ".local/bin") not in os.environ.get("PATH", "").split(os.pathsep):

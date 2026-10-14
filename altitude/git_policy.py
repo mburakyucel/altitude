@@ -158,6 +158,11 @@ def worker_git_access(worktree: str | Path) -> tuple[tuple[Path, ...], tuple[Pat
              *(record / name for name in ("commondir", "gitdir", "config.worktree"))))
 
 
+def has_origin(repo: str | Path) -> bool:
+    """Whether the checkout names an ``origin`` remote at all, so a new local repository reads as not yet published."""
+    return _run(Path(repo).resolve(), "remote", "get-url", "origin", timeout=10).returncode == 0
+
+
 def inspect_repository(
     repo: str | Path,
     base: str = DEFAULT_BASE,

@@ -5,12 +5,12 @@ import { walkthrough } from "./walkthrough";
 /**
  * The Validation runs switch in Settings (docs/DEVELOPMENT.md#validation-runner) against the real machine
  * settings, walked at both widths: on after install, off, a refused change that leaves the switch where it
- * was, back on, and a computer without the runner. Only the runner's availability and the failed save are
+ * was, back on, and a computer without the runner, where the row is absent. Only the runner's availability and the failed save are
  * fixtures, so the walk does not depend on Podman being installed where it runs.
  */
 test.use({ serviceScript: "terminal-service.py" });
 
-test("validation runs switch on and off, keeps its place after a refused change and explains an unavailable runner", async ({ page }, info) => {
+test("validation runs switch on and off, keeps its place after a refused change and leaves Settings without a runner", async ({ page }, info) => {
   const walk = walkthrough(page, info);
   let unavailable: string | null = null;
   await page.route(/\/api\/(machine|validation-access)$/, async (route) => {
@@ -44,7 +44,5 @@ test("validation runs switch on and off, keeps its place after a refused change 
 
   unavailable = "Podman is not installed";
   await page.reload();
-  await walk.state("05-unavailable", { visible: [toggle, page.getByText("Not available here: Podman is not installed.")], hidden: [detail] });
-  await expect(toggle).toBeDisabled();
-  await expect(toggle).not.toBeChecked();
+  await walk.state("05-unavailable", { visible: [page.getByRole("link", { name: /Prerequisites/ })], hidden: [toggle, detail, page.getByText(/Not available here/)] });
 });

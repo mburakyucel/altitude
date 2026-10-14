@@ -551,37 +551,44 @@ _GH_TOO_OLD = "Agents land pull requests with GitHub CLI 2.72 or newer; this one
 
 def prerequisites() -> list[dict]:
     """What agents need before the first task, in the order First run shows it: each item is met, unmet or optional,
-    with the command the operator runs in their own terminal. Nothing here takes a password or token."""
+    with the step that meets it and the command the operator runs in their own terminal. Nothing here takes a password or token."""
     from . import config, engines, platform
     gh = shutil.which("gh")
     lacks = _gh_lacks() if gh else []
     install = None if platform.containerized() else platform.install_command("gh")
     page = "" if install else f" ({platform.INSTALL_PAGES['gh']})"
     if not gh:
-        github = {"label": "GitHub CLI not installed", "state": "unmet", "command": install,
+        github = {"label": "GitHub CLI not installed", "step": "Install the GitHub CLI", "state": "unmet", "command": install,
                   "detail": f"Agents push branches and open pull requests through the GitHub CLI. Install it{page}, "
                   "then sign in with gh auth login."}
     elif lacks:
-        github = {"label": "GitHub CLI too old", "state": "unmet", "command": install,
+        github = {"label": "GitHub CLI too old", "step": "Update the GitHub CLI", "state": "unmet", "command": install,
                   "detail": _GH_TOO_OLD.format(", ".join(lacks)) + f" Install the current release{page}, then check again."}
     else:
         signed = _gh_signed_in()
-        github = {"label": "GitHub CLI signed in", "state": "met" if signed else "unmet", "command": "gh auth login",
+        github = {"label": "GitHub CLI signed in", "step": "Sign in to the GitHub CLI", "state": "met" if signed else "unmet",
+                  "command": "gh auth login",
                   "detail": "Agents push branches and open pull requests through the GitHub CLI."}
     if platform.containerized() and (lacks or not gh):
         github["detail"] = "GitHub CLI is bundled in the image. Replace this incomplete image from the host."
     items = [{"key": "github", **github}]
-    agents = []
-    for engine in config.ENGINES:
+    installed = [engine for engine in config.ENGINES if engines.installation(engine)["available"] is not False]
+    if not installed:
+        # One agent is enough, so a fresh computer shows one requirement with each agent's install command.
+        names = " or ".join(config.ENGINE_LABELS[engine] for engine in config.ENGINES)
+        lead = "Install at least one coding agent" if len(config.ENGINES) > 1 else "Install a coding agent"
+        items.append({"key": "agents", "label": f"{lead}: {names}", "step": f"{lead}: {names}", "state": "unmet",
+                      "detail": "Then sign in to it.", "command": None,
+                      "options": [{"label": config.ENGINE_LABELS[engine], "command": engines.install_command(engine)}
+                                  for engine in config.ENGINES]})
+    agents, ready = [], []
+    for engine in installed:
         label = config.ENGINE_LABELS[engine]
-        if engines.installation(engine)["available"] is False:
-            agents.append({"key": engine, "label": f"{label} not installed", "state": "unmet",
-                           "detail": f"Install {label} (or set its binary in the service environment), then sign in.",
-                           "command": engines.install_command(engine)})
-            continue
         signed = engines.sign_in(engine)
+        if signed["signed_in"]:
+            ready.append(engine)
         agents.append({"key": engine, "label": f"{label} signed in" if signed["signed_in"] else f"{label} installed",
-                       "state": "met" if signed["signed_in"] else "unmet",
+                       "step": f"Sign in to {label}", "state": "met" if signed["signed_in"] else "unmet",
                        "detail": None if signed["signed_in"] else f"{label} is installed but not signed in.",
                        "command": None if signed["signed_in"] else signed["command"]})
     if any(agent["state"] == "met" for agent in agents):
@@ -589,10 +596,22 @@ def prerequisites() -> list[dict]:
             if agent["state"] == "unmet":
                 agent.update(state="optional", detail=f"Altitude works with any one coding agent. {agent['detail']}")
     items += agents
+    sandbox = platform.sandbox_tool()
+    if sandbox:
+        # Only agents Altitude confines itself run inside it: a signed-in agent with its own sandbox is enough, as
+        # project setup judges the coordinator ready.
+        confined = lambda engine: engines.common.implementation(engine).JOB_PROFILE
+        needed = not any(not confined(engine) for engine in ready) and (not installed or any(map(confined, ready or installed)))
+        items.append({"key": "sandbox", "label": "Agent sandbox", "step": "Install the agent sandbox",
+                      "state": "met" if sandbox["enabled"] else "unmet" if needed else "optional",
+                      "detail": None if sandbox["enabled"] else "Altitude runs agents inside bubblewrap on Linux."
+                      + ("" if sandbox["command"] else " Install it with this computer's package manager."),
+                      "command": None if sandbox["enabled"] else sandbox["command"]})
     git = shutil.which("git")
     install = None if git else platform.install_command("git")
     detail = "Agents work in Git checkouts." + ("" if install else f" Install it ({platform.INSTALL_PAGES['git']}).")
-    items.append({"key": "git", "label": "Git installed" if git else "Git not installed", "state": "met" if git else "unmet",
+    items.append({"key": "git", "label": "Git installed" if git else "Git not installed", "step": "Install Git",
+                  "state": "met" if git else "unmet",
                   "detail": None if git else detail, "command": install})
     if not git and platform.containerized():
         items[-1].update(detail="Git is bundled in the image. Replace this incomplete image from the host.", command=None)
@@ -658,20 +677,37 @@ def describe_hosting(hosting: dict) -> str:
         lines.append(hosting["detail"])
     if hosting.get("overrides"):
         lines.append("Ignored calling-shell values: " + ", ".join(hosting["overrides"]) + "; the service keeps its saved settings.")
-    lines.append("Next: open the URL for browser setup." if hosting["verified"] else
-                 "Next: use alt service logs to investigate, or alt service start to start a stopped installation.")
+    if not hosting["verified"]:
+        lines.append("Next: use alt service logs to investigate, or alt service start to start a stopped installation.")
     return "\n".join(lines)
 
 
+def _next(hosting: dict, pairing: dict, needs: list[dict]) -> list[str]:
+    """The one next step from current state: a working service, then the first browser, then the first missing tool."""
+    if not hosting["verified"]:
+        return []  # describe_hosting already names the service step.
+    if pairing["paired"] == 0:
+        if pairing.get("code_expires"):
+            from . import state as S
+            return [f"Next: open the private link the installer printed. It works once, until {S.local(pairing['code_expires'])}."]
+        return ["Next: compare the certificate below with what your browser shows, trust it, then run alt pair."]
+    if needs:
+        first = needs[0]
+        return [f"Next: {first['step']}.",
+                *([f"  {first['command']}"] if first.get("command") else []),
+                *[f"  {option['label']}: {option['command']}" for option in first.get("options") or []]]
+    return ["Next: nothing is left to set up; open Altitude in your browser."]
+
+
 def describe_doctor(report: dict) -> str:
-    lines = [describe_hosting(report["hosting"]), "", "Readiness:"]
+    lines = [describe_hosting(report["hosting"]), *report["next"], "", "Readiness:"]
     lines += [f"  {item['name']}: {item['state']}" for item in report["checks"]]
     lines += ["  " + item["detail"] for item in report["checks"]
               if item["state"] in ("unavailable", "unknown") and isinstance(item.get("detail"), str)]
     paired = report["pairing"]["paired"]
-    lines += ["Browser certificate trust: unverified; compare the certificate and reopen without a warning.",
+    lines += [*(["Browser certificate trust: unverified until a browser opens Altitude without a warning."] if not paired else []),
               f"Browser pairing: unknown; {report['pairing']['detail']}" if paired is None else
-              "Browser pairing: no browser is paired yet; trust the certificate, then run alt pair." if not paired else
+              "Browser pairing: no browser is paired yet." if not paired else
               f"Browser pairing: {paired} browser{'' if paired == 1 else 's'} paired; alt pair prints a code for another.",
               "Coding-provider access: unverified; no provider requests are made."]
     trust = report["certificate_trust"]
@@ -732,12 +768,17 @@ def doctor() -> dict:
     except (tls.TLSFailure, OSError) as exc:
         trust = {"state": "unavailable", "detail": str(exc)}
     try:
-        pairing = {"paired": len(access.devices())}
+        pairing = {"paired": len(access.devices()), "code_expires": access.code_expires()}
     except (OSError, ValueError) as exc:
         pairing = {"paired": None, "detail": str(exc)}
     seats = [{"name": config.ENGINE_LABELS[engine], **engines.installation(engine)} for engine in config.ENGINES]
+    needs = [item for item in prerequisites() if item["state"] == "unmet"]
+    agents = next((item for item in needs if item["key"] == "agents"), None)
+    checks.append({"name": "coding agent", "state": "unavailable" if agents else "configured",
+                   "detail": (agents["label"] + "; " + "; ".join(f"{o['label']}: {o['command']}" for o in agents["options"]))
+                   if agents else ", ".join(seat["name"] for seat in seats if seat["available"] is not False)})
     return {"version": (config.RELEASE or {}).get("version"), "update": update_status(), "checks": checks, "engines": seats,
-            "hosting": hosting, "pairing": pairing,
+            "hosting": hosting, "pairing": pairing, "next": _next(hosting, pairing, needs),
             "engine_access": "unknown; no provider requests are made", "certificate_trust": trust,
             "optional": "Voice, GPU and telemetry do not gate typing or task delivery."}
 

@@ -40,6 +40,7 @@ const overview = {
     { engine: "alpha", label: "Alpha", week: 52, known: true, stale: false, at: ago(1) },
     { engine: "beta", label: "Beta", week: 78, known: false, stale: true, at: ago(3 * 60) },
     { engine: "gamma", label: "Gamma", week: null, known: false, stale: false, at: null },
+    { engine: "delta", label: "Delta", installed: false, week: null, known: false, stale: false, at: null },
   ],
   roots: ["~/Projects"],
   operator: "Ada",
@@ -106,13 +107,13 @@ describe("Rail", () => {
     expect(dotOf(within(rail).getByRole("link", { name: "idle" }))).toBe("idle");
     expect(dotOf(within(rail).getByRole("link", { name: "broken" }))).toBe("danger");
     expect(within(rail).queryByRole("link", { name: "spare" })).toBeNull();
-    expect(within(rail).getByRole("button", { name: "1 folder not managed" })).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: "1 folder found — add it" })).toBeInTheDocument();
     expect(within(rail).getByRole("link", { name: "Monitor" })).toBeInTheDocument();
     expect(screen.getByText("Ada")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dark theme" })).toBeInTheDocument();
   });
 
-  it("reads each engine's week from the seam's rows, with no reading and stale spelled out", async () => {
+  it("reads each engine's week from the seam's rows, with not installed, no reading and stale spelled out", async () => {
     mockFetch();
     renderApp({ route: "/" });
 
@@ -123,6 +124,7 @@ describe("Rail", () => {
     expect(rows[1]).toHaveTextContent("Beta78% of week · reading 3h old");
     expect(rows[1]?.querySelector(".meter-fill")).toHaveAttribute("data-danger", "true");
     expect(rows[2]).toHaveTextContent("Gammano reading");
+    expect(rows[3]).toHaveTextContent("Deltanot installed");
   });
 
   it("hides badges at zero and the unmanaged line with nothing to add", async () => {
@@ -136,7 +138,7 @@ describe("Rail", () => {
 
     const rail = await screen.findByRole("navigation", { name: "Rail" });
     expect(within(rail).queryByText("1")).toBeNull();
-    expect(within(rail).queryByRole("button", { name: /not managed/ })).toBeNull();
+    expect(within(rail).queryByRole("button", { name: /folders? found/ })).toBeNull();
     expect(screen.queryByRole("list", { name: "Engines" })).toBeNull();
   });
 

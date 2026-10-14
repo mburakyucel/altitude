@@ -134,7 +134,7 @@ test("failed and interrupted setup retries safely; a denied request preserves th
   const panel = setupPanel(page);
   const guards = step(panel, "Git guards");
   await guards.getByRole("button", { name: "Repair" }).click();
-  await walk.state("01-actual-git-write-failed", { visible: [guards.getByText("Failed", { exact: true }), guards.getByRole("button", { name: "Retry", exact: true }), panel.getByRole("button", { name: "Discuss with L3", exact: true })], hidden: [] });
+  await walk.state("01-actual-git-write-failed", { visible: [guards.getByText("Failed", { exact: true }), guards.getByRole("button", { name: "Retry", exact: true }), panel.getByRole("button", { name: "Ask the coordinator", exact: true })], hidden: [] });
   const failed = await (await request.get(`${service}/api/setup/atlas`)).json();
   expect(failed.operation.state).toBe("failed");
   await page.route("**/api/project/setup", (route) => route.fulfill({ status: 403, json: { error: "Repair request is denied" } }), { times: 1 });
@@ -148,7 +148,7 @@ test("failed and interrupted setup retries safely; a denied request preserves th
   await page.reload();
   await walk.state("04-interrupted-record-reconciled", { visible: [guards.getByText("Recheck needed", { exact: true }), guards.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
   const beforeDiscuss = await (await request.get(`${service}/api/chat/atlas`)).json();
-  await panel.getByRole("button", { name: "Discuss with L3", exact: true }).click();
+  await panel.getByRole("button", { name: "Ask the coordinator", exact: true }).click();
   await walk.state("05-discussion-preserves-conversation", { visible: [page.getByText("Saved project history."), page.getByRole("textbox", { name: "Message L3 about atlas" })], hidden: [panel] });
   await expect(page.getByRole("button", { name: "Setup: Needs attention" })).toBeVisible();
   expect((await (await request.get(`${service}/api/chat/atlas`)).json()).history).toEqual(beforeDiscuss.history);
@@ -226,6 +226,6 @@ test("conversation-only folders report not-applicable checks and recover an init
   await walk.state("02-conversation-only-ready", { visible: [summary(panel, "Conversation ready"), step(panel, "Git repository").getByText("Not applicable", { exact: true }), step(panel, "Git guards").getByText("Not applicable", { exact: true }), step(panel, "Project instructions").getByText(/No project instructions/)], hidden: [panel.getByRole("button", { name: "Retry connection" })] });
   const view = await (await request.get(`${service}/api/setup/notes`)).json();
   expect(view.status).toBe("conversation_ready");
-  await step(panel, "Project instructions").getByRole("button", { name: "Discuss with L3" }).click();
+  await step(panel, "Project instructions").getByRole("button", { name: "Ask the coordinator" }).click();
   await walk.state("03-discuss-optional-instructions", { visible: [page.getByRole("textbox", { name: "Message L3 about notes" })], hidden: [panel] });
 });

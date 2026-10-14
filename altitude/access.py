@@ -247,6 +247,15 @@ def devices() -> list[dict]:
     return [{key: row[key] for key in ("id", "name", "paired", "used")} for row in _read()["devices"]]
 
 
+def code_expires() -> str | None:
+    """When the one unused pairing code stops working, or None when there is none: `alt doctor` points at
+    the installer's private link while it still works, since `alt pair` would replace it."""
+    active = _read().get("code")
+    if not isinstance(active, dict) or not isinstance(active.get("expires"), str):
+        return None
+    return active["expires"] if datetime.fromisoformat(active["expires"]) > _now() else None
+
+
 def revoke(device_id: str) -> None:
     with _locked():
         record = _read()
