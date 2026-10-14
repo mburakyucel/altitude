@@ -1,21 +1,26 @@
 """Disposable real service on a fresh computer: no coding agent, no agent sandbox, no validation runner and a
-local repository that is not on GitHub yet. Only engine installation and execution are controlled."""
+local repository that is not on GitHub yet. Only engine installation and execution are controlled: the spec
+installs the agent and the sandbox by creating their marker files, and a setup check runs as the daemon's
+project tick runs it."""
+import threading
 from service_support import configure, serve
-from tests.support import git
-from altitude import config, engines, incidents, installation, l3, platform, project_setup, server, state as S
+from tests.support import SUITE, git
+from altitude import config, engines, incidents, installation, platform, project_setup
 
 
 def main():
     configure()
-    installed, sandbox = False, False
-    engines.installation = lambda engine: {"available": installed and engine == config.ENGINES[0],
+    tools = SUITE / "first-timer-tools"
+    tools.mkdir()
+    agent, sandbox = tools / "agent", tools / "sandbox"
+    engines.installation = lambda engine: {"available": agent.exists() and engine == config.ENGINES[0],
                                            "why": "deterministic browser engine fixture"}
     engines.common.installation = engines.installation
-    engines.sign_in = lambda engine: {"signed_in": installed and engine == config.ENGINES[0],
+    engines.sign_in = lambda engine: {"signed_in": agent.exists() and engine == config.ENGINES[0],
                                       "command": engines.SIGN_IN[engine][1]}
     installation._gh_signed_in = lambda: True
-    platform.sandbox_tool = lambda: {"enabled": sandbox, "command": "sudo apt install bubblewrap",
-                                     "detail": "/usr/bin/bwrap" if sandbox else "Install bubblewrap (sudo apt install bubblewrap)"}
+    platform.sandbox_tool = lambda: {"enabled": sandbox.exists(), "command": "sudo apt install bubblewrap",
+                                     "detail": "/usr/bin/bwrap" if sandbox.exists() else "Install bubblewrap (sudo apt install bubblewrap)"}
     platform.validation_unavailable = lambda: "validation runs need podman and slirp4netns on this computer"
     engines.claude_print = lambda _prompt, **_options: {"text": "The project conversation is ready.",
                                                          "session_id": "fixture-first-timer-session"}
@@ -27,28 +32,21 @@ def main():
     git("add", "-A", cwd=repo)
     git("commit", "-qm", "Initial project", cwd=repo)
 
-    class Handler(server.Handler):
-        def do_GET(self):
-            if self.path == "/fixture/evidence":
-                return self._json({"faults": S.read_json(incidents.FAULTS, {}) or {},
-                                   "history": l3.chat_history("atlas") if config.is_managed("atlas") else []})
-            return super().do_GET()
+    stopping = threading.Event()
 
-        def do_POST(self):
-            nonlocal installed, sandbox
-            if self.path in ("/fixture/install-agent", "/fixture/install-sandbox"):
-                installed = installed or self.path.endswith("agent")
-                sandbox = sandbox or self.path.endswith("sandbox")
-                # The daemon's next setup check, as its project tick runs it.
+    def tick():
+        while not stopping.wait(0.5):
+            if config.is_managed("atlas"):
                 project_setup.maintain("atlas")
-                with server._bg_guard:
-                    worker = server._bg.get("start:atlas")
-                if worker:
-                    worker.join(10)
-                return self._json(project_setup.observe("atlas"))
-            return super().do_POST()
 
-    serve(Handler)
+    ticker = threading.Thread(target=tick)
+    ticker.start()
+
+    def release():
+        stopping.set()
+        ticker.join()
+
+    serve(release=release, ready={"agent": str(agent), "sandbox": str(sandbox), "faults": str(incidents.FAULTS)})
 
 
 if __name__ == "__main__":

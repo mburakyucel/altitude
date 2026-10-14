@@ -1,14 +1,19 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
-// A fresh computer in a disposable real service: only engine installation and execution are controlled.
+// A fresh computer in a disposable real service: only engine installation and execution are controlled. Creating a
+// marker file installs the agent or the sandbox; the service runs its setup check as the daemon's tick does.
 test.use({ serviceScript: "project-first-timer-service.py" });
 test.setTimeout(60_000);
 const setupPanel = (page: Page) => page.getByRole("dialog", { name: "Project setup" });
+type FirstTimer = { agent: string; sandbox: string; faults: string };
+const faults = (service: FirstTimer) => existsSync(service.faults) ? JSON.parse(readFileSync(service.faults, "utf8")) : {};
 const step = (panel: Locator, label: string) => panel.getByRole("listitem").filter({ has: panel.page().getByRole("heading", { name: label, exact: true }) });
 
-test("a fresh computer names one coding agent and the sandbox, and setup waits until a tool is ready, then continues by itself", async ({ page, request, service }, info) => {
+test("a fresh computer names one coding agent and the sandbox, and setup waits until a tool is ready, then continues by itself", async ({ page, request, service, altitude }, info) => {
+  const fresh = altitude as unknown as FirstTimer;
   const walk = walkthrough(page, info);
   const firstRun = page.getByRole("region", { name: "First run" });
   await walk.open(`${service}/projects`);
@@ -37,10 +42,9 @@ test("a fresh computer names one coding agent and the sandbox, and setup waits u
     hidden: [coordinator.getByText("Failed", { exact: true }), panel.getByText(/engine hold/), panel.getByText(/Discuss with L3/),
       page.getByRole("button", { name: "Start L3" })],
   });
-  const before = await (await request.get(`${service}/fixture/evidence`)).json();
-  expect(before.faults, "a missing tool and an unpublished repository file no incident").toEqual({});
-  expect(before.history.filter((row: { role: string }) => row.role !== "user")).toEqual([]);
-  expect((await request.post(`${service}/fixture/install-agent`)).ok()).toBe(true);
+  expect(faults(fresh), "a missing tool and an unpublished repository file no incident").toEqual({});
+  expect((await (await request.get("/api/chat/atlas")).json()).history.filter((row: { role: string }) => row.role !== "user")).toEqual([]);
+  writeFileSync(fresh.agent, "");
   await walk.state("03-setup-waits-for-the-sandbox", {
     action: () => page.reload(),
     visible: [coordinator.getByText("Waiting", { exact: true }),
@@ -48,7 +52,9 @@ test("a fresh computer names one coding agent and the sandbox, and setup waits u
       coordinator.getByRole("link", { name: "Coding tools" })],
     hidden: [coordinator.getByText(/Install Claude/), coordinator.getByText("Failed", { exact: true })],
   });
-  expect((await request.post(`${service}/fixture/install-sandbox`)).ok()).toBe(true);
+  writeFileSync(fresh.sandbox, "");
+  const replies = async () => (await (await request.get("/api/chat/atlas")).json()).history.map((row: { text?: string }) => row.text);
+  await expect.poll(replies, { message: "the next setup check starts the first conversation", timeout: 15_000 }).toContain("The project conversation is ready.");
   await walk.state("04-setup-continued-by-itself", {
     action: () => page.reload(),
     visible: [coordinator.getByText("First conversation ready."), repository.getByText("gh repo create --source . --push"),
@@ -56,9 +62,7 @@ test("a fresh computer names one coding agent and the sandbox, and setup waits u
       ...(info.project.name === "desktop" ? [rail.getByText("not installed")] : [])],
     hidden: [coordinator.getByText(/Waiting for a coding tool/), coordinator.getByRole("link", { name: "Coding tools" })],
   });
-  const after = await (await request.get(`${service}/fixture/evidence`)).json();
-  expect(after.faults).toEqual({});
-  expect(after.history.map((row: { text?: string }) => row.text)).toContain("The project conversation is ready.");
+  expect(faults(fresh)).toEqual({});
 });
 
 test("Settings hides validation runs on a computer that cannot run them", async ({ page, service }, info) => {
