@@ -53,9 +53,16 @@ class SelfDeployFastForward(AltitudeCase):
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("refs/heads/main may move only to origin/main", refused.stderr)
         self.assert_untouched(before)
-        # The two fetches seem to agree, but the cached ref is elsewhere by the time the branch moves.
+        # The two fetches agreed, but the cached ref is elsewhere by the time the branch moves.
         with mock.patch.object(git_policy, "capture_origin_sha", return_value=tip), \
-             self.assertRaisesRegex(git_policy.GitPolicyError, "protected branch update blocked"):
+             self.assertRaisesRegex(git_policy.GitPolicyError, "protected branch update blocked") as refusal:
+            git_policy.deploy_source(self.repo, "main")
+        self.assertNotIsInstance(refusal.exception, git_policy.FetchError)
+        self.assert_untouched(before)
+        # A fetch elsewhere moved the cached ref on in the meantime: the next tick fetches again.
+        agreed = iter([tip])
+        with mock.patch.object(git_policy, "capture_origin_sha", side_effect=lambda *_: next(agreed, self.head)), \
+             self.assertRaisesRegex(git_policy.FetchError, "moved past"):
             git_policy.deploy_source(self.repo, "main")
         self.assert_untouched(before)
 

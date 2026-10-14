@@ -294,8 +294,10 @@ when the checkout's files are exactly a commit on the copy's branch, compared by
 objects; self-deploy fast-forwards the checkout to the copy's fetched tip and checks it again. The guard lets
 the branch move only to the checkout's cached `origin/<branch>`, and two fetches straddling a fresh merge can see
 different tips, so self-deploy fetches the checkout once more when its origin ref differs from the copy's tip and
-otherwise leaves the step to the next tick as a failed fetch. The fast-forward moves the branch through the guard
-before it writes the index and files, so a refused move leaves the checkout exactly as it was. `config.REPO` identifies the deployment checkout;
+otherwise leaves the step to the next tick as a failed fetch, as it does when another fetch moves that ref on before
+the branch moves. The fast-forward rebuilds the checkout's index from the verified commit, moves the branch through
+the guard and only then writes the files, without another refusal; a refused move leaves the branch and files as
+they were. `config.REPO` identifies the deployment checkout;
 `config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
 These exports sit outside worker writable roots. The maintenance tick removes an export nothing names:
 the running service's export, the target of `current` and every export named in the brief or session

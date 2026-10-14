@@ -512,10 +512,13 @@ def deploy_source(repo: str | Path, branch: str) -> tuple[str, str, list[str]]:
     _output(_run(root, "read-tree", head, env=env), "cannot read the service checkout's commit")
     _run(root, "update-index", "-q", "--refresh", env=env)   # unchanged files are not rewritten
     # #961: `git merge --ff-only` writes the files before the guard refuses the branch move, leaving them changed.
-    # The branch moves first, through the guard, so a refused move leaves the checkout exactly as it was; the
+    # The branch moves first, through the guard, so a refused move leaves the branch and files as they were; the
     # files then follow without another refusal, replacing anything that appeared where `tip` tracks a file.
-    _output(_run(root, "update-ref", "-m", "self-deploy: fast-forward", f"refs/heads/{branch}", tip, head, env=env),
-            "fast-forward failed")
+    moved = _run(root, "update-ref", "-m", "self-deploy: fast-forward", f"refs/heads/{branch}", tip, head, env=env)
+    if moved.returncode and capture_origin_sha(root, branch) != tip:   # a fetch elsewhere moved the cached ref on
+        raise FetchError(f"the checkout's origin/{branch} moved past {tip[:12]} before the fast-forward; "
+                         "the next tick fetches again")
+    _output(moved, "fast-forward failed")
     _output(_run(root, "read-tree", "--reset", "-u", tip, env=env, timeout=300),
             "fast-forward failed after moving the branch")
     if source_head(root, branch) != tip:
