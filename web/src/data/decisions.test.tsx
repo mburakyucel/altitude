@@ -14,6 +14,16 @@ describe("the operator's turn", () => {
     expect(turnLabel([question("scope"), review])).toBe("Your turn · 1 question · review PR #12");
   });
 
+  it("names a lone question on a task card, so a wait on the operator's step says the step", () => {
+    const step = { ...question("sign-in"), question: "Run `example-tool sign-in` in this task's terminal.\n\n```run\nexample-tool sign-in\n```" };
+    expect(turnLabel([step], true)).toBe("Your turn · Run `example-tool sign-in` in this task's terminal");
+    expect(turnLabel([step, review], true)).toBe("Your turn · Run `example-tool sign-in` in this task's terminal · review PR #12");
+    expect(turnLabel([step, question("region")], true)).toBe("Your turn · 2 questions");
+    expect(turnLabel([step])).toBe("Your turn · 1 question");
+    const choice = { ...step, options: [{ key: "a", label: "Approve", text: "Approve it." }] };
+    expect(turnLabel([choice], true)).toBe("Your turn · 1 question");
+  });
+
   it("counts reviews apart from questions, stops and faults", () => {
     const stopped: Decision = { project: "atlas", slug: "halted", kind: "stopped" };
     const fault: Decision = { project: "atlas", slug: "broken", kind: "fault" };

@@ -593,8 +593,11 @@ for resume at <time>", or plain "waits for dispatch"; never a file lease, which 
 hold; see [concurrency](../../docs/ARCHITECTURE.md#task-lifecycle)); running ("Running · <model> on <engine> · started N min ago"); blocked waiting
 on L3 ("Waiting for the coordinator: <short prerequisite>.", the running dot: L3's answer is Altitude's own work, and the dot turns amber
 only when L3 escalates to the operator; the rail's §3.1 dot follows the same rule); blocked on the
-operator ("Your turn · N questions", "Your turn · review PR #N", or both, plus a sentence explaining the answer or review wait,
-amber dot); replying to the operator ("L2 replying to you", running dot); running ("L2 working");
+operator ("Your turn · <first sentence>" for a lone freeform question, so a wait on the operator's step names the step,
+otherwise "Your turn · N questions", "Your turn · review PR #N", or both, plus a sentence explaining the answer or review wait,
+amber dot; the first sentence is the question's authored excerpt of at most 120 characters, ending in "…" at a word when cut,
+and wraps on phone; a question with choices, a task whose resume is already due, and the task page, whose question card
+shows the question and a step's **Open in terminal**, keep the count); replying to the operator ("L2 replying to you", running dot); running ("L2 working");
 blocked by a fault (a short explanation of the interruption and the known coordinator prerequisite, red dot);
 operator-stopped (confirmed Stop explains Continue; a stop request alone points to the task for confirmation, red dot);
 owner/daemon-parked without a question, review, fault or operator stop (a short reason, or "Work is paused; no reason is recorded.", idle dot);

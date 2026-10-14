@@ -103,7 +103,8 @@ export function TaskCard({
     .filter((d) => d.project === project && d.slug === task.slug && d.status !== "resolved" && d.audience !== "l3");
   const questions = decisions.filter((d) => d.id);
   const facts = taskCardFacts(task, overview.data, project, decisions[0]);
-  const turn = turnLabel(decisions);
+  // Only a waiting task names its step: once a resume is due, the operator has nothing left to do (§3.5).
+  const turn = turnLabel(decisions, (task.state === "blocked" || task.state === "reported") && !task.resume_after);
   const attention = turn ? `${turn}${overview.isError ? " · saved" : ""}` : null;
   const tab = variant === "row" || new URLSearchParams(location.search).get("tab") === "work" ? "work" : "chat";
   const title = task.title || task.slug;

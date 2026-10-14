@@ -1,4 +1,5 @@
 import type { Decision, Overview, TaskMessage } from "./api";
+import { statusExcerpt } from "./taskStatus";
 
 /** Unknown attention never looks like a known empty inbox. */
 export function attentionCount(overview: Overview | undefined, failed: boolean) {
@@ -17,11 +18,15 @@ export function attentionSummary(rows: Decision[]): string {
     .filter(([count]) => count).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ");
 }
 
-/** One task's turn, as Work rows, the task header and its chat say it (SPEC.md §3.5). */
-export function turnLabel(rows: Decision[]): string | null {
-  const questions = rows.filter((row) => row.id).length;
+/** One task's turn, as Work rows, the task header and its chat say it (SPEC.md §3.5). A waiting task's row is `named`:
+ * a lone freeform question shows its first sentence, so a wait on the operator's step says the step. The task page,
+ * which shows the question itself, and a question with choices keep the count. */
+export function turnLabel(rows: Decision[], named = false): string | null {
+  const questions = rows.filter((row) => row.id);
   const review = rows.find((row) => row.kind === "review");
-  const parts = [questions ? `${questions} question${questions === 1 ? "" : "s"}` : "", review ? `review PR #${review.pr}` : ""];
+  const lone = named && questions.length === 1 && !optionsFor(questions[0]!).length ? statusExcerpt(questions[0]!.question) : "";
+  const count = questions.length ? `${questions.length} question${questions.length === 1 ? "" : "s"}` : "";
+  const parts = [lone || count, review ? `review PR #${review.pr}` : ""];
   return parts.some(Boolean) ? `Your turn · ${parts.filter(Boolean).join(" · ")}` : null;
 }
 

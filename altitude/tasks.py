@@ -18,8 +18,8 @@ from urllib.parse import quote, unquote, urlsplit
 from . import capture as C, config, git_policy, github_intake, images as image_store, platform, state as S, storage, usage
 
 def short_reason(reason: str, limit: int = 200) -> str:
-    """The first sentence of a block reason, for the card; the whole reason stays in detail."""
-    first = re.split(r"(?<=[.!?])\s|\s[—–-]\s|:\s`", reason.strip(), maxsplit=1)[0].strip()
+    """The first sentence or line of a block reason, for one-line labels; the whole reason stays in detail."""
+    first = re.split(r"(?<=[.!?])\s|\n|\s[—–-]\s|:\s`", reason.strip(), maxsplit=1)[0].strip()
     return first if len(first) <= limit else first[:limit - 1].rstrip() + "…"
 
 TRANSITIONS = {
@@ -2960,17 +2960,21 @@ def review_pr(project: str, task: dict) -> int | None:
 
 
 def block_status(project: str, task: dict) -> tuple[str, str]:
-    """One wait label for the CLI, queue and restart notice; "paused" never hides an operator decision."""
+    """One wait label for the CLI, queue and restart notice; "paused" never hides an operator decision. While the
+    task waits, a lone freeform operator question is named by its first sentence, so a wait on the operator's step
+    says the step; a question with choices, several, or one already followed by a resume are counted."""
     name = config.operator_label()
     if task.get("fault"):
         return "fault", f"paused · fault {task['fault']}"
     if task.get("stop_id"):
         return "stopped", f"stopped by {'L3' if stopped_by(task) == 'l3' else name}"
     stopped = task.get("state") in ("blocked", "reported")
-    count, number = len(operator_questions(task)) if stopped else 0, review_pr(project, task)
+    asked, number = operator_questions(task) if stopped else [], review_pr(project, task)
     waits = []
-    if count:
-        waits.append(f"{count} question{'s' if count != 1 else ''}")
+    if len(asked) == 1 and not question_choices(asked[0]) and not task.get("resume_after"):
+        waits.append(short_reason(asked[0]["question"], 120))
+    elif asked:
+        waits.append(f"{len(asked)} question{'s' if len(asked) != 1 else ''}")
     if number:
         waits.append(f"review PR #{number}")
     if waits:
