@@ -2336,8 +2336,8 @@ not completion. Name, incident reporting and voice are optional Settings links. 
 reads `GET /api/prerequisites`, `installation.prerequisites()`: the
 doctor's GitHub CLI checks (the pull request fields `alt land` reads, from the list `gh pr view --json` prints
 without a repository, sign-in or network request, then sign-in), each engine's local sign-in status through the
-engine seam (`engines.sign_in`), on Linux the agent sandbox (`platform.sandbox_tool`, optional when only agents
-with their own sandbox are installed) and Git, as met, unmet with the terminal command to run (the install command from
+engine seam (`engines.sign_in`), on Linux the agent sandbox (`platform.sandbox_tool`, optional when a signed-in agent
+brings its own sandbox) and Git, as met, unmet with the terminal command to run (the install command from
 `platform.install_command` or `engines.install_command` for a missing tool or a GitHub CLI too old to land, else
 its sign-in command), or optional once one engine is signed in. With no engine installed, one row asks for at least
 one coding agent and lists each engine's install command as an option. The projects step lists the folders under the projects folder

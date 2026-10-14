@@ -1624,7 +1624,7 @@ wherever none is known.
   Continue opens coding tools. Optional preference links remain visible.
 - **What the agents need**: one row per doctor check (GitHub CLI, each installed coding agent, on Linux
   **Agent sandbox**, Git), a green tick when met, a red mark when unmet, a hollow mark when optional
-  (another agent is signed in; the sandbox when only agents with their own sandbox are installed). With no
+  (another agent is signed in; the sandbox when a signed-in agent brings its own). With no
   coding agent installed, one red row reads "Install at least one coding agent: Claude or Codex" (the
   seam's names in its order; "Install a coding agent: <name>" with one engine) with "Then sign in to it."
   and, under it, each agent's label and install command with **Copy**. A missing sandbox reads "Altitude
