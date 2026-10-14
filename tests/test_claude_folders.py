@@ -62,7 +62,8 @@ class TestClaudeFolders(AltitudeCase):
         job_root = self.runtime_tmp / "l2-engine"
         self.patch(engines.claude, "claude_agents", return_value=[])
         _, _, writable, _, env = engines.claude.prepare_worker(
-            "p/folders", "brief", cwd=worktree, job_root=job_root, persona=None, model=None, settings=None,
+            "p/folders", "brief", cwd=worktree, scratch=config.task_scratch(self.project, "folders"), job_root=job_root,
+            persona=None, model=None, settings=None,
             effort=None, resume=None, images=())
         self.assertIn(job_root / "claude", writable)
         self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(job_root / "claude"))
@@ -109,7 +110,9 @@ class TestClaudeFolders(AltitudeCase):
 
         with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen):
             result = engines.start_l2("claude", "project/worker-1", "brief", cwd=worktree, persona=None, model=None,
-                                      settings=None, extra_env={"FAKE_ENGINE_LOG": str(log)}, job_root=job_root)
+                                      settings=None, job_root=job_root,
+                                      extra_env={"FAKE_ENGINE_LOG": str(log),
+                                                 "ALTITUDE_SCRATCH": str(config.task_scratch(self.project, "worker-1"))})
         self.assertEqual(result["returncode"], 0, result)
         command, sent = launches[0][0], launches[0][1].stdin.getvalue()
         self.assertNotIn(TOKEN, " ".join(command))
@@ -285,7 +288,7 @@ class TestClaudeFolders(AltitudeCase):
         self.assertIsNone(result["error"], result)
 
     def test_workers_read_the_projects_notes_where_they_cannot_change_them(self):
-        settings = json.loads(dispatch.session_settings(self.project, "notes", "key").read_text())
+        settings = json.loads(dispatch.session_settings(self.project, "notes").read_text())
         notes = engines.notes_folder(self.repo)
         self.assertEqual(settings["autoMemoryDirectory"], str(notes))
         self.assertEqual(notes.parent.parent, self.operator / "projects")

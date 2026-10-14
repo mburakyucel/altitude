@@ -1,6 +1,7 @@
-"""A task worker on either engine writes its worktree, the Git parts it needs and its own scratch folder, never
-Altitude's home: a process confined to the roots each engine's launch names is refused every record there, its own
-task's included (docs/ARCHITECTURE.md#task-door)."""
+"""A task worker on either engine writes its worktree, the Git parts it needs and its own scratch folder, and a Claude
+worker its own Claude folder, never the rest of Altitude's home: a process confined to the roots each engine's launch
+names is refused every record there, its own task's included, and every other task's Claude folder
+(docs/ARCHITECTURE.md#task-door)."""
 import json
 import os
 import subprocess
@@ -48,6 +49,10 @@ class WorkerRoots(AltitudeCase):
         images = config.project_dir(self.project) / "images"
         images.mkdir()
         self.scratch = engines.common.task_scratch(dispatch.l2_env(self.project, self.slug, 1))
+        self.own_claude = dispatch.l2_job_root(self.project, self.slug) / "claude"
+        other_claude = dispatch.l2_job_root(self.project, other["slug"]) / "claude"
+        for folder_path in (self.own_claude, other_claude):
+            folder_path.mkdir(parents=True)
         self.targets = {
             "task record": ("file", S.status_path(self.project, self.slug)),
             "worker record": ("file", record),
@@ -55,14 +60,16 @@ class WorkerRoots(AltitudeCase):
             "project list": ("file", config.PROJECTS_FILE),
             "task folder": ("folder", folder), "other task": ("folder", S.task_dir(self.project, other["slug"])),
             "reviews folder": ("folder", folder / "reviews"), "image staging": ("folder", images),
-            "home": ("folder", config.ROOT), "scratch": ("folder", self.scratch)}
+            "home": ("folder", config.ROOT), "scratch": ("folder", self.scratch),
+            "own Claude folder": ("folder", self.own_claude), "other task's Claude folder": ("folder", other_claude)}
         self.assertTrue(all(Path(path).exists() for _, path in self.targets.values()))
 
     def roots(self, engine: str) -> tuple[list[Path], tuple]:
         """The writable roots and read-only paths a worker launch on `engine` names."""
         self.patch(engines.claude, "claude_agents", return_value=[])
-        cmd, _, writable, read_only = engines.common.implementation(engine).prepare_worker(
-            "fixture", "brief", cwd=self.worktree, scratch=self.scratch, persona=None, model=None,
+        cmd, _, writable, read_only, _ = engines.common.implementation(engine).prepare_worker(
+            "fixture", "brief", cwd=self.worktree, scratch=self.scratch,
+            job_root=dispatch.l2_job_root(self.project, self.slug), persona=None, model=None,
             settings=self.tmp / "settings.json", effort=None, resume=None, images=())
         if writable is None:  # Codex names its roots in its own sandbox settings
             settings = [cmd[n + 1] for n, part in enumerate(cmd[:-1]) if part == "-c"]
@@ -77,8 +84,9 @@ class WorkerRoots(AltitudeCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         return json.loads(run.stdout)
 
-    def assert_only_scratch(self, written: dict):
-        self.assertEqual({name for name, allowed in written.items() if allowed}, {"scratch"}, written)
+    def assert_only_own(self, written: dict, engine: str):
+        own = {"scratch", "own Claude folder"} if engine == "claude" else {"scratch"}
+        self.assertEqual({name for name, allowed in written.items() if allowed}, own, written)
 
     def test_no_engines_roots_reach_the_coordinator_folder_on_either_platform(self):
         """A worker that could write the coordinators' folder or any folder above it could plant, replace or redirect
@@ -102,8 +110,9 @@ class WorkerRoots(AltitudeCase):
             with self.subTest(engine=engine):
                 writable, _ = self.roots(engine)
                 home = config.ROOT.resolve()
-                self.assertFalse([root for root in writable if home.is_relative_to(root.resolve())
-                                  or root.resolve().is_relative_to(home)], writable)
+                inside = [root for root in writable if home.is_relative_to(root.resolve())
+                          or root.resolve().is_relative_to(home)]
+                self.assertEqual(inside, [self.own_claude] if engine == "claude" else [], writable)
                 # Landlock names folders that exist; Claude's account file family is a name pattern, not a folder.
                 folders = tuple(root for root in writable if not str(root).endswith("*") and root.is_dir())
-                self.assert_only_scratch(self.written(read_only_home([], folders)))
+                self.assert_only_own(self.written(read_only_home([], folders)), engine)

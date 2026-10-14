@@ -1605,12 +1605,14 @@ reading, so a worker that cannot write the home still shares them. `tests/test_w
 verbs, both hooks and the driver on both engines, and `tests/test_land.py` a landing, with Altitude's home
 read-only to them.
 
-No worker's writable roots include Altitude's home. A worker writes its worktree, the Git parts
+No worker's writable roots include Altitude's records. A worker writes its worktree, the Git parts
 [isolation](#isolation-and-landing) allows, temporary folders and its own scratch folder,
 `~/.altitude-scratch/<project>/<task>` (`ALTITUDE_SCRATCH`), for drafts, held patches, verb input files and tool
 caches. altd makes it at launch beside the home and deletes it, without following links, when the task is done or
-rejected; it never reads it. `tests/test_worker_roots.py` confines a process to each engine's roots and finds every
-record refused, its own task's included, and the scratch folder writable.
+rejected; it never reads it. A Claude worker also writes its own [Claude folder](#isolation-and-landing) in its
+task's engine records, which altd reads without following links. `tests/test_worker_roots.py` confines a process
+to each engine's roots and finds every record refused, its own task's included, and every other task's Claude
+folder, with the scratch folder and its own Claude folder writable.
 
 ### Operator terminal
 
