@@ -39,7 +39,7 @@ test("a wait on the operator's step names the step until the owner is woken", as
     hidden: [page.getByText(step, { exact: true })],
   });
 
-  expect(await (await request.post("/fixture/notice")).json()).toEqual({ resume_after: true });
+  expect(await (await request.put("/fixture/notice")).json()).toEqual({ resume_after: true });
   await walk.open("/projects/atlas?tab=work");
   await walk.state("03-work-row-after-the-terminal-notice", {
     visible: [row("Sign in").getByText("Your turn · 1 question", { exact: true })],

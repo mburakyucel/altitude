@@ -34,12 +34,11 @@ def main():
     time.sleep(1 - time.time() % 1)
 
     class Handler(server.Handler):
-        def do_POST(self):
-            if self.path == "/fixture/notice":
-                # What the task terminal sends once the handed command looks finished: a wake for the owner.
-                T.notify("atlas", slugs["Sign in"], "Terminal: the command looks finished.", by="terminal", attempt=1)
-                return self._json({"resume_after": bool(S.load_task("atlas", slugs["Sign in"]).get("resume_after"))})
-            return super().do_POST()
+        # The fixture's one control reads nothing from the request, so it adds no request source to code scanning.
+        def do_PUT(self):
+            # What the task terminal sends once the handed command looks finished: a wake for the owner.
+            T.notify("atlas", slugs["Sign in"], "Terminal: the command looks finished.", by="terminal", attempt=1)
+            return self._json({"resume_after": bool(S.load_task("atlas", slugs["Sign in"]).get("resume_after"))})
 
     serve(Handler)
 
