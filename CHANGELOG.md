@@ -5,21 +5,35 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
-- Altitude's records, logs, locks, agent output and review snapshots are never written through a link
-  placed in its data folder, so a sandboxed agent cannot use them to have Altitude write a file
-  outside the sandbox.
-- Live session works for every valid project name, including names with capitals, spaces or dots, and
-  redacting long incident text no longer takes seconds.
-- Task agents cannot act with the coordinator's or your authority: an agent's own task commands are
-  admitted by its task, and no Altitude sandbox can read the access key, paired devices or HTTPS keys.
-  After the update Altitude replaces its access key, and once more when the agents running at the
-  update have finished; each replacement ends open design-board links, and the first cancels a
-  pairing code in progress. Linux needs kernel 6.5 or newer.
-- On Linux, Claude agents run inside Altitude's own sandbox, as on macOS: they write only their task's
-  folders, Altitude's data and temporary folders, see only their own processes, and cannot reach the
-  service manager or read Altitude's keys. Linux needs bubblewrap, which `alt doctor` checks. The alert
-  signing key moves where no agent can read it and is replaced, so turn alerts off and on once on each
-  phone or browser that uses them.
+## v0.7.0 — 2026-10-13
+
+Feature release of the early preview.
+
+- A failed update no longer stays stuck: it ends with the release check's reason and Try again. An
+  installation on v0.5.0 or older that cannot update because it left Python cache files in its
+  folder is repaired with this release's `install.py --repair-generated-bytecode`, then updates with
+  `alt update` ([generated-cache recovery](https://github.com/mburakyucel/altitude/blob/main/docs/OPERATIONS.md#generated-cache-recovery)).
+- Installation ends with Altitude's address and two steps: trust the certificate, shown with its
+  full fingerprint, then open the pairing link. Every browser, the hosting computer's included,
+  passes the certificate check before pairing, and First run is three steps that end in a usable
+  project. Settings → Network shows where Altitude can be reached.
+- One model and effort button sits under each message box and on New tasks. A usage limit or an
+  engine refusal stops the task with Change model…; nothing switches engines by itself. Codex
+  always runs with a named model and effort, shown on the task.
+- Voice settings are option cards, each with its own Use button.
+- Task agents cannot act with the coordinator's or your authority. In an Altitude sandbox they also
+  cannot read the access key, paired devices or HTTPS keys, change the repository's Git settings,
+  or use links in Altitude's data folder to write outside the sandbox. After the update Altitude
+  replaces its access key, and once more when the agents running at the update have finished; each
+  replacement ends open design-board links, and the first cancels a pairing code in progress.
+  Linux needs kernel 6.5 or newer.
+- On Linux, Claude agents run inside Altitude's own sandbox, as on macOS; Linux needs bubblewrap,
+  which `alt doctor` checks. On every computer the alert signing key is replaced, so turn alerts
+  off and on once on each phone or browser that uses them.
+- Live session works for every valid project name, including names with capitals, spaces or dots.
+
+Known limits: the update repair and installer pairing still await confirmation on a real Linux and
+Mac installation (#912, #926). Live providers are not part of release testing.
 
 ## v0.6.0 — 2026-10-13
 
