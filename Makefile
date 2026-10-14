@@ -1,4 +1,4 @@
-.PHONY: run test check check-python check-web web ui ui-shell ui-ios ui-simulator audit-history installation-vm installation-mac installation-macos-vm container-macos-vm browser-sandbox restart install-service
+.PHONY: run test check check-python check-web mutation web ui ui-shell ui-ios ui-simulator audit-history installation-vm installation-mac installation-macos-vm container-macos-vm browser-sandbox restart install-service
 run:            ## run altd in the foreground on 127.0.0.1:8890 (ALTITUDE_HOST/PORT override)
 	ALTITUDE_HOST=$${ALTITUDE_HOST:-127.0.0.1} bin/alt serve
 test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
@@ -17,6 +17,9 @@ check-web:
 	cd web && $(TIME) pnpm build
 	cd web && $(TIME) pnpm ui $(SHARDED)
 	cd web && $(TIME) pnpm ui:shell $(SHARDED)
+mutation:       ## mutation run over the core modules' fast unit tests, a measurement outside `check` (RESULTS=dir for report.md)
+	$(if $(RESULTS),,$(error Set RESULTS to a new directory for the report))
+	python3 scripts/mutation.py "$(RESULTS)"
 web:            ## build the SPA into web/dist (supported Node and pnpm on PATH)
 	cd web && pnpm install --frozen-lockfile && pnpm build
 ui:             ## isolated headless browser walkthroughs at phone and desktop widths (build first; CAPTURE=1 with UI_ARGS=spec keeps GIFs in web/ui-artifacts/captures)

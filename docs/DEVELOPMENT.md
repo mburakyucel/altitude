@@ -1066,6 +1066,7 @@ failed check stays open on the issue with its evidence until a fix is verified.
 Review evidence by user journey and failure mode. Full suites are required; a line-coverage number
 or a test that only restates mocked calls cannot establish confidence. Add regressions that fail
 when the observable behavior breaks. Keep the expected result independent of the implementation.
+The periodic [mutation run](#mutation-run) shows where the core modules' tests would miss wrong code.
 
 | Journey | Programmatic evidence | Boundary / remaining limit |
 | --- | --- | --- |
@@ -1131,6 +1132,42 @@ keep decoded pixels. A 12-megapixel Display P3 photo converts under the real pro
 wall/CPU/memory/output bounds, orientation, alpha/color parity and intermediate cleanup have real
 conversion fixtures. The service
 and Python harnesses replace image capability checks and native execution at the engine seam.
+
+## Mutation run
+
+`make mutation RESULTS=dir` measures how well the fast unit tests guard the code where a silent
+regression costs most: task records (`altitude/state.py`), the functions that move a task between
+states in `altitude/tasks.py`, Git policy, the task door and landing. It copies the working tree,
+without ignored files, to a scratch folder, installs mutmut from the hash-pinned
+`scripts/mutation-requirements.txt` into a scratch virtual environment, and makes one small wrong
+edit at a time: a flipped comparison, a dropped call, a changed constant, string or return value.
+For each edit it runs the selected tests that reach the edited function. The module and test lists
+sit at the top of `scripts/mutation.py`. The run needs `python3 -m venv` and the package index, takes
+MINUTES on a 24-CPU Linux machine and removes its scratch folder at the end. It is a
+measurement, not a check: `make check` and the required CI never run it, and its counts gate nothing.
+
+`RESULTS/report.md` has one row per module, then each surviving edit's diff grouped by function;
+`RESULTS/mutmut.log` keeps mutmut's own output.
+
+- **Killed**: a test failed with the edit in place, so the tests guard that code.
+- **Survived**: every selected test that reaches the function still passed.
+- **No tests**: no selected test calls the function in the test process. mutmut sees calls only
+  there, and child processes a test starts (`bin/alt`, Git hooks) run the original code, so a
+  function reached only through them counts here too.
+- **Timeout**: the edit made the tests run far longer than usual, usually a loop that no longer
+  ends; read it as killed.
+
+Read each survivor and sort it:
+
+- **Real gap**: the edit changes observable behavior (a refused transition allowed, a check skipped,
+  a wrong state, path or exit status recorded) and nothing notices. Add a regression test that fails
+  on that edit through the module's behavior, not its implementation, and rerun to see it killed.
+- **Equivalent**: the edit cannot change behavior, such as a boundary that never occurs, a default
+  every caller overrides, or a timeout constant a fixture replaces. Leave it.
+- **Noise**: wording of log lines and messages. Test it only where the exact text is the behavior,
+  such as a refusal the operator reads.
+
+A survivor count is not a target; the worst real gaps become ordinary test work in their own tasks.
 
 ## Improvement review eval
 
