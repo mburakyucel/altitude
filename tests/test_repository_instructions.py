@@ -113,7 +113,7 @@ class TestRepositoryInstructions(AltitudeCase):
 
                         kwargs = dict(cwd=worktree, persona=config.PERSONAS / "l2.md", model=None,
                                       settings=self.tmp / "settings.json", job_root=self.runtime_tmp / "jobs",
-                                      extra_env={"ALTITUDE_TASK": "fixture"})
+                                      extra_env=self.worker_env("fixture"))
                         with mock.patch.object(engines.claude, "claude_agents", return_value=[]), \
                              mock.patch.object(platform, "job_active", return_value=True), \
                              mock.patch.object(engines.common.subprocess, "Popen", side_effect=execute):

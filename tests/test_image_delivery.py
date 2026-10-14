@@ -158,7 +158,7 @@ class TestNativeImages(ImageDeliveryCase):
                      mock.patch.object(platform, "job_active", return_value=True), \
                      mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen) as launch:
                     common = dict(cwd=worktree, persona=persona, model="original-model", settings=self.tmp / "settings.json",
-                                  extra_env={"ALTITUDE_TASK": "owner"}, job_root=self.runtime_tmp / "jobs", images=[self.image],
+                                  extra_env=self.worker_env("owner"), job_root=self.runtime_tmp / "jobs", images=[self.image],
                                   effort="xhigh" if engine == "codex" else None)
                     result = (engines.resume_l2(engine, "owner", "session", "inspect the screenshot", **common) if resume else
                               engines.start_l2(engine, "owner", "inspect the screenshot", **common))
@@ -197,7 +197,8 @@ class TestNativeImages(ImageDeliveryCase):
                 for engine in ("claude", "codex"):
                     with self.assertRaises(engines.ImageInputError):
                         engines.common._start_worker(engine, "owner", "caption", cwd=worktree,
-                                              job_root=self.runtime_tmp / "jobs", images=[image])
+                                              job_root=self.runtime_tmp / "jobs", images=[image],
+                                              extra_env=self.worker_env("owner"))
                 launch.assert_not_called()
                 old_workers.assert_not_called()
 

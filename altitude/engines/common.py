@@ -609,13 +609,23 @@ def launch_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) 
     return platform.manager_env(env) if retain_user_bus else platform.job_env(env)
 
 
-def task_tool_env(env: dict, job_root: Path) -> dict:
-    """Tool caches share the task's lifetime and existing writable runtime root.
+def task_scratch(extra_env: dict) -> Path:
+    """The task's scratch folder (`config.task_scratch`), which its L2 environment names: made here, beside Altitude's
+    home, without following a link, and the one folder of Altitude's that the worker may write."""
+    scratch = Path(extra_env["ALTITUDE_SCRATCH"])
+    with storage.directory(config.SCRATCH.parent.resolve(), [config.SCRATCH.name,
+                                                             *scratch.relative_to(config.SCRATCH).parts], create=True):
+        pass
+    return scratch
+
+
+def task_tool_env(env: dict, scratch: Path) -> dict:
+    """Tool caches live in the task's scratch folder and share its lifetime.
 
     Keep Corepack's installed managers readable at their original location before moving XDG caches.
     """
     env = dict(env)
-    cache = Path(job_root).resolve() / "tool-cache"
+    cache = Path(scratch).resolve() / "tool-cache"
     env["COREPACK_HOME"] = env.get("COREPACK_HOME") or str(
         Path(env.get("XDG_CACHE_HOME") or Path(env["HOME"]) / ".cache") / "node/corepack")
     for key in ("NPM_CONFIG_CACHE", "NPM_CONFIG_STORE_DIR"):
@@ -1243,8 +1253,10 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     config.task_effort(engine, effort)
     prompt = owner_prompt(cwd, persona, resume=bool(resume)) + prompt
     native = implementation(engine)
-    cmd, content, writable, read_only = native.prepare_worker(name, prompt, cwd=cwd, persona=persona, model=model,
-                                                    settings=settings, effort=effort, resume=resume, images=images)
+    scratch = task_scratch(extra_env)
+    cmd, content, writable, read_only = native.prepare_worker(name, prompt, cwd=cwd, scratch=scratch, persona=persona,
+                                                              model=model, settings=settings, effort=effort,
+                                                              resume=resume, images=images)
     worker_id = uuid.uuid4().hex
     unit = native.worker_unit_name(worker_id)
     root = Path(job_root)
@@ -1255,7 +1267,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
               "launch_model": model, "launch_effort": effort, "input_delivered": False, "sends": str(paths["sends"])}
     S.write_json(paths["record"], record)
-    worker_env = task_tool_env(launch_env(extra_env, retain_user_bus=True), root)
+    worker_env = task_tool_env(launch_env(extra_env, retain_user_bus=True), scratch)
     if native.EFFORT_ENV and effort is not None:
         worker_env.pop(native.EFFORT_ENV, None)
     job_env = {key: value for key, value in launch_env(worker_env).items() if key not in GITHUB_TOKEN_VARIABLES}

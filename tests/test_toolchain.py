@@ -176,7 +176,7 @@ class TestToolchain(AltitudeCase):
                         result = engines.common._start_worker(
                             engine, "fixture", "continue", cwd=worktree, job_root=self.runtime_tmp / "jobs",
                             resume="session" if resume else None,
-                            extra_env={"ALTITUDE_TASK": "toolchain-task", "ALTITUDE_ATTEMPT": "1"})
+                            extra_env=self.worker_env("toolchain-task", ALTITUDE_ATTEMPT="1"))
                     self.assertEqual(result["returncode"], 0, result)
                     worker_id = result["agent"]["id"]
                     process = engines.common._worker_processes.get(worker_id)

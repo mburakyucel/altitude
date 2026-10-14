@@ -114,7 +114,8 @@ tar -tzf ~/Backups/altitude-2026-10-10.tar.gz > /dev/null && echo complete
 The first command writes an archive only you can read; the second reads the whole archive and fails
 on a truncated or damaged file. Both assume the default `ALTITUDE_HOME`. The voice runtime lives beside it in
 `~/.altitude-speech` and downloads again when needed, and Altitude's copy of its repository in
-`~/.altitude-repository` is fetched again from the origin, so the archive leaves both out. Records are replaced whole, so a copy taken while
+`~/.altitude-repository` is fetched again from the origin, so the archive leaves both out, as it does task
+workers' drafts and tool caches in `~/.altitude-scratch`, deleted when each task ends. Records are replaced whole, so a copy taken while
 Altitude runs holds intact files, but activity during the copy can leave one record without its
 counterpart, such as an incident index line without its incident. For an exact copy, take it while
 no task runs and the coordinator is idle. Task folders keep their check evidence, so
