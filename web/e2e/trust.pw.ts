@@ -20,7 +20,7 @@ function screen(page: Page) {
   };
 }
 
-test("a browser that proceeded past the certificate warning is not trusted and is not offered the code @chromium", async ({ page }, info) => {
+test("a host browser that proceeded past the certificate warning is not trusted and is not offered the code @chromium", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const view = screen(page);
   await page.goto("/").catch(() => undefined);  // Chromium refuses the unknown CA with its warning page
@@ -36,6 +36,10 @@ test("a browser that proceeded past the certificate warning is not trusted and i
     visible: [view.heading, view.notTrusted, view.trust.getByRole("button", { name: "Check again" })],
     hidden: [view.field, view.trusted],
   });
+  const access = await (await request.get("/api/access", { ignoreHTTPSErrors: true })).json();
+  expect(access.trust.local).toBe(true);
+  await expect(view.trust.getByText(/If they differ, delete the download and stop/)).toBeVisible();
+  await expect(view.trust.getByText(/if a warning remains, don’t pair/)).toBeVisible();
   await walk.state("check-again-still-not-trusted", {
     action: () => view.trust.getByRole("button", { name: "Check again" }).click(),
     visible: [view.notTrusted],

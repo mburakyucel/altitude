@@ -27,12 +27,35 @@ test("fresh registration shows real automatic progress, survives refresh and com
   await request.post(`${service}/fixture/release-intro`);
   await expect(summary(panel, "Ready")).toBeVisible();
   await walk.state("04-verified-ready", { visible: [coordinator.getByText("Complete", { exact: true }), step(panel, "Project instructions").getByText("Using AGENTS.md; its contents are unchanged.")], hidden: [coordinator.getByText("In progress", { exact: true })] });
+  await expect(panel.getByText("Ready for your first conversation")).toBeVisible();
+  const beforeOpen = await (await request.get(`${service}/fixture/evidence`)).json();
   await panel.getByRole("button", { name: "Open conversation" }).click();
   await walk.state("05-conversation-quiet-header", { visible: [page.getByText("The project conversation is ready."), page.getByRole("textbox", { name: "Message L3 about new-project" })], hidden: [panel, headerSetup(page)] });
   const current = await (await request.get(`${service}/api/setup/new-project`)).json();
   expect(current.status).toBe("ready");
   const evidence = await (await request.get(`${service}/fixture/evidence`)).json();
   expect(evidence.calls.filter((call: { project: string }) => call.project === "new-project")).toHaveLength(1);
+  expect(evidence.calls).toEqual(beforeOpen.calls);
+  await expect(page.getByRole("textbox", { name: "Message L3 about new-project" })).toBeFocused();
+});
+
+test("project registration never claims readiness when actual machine prerequisites need attention", async ({ page, request, service }, info) => {
+  const walk = walkthrough(page, info);
+  expect((await request.post(`${service}/fixture/sign-out`)).ok()).toBe(true);
+  await walk.open(`${service}/projects/atlas?setup=1`);
+  const panel = setupPanel(page);
+  await walk.state("tools-01-blocked", {
+    visible: [panel.getByText("Coding tools need attention"), panel.getByRole("link", { name: "Finish coding-tool setup" }), step(panel, "Coordinator").getByText(/Using the existing conversation/)],
+    hidden: [panel.getByRole("button", { name: "Open conversation" }), panel.getByText("Ready for your first conversation")],
+  });
+  expect((await request.get(`${service}/api/prerequisites`)).ok()).toBe(true);
+  await panel.getByRole("link", { name: "Finish coding-tool setup" }).click();
+  await walk.state("tools-02-terminal-action", { visible: [page.getByText("gh auth login"), page.getByRole("button", { name: "Check again" })], hidden: [panel] });
+  expect((await request.post(`${service}/fixture/sign-in`)).ok()).toBe(true);
+  await page.getByRole("button", { name: "Check again" }).click();
+  await expect(page.getByText("gh auth login")).toBeHidden();
+  await walk.open(`${service}/projects/atlas?setup=1`);
+  await walk.state("tools-03-observed-ready", { visible: [panel.getByText("Ready for your first conversation"), panel.getByRole("button", { name: "Open conversation" })], hidden: [panel.getByText("Coding tools need attention")] });
 });
 
 test("existing projects expose new missing requirements and repair stale guards without losing continuity", async ({ page, request, service }, info) => {

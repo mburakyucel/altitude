@@ -95,13 +95,11 @@ test.describe("last project", () => {
     await page.getByRole("dialog", { name: "Remove sample-project from Altitude?", exact: true }).getByRole("button", { name: "Remove sample-project", exact: true }).click();
     await expect(page).toHaveURL(`${service}/projects`);
     const firstRun = page.getByRole("region", { name: "First run", exact: true });
-    // With nothing managed, First run starts again at its first step; each step is skippable.
+    // With nothing managed, First run returns to hosting, tools and projects; preferences stay in Settings.
     await expect(firstRun.getByRole("heading", { name: "Welcome to Altitude" })).toBeVisible();
-    await firstRun.getByRole("button", { name: "Skip" }).click();
-    await firstRun.getByRole("button", { name: /^Continue/ }).click();
-    await firstRun.getByRole("button", { name: "Skip" }).click();
-    await expect(firstRun.getByRole("heading", { name: "Voice to text" })).toBeVisible();
-    await firstRun.getByRole("button", { name: "Skip" }).click();
+    await firstRun.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(firstRun.getByRole("heading", { name: "What the agents need" })).toBeVisible();
+    await firstRun.getByRole("button", { name: /Continue|Choose a project anyway/ }).click();
     const row = firstRun.getByRole("listitem").filter({ hasText: "sample-project" });
     await walk.state("01-last-project-removed", { visible: [firstRun, row.getByRole("button", { name: "Add project", exact: true })], hidden: [page.getByRole("button", { name: "More actions" })] });
     expect(await page.evaluate(() => localStorage.getItem("altitude.project"))).toBeNull();

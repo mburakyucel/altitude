@@ -272,7 +272,9 @@ def project_roots() -> list[Path]:
     folder = machine_settings().get("projects_folder")
     if platform.containerized():
         root = Path(folder) if folder else platform.CONTAINER_PROJECTS
-        platform.require_container_project(root, folder=True)
+        with platform.inspected_path(root, limit=platform.folder_link_limit(normalize=True),
+                                     real=False, open_leaf=False) as inspected:
+            platform.require_container_project(inspected, folder=True)
         return [root]
     return [Path(folder)] if folder else PROJECT_ROOTS
 
@@ -319,8 +321,12 @@ def incident_repository() -> str | None:
 def validate_incident_repository(value) -> None:
     if value is None or value is False:
         return
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value):
-        raise ValueError("the incident repository must be a GitHub owner/name")
+    if isinstance(value, str):
+        owner, separator, name = str.partition(value, "/")
+        allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
+        if separator and owner and name and all(character in allowed for part in (owner, name) for character in part):
+            return
+    raise ValueError("the incident repository must be a GitHub owner/name")
 
 
 def validate_projects_folder(value) -> None:
@@ -328,13 +334,21 @@ def validate_projects_folder(value) -> None:
         return
     if not isinstance(value, str) or not Path(value).is_absolute():
         raise ValueError("the projects folder must be an absolute path")
-    platform.require_container_project(Path(value), folder=True)
-    if platform.private(value):
-        raise ValueError(PRIVATE_FOLDER)
-    if not Path(value).is_dir():
-        raise ValueError(f"{value} is not a directory")
-    if not os.access(value, os.R_OK | os.X_OK):
-        raise ValueError(f"{value} is not readable")
+    try:
+        with platform.inspected_path(Path(value), limit=platform.folder_link_limit(), real=False,
+                                     open_leaf=False) as inspected:
+            platform.require_container_project(inspected, folder=True)
+            if not inspected.searchable or not platform.directory_type(inspected):
+                raise ValueError(f"{value} is not a directory")
+            try:
+                with platform.readable_directory(inspected):
+                    pass
+            except PermissionError:
+                raise ValueError(f"{value} is not readable") from None
+    except platform.PrivatePath:
+        raise ValueError(PRIVATE_FOLDER) from None
+    except OSError:
+        raise ValueError(f"{value} is not a directory") from None
 
 
 def machine_wip() -> int:
@@ -687,11 +701,17 @@ def add_project(name: str, *, path=None, approval="default", l2_engine=None):
     from . import state as S
     name = require_project_name(name)
     path = Path(path or (project_roots()[0] / name)).expanduser()
-    platform.require_container_project(path)
-    if platform.private(path):
-        raise ValueError(PRIVATE_FOLDER)
-    if not path.is_dir():
-        raise ValueError(f"{path} is not a directory")
+    try:
+        # Registration inspects final type without requiring final-directory execute/read/list.
+        with platform.inspected_path(path, limit=platform.folder_link_limit(), real=False,
+                                     open_leaf=False) as inspected:
+            platform.require_container_project(inspected)
+            if not inspected.searchable or not platform.directory_type(inspected):
+                raise ValueError(f"{path} is not a directory")
+    except platform.PrivatePath:
+        raise ValueError(PRIVATE_FOLDER) from None
+    except OSError:
+        raise ValueError(f"{path} is not a directory") from None
     entry = {"path": str(path), "approval": approval,
              **({"l2_engine": l2_engine} if l2_engine else {})}
     with S.project_lock(name):
@@ -801,27 +821,57 @@ def beside_root(name: str) -> Path:
 SOURCE_COPY = beside_root("repository")
 
 
+def managed_addresses(managed: dict) -> dict[str, str]:
+    """Normalize registry spelling through policy-checked metadata; no persisted capability."""
+    addresses = {}
+    for name, entry in managed.items():
+        try:
+            with platform.inspected_path(Path(entry["path"]).expanduser(),
+                                         limit=platform.folder_link_limit(normalize=True),
+                                         real=False, open_leaf=False) as inspected:
+                addresses[str(inspected.address)] = name
+        except (OSError, ValueError):
+            continue
+    return addresses
+
+
 def discover_projects() -> list[dict]:
-    """The immediate subfolders of the projects folder, marked managed/unmanaged, and managed projects elsewhere."""
+    """List held project roots/children and marker presence; unavailable managed projects remain visible."""
     managed = load_projects()
-    by_path = {str(Path(v["path"]).expanduser().resolve()): k for k, v in managed.items()
-               if not platform.private(Path(v["path"]).expanduser())}
+    by_path = managed_addresses(managed)
     out, seen = [], set()
     for root in project_roots():
         try:
-            children = [] if platform.private(root) else sorted(root.iterdir())
-        except OSError:  # a missing or unreadable projects folder lists nothing; managed projects remain
+            with platform.inspected_path(root, limit=platform.folder_link_limit(), open_leaf=False) as inspected:
+                platform.require_container_project(inspected, folder=True)
+                with platform.directory_listing(inspected) as directory:
+                    for folder in sorted(os.listdir(directory.fd)):
+                        if folder.startswith("."):
+                            continue
+                        try:
+                            with platform.inspected_child(directory, folder, inherited_links=inspected.links,
+                                                          open_leaf=False) as child:
+                                if not platform.directory_type(child):
+                                    continue
+                                name = by_path.get(str(child.address))
+                                seen.add(name)
+                                out.append({"name": name or folder, "folder": folder, "path": str(root / folder),
+                                            "managed": name is not None, "git": platform.git_marker(child),
+                                            **(managed.get(name, {}) if name else {})})
+                        except (OSError, ValueError):
+                            continue
+        except (OSError, ValueError):
             continue
-        for p in children:
-            if p.name.startswith(".") or platform.private(p) or not p.is_dir():
-                continue
-            key = str(p.resolve())
-            name = by_path.get(key)
-            seen.add(name)
-            out.append({"name": name or p.name, "folder": p.name, "path": str(p), "managed": name is not None,
-                        "git": (p / ".git").exists(), **(managed.get(name, {}) if name else {})})
-    for k, v in managed.items():  # managed projects outside the roots
-        if k not in seen:
-            git = not platform.private(Path(v["path"]).expanduser()) and (Path(v["path"]) / ".git").exists()
-            out.append({"name": k, "folder": Path(v["path"]).name, "managed": True, "git": git, **v})
+    for name, entry in managed.items():
+        if name in seen:
+            continue
+        git = False
+        try:
+            with platform.inspected_path(Path(entry["path"]).expanduser(),
+                                         limit=platform.folder_link_limit(), open_leaf=False) as directory:
+                if platform.directory_type(directory):
+                    git = platform.git_marker(directory)
+        except (OSError, ValueError):
+            pass
+        out.append({"name": name, "folder": Path(entry["path"]).name, "managed": True, "git": git, **entry})
     return out

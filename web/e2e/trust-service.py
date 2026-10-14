@@ -1,5 +1,5 @@
-"""Altitude over real HTTPS with the pairing screen's trust check. The browser runs on this computer, so the service
-treats it as another device. Without an argument the identity is a fresh CA this browser does not trust; with one,
+"""Altitude over real HTTPS with the pairing screen's trust check on the hosting computer.
+Without an argument the identity is a fresh CA this browser does not trust; with one,
 it is that folder as `tls.fixture(folder, probe=True)` makes it, for a phone that trusts its CA."""
 import sys
 from pathlib import Path
@@ -20,7 +20,6 @@ def main():
         server.tls_init()
         context, probe = tls.check("127.0.0.1"), tls.probe_context("127.0.0.1")
     server.TRUST = tls.TrustCheck(probe, tls.identity(config.TLS_DIR / "ca.crt")["name"])
-    server.Handler._local = lambda _handler: False
     serve(context=context)
 
 

@@ -12,6 +12,9 @@ import ctypes
 import fcntl
 import hashlib
 from contextlib import ExitStack, contextmanager
+from collections import deque
+from dataclasses import dataclass, replace
+import errno
 import ipaddress
 import json
 import os
@@ -37,6 +40,42 @@ import time
 
 
 SERVICE = "altitude.service"
+
+
+def computer_name() -> str:
+    """The hosting computer's name, shown only inside the paired app or a local terminal."""
+    return "Altitude container" if containerized() else socket.gethostname()
+
+
+# The LAN and VPN ranges the managed CA's name constraints permit: private IPv4, shared VPN space and unique-local IPv6.
+PRIVATE_NETWORKS = tuple(map(ipaddress.ip_network, ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
+                                                    "fc00::/7")))
+
+
+def private_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return any(address in network for network in PRIVATE_NETWORKS)
+
+
+def service_address(host: str) -> str:
+    """An explicit local/private bind assigned to this computer; never change networking to make it fit."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise ValueError("Choose a concrete loopback or private IP address assigned to the hosting computer") from exc
+    if not address.is_loopback and not private_address(address):
+        raise ValueError("Choose loopback or a private LAN/VPN address; wildcard, public and link-local binds are not supported here")
+    try:
+        with socket.socket(socket.AF_INET if address.version == 4 else socket.AF_INET6) as probe:
+            probe.bind((str(address), 0))
+    except OSError as exc:
+        raise ValueError("That address is not available on the hosting computer; arrange the private connection first") from exc
+    return str(address)
+
+
+def installation_lifecycle() -> str:
+    return ("Altitude runs in the background while you are logged in and starts at your next login."
+            if _darwin() else "Altitude runs as your account's background service; logout and boot behavior is shown below.")
+
 CONTAINER_STOP_WAIT = 105  # process termination45 + stop-post45 + margin15
 CONTAINER_BUILD_SECONDS = 900  # extraction, build480, inspections60, save60, load60, margin
 #: The LaunchAgent that runs the account's service on macOS; service_label() names the one for the current home.
@@ -219,12 +258,17 @@ def container_git_guards() -> tuple[Path, Path, str] | None:
     return config.SOURCE / "hooks", config.HOME / ".config/altitude/git-guards", "/usr/bin/python3"
 
 
-def require_container_project(path: Path, *, folder: bool = False) -> None:
+def require_container_project(inspected, *, folder: bool = False) -> None:
+    """Chooser containment compares inspected addresses, never an unchecked pre-resolution."""
     if containerized():
-        root = CONTAINER_PROJECTS.resolve()
-        target = path.resolve()
-        if not target.is_relative_to(root) or not folder and target == root:
-            raise ValueError("Choose a project folder inside the container's /home/altitude/Projects volume")
+        with inspected_path(CONTAINER_PROJECTS, limit=None, real=False, open_leaf=False) as volume:
+            target, root = inspected.address, volume.address
+            if not target.is_relative_to(root) or not folder and target == root:
+                raise ValueError("Choose a project folder inside the container's /home/altitude/Projects volume")
+            target_info = inspected.frames[len(root.parts) - 1][2]
+            if ((volume.info is None) != (target_info is None) or
+                    volume.info is not None and _path_identity(volume.info) != _path_identity(target_info)):
+                raise ValueError("Container projects volume changed during inspection")
 
 
 def _container_instance() -> str:
@@ -1772,6 +1816,277 @@ def private(path: str | Path) -> bool:
         if target.is_absolute():  # its anchor may be "//", which the disk reads as "/"
             current, target = "/", target.relative_to(target.anchor)
         remaining = [*target.parts, *remaining]
+
+
+
+class PrivatePath(ValueError):
+    """Existing private-place policy refused a candidate before its lookup."""
+
+
+def _path_identity(info):
+    return info.st_dev, info.st_ino, info.st_mode
+
+
+@dataclass(frozen=True)
+class NamespacePath:
+    parent: int | None
+    address: Path
+    relative: Path
+    fd: int | None
+    info: object
+    links: int
+    frames: tuple
+    searchable: bool
+
+
+@contextmanager
+def namespace_path(root: int, base: Path, path: Path, places: tuple[str, ...], anchors: tuple[Path, ...],
+                   *, parent=None, limit: int | None = None, real: bool = False, open_leaf: bool = True,
+                   clamp_root: bool = False):
+    """Normalize within a pinned namespace; links never cause an unchecked target lookup."""
+    flags = directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW
+    frames = []
+    initial = parent.frames if parent is not None else (("", root, None),)
+    cost = parent.links if parent is not None else 0
+    unchecked = object()
+    active, completed = {}, {}
+    pending = deque(path.parts)
+    searchable = parent.searchable if parent is not None else True
+
+    def pop():
+        _, fd, _ = frames.pop()
+        if fd is not None:
+            os.close(fd)
+
+    def charge(amount):
+        nonlocal cost
+        cost += amount
+        if limit is not None and cost > limit:
+            if places and limit == 32:
+                raise PrivatePath("private-path alias limit")
+            raise OSError(errno.ELOOP, "too many directory aliases")
+
+    def leaf():
+        return not any(isinstance(p, str) or len(p) == 2 for p in pending)
+
+    try:
+        for name, fd, info in initial:
+            frames.append((name, os.dup(fd) if fd is not None else None, info))
+        frames[0] = ("", frames[0][1], os.fstat(frames[0][1]))
+        while pending:
+            part = pending.popleft()
+            expected = unchecked
+            if isinstance(part, tuple):
+                if len(part) == 3:  # A completion marker ends this link's active expansion.
+                    signature, started = active.pop(part)
+                    completed[part] = signature, tuple((name, info) for name, _, info in frames[1:]), cost - started
+                    continue
+                part, expected = part  # A reused address still requires fresh lookup/identity checks.
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if len(frames) == 1:
+                    if clamp_root:
+                        continue
+                    raise ValueError("website path leaves its root")
+                pop()
+                continue
+            candidate = base.joinpath(*(f[0] for f in frames[1:]), part)
+            if private_prefix(candidate, places):
+                raise PrivatePath("private filesystem path")
+            parent = frames[-1][1]
+            if parent is None:
+                if real:
+                    raise NotADirectoryError(candidate)
+                searchable = False
+                if expected is not unchecked and expected is not None:
+                    raise ValueError("website target changed")
+                frames.append((part, None, None))
+                continue
+            try:
+                info = os.stat(part, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                if real:
+                    raise
+                searchable = False
+                if expected is not unchecked and expected is not None:
+                    raise ValueError("website target changed") from None
+                frames.append((part, None, None))
+                continue
+            if expected is not unchecked and (expected is None or _path_identity(info) != _path_identity(expected)):
+                raise ValueError("website target changed")
+            if stat.S_ISLNK(info.st_mode):
+                parent_info = frames[-1][2]
+                key = parent_info.st_dev, parent_info.st_ino, part
+                if key in active:
+                    if places and limit == 32:
+                        raise PrivatePath("cyclic private-path alias")
+                    raise ValueError("cyclic website link")
+                signature = info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns
+                saved = completed.get(key)
+                if saved is not None:
+                    if saved[0] != signature:
+                        raise ValueError("website link changed")
+                    charge(saved[2])
+                    # Request-local verified addresses are rewalked through the same pinned root.
+                    # They contain no links; each component keeps private/no-follow/identity checks.
+                    while len(frames) > 1:
+                        pop()
+                    pending.extendleft(reversed(saved[1]))
+                    continue
+                target = Path(os.readlink(part, dir_fd=parent))
+                after = os.stat(part, dir_fd=parent, follow_symlinks=False)
+                if signature != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns):
+                    raise ValueError("website link changed")
+                started = cost
+                charge(1)
+                active[key] = signature, started
+                if target.is_absolute():
+                    # Known spellings address the held root, never a mutable alias rewalk.
+                    parts = ("/", *target.parts[1:])
+                    anchor = next((a for a in sorted(anchors, key=lambda a: len(a.parts), reverse=True)
+                                   if parts[:len(a.parts)] == a.parts), None)
+                    if anchor is None:
+                        raise ValueError("website link leaves its root")
+                    while len(frames) > 1:
+                        pop()
+                    target_parts = parts[len(anchor.parts):]
+                else:
+                    target_parts = target.parts
+                pending.extendleft(reversed((*target_parts, key)))
+                continue
+            if stat.S_ISDIR(info.st_mode) and (open_leaf or not leaf()):
+                child = os.open(part, flags, dir_fd=parent)
+                frames.append((part, child, info))
+                if _path_identity(os.fstat(child)) != _path_identity(info):
+                    raise ValueError("website directory changed")
+            elif stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode):
+                if real and not leaf():
+                    raise NotADirectoryError(candidate)
+                if not leaf():
+                    searchable = False
+                frames.append((part, None, info))
+            elif real and leaf():
+                # Folder metadata never opens marker contents, including a nonregular leaf.
+                frames.append((part, None, info))
+            else:
+                raise ValueError("not a regular website path")
+        relative = Path(*(f[0] for f in frames[1:]))
+        yield NamespacePath(frames[-2][1] if len(frames) > 1 else root, base / relative,
+                            relative, frames[-1][1], frames[-1][2], cost, tuple(frames), searchable)
+    finally:
+        # Keep only live frames. ExitStack completes all closes even if one close raises.
+        with ExitStack() as closing:
+            for _, fd, _ in frames:
+                if fd is not None:
+                    closing.callback(os.close, fd)
+
+
+@contextmanager
+def namespace_file(parent: int | None, relative: Path, info):
+    """Read the inspected regular file without following replacements or blocking on a FIFO."""
+    if info is None:
+        raise FileNotFoundError(relative)
+    if stat.S_ISDIR(info.st_mode):
+        raise IsADirectoryError(relative)
+    if parent is None:
+        raise NotADirectoryError(relative)
+    try:
+        fd = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
+        raise ValueError("website file changed") from None
+    try:
+        actual = os.fstat(fd)
+        if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (info.st_dev, info.st_ino):
+            raise ValueError("website file changed")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            yield stream
+    finally:
+        os.close(fd)
+
+
+def directory_link_limit() -> int:
+    """The native whole-path lookup budget; component-wise normalization has no such quota."""
+    return 32 if hasattr(os, "O_SEARCH") else 40
+
+
+def folder_link_limit(*, normalize: bool = False) -> int | None:
+    # The original private-path operation counts 32 even before a component-wise resolve.
+    return 32 if private_places() else None if normalize else directory_link_limit()
+
+
+@contextmanager
+def inspected_path(path: Path, *, limit: int | None, real: bool = True, open_leaf: bool = True):
+    """One operation's absolute address and held ancestors, with policy before every candidate lookup."""
+    absolute = Path(os.path.join(os.getcwd(), path))
+    places = private_places()
+    if private_prefix("/", places):
+        raise PrivatePath("private filesystem root")
+    root = os.open("/", directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with namespace_path(root, Path("/"), Path(*absolute.parts[1:]), places, (Path("/"),),
+                            limit=limit, real=real, open_leaf=open_leaf, clamp_root=True) as inspected:
+            yield inspected
+    finally:
+        os.close(root)
+
+
+@contextmanager
+def inspected_child(parent: NamespacePath, name: str, *, inherited_links: int, open_leaf: bool = True):
+    """A listed child uses the held ancestry; caller spelling establishes its logical alias budget."""
+    if not name or name in (".", "..") or "/" in name:
+        raise ValueError("not a directory entry name")
+    with namespace_path(parent.frames[0][1], Path("/"), Path(name), private_places(), (Path("/"),),
+                        parent=replace(parent, links=inherited_links), limit=folder_link_limit(),
+                        real=True, open_leaf=open_leaf, clamp_root=True) as inspected:
+        yield inspected
+
+
+def directory_type(inspected: NamespacePath) -> bool:
+    return inspected.info is not None and stat.S_ISDIR(inspected.info.st_mode)
+
+
+@contextmanager
+def _opened_directory(inspected: NamespacePath, access: int):
+    """Open an inspected final directory with only this operation's required access."""
+    if not directory_type(inspected):
+        raise NotADirectoryError(inspected.address)
+    parent, name = ((inspected.fd, ".") if inspected.fd is not None
+                    else (inspected.parent, inspected.relative.name))
+    fd = os.open(name, access | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+    try:
+        if _path_identity(os.fstat(fd)) != _path_identity(inspected.info):
+            raise ValueError("directory changed")
+        frames = (*inspected.frames[:-1], (inspected.frames[-1][0], fd, inspected.info))
+        yield replace(inspected, fd=fd, frames=frames)
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def readable_directory(inspected: NamespacePath):
+    """Selection checks read/search access on the exact held directory."""
+    with _opened_directory(inspected, directory_search_access()) as directory:
+        if not os.access(".", os.R_OK | os.X_OK, dir_fd=directory.fd):
+            raise PermissionError(inspected.address)
+        yield directory.fd
+
+
+@contextmanager
+def directory_listing(inspected: NamespacePath):
+    """Listing keeps its original read permission; children separately require ancestor search."""
+    with _opened_directory(inspected, os.O_RDONLY) as directory:
+        yield directory
+
+
+def git_marker(directory: NamespacePath) -> bool:
+    """Presence only, with a new raw directory-plus-marker budget and no marker contents read."""
+    try:
+        with _opened_directory(directory, directory_search_access()) as held:
+            with inspected_child(held, ".git", inherited_links=directory.links, open_leaf=False) as marker:
+                return marker.info is not None
+    except (OSError, ValueError):
+        return False
 
 
 def _filters(kind: str, values) -> list[str]:

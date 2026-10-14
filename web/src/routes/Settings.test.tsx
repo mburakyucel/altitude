@@ -771,9 +771,9 @@ describe("Pair another device", () => {
     }));
   }
 
-  it("shows the code with the address to open, its QR and the certificate's check, and never a code link", async () => {
+  it("shows the code with the address to open, its QR and the certificate's full SHA-256, and never a code link", async () => {
     codeFixture({ code: "ABCD-2345", minutes: 10, address: "https://192.168.1.20:8890", qr: ["1010101", "0101010", "1111111", "0000000", "1010101", "0101010", "1111111"],
-      certificate: { name: "Altitude CA 4F7K", check: "AA BB CC DD EE FF 00 11" } });
+      certificate: { name: "Altitude CA 4F7K", sha256: ["AA BB CC DD EE FF 00 11", "22 33 44 55 66 77 88 99", "AA BB CC DD EE FF 00 12", "22 33 44 55 66 77 88 9A"] } });
     const { user } = renderApp({ route: "/settings/devices" });
     const card = await screen.findByRole("region", { name: "Pair another device" });
     await user.click(within(card).getByRole("button", { name: "Make a pairing code" }));
@@ -781,7 +781,8 @@ describe("Pair another device", () => {
     expect(within(card).getByText(/Works once, for the next 10 minutes\. On the other device, open/)).toHaveTextContent("open https://192.168.1.20:8890 and type it.");
     expect(within(card).getByRole("img", { name: "QR code for https://192.168.1.20:8890" })).toBeInTheDocument();
     expect(within(card).getByText("Scan with a phone to open Altitude.")).toBeVisible();
-    expect(within(card).getByText(/Certificate “Altitude CA 4F7K” — SHA-256 ends with/)).toHaveTextContent("AA BB CC DD EE FF 00 11");
+    expect(within(card).getByText(/check it is named “Altitude CA 4F7K” with this SHA-256/)).toBeVisible();
+    expect(within(card).getByLabelText("Certificate SHA-256")).toHaveTextContent("AA BB CC DD EE FF 00 1122 33 44 55 66 77 88 99AA BB CC DD EE FF 00 1222 33 44 55 66 77 88 9A");
     expect(within(card).queryByText(/pair\?code=/)).toBeNull();
     expect(within(card).getByRole("button", { name: "Make a new code" })).toBeVisible();
   });

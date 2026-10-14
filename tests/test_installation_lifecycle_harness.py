@@ -589,8 +589,8 @@ class TestMacLifecycle(AltitudeCase):
         harness = MacLifecycle(self.tmp, self.tmp, release["commit"])
         harness.home = self.tmp
         made = harness.versions(package, release)
-        self.assertEqual(list(made), ["v0.0.2", "v0.0.3", "v0.0.4", "v0.0.5"])
-        self.assertEqual([entry["failing"] for entry in made.values()], [False, False, False, True])
+        self.assertEqual(list(made), ["v0.0.2", "v0.0.3", "v0.0.4", "v0.0.5", "v0.0.6"])
+        self.assertEqual([entry["failing"] for entry in made.values()], [False, False, False, True, False])
         for version, entry in made.items():
             bundle = entry["folder"] / f"altitude-{version}.tar.gz"
             verified = installation.extract(bundle, hashlib.sha256(bundle.read_bytes()).hexdigest(), self.tmp / version)
@@ -758,6 +758,32 @@ class TestInstallationVmCapture(AltitudeCase):
 
 class TestInstallationMacosVm(AltitudeCase):
     """The macOS VM lane's offline guest setup, isolation and judging; no guest, helper or restore image."""
+
+    def test_registered_project_broker_fits_the_actual_guest_lifecycle_home(self):
+        from scripts import installation_macos_vm as vm
+        from altitude import config, l3, platform
+        commands = []
+
+        class Guest:
+            def copy(self, source, target):
+                pass
+
+            def ssh(self, command, timeout=120, check=True):
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            def fetch(self, source, target):
+                target.mkdir()
+                (target / "result.json").write_text(json.dumps({"passed": True, "steps": [], "limits": []}))
+
+        with mock.patch.object(vm, "add_github_cli"), mock.patch.object(vm, "prerequisites", return_value={}):
+            vm.lifecycle(Guest(), self.tmp, {}, self.tmp, self.tmp, "a" * 40, "mac", "lifecycle")
+        work = commands[0].split('work="', 1)[1].split('"', 1)[0]
+        self.assertTrue(work.startswith(vm.SHARED + "/"))
+        self.assertIn('TMPDIR="$temp"', commands[0])
+        with mock.patch.object(config, "ROOT", Path(work) / "home/.altitude"), \
+             mock.patch.object(platform, "containerized", return_value=False):
+            self.assertLess(len(str(l3.verb_socket_path("fictional")).encode()), 104)
 
     class Guest:
         """Answers the lane's probes as a guest whose network card is plugged in until `unplug`."""

@@ -71,10 +71,10 @@ test("Settings › Devices › Set up a device shows the QR code with its time l
   await certificate(page, LIMITED);
   await walk.open("/settings/devices");
   await walk.state("05-set-up-a-device", { action: () => add.scrollIntoViewIfNeeded(), visible: [add], hidden: [code, setup, card.getByRole("alert")] });
-  // The suite's service listens on loopback only, so its real answer is the refusal.
+  // The suite's service is plain HTTP, so its real answer refuses certificate sharing.
   await walk.state("06-refused", {
     action: () => add.click(),
-    visible: [card.getByRole("alert").getByText(/configured for 127\.0\.0\.1, which only this computer can open/), add],
+    visible: [card.getByRole("alert").getByText(/serves plain HTTP, so it has no certificate for a device to trust/), add],
     hidden: [code, setup],
   });
   const closes: unknown[] = [];

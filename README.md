@@ -61,16 +61,19 @@ and one authenticated coding CLI. Agent work uses your coding account's allowanc
    [installation steps](docs/SETUP.md#install-the-application) explain what it trusts and how to
    verify a release's script before running it.
 2. Trust Altitude's certificate with the
-   [certificate guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device), then
-   open the private link printed by the installer. It pairs the first browser and opens
-   [First run](docs/SETUP.md#first-run-in-the-browser), where you add your project. The link works
-   once, for ten minutes; if it expires, run `~/.local/bin/alt pair` on the computer running Altitude.
-3. For terminal use, put `~/.local/bin` on your PATH and run `alt doctor` when ready.
-   [Pair additional devices](docs/SETUP.md#pair-each-device) with `alt pair` or Settings → Devices.
+   [certificate guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device),
+   comparing its name and full SHA-256 with the installer's output. Then open the private link the
+   installer prints. It pairs this browser and opens [First run](docs/SETUP.md#first-run-in-the-browser),
+   which checks your coding tools and adds your first project. The link works once, for ten minutes;
+   if it expires, run `~/.local/bin/alt pair` on the computer running Altitude.
+3. For terminal use, put `~/.local/bin` on your PATH. `alt doctor` shows where Altitude runs, its
+   address and what is left to set up. [Pair additional devices](docs/SETUP.md#pair-each-device) with
+   `alt pair` or Settings → Devices.
 
-Installation enables a per-user service. The installer opens no browser and changes no certificate
-trust. Clicking its link uses your terminal's normal browser handler on the device viewing it;
-over SSH, `127.0.0.1` points to that device, so remote use needs a configured reachable address.
+Altitude runs as a per-user background service on the computer you installed it on; closing the
+terminal or the browser leaves it running. The default `https://127.0.0.1:8890` opens only on that
+computer. **Settings → Network** explains reaching it from a phone or another computer, and how an
+optional private VPN fits in. The installer opens no browser and changes no certificate trust.
 
 <details>
 <summary>Ask your coding agent to help install</summary>

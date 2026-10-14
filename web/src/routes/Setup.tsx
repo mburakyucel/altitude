@@ -1,9 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { useSearchParams } from "react-router";
+import { useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router";
 import { Stamp } from "../components/Stamp";
 import { StatusMark } from "../components/StatusMark";
-import { ApiError, useSetup, useSetupAction } from "../data/api";
+import { ApiError, usePrerequisites, useSetup, useSetupAction } from "../data/api";
 import type { Setup } from "../data/api";
 import { Overlay } from "../shell/Overlay";
 
@@ -49,7 +49,10 @@ export function ProjectSetup({ name }: { name: string }) {
   const [kept, setKept] = useState(false);
   const client = useQueryClient();
   const open = search.get("setup") === "1";
+  const conversationFocus = useRef(false);
+  const prerequisites = usePrerequisites(open);
   const close = (conversation = false) => {
+    conversationFocus.current = conversation;
     // The conversation polls slowly while idle; a first reply saved meanwhile appears on arrival.
     if (conversation) void client.invalidateQueries({ queryKey: ["chat", name] });
     setSearch((current) => {
@@ -67,6 +70,12 @@ export function ProjectSetup({ name }: { name: string }) {
   const stale = setup.isError;
   const steps = [...(data?.steps ?? [])].sort((a, b) => Number(attention(b.status)) - Number(attention(a.status)));
   const failed = data?.steps.some((step) => step.status === "failed" || step.status === "unknown");
+  const conversationOnly = data?.status === "conversation_ready";
+  // Existing non-Git conversations require a coding agent, while Git/GitHub checks apply to Git task delivery.
+  const toolsReady = !prerequisites.isError && !prerequisites.isFetching && !!prerequisites.data?.every((item) =>
+    item.state !== "unmet" || conversationOnly && (item.key === "github" || item.key === "git"));
+  const projectReady = !stale && !busy && (data?.status === "ready" || data?.status === "conversation_ready");
+  const ready = projectReady && toolsReady;
   const run = (kind: "check" | "repair" | "combine", expected?: string) => {
     setIntegration(null);
     action.mutate({ action: kind, ...(expected ? { expected } : {}) });
@@ -84,7 +93,8 @@ export function ProjectSetup({ name }: { name: string }) {
       <span className="setup-dot" aria-hidden />
       <span>Setup<span className="setup-trigger-status"><span className="setup-separator"> · </span>{label}</span></span>
     </button> : null}
-    {open ? <Overlay label="Project setup" side="right" onClose={() => close()}>
+    {open ? <Overlay label="Project setup" side="right" onClose={() => close()}
+      returnFocus={() => conversationFocus.current ? document.querySelector<HTMLTextAreaElement>(".composer-field") : null}>
       <section className="setup-panel">
         <header className="setup-heading">
           <div><p className="label text-muted">{name}</p><h2>Project setup</h2></div>
@@ -135,10 +145,19 @@ export function ProjectSetup({ name }: { name: string }) {
         </ol>
         {failed ? <div className="setup-help"><p className="text-meta text-muted">Retry runs setup again. Discuss with L3 opens your project conversation.</p><button type="button" className="btn" onClick={() => close(true)}>Discuss with L3</button></div> : null}
         <footer className="setup-footer">
+          {projectReady ? prerequisites.isPending || prerequisites.isFetching ? <p><StatusMark label="Checking coding tools…" /></p>
+            : !toolsReady ? <div className="setup-notice">
+              <p>{prerequisites.isError ? "Could not check coding tools" : "Coding tools need attention"}</p>
+              {prerequisites.isError ? <button type="button" className="btn" onClick={() => void prerequisites.refetch()}>Retry</button> : null}
+              <Link className="link" to="/settings/prerequisites">Finish coding-tool setup</Link>
+            </div> : <>
+              <p className="setup-summary">{data?.status === "conversation_ready" ? "Conversation ready" : "Ready for your first conversation"}</p>
+              {data?.status === "conversation_ready" ? <p className="text-meta text-muted">Git task delivery requires a repository.</p> : null}
+            </> : null}
           {data?.checked_at ? <p className="text-meta text-muted">{stale ? "Last observed" : "Checked"} <Stamp at={data.checked_at} className="setup-time" /></p> : null}
           <div className="setup-actions">
             <button type="button" className="btn" disabled={busy || setup.isPending} onClick={() => run("check")}>Check again</button>
-            <button type="button" className="btn btn-primary" onClick={() => close(true)}>Open conversation</button>
+            {ready ? <button type="button" className="btn btn-primary" onClick={() => close(true)}>Open conversation</button> : null}
           </div>
           <p className="text-meta text-muted">Closing this panel does not cancel setup.</p>
         </footer>
