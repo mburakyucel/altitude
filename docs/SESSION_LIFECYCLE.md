@@ -574,7 +574,11 @@ for the running worker's next checkpoint. An explicit question block supersedes 
 older inbox messages remain available, but cannot resume that wait. A later message or explicit Resume
 authorizes another turn. An L2's question goes to L3 first: L3's `alt task message` requests that
 daemon resume, or `alt task escalate` turns it into a Needs you card for the operator. `--for-operator`
-places operator questions there immediately and also notifies L3. A block that publishes or revises questions
+places operator questions there immediately and also notifies L3. A wait on the operator's own action, such as
+a command for the task terminal or a step posted in project chat, is such a plain question with the step as its
+first line and a terminal step's `run` block; while the task waits, the operator's turn names that line.
+Their reply, the Terminal notice or L3's message wakes the owner, which verifies the step and resolves the
+question. A block that publishes or revises questions
 queues one notification with open members, revisions and required authority; re-parking unchanged members
 stays quiet. Notification lets L3 coordinate scope or record-backed portions without approving
 operator-required proposal, security or product decisions. A member that exists only because an
