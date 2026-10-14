@@ -109,6 +109,7 @@ class TestInvocationReader(_CodexTranscriptCase):
         record = self.root / "w2.json"
         cases = (("first thread wins", [started("thread-1"), started("thread-0"), work], None, True),
                  ("work ends the header", [work, started("thread-1")], None, False),
+                 ("a turn ends the header", [{"type": "turn.started"}, started("thread-1"), work], None, False),
                  ("record fills a headerless turn", [work, started("thread-0")], "thread-1", True),
                  ("header outranks the record", [started("thread-0"), work], "thread-1", False))
         for name, events, session, selected in cases:
@@ -229,7 +230,9 @@ class TestInvocationReader(_CodexTranscriptCase):
         record.unlink()
         record.symlink_to(outside)
         # A record already replaced by a link when activity opens it refuses activity, as stdout does.
-        self.assertEqual(transcript.activity(self.project, self.slug)["state"], "unavailable")
+        refused = transcript.activity(self.project, self.slug)
+        self.assertEqual(refused["state"], "unavailable")
+        self.assertNotIn("outside marker", json.dumps(refused))
         record.unlink()
         S.write_json(record, current)
         self.assertEqual(self._view(mode="delta", cursor=before["cursor"])["events"], [])
