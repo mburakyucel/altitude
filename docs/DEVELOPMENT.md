@@ -525,7 +525,8 @@ while True:
   both browsers' system libraries). The image is tagged by the file's hash and is never built from
   a candidate. Keep the Playwright pin aligned with `web/pnpm-lock.yaml` when upgrading browsers.
 - **Candidate.** The run sees a throwaway clone of the worktree's committed `HEAD` (at `/work` in the
-  container), with the worktree's `origin/*` branches and tags. Uncommitted edits and the worktree
+  container), with the worktree's `origin/*` branches and tags. Its `origin` is the project's GitHub
+  remote when it has one, otherwise the project's local Git folder. Uncommitted edits and the worktree
   itself stay out, and Git hooks are not run. The command starts in the clone; `VALIDATION_RESULTS`
   names its results folder and `ALTITUDE_VALIDATION=1` is set.
 - **Container.** Every run uses fixed flags. The command runs as the image's non-root user,
@@ -1313,7 +1314,9 @@ without GitHub runners. It needs `qemu-system-x86`, `qemu-utils` and `cloud-imag
 once by the machine's administrator) and read/write access to `/dev/kvm`. One command builds both
 synthetic versions from a committed revision (default: HEAD, which refuses uncommitted edits to tracked
 files), runs every phase
-and leaves the evidence in the results directory:
+and leaves the evidence in the results directory. The release builds and the published-release
+downloads take the GitHub repository from the checkout's `origin` remote, which the validation
+runner's copy carries, and a non-GitHub origin stops the run naming it:
 
 ```sh
 make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main

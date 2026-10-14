@@ -290,8 +290,8 @@ def _clone(worktree: Path, target: Path, project: str) -> tuple[str, str]:
                   "+refs/remotes/origin/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"],
                  ["-C", str(target), "checkout", "--quiet", "--detach", commit]):
         subprocess.run([*git, *step], capture_output=True, text=True, timeout=600, check=True)
-    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=common, capture_output=True, text=True,
-                            timeout=10, env=git_policy.git_env(common)).stdout.strip()
+    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=worktree, capture_output=True, text=True,
+                            timeout=10, env=env).stdout.strip()
     if re.fullmatch(r"(https://github\.com/|git@github\.com:)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", origin):
         subprocess.run([*git, "-C", str(target), "remote", "set-url", "origin", origin], check=True, timeout=10)
     return commit, tree
