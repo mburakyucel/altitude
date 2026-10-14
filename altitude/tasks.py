@@ -271,14 +271,46 @@ def _excerpt(text: str, markdown: bool) -> tuple[str, str]:
     return heading[:160], paragraph[:300]
 
 
-def capture_shown(project: str, task: dict, paths: object) -> tuple[dict, dict[str, bytes]]:
-    """Copy exactly the owner's named worktree files and the document's own local images; nothing else is read."""
+def shown_files(project: str, task: dict, paths: object) -> dict[str, bytes]:
+    """The owner's named worktree files and the document's own local images, read by the owner's `alt` in its
+    worker, so altd records what it is sent without opening a path the worker names."""
     if not isinstance(paths, list) or not paths or any(not isinstance(path, str) for path in paths):
         raise TransitionError("--show names files in this task's worktree")
     if not task.get("worktree"):
         raise TransitionError("showing files requires this task's registered worktree")
     root = config.project_path(project).resolve()
     relative_worktree = config.WORKTREE_ROOT / task["slug"]
+    found = {}
+
+    def read(path: str, limit: int) -> bytes:
+        found[path] = _bounded_bytes(root, f"{relative_worktree}/{path}", limit)
+        return found[path]
+
+    _shown(list(paths), read)  # the same checks altd repeats on what it is sent
+    return found
+
+
+def capture_shown(project: str, task: dict, sent: object) -> tuple[dict, dict[str, bytes]]:
+    """The shown record and content-named copies of exactly the files the owner sent: its named worktree files and
+    the document's own local images, as `shown_files` read them."""
+    if (not isinstance(sent, dict) or not sent
+            or any(not isinstance(path, str) or not isinstance(data, bytes) for path, data in sent.items())):
+        raise TransitionError("--show names files in this task's worktree")
+    if not task.get("worktree"):
+        raise TransitionError("showing files requires this task's registered worktree")
+
+    def read(path: str, limit: int) -> bytes:
+        if path not in sent:
+            raise FileNotFoundError(f"{path} was not sent")
+        if len(sent[path]) > limit:
+            raise ValueError(f"{path}: not a bounded regular file")
+        return sent[path]
+
+    return _shown(list(sent), read)
+
+
+def _shown(paths: list[str], fetch) -> tuple[dict, dict[str, bytes]]:
+    """Check and describe the shown files, reading each through `fetch(path, limit)`."""
     files, total = {}, 0
 
     def kind(path: str) -> str:
@@ -291,7 +323,7 @@ def capture_shown(project: str, task: dict, paths: object) -> tuple[dict, dict[s
         if path.startswith("/") or any(p in ("", ".", "..") or "\\" in p or any(ord(c) < 32 for c in p)
                                        for p in path.split("/")):
             raise ValueError(f"{path}: name a plain path inside the worktree")
-        data = _bounded_bytes(root, f"{relative_worktree}/{path}", limit)
+        data = fetch(path, limit)
         name = hashlib.sha256(data).hexdigest() + "." + kind(path)
         files[name] = data
         return data, name
@@ -870,6 +902,38 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         return row
 
 
+#: What the owner saves through `alt task save`, and the file in the task's folder altd keeps it in.
+OWNER_FILES = {"report": "report.json", "progress": "progress.md", "handoff": None}
+
+
+def save_owner_file(project: str, slug: str, kind: str, text: str, *, expected_attempt: int) -> dict:
+    """Store the running owner's report, progress or engine-transfer readiness receipt in the task's folder. altd
+    writes it, so what it later reads is what the owner saved, never a file the worker wrote."""
+    if kind not in OWNER_FILES:
+        raise TransitionError(f"alt task save: one of {', '.join(OWNER_FILES)}")
+    if len(text.encode()) > TASK_FILE_LIMIT:
+        raise TransitionError(f"alt task save: the {kind} is larger than {TASK_FILE_LIMIT >> 20} MiB")
+    name = OWNER_FILES[kind]
+    if kind != "progress":
+        try:
+            parsed = json.loads(text)
+        except ValueError as exc:
+            raise TransitionError(f"alt task save: the {kind} is not JSON: {exc}") from None
+        if not isinstance(parsed, dict):
+            raise TransitionError(f"alt task save: the {kind} is one JSON object")
+        if kind == "handoff":
+            transfer = parsed.get("id")
+            if not isinstance(transfer, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", transfer):
+                raise TransitionError("alt task save: the readiness receipt names its transfer id")
+            name = f"handoff-{transfer}.ready.json"
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") != "running" or task.get("attempt") != expected_attempt:
+            raise TransitionError(f"alt task save: attempt {expected_attempt} is not the running owner")
+        storage.replace(S.task_dir(project, slug) / name, text.encode())
+    return {"saved": kind, "path": str(S.task_dir(project, slug) / name)}
+
+
 def notify(project: str, slug: str, text: str, *, by: str, attempt: int) -> dict | None:
     """Leave an automatic notice for the owner's next checkpoint, without a conversation entry, and wake an owner
     that is blocked. Stop and a fault still hold it: the notice waits for the next resume. A task with no owner
@@ -976,6 +1040,46 @@ def steering_view(task: dict, events: list[dict], *, job_root=None) -> dict:
 def from_operator(row: dict) -> bool:
     """The operator's own words, which an owner receives only as a user turn, never as hook context."""
     return row.get("role") == row.get("by") == OPERATOR_MESSAGE_ROLE
+
+
+def owner_checkpoint(project: str, slug: str, *, stop: bool, background: list[str]) -> str:
+    """What an owner's checkpoint hook delivers: after a tool call, its waiting messages as extra context; when
+    the owner is about to stop, the reason to go on. The operator's own messages are never hook context: the engine's
+    action classifier reads only user turns as the user's intent (#612). They wait for the session's next user turn,
+    the owner reads a notice naming them, and a stop with nothing else to deliver lets the turn end so altd resumes the
+    same session with them. A stop while native `background` work is still in flight keeps a running owner going
+    (#369). Only a running task's inbox is delivered: a task the worker just blocked keeps its messages for the resume
+    that answers them, and its worker exits."""
+    from . import dispatch, engines
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") != "running":
+            return ""
+        rows = pending(project, slug)
+        sending = send_now_ids(task)  # the driver is writing them into this turn
+        waiting = [row["id"] for row in rows if from_operator(row) and row["id"] not in sending]
+        rows = [row for row in rows if not from_operator(row)]
+        attached = image_store.resolve(project, [image for row in rows for image in row.get("images") or []], task=slug)
+    resolved = {image["id"]: image for image in attached}
+    prepared = {row["id"]: render_inbox([row]) + engines.image_read_instructions(
+        dispatch.l2_engine(task), [resolved[image["id"]] for image in row.get("images") or []]) for row in rows}
+    taken = take_inbox(project, slug, ids=set(prepared), running_only=True) if prepared else []
+    text = "\n\n".join(prepared[row["id"]] for row in taken)
+    if waiting:
+        text += (("\n\n" if text else "") + f"{len(waiting)} message{'s' if len(waiting) > 1 else ''} from "
+                 f"{config.operator_label()} (message id {', '.join(waiting)}) wait{'' if len(waiting) > 1 else 's'} for "
+                 "this session's next user turn. Altitude resumes this same session with them once this turn ends; "
+                 "ending the turn at a safe checkpoint, without a report or block, delivers them.")
+    if stop and background:
+        text += (("\n\n" if text else "") + "Background work is still in flight: " + ", ".join(background) + ". "
+                 "Use native wait/result tools to consume required output and exit status before "
+                 "ending this turn. Cancel only work no longer needed. If required results cannot "
+                 "be obtained, checkpoint unfinished work and record an explicit supported task block.")
+    elif stop and waiting and not taken:
+        # The turn ends; altd resumes this session with the operator's messages as its prompt.
+        release_turn(project, slug)
+        return ""
+    return text
 
 
 def release_turn(project: str, slug: str) -> bool:
@@ -1248,24 +1352,30 @@ def claim_send_now(project: str, task: dict, rows: list[dict], sends: Path, *, o
     (engines.send_into_turn_once if once else engines.send_into_turn)(sends, ids[0], render_inbox(rows))
 
 
+def _steerable(project: str, task: dict, agent_id: str) -> list[dict]:
+    """Everything waiting for the running owner, in arrival order up to the first message with images, which waits
+    with the rest for the next turn."""
+    from . import dispatch
+    rows = _pending_rows(task, S.task_dir(project, task["slug"]) / "inbox.jsonl")
+    rows = rows[:next((i for i, row in enumerate(rows) if row.get("images")), len(rows))]
+    if not rows or task.get("agent_id") != agent_id or dispatch.send_now_unavailable(project, task):
+        return []
+    return rows
+
+
+def steer_ready(project: str, slug: str, agent_id: str) -> bool:
+    """Whether a driver has anything to steer into its turn. The driver asks at every poll, so this is an unlocked
+    read, and only a yes asks altd to claim it (`steer_waiting`)."""
+    return bool(_steerable(project, S.load_task(project, slug), agent_id))
+
+
 def steer_waiting(project: str, slug: str, agent_id: str, sends: Path) -> None:
     """For a driver whose engine has no hook checkpoint: claim everything waiting for the running owner, as Send now
-    would, in arrival order up to the first message with images, which waits with the rest for the next turn.
-    The driver asks at every poll, so an unlocked read decides whether there is anything to claim."""
-    from . import dispatch
-
-    def group(task: dict) -> list[dict]:
-        rows = _pending_rows(task, S.task_dir(project, slug) / "inbox.jsonl")
-        rows = rows[:next((i for i, row in enumerate(rows) if row.get("images")), len(rows))]
-        if not rows or task.get("agent_id") != agent_id or dispatch.send_now_unavailable(project, task):
-            return []
-        return rows
-
-    if group(S.load_task(project, slug)):
-        with S.project_lock(project):
-            task = S.load_task(project, slug)
-            if rows := group(task):
-                claim_send_now(project, task, rows, sends)
+    would."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if rows := _steerable(project, task, agent_id):
+            claim_send_now(project, task, rows, sends)
 
 
 def settle_send_now(project: str, slug: str, message_id: str, outcome: str, *, agent_id: str | None,

@@ -1472,6 +1472,7 @@ class TestReviews(AltitudeCase):
         (boards / "spec.md").write_text(spec)
         (boards / "phone.png").write_bytes(png())
         selection = ["docs/spec.md"]
+        sent = lambda: T.shown_files(self.project, S.load_task(self.project, self.slug), selection)  # noqa: E731
         captured = {}
         def inspect(prompt, **kwargs):
             design = kwargs["snapshot"] / "design.md"
@@ -1482,7 +1483,7 @@ class TestReviews(AltitudeCase):
         self.engine.side_effect = inspect
         capability = self.patch(engines, "review_capability", return_value={"available": True, "images": True})
         proposal = T.message(self.project, self.slug, "l2", "Build the compact rows in the saved design.", expected_attempt=1)
-        result = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"], show=selection)
+        result = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"], show=sent())
 
         # The reviewer is given the screenshots themselves, and the receipt names each one.
         self.assertEqual(result["state"], "completed")
@@ -1501,7 +1502,7 @@ class TestReviews(AltitudeCase):
         # An engine whose CLI cannot take images says so plainly instead of quietly reviewing only the spec.
         capability.return_value = {"available": True, "images": False}
         self.assess(result)
-        result = self.run_review(self.request(subject="proposal", previous=result["id"]), proposal_id=proposal["id"], show=selection)
+        result = self.run_review(self.request(subject="proposal", previous=result["id"]), proposal_id=proposal["id"], show=sent())
         self.assertEqual(result["state"], "completed")
         notice = "This reviewer's engine cannot take images, so the design screenshots are named, not viewed; design.md is the design under review."
         self.assertIn(notice, captured["context"]["limitations"])
@@ -1517,12 +1518,12 @@ class TestReviews(AltitudeCase):
         self.assertNotIn("design.md", captured["prompt"])
         self.assertIn("also review it as a design", captured["prompt"])
         self.engine.reset_mock()
-        changes = self.run_review(self.request(), show=selection)
+        changes = self.run_review(self.request(), show=sent())
         self.assertEqual(changes["state"], "failed")
         self.assertIn("--show", changes["error"])
         self.engine.assert_not_called()
         # The reviewed design is the one the operator is shown; a changed spec makes the review an earlier version.
-        question = T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, show=selection)
+        question = T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, show=sent())
         self.assertEqual(result["snapshot"]["design"], {"id": question["questions"][-1]["shown"]["id"], "title": "docs/spec.md", "images": []})
         reviewed = lambda: next(r for r in reviews.view(self.project, self.slug)["history"] if r["id"] == result["id"])
         self.assertFalse(reviewed()["earlier"])
@@ -1531,7 +1532,7 @@ class TestReviews(AltitudeCase):
                          {"subject": "proposal", "id": plain["id"], "earlier": False})
         (boards / "spec.md").write_text(spec + "Desktop: two lines.\n")
         T.resume(self.project, self.slug)
-        T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, show=selection)
+        T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, show=sent())
         self.assertTrue(reviewed()["earlier"])
 
     def test_question_review_status_reads_the_saved_reviews(self):

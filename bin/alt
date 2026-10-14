@@ -2,6 +2,8 @@
 """alt — the Altitude CLI. Thin: state operations go through the library under a lock; serving is `alt serve`."""
 from __future__ import annotations
 import argparse
+import base64
+import io
 import json
 import os
 import sys
@@ -13,11 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, l3, project_setup, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
+#: altd runs this verb for a task worker: its input arrives on stdin as JSON, with every input file's content.
+DOOR = os.environ.get("ALTITUDE_DOOR") == "1"
+INPUTS: dict = {}
 READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("incident", "list"),
                  *(("task", name) for name in ("status", "show", "report", "events", "messages", "list"))}
 L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done"),
                                ("task", "grant"), ("task", "run"), ("task", "validate"), ("task", "review"),
-                               ("task", "terminal")}
+                               ("task", "terminal"), ("task", "save")}
 L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"), ("project", "setup"),
     ("pr", "close"),
@@ -44,13 +49,72 @@ def _project(args) -> str:
     return p
 
 
+def _read(path: str) -> str:
+    """An input file's text. A worker's verb that altd runs reads the content the worker's `alt` sent."""
+    if not DOOR:
+        return Path(path).read_text()
+    try:
+        return base64.b64decode(INPUTS["files"][path]).decode()
+    except KeyError:
+        sys.exit(f"alt: {path} was not sent with this request")
+
+
+def _shown(args, project: str) -> dict[str, bytes] | None:
+    """The files `--show` names, as the worker's `alt` read them from its worktree."""
+    if not args.show:
+        return None
+    if not DOOR:
+        sys.exit("alt: --show is the current L2's, through the task door")
+    return {path: base64.b64decode(data) for path, data in INPUTS["shown"].items()}
+
+
+def _sent_show(args, command: str) -> dict[str, str] | None:
+    """The content of the worktree files `--show` names, with the document's own images, read here in the worker."""
+    if not getattr(args, "show", None):
+        return None
+    from altitude import door
+    project, slug = _project(args), os.environ.get("ALTITUDE_TASK")
+    try:
+        return {path: door.encode(data)
+                for path, data in T.shown_files(project, S.load_task(project, slug), args.show).items()}
+    except (OSError, T.TransitionError) as exc:
+        sys.exit(f"alt {command}: {exc}")
+
+
+def _forward(args, raw: list[str], command: str) -> None:
+    """Send this L2 verb to altd through the task door: its arguments, the stdin it reads, the content of each input
+    file and of each file it shows. altd runs it as this task's L2 and changes the records; this process changes
+    none."""
+    from altitude import door
+    inputs = [path for path in (getattr(args, "file", None), getattr(args, "questions_file", None))
+              if path and path != "-"]
+    try:
+        files = {path: door.encode(Path(path).read_bytes()) for path in inputs}
+    except OSError as exc:
+        sys.exit(f"alt {command}: {exc}")
+    shown = _sent_show(args, command) or {}
+    reply = command == "task reply" and not args.file
+    words = args.text[1:] if reply and args.text[:1] == [os.environ.get("ALTITUDE_TASK")] else getattr(args, "text", None)
+    reads_stdin = "-" in (getattr(args, "file", None), getattr(args, "questions_file", None)) or (
+        reply and (not words or words == ["-"]))
+    try:
+        result = door.call("alt", {"args": raw, "stdin": sys.stdin.read() if reads_stdin else "",
+                                   "files": files, "shown": shown})
+    except door.DoorError as exc:
+        sys.exit(f"alt {command}: {exc}")
+    sys.stdout.write(result["stdout"])
+    sys.stderr.write(result["stderr"])
+    if result["returncode"]:
+        sys.exit(result["returncode"])
+
+
 def _question_input(args, reason: str | None) -> tuple[dict | None, str]:
     payload = None
     if args.questions_file:
         if any(value is not None for value in (args.recommendation, args.label, args.why)):
             sys.exit("questions JSON supplies its own options and recommendation")
         try:
-            text = sys.stdin.read() if args.questions_file == "-" else Path(args.questions_file).read_text()
+            text = sys.stdin.read() if args.questions_file == "-" else _read(args.questions_file)
             payload = json.loads(text)
             items = T._validate_questions(payload)
         except (OSError, ValueError, T.TransitionError) as exc:
@@ -63,7 +127,7 @@ def _question_input(args, reason: str | None) -> tuple[dict | None, str]:
 
 def _stdin_or_file(args) -> str:
     if getattr(args, "file", None):
-        return sys.stdin.read() if args.file == "-" else Path(args.file).read_text()
+        return sys.stdin.read() if args.file == "-" else _read(args.file)
     if getattr(args, "text", None) and args.text != "-":
         return args.text
     return sys.stdin.read()
@@ -102,7 +166,7 @@ def _task_review(args, project: str) -> dict:
                                additional=args.additional, subject=args.subject, engine=args.engine, model=args.model, **options)
     if args.review_action == "assess":
         try:
-            payload = json.loads(sys.stdin.read() if args.file == "-" else Path(args.file).read_text())
+            payload = json.loads(sys.stdin.read() if args.file == "-" else _read(args.file))
             if not isinstance(payload, dict) or set(payload) != {"dispositions", "reason"}:
                 raise ValueError("expected an object with dispositions and reason")
         except (OSError, ValueError) as exc:
@@ -355,6 +419,8 @@ def main(argv=None) -> None:
     for name in ("events", "messages"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--last", type=int, default=10); x.add_argument("--json", action="store_true", dest="as_json")
     x = ts.add_parser("report"); x.add_argument("slug"); x.add_argument("--json", action="store_true", dest="as_json")
+    x = ts.add_parser("save", help="current L2: store this task's report or progress from a file, or - for stdin")
+    x.add_argument("kind", choices=tuple(T.OWNER_FILES)); x.add_argument("file", metavar="FILE")
     x = ts.add_parser("terminal", help="current L2: read this task's terminal output (read-only)")
     x.add_argument("slug", nargs="?"); x.add_argument("--json", action="store_true", dest="as_json")
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?"); x.add_argument("--brief", action="store_true"); x.add_argument("--json", action="store_true", dest="as_json")
@@ -502,6 +568,9 @@ def main(argv=None) -> None:
     sub.add_parser("pair", help="print a one-time code that pairs one browser with Altitude")
 
     args = ap.parse_args(argv)
+    if DOOR:
+        INPUTS.update(json.load(sys.stdin))
+        sys.stdin = io.StringIO(INPUTS["stdin"])
     if "ALTITUDE_ACTOR" not in os.environ and config.RELEASE is not None and args.cmd != "update" and sys.stderr.isatty():
         from altitude import installation
         if notice := installation.update_notice():
@@ -528,6 +597,16 @@ def main(argv=None) -> None:
             sys.exit(f"alt {c}: not available to an L2 worker; use project inspection or owned-task verbs")
         if c in ("repo", "pr", "l3") and _project(args) != os.environ.get("ALTITUDE_PROJECT"):
             sys.exit("alt: owner inspection is bound to the launch project")
+        local = (c == "land" or actor_command in READ_COMMANDS
+                 or actor_command in {("task", "run"), ("task", "validate"), ("task", "terminal")}
+                 or actor_command == ("task", "review") and args.review_action in ("status", "run"))
+        if DOOR and local:  # altd runs only what changes the task's records, never the worker's own commands
+            sys.exit(f"alt {c}: the task door runs only verbs that change the task's records")
+        if not local and (_project(args) != os.environ.get("ALTITUDE_PROJECT")
+                          or getattr(args, "slug", None) not in (None, os.environ.get("ALTITUDE_TASK"))):
+            sys.exit("alt: an L2 changes only its own project/task")
+        if not DOOR and not local:
+            return _forward(args, list(sys.argv[1:] if argv is None else argv), " ".join(filter(None, actor_command)))
     if ACTOR == "l3" and actor_command not in L3_COMMANDS:
         sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
     if closing_pr and (args.number is None or args.number < 1 or args.as_json):
@@ -565,7 +644,7 @@ def main(argv=None) -> None:
         body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation in ("close", "label")) else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
                    "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message,
-                   "show": args.show} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture, "container_browser": args.container_browser} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "show": _sent_show(args, "task review run")} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture, "container_browser": args.container_browser} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "add", "remove") if hasattr(args, key)}}
         # An option left unset sends nothing, so a checkout awaiting activation keeps working against the older
@@ -834,7 +913,7 @@ def main(argv=None) -> None:
                     blocked = T.block(p, args.slug, args.reason, actor="l2", expected_state="running",
                                       expected_attempt=int(attempt), updates={"waiting_on": waiting},
                                       recommendation=args.recommendation, recommendation_label=args.label,
-                                      recommendation_why=args.why, questions=questions, show=args.show,
+                                      recommendation_why=args.why, questions=questions, show=_shown(args, p),
                                       tell_l3=True)
                     if args.show:
                         asked = T.shown_question(questions)["question"] if questions else args.reason
@@ -914,9 +993,14 @@ def main(argv=None) -> None:
         elif tc == "done":
             if ACTOR == "l2" and not os.environ.get("ALTITUDE_ATTEMPT"):
                 sys.exit("alt task done: ALTITUDE_ATTEMPT is required for the L2")
-            out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest,
+            out(T.done(p, args.slug, actor=ACTOR, digest=_read(args.file) if args.file else args.digest,
                        expected_attempt=int(os.environ["ALTITUDE_ATTEMPT"]) if ACTOR == "l2" else None,
                        findings_tracked=args.findings_tracked))
+        elif tc == "save":
+            if ACTOR != "l2" or not os.environ.get("ALTITUDE_TASK") or not os.environ.get("ALTITUDE_ATTEMPT"):
+                sys.exit("alt task save: only the current L2 saves its own task's report and progress")
+            out(T.save_owner_file(p, os.environ["ALTITUDE_TASK"], args.kind, sys.stdin.read() if args.file == "-" else _read(args.file),
+                                  expected_attempt=int(os.environ["ALTITUDE_ATTEMPT"])))
         elif tc == "brief":
             out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
         elif tc == "review":
@@ -933,7 +1017,7 @@ def main(argv=None) -> None:
                 sys.exit("alt task reply: give one text or -, optionally after this task's slug")
             args.text = words[0] if words else "-"
             row = T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt),
-                            capture_run=args.capture, to_l3=args.to == "l3", show=args.show)
+                            capture_run=args.capture, to_l3=args.to == "l3", show=_shown(args, p))
             out({**row, "view_url": T.shown_url(p, slug, row["id"])} if row.get("shown") else row)
         elif tc in ("show", "status"):
             from altitude import status

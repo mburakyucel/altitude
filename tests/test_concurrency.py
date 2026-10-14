@@ -144,7 +144,6 @@ class TestConcurrency(AltitudeCase):
         self.machine(120, "unblock capacity")
         seen = []
         with mock.patch.object(engines, "refresh_quotas"), \
-             mock.patch.object(server, "drain_hook_faults"), \
              mock.patch.object(server, "tick_project", side_effect=lambda p: seen.append(config.machine_wip())), \
              mock.patch.object(server, "auto_restart"), mock.patch.object(server, "morning_digest"):
             server.tick()

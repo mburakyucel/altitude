@@ -275,8 +275,10 @@ class TestServiceRecord(AltitudeCase):
 
 
 class TestTaskDoor(AltitudeCase):
-    """`alt task run`, `validate`, `review run` and `terminal` reach altd without the operator's key, from the
-    task's own worker job only; every other caller, key or not, gets one refusal that says nothing about tasks."""
+    """`alt task run`, `validate`, `review run`, `terminal` and every record change reach altd without the operator's
+    key, from the task's own worker job only; every other caller, key or not, gets one refusal that says nothing about
+    tasks."""
+    door = False  # these cases decide who the task's owner is
 
     def setUp(self):
         super().setUp()
@@ -314,7 +316,8 @@ class TestTaskDoor(AltitudeCase):
         return {"task/run": {**common, "command": "true", "request": "a" * 32},
                 "task/validate": {**common, "command": ["true"]},
                 "task/terminal": common,
-                "task/review/run": {**common, "review_id": "r1"}}
+                "task/review/run": {**common, "review_id": "r1"},
+                "task/door": {**common, "kind": "alt", "request": "b" * 32, "args": ["task", "reply", "x"]}}
 
     def test_every_other_caller_gets_one_refusal_before_anything_reads_or_queues(self):
         access.prepare()

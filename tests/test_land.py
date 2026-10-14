@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.support import ALT, AltitudeCase, add_worktree, git, make_repo
+from tests.support import ALT, AltitudeCase, add_worktree, git, make_repo, read_only_home
 from altitude import land, state as S
 
 
@@ -1156,6 +1156,35 @@ class TestLand(AltitudeCase):
         self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 1)
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), local_tip)
         self.assertEqual(git("rev-parse", "worktree-fix-x", cwd=self.remote).strip(), foreign_tip)
+
+    def test_the_owner_lands_with_altitudes_home_read_only(self):
+        """A held landing merges under the operator's approval, changing the task's records only through altd's task
+        door (docs/ARCHITECTURE.md#task-door)."""
+        from altitude import dispatch, tasks as T
+        from tests.test_worker_writes import require_read_only_home
+        require_read_only_home(self)
+        self.set_current_l2()
+        task = S.load_task("demo", "fix-x")
+        task["agent_id"] = "worker"
+        with S.project_lock("demo"):  # as dispatch does before the worker starts, with the merge lock's leaf
+            S.save_task("demo", task)
+        dispatch.session_settings("demo", "fix-x")
+        T.set_hold_merge("demo", "fix-x", "Operator approval before merging")
+        time.sleep(1)  # the hold's event keeps whole seconds; the approval follows it
+        approval = T.message("demo", "fix-x", T.OPERATOR_MESSAGE_ROLE, "Merge it after checks.")
+        self.staged_change()
+        self.no_checks()
+        self.fake_runner("otherrunner", 0, "=== 5 passed in 0.2s ===\n")
+        run = subprocess.run(read_only_home([sys.executable, str(ALT), "land", "--message", "fix: read-only home",
+                                             "--wait", "0", "--merge", "--approval", approval["id"],
+                                             "--test-cmd", "otherrunner -q tests"], (self.tmp,)),
+                             cwd=self.repo, capture_output=True, text=True, env={**os.environ, "TMPDIR": str(self.tmp)})
+        self.assertEqual(run.returncode, 0, run.stderr)
+        result = json.loads(run.stdout)
+        self.assertEqual((result["pr"], result["merged"]), (101, True))
+        task = S.load_task("demo", "fix-x")
+        self.assertEqual(task["prs"], [101])
+        self.assertEqual(task["merge_approval"]["approval"], approval["id"])
 
     def test_empty_expected_paths_publish_only_selected_content_through_cli(self):
         task = S.load_task("demo", "fix-x")

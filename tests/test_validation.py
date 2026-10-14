@@ -314,6 +314,7 @@ class ClientStop:
 
 class TestValidationRunner(ClientStop, RunnerCase):
     host = "linux"  # the fixtures are systemd-run and Podman
+    door = False  # these cases decide who the task's owner is
 
     def setUp(self):
         super().setUp()

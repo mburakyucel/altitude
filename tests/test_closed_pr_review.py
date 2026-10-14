@@ -34,7 +34,7 @@ class TestClosedPrReview(AltitudeCase):
 
     def owner_block(self, *args: str):
         out = self.alt("--project", self.project, "task", "block", self.slug, *args,
-                       env={"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
+                       env={"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": self.project, "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
         self.assertEqual(out.returncode, 0, out.stderr)
         return out
 

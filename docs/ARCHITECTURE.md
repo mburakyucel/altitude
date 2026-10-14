@@ -1387,11 +1387,13 @@ from the saved status, or as uncertain without one, and the owner's CLI reconnec
 the grant; nobody can widen it. Both engines share the verb; only the launcher is host-specific.
 
 The commands a task's owner sends to altd over HTTP (`POST /api/task/run`, `task/validate`,
-`task/terminal` and `task/review/run`) are its own task's door. altd admits them by the caller, not
-by the machine key: the body's project, task and attempt must name a running task's current attempt,
-and the client end of the connection must be held by a process in that attempt's worker job
-(`terminal.owner_connection`). Any other caller, including one holding the machine key, gets the same
-403 before anything is queued or run, and the owner's `alt` sends no key for these commands.
+`task/terminal`, `task/review/run` and its record changes through `task/door`) are its own task's door. altd
+admits them by the caller, not by the machine key: the body's project, task and attempt must name a running task's
+current attempt, and the client end of the connection must be held by a process in that attempt's worker job
+(`terminal.owner_connection`). A record change is admitted for the current attempt also after the task left
+running, while that worker job lasts, so its stop checkpoint and end-of-session notices still arrive. Any other
+caller, including one holding the machine key, gets the same 403 before anything is queued or run, and the owner's
+`alt` sends no key for these commands.
 Ordinary candidate checks need no grant; the fixed Mac guest browser lane requires its standing VM-policy grant:
 `POST /api/task/validate` lets the running owner's current attempt, from a process in its own worker
 job, run one command against a throwaway clone of its committed `HEAD`. On Linux the command runs in a
@@ -1532,6 +1534,41 @@ PR-close authority. Task state, archives and merge holds retain their own lifecy
 is a task's current PR gains a `pr-closed` task event, which retires its held-review card.
 The [L3 persona](../personas/l3.md) directs capability-gap recommendations and authorized remediation;
 that guidance grants no permission expansion by itself.
+
+### Task door
+
+A task worker's own processes change Altitude's records only through altd. Its `alt` verbs, its landing, its
+checkpoint hooks and its engine driver each send one short request to `POST /api/task/door` (`altitude/door.py`).
+altd admits a request as it admits the owner's other commands, from a process in the task's current worker job
+carrying the task's current attempt (see [Isolation and landing](#isolation-and-landing)), and applies it as that task's L2, with the
+project, task and attempt its record names. A request names its project and task, and altd refuses one for another.
+- **Verbs.** `alt` in the worker reads the content of each input file it names (`--file`, `--questions-file`) and of
+  each file it shows (`--show`, with the document's own images), with its standard input, and sends them with its
+  arguments. altd runs the verb as the task's L2 with that content and never opens a path the worker names.
+  Reads, `alt land`, `alt task run`, `validate`, `terminal` and `review run` run in the worker or keep their own
+  routes, and altd refuses them as door verbs; `alt task save
+  report|progress|handoff` stores the owner's report, progress file and hand-off receipt in the task's folder.
+- **Landing.** `alt land` commits, runs the local suite, pushes, waits for checks and merges inside the worker,
+  under the project lock and the task's merge lock, whose leaf altd makes with each launch. Its record changes
+  (adoption, delivery, merge approval, merged head and its end-of-session notice) are door requests.
+- **Hooks.** The inbox hook asks altd for the checkpoint's delivery (`tasks.owner_checkpoint`), and the edit hook
+  reports each edit (`state.count_edit`). Each waits at most a few seconds for an unreachable altd and then lets the
+  worker go on, saying so on its own output; messages wait in the inbox for the next checkpoint. Once altd has a
+  checkpoint, the hook waits for its answer for nearly its own time limit. A change that fails inside altd is a
+  `hook` system fault.
+- **Driver.** The driver asks altd to take a Send now message from the worker's sends folder, to settle its
+  outcome, and on an engine without hook checkpoints to claim the owner's waiting messages (`tasks.steer_waiting`).
+  altd takes and settles only the message it handed that worker, in the sends folder its layout names, without
+  following a link.
+
+Each request carries an identity. altd keeps its outcome in the task's `door/` folder for as long as its client may
+ask again, so a repeat after a dropped answer or a restart gets the first answer rather than a second change; a
+request a restart interrupted
+is refused as unknown, and the owner checks the task before asking again. The client keeps asking while altd is
+unreachable for up to ten minutes, which covers the restart that activates merged changes. altd's locks open for
+reading, so a worker that cannot write the home still shares them. `tests/test_worker_writes.py` runs the owner's
+verbs, both hooks and the driver on both engines, and `tests/test_land.py` a landing, with Altitude's home
+read-only to them.
 
 ### Operator terminal
 

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase, fyi_rows, git, make_repo
-from altitude import config, state as S, incidents, l3, verify, engines, dispatch, tasks as T
+from altitude import config, server, state as S, incidents, l3, verify, engines, dispatch, tasks as T
 
 PROJECT = "altitude"
 
@@ -317,9 +317,9 @@ class TestSystemFault(AltitudeCase):
         task = T.new(PROJECT, "fault door", "request", actor="burak")
         task.update({"state": "running", "attempt": 2}); S.save_task(PROJECT, task)
         slug = task["slug"]
-        worker = {"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": slug, "ALTITUDE_ATTEMPT": "1"}
+        worker = {"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": PROJECT, "ALTITUDE_TASK": slug, "ALTITUDE_ATTEMPT": "1"}
         out = self.alt("--project", PROJECT, "task", "block", slug, "--reason", "gitdir is read-only", "--fault", env=worker)
-        self.assertNotEqual(out.returncode, 0); self.assertIn("no longer current", out.stderr)
+        self.assertNotEqual(out.returncode, 0); self.assertIn(server.TASK_DOOR_REFUSED, out.stderr)
         self.assertEqual(S.load_task(PROJECT, slug)["state"], "running")
         worker["ALTITUDE_ATTEMPT"] = "2"
         out = self.alt("--project", PROJECT, "task", "block", slug, "--reason", "gitdir is read-only", "--fault", env=worker)

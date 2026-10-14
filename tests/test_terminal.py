@@ -618,6 +618,8 @@ class TestOwnerOutput(TerminalCase):
 
 
 class TestOwnerHttp(TerminalCase):
+    door = False  # these cases decide who the task's owner is
+
     def setUp(self):
         super().setUp()
         self.owner = self.patch(terminal, "owner_connection", return_value=True)

@@ -815,8 +815,8 @@ installing it. The code never appears in a link. It writes the code straight to 
 works over SSH and without a browser; only the operator runs it, and L2 and L3 are refused. A code
 works once, for ten minutes; a new code cancels the previous one and five wrong codes cancel it.
 Every other `alt` command that calls altd sends the machine key from the same store, except the commands
-an owner sends for its own task (`alt task run`, `validate`, `terminal` and `review run`), which altd
-admits from that owner's worker job instead. No Altitude sandbox can read the store. See
+an owner sends for its own task (`alt task run`, `validate`, `terminal`, `review run` and every verb that changes
+its records), which altd admits from that owner's worker job instead. No Altitude sandbox can read the store. See
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
@@ -1130,6 +1130,7 @@ alt project terminal [--json]  # the coordinator, through its project socket
 alt task offer <title>  # the coordinator, through its project socket, during a chat turn
 alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
+alt task save report|progress|handoff <file>|-
 ```
 
 `-`, `--file -` or no text reads the message from stdin, so a quoted heredoc such as
@@ -1144,6 +1145,12 @@ conversation row name that notice in `queued_for_l3`, and `alt task messages` ma
 **[Queued for L3]**. The notice grants no operator authority and changes no question or hold. A plain
 reply, and a block that re-parks an unchanged question, queue nothing for L3. Without `--questions-file`, a block's reason is its question: a different reason revises the
 open question, and the saved reason re-parks it unchanged.
+
+An owner's verbs change records through altd's [task door](ARCHITECTURE.md#task-door): `alt` sends the
+content of each file it names and shows, so the files can live anywhere the worker can read, and altd
+applies the verb to the owner's own task and attempt only. `alt task save` stores the owner's
+`report.json`, `progress.md` or hand-off receipt (`handoff-<id>.ready.json`, from the receipt's `id`)
+in the task's folder from a file or stdin, while the task runs; a report or receipt is a JSON object.
 
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
 and installation commands remain available through `bin/alt --help` and the relevant subcommand

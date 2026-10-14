@@ -286,7 +286,7 @@ class InstalledRuntime(AltitudeCase):
         hooks.mkdir()
         (hooks / "inbox.py").write_text("import json, sys; print(json.dumps([sys.executable, sys.dont_write_bytecode]))\n")
         self.patch(config, "HOOKS", hooks)
-        settings = S.read_json(dispatch.session_settings(self.project, "quoted-hooks", "fixture-key"))
+        settings = S.read_json(dispatch.session_settings(self.project, "quoted-hooks"))
         command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
         self.assertEqual(shlex.split(command), [sys.executable, "-B", str(hooks / "inbox.py")])
         result = subprocess.run(command, shell=True, cwd=self.repo, capture_output=True, text=True, timeout=30)

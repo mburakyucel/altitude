@@ -78,10 +78,14 @@ def _find(task, identity):
     return review
 
 
+def merge_lock_path(project: str, slug: str) -> Path:
+    return S.task_dir(project, slug) / ".review-merge.lock"
+
+
 @contextmanager
 def merge_lock(project, slug, *, wait=True):
     """Request admission and the actual merge share a task-local lock, not a second hold field."""
-    with storage.runtime_lock(S.task_dir(project, slug) / ".review-merge.lock") as lock:
+    with storage.runtime_lock(merge_lock_path(project, slug)) as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:

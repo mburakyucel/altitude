@@ -58,6 +58,7 @@ def wait_for(condition, what):
 
 class TestOperatorGrant(AltitudeCase):
     host = "linux"  # systemd fixtures
+    door = False  # these cases decide who the task's owner is
 
     def setUp(self):
         super().setUp()
@@ -625,7 +626,7 @@ class TestOperatorGrant(AltitudeCase):
         for elsewhere in (("task", "grant", "other-task"), ("--project", "other", "task", "grant", self.slug)):
             result = self.alt(*elsewhere, *grant_args, env=owner)
             self.assertEqual(result.returncode, 1)
-            self.assertIn("only on its own task", result.stderr)
+            self.assertIn("own project/task", result.stderr)
         result = self.alt("task", "grant", self.slug, *grant_args, env=owner)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((json.loads(result.stdout)["purpose"], json.loads(result.stdout)["actor"]),
@@ -716,7 +717,7 @@ class TestOperatorGrant(AltitudeCase):
         self.assertEqual((self.run_command("echo next")["n"], len(self.events("machine-run"))), (2, 2))
 
     def test_claude_sessions_may_call_only_their_own_task_runner_natively(self):
-        settings = S.read_json(dispatch.session_settings(self.project, self.slug, "fixture-key"))
+        settings = S.read_json(dispatch.session_settings(self.project, self.slug))
         self.assertEqual(settings["permissions"], {"allow": [f"Bash(alt task run {self.slug} *)"]})
         # The rule admits the call; altd still refuses it without the task's current grant.
         self.assertIn("no operator grant", self.run_command("true", status=403)["error"])

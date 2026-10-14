@@ -30,7 +30,10 @@ class TestEngineDriver(AltitudeCase):
         env = {**os.environ, "FAKE_ENGINE_LOG": str(self.log), **({"FAKE_ENGINE_TOOL": str(self.tool)} if tool else {}),
                **({"FAKE_ENGINE_ASK": "1"} if ask else {}),
                **({"FAKE_ENGINE_HELPERS": str(helpers)} if helpers else {}), "FAKE_ENGINE_END": end,
-               **({"FAKE_ENGINE_REFUSE_STEER": "1"} if refuse else {})}
+               **({"FAKE_ENGINE_REFUSE_STEER": "1"} if refuse else {}),
+               # A task's driver runs in its worker job, whose launch names the task and attempt.
+               **({"ALTITUDE_PROJECT": task["project"], "ALTITUDE_TASK": task["slug"],
+                   "ALTITUDE_ATTEMPT": str(S.load_task(task["project"], task["slug"]).get("attempt"))} if task else {})}
         proc = subprocess.Popen(engines.common._driver_command(), stdin=subprocess.PIPE, stdout=output or subprocess.PIPE,
                                 stderr=subprocess.PIPE, env=env)
         proc.stdin.write(engines.common._driver_input(spec).encode())
@@ -324,16 +327,16 @@ class TestEngineDriver(AltitudeCase):
         self.assertEqual(events, [{"type": "error", "message": "turn/start: turn refused"}])
         self.assertNotEqual(proc.returncode, 0)
 
-    def test_the_driver_settles_a_task_message_without_altd(self):
-        """The driver writes the receipt itself, so a restart of Altitude mid-turn loses no delivery."""
-        task = T.new(self.project, "Driver receipt", "Brief.")
+    def test_the_driver_settles_a_task_message_through_altd(self):
+        """The driver asks altd to take and settle the message; altd records the receipt."""
+        task = self.owner()
         T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, TEXT)
         message = T.pending(self.project, task["slug"])[-1]
         with S.project_lock(self.project):
             current = S.load_task(self.project, task["slug"])
-            current.update(state="running", agent_id="worker", session_id="fake-session")
+            current.update(session_id="fake-session")
             T.claim_send_now(self.project, current, [message], self.sends)
-        proc = self.drive("claude", task={"project": self.project, "slug": task["slug"]})
+        proc = self.drive("claude", task=task)
         self.wait_for_tool(proc)
         self.finish(proc)
         current = S.load_task(self.project, task["slug"])
@@ -349,9 +352,10 @@ class TestEngineDriver(AltitudeCase):
             current = S.load_task(self.project, task["slug"])
             current.update(state="running", agent_id="worker", session_id="fake-thread", attempt=1)
             S.save_task(self.project, current)
-        record = engines.common._worker_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker")["record"]
-        record.parent.mkdir(parents=True, exist_ok=True)
-        S.atomic_write(record, json.dumps({"id": "worker", "sends": str(self.sends)}))
+        paths = engines.common._worker_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker")
+        self.sends = paths["sends"]  # the job's own layout, which altd keeps to
+        paths["record"].parent.mkdir(parents=True, exist_ok=True)
+        S.atomic_write(paths["record"], json.dumps({"id": "worker", "sends": str(self.sends)}))
         return {"project": self.project, "slug": task["slug"]}
 
     def test_an_ordinary_message_reaches_a_running_codex_turn_without_send_now(self):

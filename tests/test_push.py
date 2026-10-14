@@ -651,7 +651,7 @@ class TestTheTick(AltitudeCase):
             release.wait(10)
 
         self.patch(push, "notify", hang)
-        for name in ("drain_hook_faults", "auto_restart", "tick_project"):
+        for name in ("auto_restart", "tick_project"):
             self.patch(server, name, lambda *a, **k: None)
         self.patch(server.dispatch, "run_settings", lambda *a, **k: None)
         self.patch(server.engines, "refresh_quotas", lambda *a, **k: None)

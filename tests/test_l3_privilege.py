@@ -1075,7 +1075,6 @@ class TestL3DaemonOperations(AltitudeCase):
         dispatch.request_task_operation(self.project, task["slug"], "stop", "Operator requested stop",
                                         actor="burak")
         with mock.patch.object(engines, "refresh_quotas"), \
-             mock.patch.object(server, "drain_hook_faults"), \
              mock.patch.object(dispatch, "poll", return_value=[]), \
              mock.patch.object(server, "resume_stranded_reports"), \
              mock.patch.object(dispatch, "resume_due", return_value=[]), \

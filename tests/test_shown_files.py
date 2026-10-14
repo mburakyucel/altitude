@@ -91,14 +91,18 @@ class TestShownFiles(AltitudeCase):
 
     def reply(self, *paths, text="The README draft is ready to read."):
         return T.message(self.project, self.slug, "l2", text, by="l2", expected_attempt=1,
-                         show=list(paths) or ["README.md", "overview.png"])
+                         show=self.sent(list(paths) or ["README.md", "overview.png"]))
+
+    def sent(self, paths):
+        """What the owner's `alt` reads in its worker and sends with a `--show`."""
+        return T.shown_files(self.project, S.load_task(self.project, self.slug), paths)
 
     def publish(self, show=None, **kwargs):
         if S.load_task(self.project, self.slug)["state"] == "blocked":
             T.resume(self.project, self.slug)
         task = T.block(self.project, self.slug, "Build the README as shown?", actor="l2",
                        expected_attempt=1, updates={"waiting_on": "burak"},
-                       show=show or ["README.md"], **kwargs)
+                       show=self.sent(show or ["README.md"]), **kwargs)
         return task["questions"][-1]
 
     def saved(self, name):
@@ -263,7 +267,7 @@ class TestShownFiles(AltitudeCase):
     def test_only_the_owner_shows_files_and_never_to_l3(self):
         for role, options in (("burak", {}), ("l3", {}), ("l2", {"to_l3": True})):
             with self.subTest(role=role, options=options), self.assertRaises(T.TransitionError):
-                T.message(self.project, self.slug, role, "Look.", by=role, show=["overview.png"], **options)
+                T.message(self.project, self.slug, role, "Look.", by=role, show=self.sent(["overview.png"]), **options)
         self.assertFalse(any(r.get("shown") for r in T.task_messages(self.project, self.slug)))
 
     def test_refused_files_add_no_reply(self):
@@ -287,7 +291,7 @@ class TestShownFiles(AltitudeCase):
                       ["docs/../overview.png"], ["./overview.png"], ["docs//images/tour.png"], ["docs\\images\\tour.png"],
                       [], "overview.png", [3]):
             with self.subTest(paths=paths), self.assertRaises(T.TransitionError):
-                T.message(self.project, self.slug, "l2", "Look.", by="l2", expected_attempt=1, show=paths)
+                T.message(self.project, self.slug, "l2", "Look.", by="l2", expected_attempt=1, show=self.sent(paths))
         self.assertFalse(any(r.get("shown") for r in T.task_messages(self.project, self.slug)))
 
     def test_count_and_total_limits_include_the_documents_own_images(self):
@@ -414,7 +418,7 @@ class TestShownFiles(AltitudeCase):
         task.update(prs=[7], delivery={"pr": 7})
         S.save_task(self.project, task)
         task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
-                       updates={"waiting_on": "burak"}, questions=self.group(), show=["README.md"])
+                       updates={"waiting_on": "burak"}, questions=self.group(), show=self.sent(["README.md"]))
         merge, proposal = task["questions"]
         self.assertEqual([q["status"] for q in task["questions"]], ["open", "open"])
         self.assertEqual(proposal["shown"]["document"]["path"], "README.md")
@@ -435,7 +439,7 @@ class TestShownFiles(AltitudeCase):
         for item, question in zip(payload["questions"], (merge, proposal)):
             item["id"] = question["id"]
         task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
-                       questions=payload, show=["README.md"])
+                       questions=payload, show=self.sent(["README.md"]))
         current = {q["id"]: q for q in task["questions"] if q["status"] == "open"}
         self.assertEqual(current[proposal["id"]]["revision"], 1)
         self.assertNotIn("shown", current[merge["id"]])
@@ -448,7 +452,7 @@ class TestShownFiles(AltitudeCase):
             with self.subTest(payload=payload):
                 with self.assertRaisesRegex(T.TransitionError, 'mark exactly one question "review": "proposal"'):
                     T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
-                            updates={"waiting_on": "burak"}, questions=payload, show=["README.md"])
+                            updates={"waiting_on": "burak"}, questions=payload, show=self.sent(["README.md"]))
                 task = S.load_task(self.project, self.slug)
                 self.assertEqual(task["state"], "running")
                 self.assertFalse(task.get("questions"))
@@ -464,7 +468,7 @@ class TestShownFiles(AltitudeCase):
             {"id": first["id"], "question": first["detail"], "review": "none"},
             {"question": "Publish the guide as shown?", "review": "proposal"}]}
         task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
-                       questions=payload, show=["overview.png"])
+                       questions=payload, show=self.sent(["overview.png"]))
         earlier, guide = [q for q in task["questions"] if q["status"] == "open"]
         self.assertEqual((earlier["id"], earlier["revision"]), (first["id"], 2))
         self.assertNotIn("shown", earlier)

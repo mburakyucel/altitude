@@ -496,7 +496,8 @@ class TestSendNowInboxHook(AltitudeCase):
         give_driver(dispatch.l2_job_root(self.project, self.slug), "aid")
 
     def run_hook(self, event):
-        env = dict(os.environ, ALTITUDE_HOME=str(config.ROOT), ALTITUDE_PROJECT=self.project, ALTITUDE_TASK=self.slug)
+        env = dict(os.environ, ALTITUDE_HOME=str(config.ROOT), ALTITUDE_PROJECT=self.project, ALTITUDE_TASK=self.slug,
+                   ALTITUDE_ATTEMPT=str(S.load_task(self.project, self.slug)["attempt"]))
         payload = {"hook_event_name": event, "session_id": "sid",
                    **({"tool_name": "Bash"} if event == "PostToolUse" else {"stop_hook_active": False})}
         done = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True,

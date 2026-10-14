@@ -126,8 +126,7 @@ class TestDirectDispatch(AltitudeCase):
                          ("running", "agent-1", "session-1"))
         self.assertEqual(running["attempt"], 1)
         env = launch.call_args.kwargs["extra_env"]
-        self.assertEqual((env["ALTITUDE_ATTEMPT"], env["ALTITUDE_SESSION_KEY"]),
-                         ("1", S.session_key(self.project, task["slug"], 1)))
+        self.assertEqual(env["ALTITUDE_ATTEMPT"], "1")
         self.assertEqual(running["l2_engine"], "codex")
         self.assertIn("configured tie order", running["routing"])
 

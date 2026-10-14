@@ -156,6 +156,8 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                     processes = []
 
                     def popen(command, **options):
+                        if command[2:3] == [str(config.SOURCE / "bin" / "alt")]:
+                            return real_popen(command, **options)  # altd runs the owner's verb for its task door
                         if host == "darwin":
                             specification = json.loads(command[-1])
                             wrapped, environment = specification["command"], specification["env"]

@@ -32,7 +32,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, dispatch, git_policy, github_intake, state as S, tasks as T, verify
+from . import config, dispatch, door, git_policy, github_intake, state as S, tasks as T, verify
 
 #: #814: the check wait polls after this many seconds, doubling up to CHECK_POLL_BACKOFF times it (one minute).
 CHECK_POLL_SECONDS = 15
@@ -485,7 +485,7 @@ def _continuation_base(root: Path, branch: str,
     return cutoff
 
 
-def _merged_retry(root: Path, project: str, slug: str, task: dict, authority: dict | None,
+def _merged_retry(root: Path, project: str, slug: str, task: dict,
                   branch: str, base: str, pr: dict, lease: list[str], issues: list[int]) -> dict:
     _require_closing_issues(root, pr["number"], issues)
     delivered = task.get("delivery") or {}
@@ -494,9 +494,9 @@ def _merged_retry(root: Path, project: str, slug: str, task: dict, authority: di
                                     != (pr["number"], pr.get("headRefName"), pr["headRefOid"])):
         reconciled = _merged_head_evidence(root, delivered, pr, base)
     if not delivered.get("number") or reconciled:
-        task = _record_delivery(project, slug, task, authority, branch=pr["headRefName"],
-                                base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"),
-                                number=pr["number"], head=pr["headRefOid"], reconciled=reconciled)
+        task = _change(project, slug, "delivery", adopted_pr=task.get("adopted_pr"), branch=pr["headRefName"],
+                       base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"),
+                       number=pr["number"], head=pr["headRefOid"], reconciled=reconciled)
     if reconciled:
         _note(f"PR #{pr['number']} merged at {pr['headRefOid'][:12]}, after its recorded head "
               f"{reconciled['head'][:12]} — current delivery reconciled")
@@ -995,6 +995,42 @@ def _fetch_base(root: Path, base: str) -> None:
         _note(f"git fetch origin {base} failed: {(f.stderr or '').strip()[-160:]}")
 
 
+def _change(project: str, slug: str, op: str, **fields):
+    """One record change of a landing. A task worker's landing asks altd to make it through the task door; the
+    operator's own landing makes it here."""
+    if os.environ.get("ALTITUDE_ACTOR") != "l2":
+        return record(project, slug, None, op, fields)
+    try:
+        return door.call("land", {"op": op, "fields": fields})["result"]
+    except door.DoorError as exc:
+        raise LandError(str(exc)) from None
+
+
+def record(project: str, slug: str, attempt: int | None, op: str, fields: object):
+    """Apply a landing's record change: in altd as the task's current L2 `attempt`, which its worker job's admission
+    names, or as the operator (`attempt` None)."""
+    if not isinstance(fields, dict):
+        raise LandError("landing record fields are required")
+    authority = None if attempt is None else {"actor": "l2", "attempt": attempt}
+    f = dict(fields)
+    if op == "adoption":
+        return list(_record_adoption(project, slug, f["receipt"], authority, previous=f["previous"],
+                                     dry_run=f["dry_run"] is True))
+    if op == "delivery":
+        return _record_delivery(project, slug, {"adopted_pr": f.get("adopted_pr")}, authority, **{
+            key: f[key] for key in ("branch", "base", "number", "head", "previous", "reconciled") if key in f})
+    if op == "approval":
+        return T.apply_merge_approval(project, slug, f["approval"], f["pull"], head=f["head"],
+                                      actor="l2" if authority else config.OPERATOR_ACTOR,
+                                      reason="owner applied the operator's task-chat approval",
+                                      validate_only=f["validate_only"] is True)
+    if op == "merged-head":
+        return _record_merged_head(project, slug, f["head"])
+    if op == "notify":
+        return T.notify(project, slug, f["text"], by="landing", attempt=f["attempt"])
+    raise LandError(f"unknown landing record change {op!r}")
+
+
 def _record_merged_head(project: str, slug: str, head: str) -> None:
     """The merged head consumes the task's current reviews."""
     from . import reviews
@@ -1104,10 +1140,11 @@ def _ends_with_session(wait_for):
             return wait_for(root, project, slug, pair, merge=merge, **kwargs)
         except _SessionEnded:
             signal.signal(signal.SIGTERM, restore)
-            T.notify(project, slug, f"Your `alt land` ended with your previous session while it waited on PR "
-                     f"#{pair['number']}. Head {pair['head_sha']} remains published and unmerged, and the landing "
-                     f"left the merge line. Assess that head where a review asks for it, then re-run "
-                     f"`alt land{' --merge' if merge else ''}` when ready.", by="landing", attempt=attempt)
+            _change(project, slug, "notify", attempt=attempt,
+                    text=f"Your `alt land` ended with your previous session while it waited on PR "
+                    f"#{pair['number']}. Head {pair['head_sha']} remains published and unmerged, and the landing "
+                    f"left the merge line. Assess that head where a review asks for it, then re-run "
+                    f"`alt land{' --merge' if merge else ''}` when ready.")
             raise LandError(f"the owner's session ended while this landing waited; PR #{pair['number']} head "
                             f"{pair['head_sha']} remains published and unmerged — assess when ready and re-run "
                             "alt land") from None
@@ -1117,12 +1154,12 @@ def _ends_with_session(wait_for):
 
 
 @_ends_with_session
-def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, deadline, strict, line=None):
+def _wait_for_candidate(root, project, slug, pair, *, merge, wait, deadline, strict, line=None):
     """Wait for the owner assessment and candidate checks: on the candidate's own head before its merge turn,
     on the exact base/head pair in it (`strict`)."""
     from . import reviews
     notified, announced, delay = None, None, CHECK_POLL_SECONDS
-    actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
+    actor = os.environ.get("ALTITUDE_ACTOR")
     while True:
         if line:
             line.require_turn()
@@ -1134,7 +1171,7 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
             # Only local review reads share admission's lock; network reads and sleeps
             # leave review requests available, including during nonmerging publication.
             with reviews.merge_lock(project, slug):
-                _require_current_publisher(project, slug, S.load_task(project, slug), authority)
+                _require_current_publisher(project, slug, S.load_task(project, slug))
                 try:
                     reviews.require_merge(project, slug, pair, strict=strict)
                 except reviews.AssessmentRequired as exc:
@@ -1317,11 +1354,11 @@ class _Line:
 
 
 @_ends_with_session
-def _wait_in_line(root, project, slug, pair, *, merge, line, authority, deadline):
+def _wait_in_line(root, project, slug, pair, *, merge, line, deadline):
     """Wait, reading only, until this ready candidate heads the merge line."""
     announced = None
     while True:
-        _require_current_publisher(project, slug, S.load_task(project, slug), authority)
+        _require_current_publisher(project, slug, S.load_task(project, slug))
         position = line.position()
         if position == 0:
             return
@@ -1338,7 +1375,7 @@ def _wait_in_line(root, project, slug, pair, *, merge, line, authority, deadline
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
          merge: bool = False, wait: int | None = None, base: str = "main",
          dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
-         authority: dict | None = None, adopt_pr: int | None = None,
+         adopt_pr: int | None = None,
          expected_head: str | None = None, reason: str | None = None,
          closes_issues: list[int] | None = None, approval: str | None = None) -> dict:
     """Run the whole sequence from the current worktree; returns the JSON-ready result object.
@@ -1391,7 +1428,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     # This is deliberately before fetch, committing, or any GitHub call. Put the
     # fence in the library rather than only in bin/alt so direct callers cannot
     # bypass current-publisher ownership.
-    _require_current_publisher(project, slug, task, authority=authority)
+    _require_current_publisher(project, slug, task)
     _require_task_checkout(root, project, slug, task, branch)
     with S.project_lock(project):
         _require_unowned_pr(project, slug, branch)
@@ -1409,8 +1446,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     _need(staged_diff, "staged changes")
     changed = [path for path in (staged_diff.stdout or "").split("\0") if path]
     if adoption:
-        adoption, hold_merge = _record_adoption(project, slug, adoption, authority,
-                                                previous=task.get("adopted_pr"), dry_run=dry_run)
+        adoption, hold_merge = _change(project, slug, "adoption", receipt=adoption,
+                                       previous=task.get("adopted_pr"), dry_run=dry_run)
         task = {**task, "adopted_pr": adoption}
     commit, staged = None, []
     if not changed:
@@ -1437,12 +1474,12 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     if pr is not None and pr.get("state") == "MERGED":
         cutoff = _continuation_base(root, publish_branch, base, pr, bool(changed), recorded_tip)
         if cutoff is None:
-            return _merged_retry(root, project, slug, task, authority, branch, base, pr, lease, closes_issues)
+            return _merged_retry(root, project, slug, task, branch, base, pr, lease, closes_issues)
         continued_pr = pr
         previous = {"number": pr["number"], "head": pr["headRefOid"],
                     "merge": pr["mergeCommit"]["oid"], "url": pr["url"]}
-        task = _record_delivery(project, slug, task, authority, branch=branch,
-                                base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"), previous=previous)
+        task = _change(project, slug, "delivery", adopted_pr=task.get("adopted_pr"), branch=branch,
+                       base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"), previous=previous)
         hold_merge = task.get("hold_merge")
         # An adopted delivery retains its receipt in history; follow-up belongs to the task branch.
         if adoption:
@@ -1455,8 +1492,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         pr = None
         _note(f"PR #{closed['number']} closed without merging — opening a fresh PR from {branch!r}")
     if changed or not pr or (task.get("delivery") or {}).get("head") != _need(_git(root, "rev-parse", "HEAD"), "head"):
-        task = _record_delivery(project, slug, task, authority, branch=publish_branch,
-                                base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"), previous=closed)
+        task = _change(project, slug, "delivery", adopted_pr=task.get("adopted_pr"), branch=publish_branch,
+                       base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"), previous=closed)
     if changed:
         _need(_git(root, "commit", "-m", message), "git commit")
         commit = _need(_git(root, "rev-parse", "HEAD"), "git rev-parse HEAD")
@@ -1477,7 +1514,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         if commit:
             commit = _need(_git(root, "rev-parse", "HEAD"), "rebased commit")
         if _git(root, "diff", "--quiet", f"origin/{base}", "HEAD").returncode == 0:
-            return _merged_retry(root, project, slug, task, authority, branch, base, continued_pr, lease, closes_issues)
+            return _merged_retry(root, project, slug, task, branch, base, continued_pr, lease, closes_issues)
     # #777: one bound for each phase — the first check and assessment, time in the merge line, the turn.
     wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
     replaced, deadline, waited, created, attempted = [], time.monotonic() + wait, 0, None, None
@@ -1498,7 +1535,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             _assert_pair_current(root, pair, strict=False)  # the merge itself pins the base
         with S.project_lock(project):
             current = S.load_task(project, slug)
-            _require_delivery_owner(project, slug, task, current, authority,
+            _require_delivery_owner(project, slug, task, current, None,
                                     branch=publish_branch, number=number)
         _require_closing_issues(root, number, closes_issues)
         if current.get("hold_merge") and not approval:
@@ -1507,9 +1544,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
 
     def apply_approval(current_pr, head, *, validate_only):
         try:
-            T.apply_merge_approval(project, slug, approval, current_pr, head=head, actor="l2",
-                                   reason="owner applied the operator's task-chat approval",
-                                   validate_only=validate_only)
+            _change(project, slug, "approval", approval=approval, pull=current_pr, head=head,
+                    validate_only=validate_only)
         except T.TransitionError as exc:
             raise LandError(str(exc)) from exc
 
@@ -1536,7 +1572,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             if current.get("hold_merge"):
                 apply_approval(current_pr, pair["head_sha"], validate_only=False)
             yield
-            _record_merged_head(project, slug, pair["head_sha"])
+            _change(project, slug, "merged-head", head=pair["head_sha"])
 
     def ahead(base_sha: str, head: str) -> bool:
         return _git(root, "merge-base", "--is-ancestor", base_sha, head).returncode == 0
@@ -1554,7 +1590,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                                             f"{pair['head_sha']}; report delivery for recovery")
                         from . import reviews
                         with reviews.merge_lock(project, slug):
-                            _record_merged_head(project, slug, pair["head_sha"])
+                            _change(project, slug, "merged-head", head=pair["head_sha"])
                         _fetch_base(root, base)
                         _require_merged_tree(root, pair)
                         _note(f"GitHub confirms PR #{pair['number']} merged at head {pair['head_sha']}")
@@ -1562,7 +1598,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                         break
                     attempted = None
                 with S.project_lock(project):
-                    _require_delivery_owner(project, slug, task, S.load_task(project, slug), authority,
+                    _require_delivery_owner(project, slug, task, S.load_task(project, slug), None,
                                             branch=publish_branch, number=(pr or {}).get("number"))
                 if line:
                     line.beat()  # a turn taken over while this process was paused ends here
@@ -1605,15 +1641,16 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                     pr = _created_pr(root, created)
                 pr_title = pr_body_file = None  # the PR text is set once; the turn's integration does not edit it
                 number = pr.get("number")
-                task = _record_delivery(project, slug, task, authority, branch=publish_branch, number=number,
-                                        head=pushed_head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
+                task = _change(project, slug, "delivery", adopted_pr=task.get("adopted_pr"), branch=publish_branch,
+                               number=number, head=pushed_head,
+                               base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
                 hold_merge = task.get("hold_merge")
                 pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
                 merged, local_tests = pr.get("state") == "MERGED", None
                 if line is None:
                     # Publication: the candidate is judged on its own head; main moving does not interrupt it.
                     checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
-                                                 authority=authority, deadline=deadline, strict=False)
+                                                 deadline=deadline, strict=False)
                     if (merge and not republished and checks not in ("pass", "none-configured", "pending", "missing")
                             and not ahead(pair["base_sha"], pair["head_sha"])):
                         _note(f"checks are {checks!r} on a head without current origin/{base}; integrating it once "
@@ -1630,7 +1667,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                     in_line.callback(line.leave)
                     line.join()
                     joined = time.monotonic()
-                    _wait_in_line(root, project, slug, pair, merge=merge, line=line, authority=authority,
+                    _wait_in_line(root, project, slug, pair, merge=merge, line=line,
                                   deadline=joined + wait)
                     waited = round(time.monotonic() - joined)
                     _note(f"PR #{number} heads the merge line after {waited}s; its turn starts")
@@ -1640,7 +1677,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                 if not ahead(pair["base_sha"], pair["head_sha"]):
                     raise BaseMoved(f"origin/{base} moved to {pair['base_sha']} while the turn published its head")
                 # The turn: the exact pair, its fresh check if main moved, then the merge.
-                checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait, authority=authority,
+                checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
                                              deadline=deadline, strict=True, line=line)
                 _require_closing_issues(root, number, closes_issues)
                 if checks in ("pass", "none-configured"):

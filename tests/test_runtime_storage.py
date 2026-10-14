@@ -71,13 +71,14 @@ class RuntimeStorage(AltitudeCase):
                     self.assertTrue(acquired)
                     self.assertEqual(transcript._turn_prompt(self.project, "fictional-task", {}, {}), "native full brief")
 
-    def test_existing_write_only_lock_keeps_its_bytes_and_can_serialize(self):
+    def test_existing_read_only_lock_keeps_its_bytes_and_can_serialize(self):
+        # A task worker takes Altitude's locks in a home it cannot write.
         self.assertNotEqual(os.geteuid(), 0, "root cannot establish lock access parity")
         self.directory.mkdir()
         for name, locked in self.locks():
             leaf = self.directory / name
             leaf.write_bytes(b"existing lock bytes")
-            leaf.chmod(0o200)
+            leaf.chmod(0o400)
             try:
                 with locked() as acquired:
                     self.assertTrue(acquired)

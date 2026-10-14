@@ -269,7 +269,8 @@ class TestL2Steering(AltitudeCase):
 
     def hook(self, task, event):
         """The real inbox hook, as the Claude session's settings run it."""
-        env = dict(os.environ, ALTITUDE_HOME=str(config.ROOT), ALTITUDE_PROJECT=self.project, ALTITUDE_TASK=task["slug"])
+        env = dict(os.environ, ALTITUDE_HOME=str(config.ROOT), ALTITUDE_PROJECT=self.project, ALTITUDE_TASK=task["slug"],
+                   ALTITUDE_ATTEMPT=str(S.load_task(self.project, task["slug"])["attempt"]))
         payload = {"hook_event_name": event, "session_id": task["session_id"],
                    **({"tool_name": "Bash"} if event == "PostToolUse" else {"stop_hook_active": False})}
         done = subprocess.run([sys.executable, str(config.HOOKS / "inbox.py")], input=json.dumps(payload), text=True,

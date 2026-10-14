@@ -495,11 +495,8 @@ class _Driver:
             if not done:
                 self.collect()
             for drop in sorted(self.sends.glob("*.json")):
-                claimed = drop.with_suffix(".writing")
-                try:
-                    os.rename(drop, claimed)
-                    message = json.loads(claimed.read_text())
-                except (OSError, ValueError):
+                message = self.claim(drop.stem)
+                if message is None:
                     continue
                 outcome = self.deliver(message)
                 if outcome:
@@ -511,20 +508,37 @@ class _Driver:
     def collect(self) -> None:
         """An engine without a hook checkpoint claims its task's waiting messages here, for this poll to write."""
 
+    def claim(self, message_id: str) -> dict | None:
+        """Take one message to write into the turn. A task worker's driver asks altd, which keeps the task's messages
+        and its sends folder (`door`); a coordinator turn's driver renames its own file."""
+        if self.spec.get("task"):
+            from .. import door
+            try:
+                return door.call("claim", {"message": message_id})["message"]
+            except door.DoorError as exc:
+                print(f"altitude-driver: message {message_id} stays for the next poll: {exc}", file=sys.stderr, flush=True)
+                return None
+        claimed = self.sends / f"{message_id}.writing"
+        try:
+            os.rename(self.sends / f"{message_id}.json", claimed)
+            return json.loads(claimed.read_text())
+        except (OSError, ValueError):
+            return None
+
     def settle(self, message_id: str, outcome: str) -> None:
-        if self.sends is not None:
+        """Record the message's outcome. A task worker's driver asks altd, again while altd restarts; one it never
+        reaches leaves the message being written, which `recover_send` settles as unconfirmed."""
+        if self.spec.get("task"):
+            from .. import door
+            try:
+                door.call("settle", {"message": message_id, "outcome": outcome, "session": self.session_id})
+            except door.DoorError as exc:
+                print(f"altitude-driver: Send now outcome not recorded: {exc}", file=sys.stderr, flush=True)
+        elif self.sends is not None:
             try:
                 os.rename(self.sends / f"{message_id}.writing", self.sends / f"{message_id}.{outcome}")
             except OSError:
                 pass
-        task = self.spec.get("task")
-        if task:
-            try:
-                from .. import tasks
-                tasks.settle_send_now(task["project"], task["slug"], message_id, outcome,
-                                      agent_id=self.spec.get("worker_id"), session_id=self.session_id)
-            except Exception as exc:  # noqa: BLE001 — `recover_send` reads the outcome file instead
-                print(f"altitude-driver: Send now outcome not recorded: {exc}", file=sys.stderr, flush=True)
         self.emit({"type": "altitude.send", "message_id": message_id, "outcome": outcome})
 
     def run(self) -> int:
@@ -1308,9 +1322,9 @@ def _owned_unit(record: dict, worker_id: str) -> str:
 
 def worker_sends(worker_id: str, *, job_root: Path) -> Path | None:
     """Where Send now hands a running worker a message; None for a worker launched without a driver."""
-    record = S.read_json(_worker_paths(job_root, worker_id)["record"], None)
-    sends = record.get("sends") if isinstance(record, dict) and record.get("id") == worker_id else None
-    return Path(sends) if sends else None
+    paths = _worker_paths(job_root, worker_id)
+    record = S.read_json(paths["record"], None)
+    return paths["sends"] if isinstance(record, dict) and record.get("id") == worker_id and record.get("sends") else None
 
 
 def worker_unit(worker_id: str, *, job_root: Path) -> str:

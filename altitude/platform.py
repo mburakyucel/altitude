@@ -369,7 +369,7 @@ def change_container_lifecycle(action: str, expected: str) -> dict:
     from . import config
     actor = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
     if actor != config.OPERATOR_ACTOR or any(os.environ.get(key) for key in
-            ("ALTITUDE_TASK", "ALTITUDE_SESSION_KEY", "ALTITUDE_L3_TOKEN")):
+            ("ALTITUDE_TASK", "ALTITUDE_L3_TOKEN")):
         raise PermissionError("Container continuation requires the operator's host terminal")
     if not containerized() or action not in ("pause", "continue"):
         raise ValueError("Select pause or continue for an Altitude container")

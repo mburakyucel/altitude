@@ -134,8 +134,9 @@ class _CodexDriver(common._Driver):
         if not steering:
             return
         try:
-            from .. import tasks
-            tasks.steer_waiting(task["project"], task["slug"], self.spec.get("worker_id"), self.sends)
+            from .. import door, tasks
+            if tasks.steer_ready(task["project"], task["slug"], self.spec.get("worker_id")):
+                door.call("steer", {})  # altd claims them and hands them to this driver's sends
         except Exception as exc:  # noqa: BLE001 — the messages keep waiting in the inbox for the next turn
             self.held = True
             print(f"altitude-driver: waiting messages stay for the next turn: {exc}", file=sys.stderr, flush=True)
