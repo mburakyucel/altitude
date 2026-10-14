@@ -36,7 +36,7 @@ voice remains usable; failed or cancelled updates wait for your Retry in Setting
   path before installing. Altitude's Claude runs use a sign-in of their own from your subscription,
   so your own Claude sign-in and settings stay yours: once installed, run `alt sign-in claude`, which
   opens Claude's sign-in in your browser and then asks you to paste the token it prints at a hidden
-  prompt. It lasts a year; when it ends, project chat names the command again.
+  prompt. It lasts a year; two weeks before it ends, project chat reminds you to run it again.
 - **A GitHub project** you can push to and open pull requests in, with a clean `main` checkout that
   tracks `origin/main`.
 

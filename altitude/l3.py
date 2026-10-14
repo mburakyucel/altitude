@@ -52,10 +52,10 @@ def verb_socket_path(project: str) -> Path:
 
 
 def _engine_home(project: str, engine: str) -> Path:
-    """The coordinator's own engine folder for this project, where its sessions persist across turns. It lives
-    beside the coordinator sockets, where no task worker can write."""
+    """The coordinator's own engine folder for this project, where its sessions persist across turns and restarts.
+    It lives in the persistent coordinator folder, where no task worker can write."""
     name = hashlib.sha256(project.encode()).hexdigest()[:20]
-    return platform.coordinator_directory() / f"{engine}-{name}"
+    return platform.coordinator_directory(persistent=True) / f"{engine}-{name}"
 
 
 def _remove_runtime(runtime: Path) -> None:
@@ -1679,6 +1679,11 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 if route.tell_sign_in(name, project):
                     chat_log(project, "system", _sign_in_notice(name, outcome), trigger="fyi", by="altd",
                              heads_up=True, turn_id=uuid.uuid4().hex, **_slug_meta(slug))
+            for name in engines.TOKEN_SETUP:
+                days = route.tell_renewal(name, project)
+                if days is not None:
+                    chat_log(project, "system", _renewal_notice(name, days), trigger="fyi", by="altd",
+                             heads_up=True, turn_id=uuid.uuid4().hex, **_slug_meta(slug))
 
         while choice.get("engine"):
             tell(choice["engine"])
@@ -1752,6 +1757,13 @@ def _sign_in_notice(engine: str, outcome: str) -> str:
             "stopped": f"{lapse}, so this turn stopped; Retry it once you are signed in again."}
     step = f"To sign in, run `{engines.SIGN_IN[engine][1]}` on the computer running Altitude."
     return f"{said.get(outcome) or f'{lapse}, so {config.ENGINE_LABELS[outcome]} is answering for now.'} {step}"
+
+
+def _renewal_notice(engine: str, days: int) -> str:
+    """That Altitude's own sign-in on an engine ends soon, and how to renew it."""
+    when = "today" if days == 0 else "tomorrow" if days == 1 else f"in {days} days"
+    return (f"Altitude's {config.ENGINE_LABELS[engine]} sign-in ends {when}. To renew it, run "
+            f"`{engines.SIGN_IN[engine][1]}` on the computer running Altitude.")
 
 
 def _limit_notice(project: str, choice: dict) -> str | None:

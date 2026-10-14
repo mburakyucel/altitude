@@ -147,6 +147,18 @@ def read_open(path: Path) -> int:
         raise OSError(errno.EINVAL, str(exc), str(path)) from exc
 
 
+def names(folder: Path) -> list[str]:
+    """The names in an engine's own folder, or none when it is absent; in the runtime root, as `read_open` opens,
+    without following a link at any component."""
+    try:
+        if runtime_parts(folder) is None:
+            return os.listdir(folder)
+        with runtime_directory(_runtime_parts(folder)) as fd:
+            return os.listdir(fd)
+    except OSError:
+        return []
+
+
 def runtime_lock(path: Path):
     """A lock file in the runtime root as an unbuffered binary handle for flock, opened for reading like
     `lock_file`."""

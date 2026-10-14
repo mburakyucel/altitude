@@ -12,7 +12,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from .. import access, config, git_policy, platform, state as S
+from .. import access, config, git_policy, platform, state as S, storage
 
 
 from . import common
@@ -527,12 +527,19 @@ _SUMMARY_KEYS = ("description", "command", "file_path", "notebook_path", "path",
 _TASK_MESSAGE = re.compile(r"^Message from \w+ \(")
 
 
+def _session_files(root: Path, session_id: str) -> list[Path]:
+    """A session's transcript in a Claude folder, listed as `storage.names` lists, so never through a planted link."""
+    projects = root / "projects"
+    return [projects / name / f"{session_id}.jsonl" for name in storage.names(projects)
+            if f"{session_id}.jsonl" in storage.names(projects / name)]
+
+
 def _claude_path(session_id: str, job_root: Path) -> Path | None:
     """A task's session in its job's own Claude folder, or in the operator's for a session recorded there."""
     if not session_id or "/" in session_id or "\\" in session_id:
         return None
     for root in (Path(job_root) / "claude", OPERATOR_HOME):
-        matches = list((root / "projects").glob(f"*/{session_id}.jsonl"))
+        matches = _session_files(root, session_id)
         if matches:
             return matches[0] if len(matches) == 1 else None
     return None
@@ -717,7 +724,7 @@ def image_input(prompt, images, native):
 def transcript_sources(task, *, job_root):
     from .invocation import NativeSession
     path = _claude_path(str(task.get("session_id") or ""), job_root)
-    return [(NativeSession(path, {}), {})] if path and path.is_file() else []
+    return [(NativeSession(path, {}), {})] if path else []
 
 
 def transcript_rows(record, worktree):
@@ -803,13 +810,15 @@ def token_sources(home, owners, register, job_root):
     sources, pending = [], False
     for root in [home] if home else [*([Path(job_root) / "claude"] if job_root else []), OPERATOR_HOME]:
         for sid in owners:
-            for path in root.glob(f"projects/*/{sid}.jsonl"):
-                sources.append((path, sid, "messages"))
-            for child in root.glob(f"projects/*/{sid}/subagents/agent-*.jsonl"):
-                child_id = f"{sid}/{child.stem}"
-                # The directory binds a helper to its owner, not necessarily its spawning helper.
-                register(child_id, sid, parentage="owner")
-                sources.append((child, child_id, "messages"))
+            for project in (root / "projects" / name for name in storage.names(root / "projects")):
+                if f"{sid}.jsonl" in storage.names(project):
+                    sources.append((project / f"{sid}.jsonl", sid, "messages"))
+                for name in storage.names(project / sid / "subagents"):
+                    if name.startswith("agent-") and name.endswith(".jsonl"):
+                        child_id = f"{sid}/{name.removesuffix('.jsonl')}"
+                        # The directory binds a helper to its owner, not necessarily its spawning helper.
+                        register(child_id, sid, parentage="owner")
+                        sources.append((project / sid / "subagents" / name, child_id, "messages"))
     return sources, pending
 
 

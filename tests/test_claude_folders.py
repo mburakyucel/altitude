@@ -6,12 +6,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 import tomllib
 from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo
-from altitude import access, config, dispatch, engines, platform, route, state as S
+from altitude import access, config, dispatch, engines, l3, platform, route, state as S
 
 TOKEN = "fixture-claude-token"
 
@@ -178,6 +179,18 @@ class TestClaudeFolders(AltitudeCase):
             self.assertEqual(sources[0][0].stat(), ())
         usage = engines.observe_token_usage("claude", "sid-own", None, job_root=job_root)
         self.assertNotIn(TOKEN, json.dumps(usage))
+        # Nor does Altitude list a folder outside the job's own through a planted folder link.
+        outside = self.tmp / "outside"
+        (outside / "-x" / "sid-out" / "subagents").mkdir(parents=True)
+        (outside / "-x" / "sid-out.jsonl").write_text('{"type": "user"}\n')
+        (outside / "-x" / "sid-out" / "subagents" / "agent-a.jsonl").write_text('{"type": "user"}\n')
+        (own.parent / "-x").symlink_to(outside / "-x")
+        self.assertIsNone(engines.claude._claude_path("sid-out", job_root))
+        self.assertEqual(engines.claude.token_sources(None, ["sid-out"], lambda *a, **k: None, job_root)[0], [])
+        os.rename(own.parent, self.tmp / "projects-moved")
+        (job_root / "claude" / "projects").symlink_to(outside)
+        self.assertIsNone(engines.claude._claude_path("sid-out", job_root))
+        self.assertEqual(engines.claude.token_sources(None, ["sid-out"], lambda *a, **k: None, job_root)[0], [])
 
     def test_claude_runs_sign_in_with_altitudes_token_and_the_usage_check_leaves_its_lapse(self):
         self.assertEqual(engines.sign_in("claude"), {"signed_in": False, "command": "alt sign-in claude"})
@@ -197,6 +210,30 @@ class TestClaudeFolders(AltitudeCase):
         self.assertTrue(route.signed_out("claude"), "the operator's own sign-in says nothing about Altitude's")
         if "codex" in config.ENGINES:
             self.assertFalse(route.signed_out("codex"), "Codex runs share the sign-in its usage check reads")
+
+    def test_each_project_hears_once_when_the_sign_ins_year_is_nearly_over(self):
+        self.assertIsNone(route.tell_renewal("claude", "one"))
+        self.save_token()
+        token = access.DIR / "claude.token"
+        age = lambda days: os.utime(token, (time.time() - days * 86400,) * 2)
+        for days in (300, 365.5):
+            age(days)
+            self.assertIsNone(route.tell_renewal("claude", "one"), "too early, or ended and so a sign-in lapse")
+        age(354.5)
+        self.assertEqual([route.tell_renewal("claude", project) for project in ("one", "one", "two")], [10, None, 10])
+        self.save_token()
+        age(360.5)
+        self.assertEqual(route.tell_renewal("claude", "one"), 4, "a new sign-in is told of again")
+
+    def test_a_coordinators_folder_outlasts_a_restart_out_of_a_workers_reach(self):
+        runtime = self.tmp / "run"
+        with mock.patch.object(platform, "_darwin", return_value=False), \
+                mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(runtime)}):
+            home, socket = l3._engine_home(self.project, "claude"), l3.verb_socket_path(self.project)
+        self.assertIn(runtime, socket.parents, "sockets stay out of backups")
+        self.assertNotIn(runtime, home.parents, "the per-user runtime folder is emptied on each restart")
+        self.assertEqual(home.parent.parent, config.HOME / ".config/altitude")
+        self.assert_none_shared([home])
 
     def test_alt_sign_in_keeps_the_pasted_token_private_and_ends_the_lapse(self):
         refused = self.alt("sign-in", "claude", env={"ALTITUDE_ACTOR": "l2"})

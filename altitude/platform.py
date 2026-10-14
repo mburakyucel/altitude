@@ -214,15 +214,17 @@ def container_unavailable(subject: str) -> str | None:
     return IMAGE_MANAGED
 
 
-def coordinator_directory() -> Path:
+def coordinator_directory(*, persistent: bool = False) -> Path:
     """The folder of the coordinators' sockets and per-turn command folders, one per installation: outside every
     root a task worker may write, so no worker can replace a socket or a command there. On Linux it is in the
     per-user runtime folder, so sockets never become persistent backup data (#543); on macOS, whose per-user
     temporary folder workers may write, it is beside Altitude's private configuration, named by the installation
-    alone so a project's socket stays within macOS's 103-byte socket path limit under any home up to 64 bytes (#973)."""
+    alone so a project's socket stays within macOS's 103-byte socket path limit under any home up to 64 bytes (#973).
+    The `persistent` folder, for what must outlast a restart such as a coordinator's own engine sessions, is there on
+    both."""
     from . import config
     name = hashlib.sha256(str(config.ROOT.resolve()).encode()).hexdigest()[:12]
-    if _darwin():
+    if _darwin() or persistent:
         return config.HOME / ".config/altitude" / name
     return Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / f"altitude-{name}"
 

@@ -162,8 +162,9 @@ the project set to one engine, the line says your message waits, and it sends on
 signed in again. Codex runs use the CLI's own sign-in, which the five-minute usage check also reads,
 so a lapse it sees moves the next message before any turn fails, and its next successful reading ends
 the lapse. Claude runs use Altitude's own sign-in from `alt sign-in claude`, which lasts a year and
-which the usage check does not read; a missing or ended one shows as a lapse on the first Claude run,
-and saving a new one ends it.
+which the usage check does not read. Each project's chat says once, two weeks before the year ends,
+that it needs renewing; a missing or ended one shows as a lapse on the first Claude run, and saving a
+new one ends it.
 
 Task owners hold with "provider rejected authentication or account access; sign in, then Retry or
 Resume". Sign in (`alt sign-in claude` or `codex login`), then press

@@ -93,6 +93,14 @@ def engine_token(engine: str) -> str | None:
         return None
 
 
+def engine_token_saved(engine: str) -> float | None:
+    """When that sign-in was saved, from which its year runs."""
+    try:
+        return (DIR / f"{engine}.token").stat().st_mtime
+    except OSError:
+        return None
+
+
 def save_engine_token(engine: str, token: str) -> None:
     with _locked():
         S.atomic_write(DIR / f"{engine}.token", token + "\n")  # mkstemp: 0600

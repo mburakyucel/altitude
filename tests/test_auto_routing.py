@@ -1,9 +1,10 @@
 """Configured Auto options flow through real routing, launch, session and failure handling."""
 from unittest import mock
+import os
 import time
 
 from tests.support import AltitudeCase, set_project_setting
-from altitude import config, digest, dispatch, engines, incidents, l3, monitor, route, server, state as S, tasks as T
+from altitude import access, config, digest, dispatch, engines, incidents, l3, monitor, route, server, state as S, tasks as T
 from altitude.engines import codex as quota_codex
 
 
@@ -421,6 +422,18 @@ class TestAutoIntegration(AltitudeCase):
 
     def assert_no_provider_text(self):
         self.assertFalse([row for row in l3.chat_history(self.project) if "OAuth token revoked" in row["text"]])
+
+    def test_the_conversation_hears_once_before_altitudes_own_sign_in_ends(self):
+        self.policy("claude:opus")
+        access.save_engine_token("claude", "fixture-token")
+        self.addCleanup((access.DIR / "claude.token").unlink, missing_ok=True)
+        saved = time.time() - 354.5 * 86400
+        os.utime(access.DIR / "claude.token", (saved, saved))
+        with mock.patch.object(engines, "claude_print", side_effect=lambda *a, **k: self.answered("Fine")):
+            self.assertTrue(l3.turn(self.project, "Hello")["completed"])
+            self.assertTrue(l3.turn(self.project, "Again")["completed"])
+        self.assertEqual(self.notices(), ["Altitude's Claude sign-in ends in 10 days. To renew it, run "
+                                          "`alt sign-in claude` on the computer running Altitude."])
 
     def test_a_revoked_sign_in_answers_on_the_other_engine_and_says_so_once_per_lapse(self):
         self.policy("claude:opus > codex")
