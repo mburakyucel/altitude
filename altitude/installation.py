@@ -571,14 +571,18 @@ def prerequisites() -> list[dict]:
     if platform.containerized() and (lacks or not gh):
         github["detail"] = "GitHub CLI is bundled in the image. Replace this incomplete image from the host."
     items = [{"key": "github", **github}]
+    installed = [engine for engine in config.ENGINES if engines.installation(engine)["available"] is not False]
+    if not installed:
+        # One agent is enough, so a fresh computer shows one requirement with each agent's install command.
+        names = " or ".join(config.ENGINE_LABELS[engine] for engine in config.ENGINES)
+        lead = "Install at least one coding agent" if len(config.ENGINES) > 1 else "Install a coding agent"
+        items.append({"key": "agents", "label": f"{lead}: {names}", "state": "unmet",
+                      "detail": "Then sign in to it.", "command": None,
+                      "options": [{"label": config.ENGINE_LABELS[engine], "command": engines.install_command(engine)}
+                                  for engine in config.ENGINES]})
     agents = []
-    for engine in config.ENGINES:
+    for engine in installed:
         label = config.ENGINE_LABELS[engine]
-        if engines.installation(engine)["available"] is False:
-            agents.append({"key": engine, "label": f"{label} not installed", "state": "unmet",
-                           "detail": f"Install {label} (or set its binary in the service environment), then sign in.",
-                           "command": engines.install_command(engine)})
-            continue
         signed = engines.sign_in(engine)
         agents.append({"key": engine, "label": f"{label} signed in" if signed["signed_in"] else f"{label} installed",
                        "state": "met" if signed["signed_in"] else "unmet",
@@ -589,6 +593,15 @@ def prerequisites() -> list[dict]:
             if agent["state"] == "unmet":
                 agent.update(state="optional", detail=f"Altitude works with any one coding agent. {agent['detail']}")
     items += agents
+    sandbox = platform.sandbox_tool()
+    if sandbox:
+        # Only agents Altitude confines itself run inside it; one that brings its own sandbox does not need it.
+        needed = not installed or any(engines.common.implementation(engine).JOB_PROFILE for engine in installed)
+        items.append({"key": "sandbox", "label": "Agent sandbox",
+                      "state": "met" if sandbox["enabled"] else "unmet" if needed else "optional",
+                      "detail": None if sandbox["enabled"] else "Altitude runs agents inside bubblewrap on Linux."
+                      + ("" if sandbox["command"] else " Install it with this computer's package manager."),
+                      "command": None if sandbox["enabled"] else sandbox["command"]})
     git = shutil.which("git")
     install = None if git else platform.install_command("git")
     detail = "Agents work in Git checkouts." + ("" if install else f" Install it ({platform.INSTALL_PAGES['git']}).")
@@ -658,20 +671,37 @@ def describe_hosting(hosting: dict) -> str:
         lines.append(hosting["detail"])
     if hosting.get("overrides"):
         lines.append("Ignored calling-shell values: " + ", ".join(hosting["overrides"]) + "; the service keeps its saved settings.")
-    lines.append("Next: open the URL for browser setup." if hosting["verified"] else
-                 "Next: use alt service logs to investigate, or alt service start to start a stopped installation.")
+    if not hosting["verified"]:
+        lines.append("Next: use alt service logs to investigate, or alt service start to start a stopped installation.")
     return "\n".join(lines)
 
 
+def _next(hosting: dict, pairing: dict, needs: list[dict]) -> list[str]:
+    """The one next step from current state: a working service, then the first browser, then the first missing tool."""
+    if not hosting["verified"]:
+        return []  # describe_hosting already names the service step.
+    if pairing["paired"] == 0:
+        if pairing.get("code_expires"):
+            from . import state as S
+            return [f"Next: open the private link the installer printed. It works once, until {S.local(pairing['code_expires'])}."]
+        return ["Next: compare the certificate below with what your browser shows, trust it, then run alt pair."]
+    if needs:
+        first = needs[0]
+        return [f"Next: {first['label']}.",
+                *([f"  {first['command']}"] if first.get("command") else []),
+                *[f"  {option['label']}: {option['command']}" for option in first.get("options") or []]]
+    return ["Next: nothing is left to set up; open Altitude in your browser."]
+
+
 def describe_doctor(report: dict) -> str:
-    lines = [describe_hosting(report["hosting"]), "", "Readiness:"]
+    lines = [describe_hosting(report["hosting"]), *report["next"], "", "Readiness:"]
     lines += [f"  {item['name']}: {item['state']}" for item in report["checks"]]
     lines += ["  " + item["detail"] for item in report["checks"]
               if item["state"] in ("unavailable", "unknown") and isinstance(item.get("detail"), str)]
     paired = report["pairing"]["paired"]
-    lines += ["Browser certificate trust: unverified; compare the certificate and reopen without a warning.",
+    lines += [*(["Browser certificate trust: unverified until a browser opens Altitude without a warning."] if not paired else []),
               f"Browser pairing: unknown; {report['pairing']['detail']}" if paired is None else
-              "Browser pairing: no browser is paired yet; trust the certificate, then run alt pair." if not paired else
+              "Browser pairing: no browser is paired yet." if not paired else
               f"Browser pairing: {paired} browser{'' if paired == 1 else 's'} paired; alt pair prints a code for another.",
               "Coding-provider access: unverified; no provider requests are made."]
     trust = report["certificate_trust"]
@@ -732,12 +762,17 @@ def doctor() -> dict:
     except (tls.TLSFailure, OSError) as exc:
         trust = {"state": "unavailable", "detail": str(exc)}
     try:
-        pairing = {"paired": len(access.devices())}
+        pairing = {"paired": len(access.devices()), "code_expires": access.code_expires()}
     except (OSError, ValueError) as exc:
         pairing = {"paired": None, "detail": str(exc)}
     seats = [{"name": config.ENGINE_LABELS[engine], **engines.installation(engine)} for engine in config.ENGINES]
+    needs = [item for item in prerequisites() if item["state"] == "unmet"]
+    agents = next((item for item in needs if item["key"] == "agents"), None)
+    checks.append({"name": "coding agent", "state": "unavailable" if agents else "configured",
+                   "detail": (agents["label"] + "; " + "; ".join(f"{o['label']}: {o['command']}" for o in agents["options"]))
+                   if agents else ", ".join(seat["name"] for seat in seats if seat["available"] is not False)})
     return {"version": (config.RELEASE or {}).get("version"), "update": update_status(), "checks": checks, "engines": seats,
-            "hosting": hosting, "pairing": pairing,
+            "hosting": hosting, "pairing": pairing, "next": _next(hosting, pairing, needs),
             "engine_access": "unknown; no provider requests are made", "certificate_trust": trust,
             "optional": "Voice, GPU and telemetry do not gate typing or task delivery."}
 

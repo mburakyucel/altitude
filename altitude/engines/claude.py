@@ -850,7 +850,7 @@ def worker_events(path):
             if e.get("type") == "result" else e for e in events]
 
 
-INSTALL_COMMAND = 'npm install -g @anthropic-ai/claude-code'
+INSTALL_COMMAND = 'curl -fsSL https://claude.ai/install.sh | bash'
 SIGN_IN = (('auth', 'status'), 'claude auth login')
 IMAGE_READER = 'Read'
 EFFORT_ENV = "CLAUDE_CODE_EFFORT_LEVEL"

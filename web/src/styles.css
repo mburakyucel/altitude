@@ -737,7 +737,7 @@
 .setup-trigger:hover { background: var(--card); }
 .setup-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
 .setup-trigger[data-status="ready"] .setup-dot, .setup-trigger[data-status="conversation_ready"] .setup-dot { background: var(--success-text); }
-.setup-trigger[data-status="attention"] .setup-dot { background: var(--chip-claimed-text); }
+.setup-trigger[data-status="attention"] .setup-dot, .setup-trigger[data-status="waiting"] .setup-dot { background: var(--chip-claimed-text); }
 .setup-panel { display: flex; flex-direction: column; min-height: 100%; padding: 24px; gap: 20px; }
 .setup-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .setup-heading h2 { font-size: var(--text-page-title); font-weight: 600; }
@@ -745,12 +745,12 @@
 .setup-intro { display: flex; flex-direction: column; gap: 6px; }
 .setup-summary { font-weight: 600; }
 .setup-summary[data-status="ready"], .setup-summary[data-status="conversation_ready"] { color: var(--success-text); }
-.setup-summary[data-status="attention"] { color: var(--chip-claimed-text); }
+.setup-summary[data-status="attention"], .setup-summary[data-status="waiting"] { color: var(--chip-claimed-text); }
 .setup-steps { display: flex; flex-direction: column; }
 .setup-step { display: flex; gap: 12px; padding: 18px 0; border-top: 1px solid var(--hairline); }
 .setup-mark { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; color: var(--text-muted); background: var(--card); font-weight: 600; }
 .setup-step[data-status="complete"] .setup-mark, .setup-step[data-status="reused"] .setup-mark { color: var(--success-text); background: var(--success-bg); }
-.setup-step[data-status="input_needed"] .setup-mark, .setup-step[data-status="unknown"] .setup-mark { color: var(--chip-claimed-text); background: var(--chip-claimed-bg); }
+.setup-step[data-status="input_needed"] .setup-mark, .setup-step[data-status="unknown"] .setup-mark, .setup-step[data-status="waiting"] .setup-mark { color: var(--chip-claimed-text); background: var(--chip-claimed-bg); }
 .setup-step[data-status="failed"] .setup-mark { color: var(--danger); background: var(--card); }
 .setup-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; overflow-wrap: anywhere; }
 .setup-step-heading { width: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }

@@ -333,6 +333,7 @@ def _tools_text(record: dict) -> str:
 
 def main(argv=None) -> None:
     ap = ExactArgumentParser(prog="alt")
+    ap.add_argument("--version", action="version", version=f"alt {(config.RELEASE or {}).get('version') or 'source checkout'}")
     ap.add_argument("--project", "-p")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
@@ -1169,7 +1170,7 @@ def main(argv=None) -> None:
             tls.phone_address(found)
             print("Or scan this with a phone to open it:\n" + qr.terminal(found["url"]))
         except tls.TLSFailure as exc:
-            print(f"No phone QR: {exc}")
+            print("Other devices can't reach this address yet — see Settings → Network." if found["tls"] else f"No phone QR: {exc}")
         if found["tls"] and (found["tls_dir"] / "ca.crt").exists():  # an external certificate has no CA here
             try:
                 authority = tls.identity(found["tls_dir"] / "ca.crt")

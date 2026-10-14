@@ -105,6 +105,9 @@ export function PrerequisiteList({ actions }: { actions: (check: ReactNode, read
               <span className="block text-meta text-muted">{item.state === "met" ? "Ready" : item.state === "optional" ? "Optional" : "Needs attention"}</span>
               {item.detail ? <p className="text-meta text-muted">{item.detail}</p> : null}
               {item.command && item.state === "unmet" ? <Command text={item.command} /> : null}
+              {item.state === "unmet" ? item.options?.map((option) => <div key={option.label} className="onboarding-option">
+                <span className="text-meta">{option.label}</span><Command text={option.command} />
+              </div>) : null}
             </div>
           </div>)}
     </div>

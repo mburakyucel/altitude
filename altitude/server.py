@@ -764,6 +764,10 @@ def start_l3(project: str) -> None:
         if held:
             project_setup.save(project, start_requested=True)
             return  # Setup maintenance retries this unclaimed first turn after host continuation.
+        if project_setup.missing_tool(project):
+            # Setup shows it waiting and starts it once a coding tool is installed; a failure it supersedes is cleared.
+            project_setup.save(project, start_requested=True, intro=None)
+            return
         _start_l3(project)
 
 

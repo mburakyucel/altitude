@@ -1305,8 +1305,9 @@ def sandbox_tool() -> dict | None:
     found = shutil.which("bwrap")
     command = {"apt": "sudo apt install bubblewrap", "dnf": "sudo dnf install bubblewrap",
                "pacman": "sudo pacman -S bubblewrap", "zypper": "sudo zypper install bubblewrap"}.get(package_manager())
-    return {"enabled": bool(found), "detail": found or f"Install bubblewrap{f' ({command})' if command else ''}: "
-                                                       "agents that Altitude confines itself run inside it"}
+    return {"enabled": bool(found), "command": command,
+            "detail": found or f"Install bubblewrap{f' ({command})' if command else ''}: "
+                               "agents that Altitude confines itself run inside it"}
 
 
 def logged_job_command(name: str, command: str, *, log: Path, status: Path, env: dict[str, str],

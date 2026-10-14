@@ -8,8 +8,9 @@ import { ThemeToggle } from "./theme";
 import { attentionCount } from "../data/decisions";
 import { RoleModelButton } from "../components/ModelMenu";
 
-/** "78% of week", "no reading", "52% of week · reading 3h old" (SPEC.md §3.1). */
+/** "78% of week", "not installed", "no reading", "52% of week · reading 3h old" (SPEC.md §3.1). */
 export function readoutText(row: EngineReadout): string {
+  if (row.installed === false) return "not installed";
   if (row.week == null) return "no reading";
   const share = `${Math.round(row.week)}% of week`;
   const old = age(row.at);
@@ -82,7 +83,7 @@ export function Rail({
       </div>
       {unmanaged.length > 0 ? (
         <button type="button" className="rail-item text-meta" onClick={onAddFolder}>
-          {unmanaged.length} folder{unmanaged.length === 1 ? "" : "s"} not managed
+          {unmanaged.length === 1 ? "1 folder found — add it" : `${unmanaged.length} folders found — add them`}
         </button>
       ) : null}
       {data && data.engines.length > 0 ? (

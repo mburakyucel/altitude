@@ -10,7 +10,10 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, engines, git_policy, l3, platform, state as S, storage, tasks as T
+from . import config, engines, git_policy, l3, state as S, storage, tasks as T
+
+
+GITHUB_CREATE = "gh repo create --source . --push"
 
 
 class SetupError(git_policy.GitPolicyError):
@@ -120,9 +123,22 @@ def _repository(project: str) -> tuple[dict, bool]:
                          "No Git repository. Conversation is available; Git tasks are unavailable."), False
         return _step("repository", "Git repository", "failed", result.stderr.strip()[:400], action="discuss"), False
     state = git_policy.inspect_repository(repo)
+    if not state.determinate and not git_policy.has_origin(repo):
+        return _step("repository", "Git repository", "input_needed", "This repository isn't on GitHub yet. "
+                     "Agents deliver through pull requests:", command=GITHUB_CREATE), True
     if not state.determinate:
         return _step("repository", "Git repository", "input_needed", state.error or "Repository needs attention.", action="discuss"), True
     return _step("repository", "Git repository", "reused", "Detected an existing repository and origin/main. No repository was created."), True
+
+
+def missing_tool(project: str) -> str | None:
+    """The coding tool to install when none the coordinator may use is installed, in First run's order;
+    None when one is installed or the first turn waits for something else, such as a usage limit."""
+    choice = l3._select(project)
+    routed = {row["engine"] for row in choice.get("held") or []}
+    if choice.get("engine") or not routed or any(engines.installation(engine)["available"] is not False for engine in routed):
+        return None
+    return next(config.ENGINE_LABELS[engine] for engine in config.ENGINES if engine in routed)
 
 
 def _coordinator(project: str, record: dict) -> dict:
@@ -147,6 +163,10 @@ def _coordinator(project: str, record: dict) -> dict:
         return _step("coordinator", "Coordinator", "complete" if intro.get("state") == "complete" else "reused",
                      "First conversation ready." if intro.get("state") == "complete" else "Using the existing conversation and command connection.")
     if record.get("start_requested"):
+        tool = None if intro else missing_tool(project)
+        if tool:
+            return _step("coordinator", "Coordinator", "waiting",
+                         f"Waiting for a coding tool. Install {tool} (Coding tools), and setup continues by itself.", action="tools")
         return _step("coordinator", "Coordinator", "pending", "Command connection ready; the first conversation is pending.")
     return _step("coordinator", "Coordinator", "complete", "Command connection ready. Open the conversation to speak with L3.")
 
@@ -194,7 +214,7 @@ def _observe(project: str, record: dict, *, interrupted: bool = False) -> dict:
                    "Registered the selected folder." if record.get("registered_at") else "Using the registered folder."), repository,
              _step("instructions", "Project instructions", "reused" if rules else "not_applicable",
                    f"Using {rules.name}; its contents are unchanged." if rules else
-                   "No project instructions. No file is created; discuss conventions with L3.", **({} if rules else {"action": "discuss"}))]
+                   "No project instructions. No file is created; discuss conventions with the coordinator.", **({} if rules else {"action": "discuss"}))]
     try:
         guard_paths = _guard_paths(project) if has_git else []
     except git_policy.GitPolicyError as exc:
@@ -232,6 +252,7 @@ def _observe(project: str, record: dict, *, interrupted: bool = False) -> dict:
     statuses = {s["status"] for s in steps}
     status = ("checking" if operation.get("state") in ("pending", "running") or statuses & {"running", "pending"}
               else "attention" if statuses & {"input_needed", "failed", "unknown"}
+              else "waiting" if "waiting" in statuses
               else "conversation_ready" if not has_git else "ready")
     return {"project": project, "status": status, "checked_at": S.now(), "steps": steps,
             "operation": operation or None, "source": str(config.SOURCE.name),
@@ -284,7 +305,9 @@ def run(project: str) -> None:
             operation.update(state="complete", finished_at=S.now())
             save(project, operation=operation)
             view = observe(project)
-            problems = [s["detail"] for s in view["steps"] if s["status"] in ("failed", "input_needed") and s["id"] != "coordinator"]
+            # Only a repair that leaves its own Git guards unmet is Altitude's fault; the repository and
+            # instructions are the operator's, and setup shows them as guidance.
+            problems = [s["detail"] for s in view["steps"] if s["status"] in ("failed", "input_needed") and s["id"].startswith("guards")]
             if problems:
                 _fault(project, "; ".join(problems))
         except (git_policy.GitPolicyError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -304,7 +327,8 @@ def maintain(project: str) -> None:
     if (record.get("operation") or {}).get("state") == "failed":
         return
     view = observe(project)
-    first_turn_pending = platform.containerized() and not record.get("intro") and any(
+    # An unclaimed first turn, held by host admission or by a coding tool installed since, starts here.
+    first_turn_pending = not record.get("intro") and any(
         s["id"] == "coordinator" and s["status"] == "pending" for s in view["steps"])
     if first_turn_pending or any(s.get("action") == "repair" and (s["id"].startswith("guards") or
            s["id"] == "coordinator" and not record.get("intro")) for s in view["steps"]):
