@@ -66,7 +66,9 @@ for (const scene of scenes) test(`task status: ${scene.key}, row and page`, asyn
   await walk.state("01-row-explanation", { visible: [row.getByText(rowExplanation, { exact: true })], hidden: [] });
   expect(await row.innerText()).not.toMatch(/aabbccdd|attempt 1|worker state|l2-died|thinking_tokens|\\n/);
   if (fault || stopped) await expect(row.locator(".dot")).toHaveAttribute("data-state", coordinatorStop ? "running" : "danger");
-  if (audience === "operator") await expect(row.getByText("Your turn · 1 question")).toBeVisible();
+  // A waiting task's lone freeform question names itself; a stopped or faulted one keeps the count (SPEC.md §3.5).
+  const turn = stopped || fault ? "Your turn · 1 question" : "Your turn · Which release should the checks use?";
+  if (audience === "operator") await expect(row.getByText(turn, { exact: true })).toBeVisible();
   await row.click();
   const explanation = page.locator(".conversation-status");
   await walk.state("02-page-explanation", { visible: [...(routine ? [] : [explanation.getByText(pageLine!, { exact: true })]), page.getByText("Merge held", { exact: false }).first()], hidden: routine ? [explanation] : [] });
