@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -11,7 +12,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from .. import config, git_policy, platform, state as S
+from .. import access, config, git_policy, platform, state as S
 
 
 from . import common
@@ -180,6 +181,7 @@ class _ClaudeDriver(common._Driver):
     and Claude then finishes what it has accepted and exits."""
 
     def __init__(self, spec: dict, env: dict):
+        _own_folder(Path(env["CLAUDE_CONFIG_DIR"]), spec.get("resume"))
         super().__init__(spec, env)
         self.waiting: dict[str, str | None] = {}
         self.ended_at: float | None = None
@@ -276,13 +278,41 @@ class _ClaudeDriver(common._Driver):
             time.sleep(common.SEND_POLL)
 
 
-def _claude_writable(*roots: Path) -> tuple[Path, ...]:
-    """Where a Claude job may write inside Altitude's own sandbox: its roots, Claude's own state
-    (sessions, settings, and the account file with its atomic replacements) and the GitHub CLI's configuration.
-    Claude's permission boundary still decides within them."""
-    home = Path.home()
-    return (*roots, Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude"), Path(f"{home / '.claude.json'}*"),
-            home / ".config/gh")
+#: The operator's own Claude folder. No Claude job Altitude starts writes it: each has a folder of its own.
+OPERATOR_HOME = config.HOME / ".claude"
+#: The operator's customisation a job's own folder links to, read-only where the platform confines the job.
+LINKED = ("settings.json", "CLAUDE.md", "skills", "agents", "commands", "plugins", "output-styles")
+
+
+def job_env(home: Path) -> dict:
+    """What a Claude job starts with, through its launch input: its own Claude folder and the sign-in Altitude's
+    runs use (`alt sign-in claude`). Without that sign-in Claude reports itself signed out, as for any lapse."""
+    token = access.engine_token("claude")
+    return {"CLAUDE_CONFIG_DIR": str(home), **({"CLAUDE_CODE_OAUTH_TOKEN": token} if token else {})}
+
+
+def _own_folder(home: Path, resume: str | None) -> None:
+    """Prepare a job's own Claude folder from inside the job, so Altitude never writes where the job can.
+
+    It links the operator's customisation, and a session resumed for the first time in this folder is copied in
+    from the operator's folder, where Claude kept every session before jobs had folders of their own."""
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for name in LINKED:
+        if os.path.lexists(OPERATOR_HOME / name) and not os.path.lexists(home / name):
+            os.symlink(OPERATOR_HOME / name, home / name)
+    if not resume or "/" in resume or any(home.glob(f"projects/*/{resume}.jsonl")):
+        return
+    for found in OPERATOR_HOME.glob(f"projects/*/{resume}.jsonl"):
+        folder = home / "projects" / found.parent.name
+        folder.mkdir(parents=True, exist_ok=True)
+        if found.with_suffix("").is_dir():
+            shutil.copytree(found.with_suffix(""), folder / resume, symlinks=True, dirs_exist_ok=True)
+        shutil.copy2(found, folder / found.name)
+
+
+def notes_folder(repo: Path) -> Path:
+    """The operator's Claude notes for a project, which task workers read but cannot change."""
+    return OPERATOR_HOME / "projects" / re.sub(r"[^a-zA-Z0-9]", "-", str(Path(repo).resolve())) / "memory"
 
 
 def claude_settings() -> Path:
@@ -308,7 +338,7 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
                  timeout: int = config.L3_TURN_TIMEOUT, restricted: bool = False,
                  add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None,
                  images: list[dict] | tuple = (),
-                 sends: Path | None = None, on_send=None) -> dict:
+                 sends: Path | None = None, on_send=None, home: Path) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
     raw_stdout/raw_stderr; `limited` (scope and optional reset) when an allowance is exhausted — the call is not even
     made while a hold is in force.
@@ -316,8 +346,8 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
     A message placed in `sends` joins the running turn (see `_Driver`); `on_send(message_id, outcome, text)` is called
     at that point of the turn with the reply streamed since the previous one, and `text` holds only what follows.
 
-    The turn runs as the job `unit`, which holds every process it starts and ends it after `timeout` seconds.
-    `on_start(pid)` is called the moment the job's launcher exists."""
+    The turn runs as the job `unit`, which holds every process it starts and ends it after `timeout` seconds, with
+    `home` as its own Claude folder. `on_start(pid)` is called the moment the job's launcher exists."""
     config.task_effort("claude", effort, role="l3")
     content = common._engine_input("claude", prompt, images)
     held = common.usage_hold()
@@ -355,9 +385,8 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
     env.update(extra_env or {})
     if effort is not None:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
-    writable = _claude_writable(Path(cwd), config.ROOT)
     driver = platform.job_command(unit, common._driver_command(), common.launch_env(env), runtime_max=timeout,
-                                  writable=writable)
+                                  writable=(Path(cwd), config.ROOT, Path(home)))
     env = common.launch_env(env, retain_user_bus=True)
     # prompt goes through the driver's input: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(driver, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -365,7 +394,8 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
     if on_start:
         on_start(proc.pid)
     common._feed(proc.stdin, common._driver_input({"engine": "claude", "command": cmd, "input": content,
-                                     "sends": str(sends) if sends is not None else None}))
+                                     "resume": resume, "sends": str(sends) if sends is not None else None,
+                                     "env": job_env(Path(home))}))
     stdout_capture, stderr_capture = common._BoundedRawCapture(), common._BoundedRawCapture()
 
     def drain_stderr() -> None:
@@ -497,11 +527,15 @@ _SUMMARY_KEYS = ("description", "command", "file_path", "notebook_path", "path",
 _TASK_MESSAGE = re.compile(r"^Message from \w+ \(")
 
 
-def _claude_path(session_id: str) -> Path | None:
+def _claude_path(session_id: str, job_root: Path) -> Path | None:
+    """A task's session in its job's own Claude folder, or in the operator's for a session recorded there."""
     if not session_id or "/" in session_id or "\\" in session_id:
         return None
-    matches = list((config.HOME / ".claude" / "projects").glob(f"*/{session_id}.jsonl"))
-    return matches[0] if len(matches) == 1 else None
+    for root in (Path(job_root) / "claude", OPERATOR_HOME):
+        matches = list((root / "projects").glob(f"*/{session_id}.jsonl"))
+        if matches:
+            return matches[0] if len(matches) == 1 else None
+    return None
 
 
 def _tool_call(block: dict, worktree: str, at) -> dict:
@@ -588,7 +622,7 @@ def _epoch_ms(value) -> str | None:
     return datetime.fromtimestamp(value / 1000, timezone.utc).isoformat()
 
 
-JOBS_DIR = config.HOME / ".claude" / "jobs"   # the Claude harness's background-job state, keyed by agent id
+JOBS_DIR = OPERATOR_HOME / "jobs"   # the Claude harness's background-job state, keyed by agent id
 
 
 def claude_job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
@@ -641,7 +675,7 @@ def review_result_facts(records: list[dict]) -> dict:
     return facts
 
 
-def prepare_worker(name, prompt, *, cwd, scratch, persona, model, settings, effort, resume, images):
+def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images):
     cmd = [config.CLAUDE_BIN, "-p", "--input-format", "stream-json", "--replay-user-messages",
            "--output-format", "stream-json", "--verbose", "--name", name,
            "--permission-mode", "auto", "--allowedTools", "Bash(alt *)",
@@ -661,7 +695,8 @@ def prepare_worker(name, prompt, *, cwd, scratch, persona, model, settings, effo
         if row.get("name") == name and row.get("state") not in ("done", "failed", "stopped"):
             claude_stop(row["id"])
     git_writable, read_only = git_policy.worker_git_access(cwd)
-    return cmd, content, _claude_writable(Path(cwd), *git_writable, scratch), read_only
+    home = Path(job_root) / "claude"
+    return cmd, content, (Path(cwd), *git_writable, scratch, home), read_only, job_env(home)
 
 
 worker_unit_name = _claude_unit
@@ -679,9 +714,9 @@ def image_input(prompt, images, native):
     return content
 
 
-def transcript_sources(task):
+def transcript_sources(task, *, job_root):
     from .invocation import NativeSession
-    path = _claude_path(str(task.get("session_id") or ""))
+    path = _claude_path(str(task.get("session_id") or ""), job_root)
     return [(NativeSession(path, {}), {})] if path and path.is_file() else []
 
 
@@ -763,17 +798,18 @@ def token_numbers(usage):
             "incomplete": None in (plain, reads, writes, outputs)}
 
 
-def token_sources(home, owners, register):
+def token_sources(home, owners, register, job_root):
+    # A session copied into its job's folder repeats message ids, which count once.
     sources, pending = [], False
-    root = home or config.HOME / ".claude"
-    for sid in owners:
-        for path in root.glob(f"projects/*/{sid}.jsonl"):
-            sources.append((path, sid, "messages"))
-        for child in root.glob(f"projects/*/{sid}/subagents/agent-*.jsonl"):
-            child_id = f"{sid}/{child.stem}"
-            # The directory binds a helper to its owner, not necessarily its spawning helper.
-            register(child_id, sid, parentage="owner")
-            sources.append((child, child_id, "messages"))
+    for root in [home] if home else [*([Path(job_root) / "claude"] if job_root else []), OPERATOR_HOME]:
+        for sid in owners:
+            for path in root.glob(f"projects/*/{sid}.jsonl"):
+                sources.append((path, sid, "messages"))
+            for child in root.glob(f"projects/*/{sid}/subagents/agent-*.jsonl"):
+                child_id = f"{sid}/{child.stem}"
+                # The directory binds a helper to its owner, not necessarily its spawning helper.
+                register(child_id, sid, parentage="owner")
+                sources.append((child, child_id, "messages"))
     return sources, pending
 
 
@@ -851,7 +887,8 @@ def worker_events(path):
 
 
 INSTALL_COMMAND = 'curl -fsSL https://claude.ai/install.sh | bash'
-SIGN_IN = (('auth', 'status'), 'claude auth login')
+SIGN_IN = (None, 'alt sign-in claude')  # Altitude's runs sign in with a token of their own
+TOKEN_SETUP = ('setup-token',)  # prints a long-lived sign-in for the operator's subscription
 IMAGE_READER = 'Read'
 EFFORT_ENV = "CLAUDE_CODE_EFFORT_LEVEL"
 NATIVE_SEND = True
@@ -892,7 +929,7 @@ def legacy_worker(task):
     if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"].strip():
         raise RuntimeError("Worker unit identity is unavailable")
     unit = _claude_unit(job["name"])
-    transcript = next((config.HOME / ".claude/projects").glob(f"*/{task['session_id']}.jsonl"), None)
+    transcript = next((OPERATOR_HOME / "projects").glob(f"*/{task['session_id']}.jsonl"), None)
     alive = platform.job_active(unit, common.launch_env(retain_user_bus=True)) and transcript is not None
     state = job.get("state") if job.get("state") in ("done", "failed", "stopped") else "working" if alive else "failed"
     detail, at = claude_job_detail(task["agent_id"])
@@ -964,7 +1001,14 @@ def public_message_identity(record):
 
 
 def review_writable(runtime):
-    return _claude_writable(Path(runtime))
+    return (Path(runtime),)
+
+
+def review_launch_env(runtime):
+    """A review keeps no session: its own Claude folder lives and ends with its runtime."""
+    home = Path(runtime) / "claude"
+    home.mkdir(mode=0o700, exist_ok=True)
+    return job_env(home)
 
 
 CONFINEMENT = 'Claude permission rules'

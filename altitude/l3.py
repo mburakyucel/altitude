@@ -51,6 +51,13 @@ def verb_socket_path(project: str) -> Path:
     return platform.coordinator_directory() / hashlib.sha256(project.encode()).hexdigest()[:8]
 
 
+def _engine_home(project: str, engine: str) -> Path:
+    """The coordinator's own engine folder for this project, where its sessions persist across turns. It lives
+    beside the coordinator sockets, where no task worker can write."""
+    name = hashlib.sha256(project.encode()).hexdigest()[:20]
+    return platform.coordinator_directory() / f"{engine}-{name}"
+
+
 def _remove_runtime(runtime: Path) -> None:
     """Remove only the daemon-created per-turn directory, never a path an old turn can retarget."""
     try:
@@ -1840,6 +1847,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         try:
             res = engines.claude_print(
                 text, cwd=runtime, unit=_turn_job(project, active_turn), resume=None if fresh else sid,
+                home=_engine_home(project, engine),
                 persona=config.PERSONAS / "l3.md", allowed_tools=engines.L3_ALLOWED_TOOLS, tools=L3_TOOLS,
                 permission_mode="dontAsk", permission_prompts="none", restricted=True,
                 add_dirs=(config.project_path(project), config.ROOT),

@@ -828,6 +828,14 @@ an owner sends for its own task (`alt task run`, `validate`, `terminal`, `review
 its records), which altd admits from that owner's worker job instead. No Altitude sandbox can read the store. See
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
+`alt sign-in claude` (operator only) gives Altitude's Claude runs a sign-in of their own. It runs
+`claude setup-token`, which signs in to the operator's subscription in a browser and prints a token valid
+for a year, then reads that token at a hidden prompt and keeps it in the private access store as
+`claude.token`. Workers, reviewers and coordinator turns receive it in their launch input, never on a
+command line or in a log, and the operator's own Claude sign-in stays untouched. Saving it ends the
+engine's [sign-in lapse](OPERATIONS.md#engine-sign-in-recovery). Usage readings and improvement reviews
+still read the operator's own sign-in.
+
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
 from the record the service wrote when it started, and checks over HTTPS that the
 service proves its identity with that folder's CA. It then offers that public CA certificate to a

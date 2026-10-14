@@ -123,7 +123,7 @@ class TestNativeImages(ImageDeliveryCase):
                      mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as popen:
                     common = dict(cwd=self.repo, model="original-model", resume="session" if resume else None,
                                   images=[self.image])
-                    result = (engines.claude_print("inspect the screenshot", unit="altitude-coordinator-fixture.service", settings=self.tmp / "settings.json", **common)
+                    result = (engines.claude_print("inspect the screenshot", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home", settings=self.tmp / "settings.json", **common)
                               if engine == "claude" else
                               engines.codex_exec("inspect the screenshot", unit="altitude-coordinator-fixture.service", sandbox_settings=[], **common))
                 self.assertEqual(result["session_id"], "session")
@@ -170,7 +170,7 @@ class TestNativeImages(ImageDeliveryCase):
                 spec = json.loads(processes[-1].stdin.getvalue())
                 if engine == "codex":
                     self.assertIn('model_reasoning_effort="xhigh"', spec["command"])
-                self.assertEqual(spec["github_token"], "", "the job's launch input carries the GitHub token")
+                self.assertNotIn("GH_TOKEN", spec["env"], "a launcher without a GitHub sign-in hands over none")
                 self.assert_input(engine, processes[-1].stdin.getvalue(), resume=resume)
 
     def test_larger_inbox_batch_keeps_every_image_visually_inspectable(self):

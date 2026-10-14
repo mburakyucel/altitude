@@ -1169,9 +1169,9 @@ HOOK_TIMEOUT = 30
 
 def session_settings(project: str, slug: str) -> Path:
     """Per-attempt settings: edit telemetry, the inbox hook that hands the operator's queued messages to the
-    worker after a tool call or when it is about to stop, and native permission for the task's own `alt task run`.
-    Each launch also makes the leaf of the task's merge lock (`reviews.merge_lock`), which the worker's landing takes
-    in a home it cannot write.
+    worker after a tool call or when it is about to stop, native permission for the task's own `alt task run`,
+    and the project's notes, which the worker reads from the operator's folder. Each launch also makes the leaf of
+    the task's merge lock (`reviews.merge_lock`), which the worker's landing takes in a home it cannot write.
 
     That one narrow allow rule decides before the engine's own action classifier, so a command the operator granted
     is not judged again; altd refuses `alt task run` unless the task holds a current grant, so the rule adds nothing
@@ -1187,7 +1187,8 @@ def session_settings(project: str, slug: str) -> Path:
         "Stop": [{"hooks": inbox}],
     }, "permissions": {"allow": [f"Bash(alt task run {slug} *)"]},
         "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2"},
-        "autoCompactWindow": config.AUTOCOMPACT_WINDOW}
+        "autoCompactWindow": config.AUTOCOMPACT_WINDOW,
+        "autoMemoryDirectory": str(engines.notes_folder(config.project_path(project)))}
     p = S.task_dir(project, slug) / "settings.json"
     S.write_json(p, settings)
     return p

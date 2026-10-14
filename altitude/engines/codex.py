@@ -631,7 +631,7 @@ def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, t
     return result
 
 
-def prepare_worker(name, prompt, *, cwd, scratch, persona, model, settings, effort, resume, images):
+def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images):
     cmd = [config.CODEX_BIN, "app-server", "--strict-config"]
     if effort is not None:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
@@ -643,7 +643,7 @@ def prepare_worker(name, prompt, *, cwd, scratch, persona, model, settings, effo
     text = ((patch_note + "\n\n" if in_container else "") + prompt) if resume else (
         ((Path(persona).read_text() + "\n\n") if persona else "") + patch_note + "\n\n" + prompt)
     content = common._engine_input("codex", text, images)
-    return cmd, content, None, ()
+    return cmd, content, None, (), {}
 
 
 worker_unit_name = _codex_unit
@@ -889,7 +889,7 @@ def token_numbers(usage):
             "incomplete": inputs is None or outputs is None}
 
 
-def token_sources(home, owners, register):
+def token_sources(home, owners, register, job_root):
     sources, pending = [], False
     root = home or _codex_home(common.launch_env())
     index, pending = _token_rollouts(root)
@@ -971,6 +971,7 @@ def worker_events(path):
 
 INSTALL_COMMAND = 'npm install -g @openai/codex'
 SIGN_IN = (('login', 'status'), 'codex login')
+TOKEN_SETUP = None  # Altitude's runs use the CLI's own sign-in
 IMAGE_READER = 'view_image'
 EFFORT_ENV = None
 NATIVE_SEND = False
@@ -987,7 +988,7 @@ def worker_record(env):
     return {"codex_home": str(_codex_home(env))}
 
 
-def session_context_source(session_id):
+def session_context_source(session_id, job_root):
     return None
 
 
@@ -1082,6 +1083,10 @@ def public_message_identity(record):
 
 def review_writable(runtime):
     return None
+
+
+def review_launch_env(runtime):
+    return {}
 
 
 CONFINEMENT = 'Codex sandbox'

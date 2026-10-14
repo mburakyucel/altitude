@@ -425,7 +425,7 @@ class TestAutoIntegration(AltitudeCase):
     def test_a_revoked_sign_in_answers_on_the_other_engine_and_says_so_once_per_lapse(self):
         self.policy("claude:opus > codex")
         notice = ("Claude's sign-in has lapsed, so Codex is answering for now. "
-                  "To sign in, run `claude auth login` on the computer running Altitude.")
+                  "To sign in, run `alt sign-in claude` on the computer running Altitude.")
         signed_in = []
         def claude(*args, **kwargs):
             return self.answered("Claude answer") if signed_in else self.revoked()
@@ -463,7 +463,7 @@ class TestAutoIntegration(AltitudeCase):
                          ["It says activation failed", "Oauth token for what?"])
         self.assertEqual(self.notices(), [
             "Claude's sign-in has lapsed and no other engine can answer, so your message waits and sends once "
-            "you are signed in again. To sign in, run `claude auth login` on the computer running Altitude."])
+            "you are signed in again. To sign in, run `alt sign-in claude` on the computer running Altitude."])
         self.assertFalse([row for row in l3.chat_history(self.project) if row["role"] in ("assistant", "error")])
         self.assert_no_provider_text()
         notice = next(row for row in l3.chat_history(self.project) if row["role"] == "system")
@@ -488,7 +488,7 @@ class TestAutoIntegration(AltitudeCase):
             self.assertTrue(l3.turn(self.project, "Status?")["completed"])
         execute.assert_not_called()
         self.assertEqual(self.notices(), ["Claude's sign-in has lapsed, so Codex is answering for now. "
-                                          "To sign in, run `claude auth login` on the computer running Altitude."])
+                                          "To sign in, run `alt sign-in claude` on the computer running Altitude."])
 
     def exhausted(self, *, codex=False):
         """Claude's five-hour window at its limit with a reported reset; Codex at 1% of its week unless also out."""
@@ -625,7 +625,7 @@ class TestAutoIntegration(AltitudeCase):
         errors = [row["text"] for row in l3.chat_history(self.project) if row["role"] == "error"]
         self.assertEqual(errors, ["provider rejected authentication or account access; sign in, then Retry or Resume"])
         self.assertEqual(self.notices(), ["Claude's sign-in has lapsed, so this turn stopped; Retry it once you are "
-                                          "signed in again. To sign in, run `claude auth login` on the computer "
+                                          "signed in again. To sign in, run `alt sign-in claude` on the computer "
                                           "running Altitude."])
         self.assert_no_provider_text()
 

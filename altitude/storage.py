@@ -1,6 +1,7 @@
 """Descriptor-relative runtime storage: every daemon write, lock and fixed-document read in the runtime root."""
 from __future__ import annotations
 
+import errno
 import os
 import secrets
 import stat
@@ -133,6 +134,17 @@ def open_runtime(path: Path, flags: int) -> int:
 def opener(path, flags: int) -> int:
     """An `open()` opener for a file in the runtime root."""
     return open_runtime(Path(path), flags)
+
+
+def read_open(path: Path) -> int:
+    """A read descriptor for an engine's own record. In the runtime root, where a worker can plant links, it opens
+    as `open_runtime` does; elsewhere, such as the operator's own engine folder, as an ordinary file."""
+    if runtime_parts(path) is None:
+        return os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        return open_runtime(path, os.O_RDONLY)
+    except NotRegularFile as exc:
+        raise OSError(errno.EINVAL, str(exc), str(path)) from exc
 
 
 def runtime_lock(path: Path):

@@ -133,11 +133,11 @@ ls /tmp/altitude-check/.altitude/example/tasks /tmp/altitude-check/.altitude/exa
 Putting a copy in place is a separate, deliberate step: with the [service](#service-lifecycle)
 stopped, move any current `~/.altitude` aside and unpack the copy into the home folder. Clone each
 project's repository to the same path, because the copy records each project's folder. The copy does
-not hold provider sign-ins or the engines' own session files, GitHub sign-in, the certificates and
+not hold provider sign-ins, Codex's own session files, GitHub sign-in, the certificates and
 paired devices under `~/.config/altitude`, or repositories, worktrees and uncommitted work. Sign in
 again, pair devices again and push any task branch you want to keep before moving. A restored task
-keeps its conversation and records, but its provider session returns only if that engine's own
-folder was copied too. Tasks that were running come back without their workers; nothing is restarted
+keeps its conversation and records, with its Claude session, which lives in the task's folder; a
+Codex session returns only if Codex's own folder was copied too. Tasks that were running come back without their workers; nothing is restarted
 or replayed by the copy itself.
 
 ## Devices and lockout recovery
@@ -157,13 +157,16 @@ the folder only to a place as private as `~/.config`.
 When an engine's login expires or is revoked, Altitude recognizes it from the CLI's own sign-in
 failure, whatever its wording, and the coordinator answers on the other configured engine. Project
 chat says so once per lapse, for example "Claude's sign-in has lapsed, so Codex is answering for now.
-To sign in, run `claude auth login` on the computer running Altitude." With no other engine, or with
+To sign in, run `alt sign-in claude` on the computer running Altitude." With no other engine, or with
 the project set to one engine, the line says your message waits, and it sends once the engine is
-signed in again. The five-minute usage check uses the same sign-in, so a lapse it sees moves the next
-message before any turn fails, and its next successful reading ends the lapse.
+signed in again. Codex runs use the CLI's own sign-in, which the five-minute usage check also reads,
+so a lapse it sees moves the next message before any turn fails, and its next successful reading ends
+the lapse. Claude runs use Altitude's own sign-in from `alt sign-in claude`, which lasts a year and
+which the usage check does not read; a missing or ended one shows as a lapse on the first Claude run,
+and saving a new one ends it.
 
 Task owners hold with "provider rejected authentication or account access; sign in, then Retry or
-Resume". Sign in with the engine's own CLI (`claude auth login` or `codex login`), then press
+Resume". Sign in (`alt sign-in claude` or `codex login`), then press
 **Resume** on a held task, or **Retry** on a coordinator turn that stopped. That attempt launches;
 once an engine call succeeds, held tasks and report turns on the engine continue on their next tick.
 While the login is still invalid, the attempt records the rejection again and automatic retries keep

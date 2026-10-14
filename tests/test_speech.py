@@ -832,9 +832,9 @@ class TestSetup(SpeechCase):
         codex = tomllib.loads("\n".join(engines.codex.codex_sandbox(tree, extra_roots=(*git_roots, scratch),
                                                                    read_only=read_only)))
         self.patch(engines.claude, "claude_agents", return_value=[])
-        _, _, claude, _ = engines.claude.prepare_worker("task", "Fictional.", cwd=tree, scratch=scratch, persona=None,
-                                                     model=None, settings=self.tmp / "settings.json", effort=None,
-                                                     resume=None, images=())
+        _, _, claude, _, _ = engines.claude.prepare_worker(
+            "task", "Fictional.", cwd=tree, scratch=scratch, job_root=self.tmp / "l2-engine", persona=None,
+            model=None, settings=self.tmp / "settings.json", effort=None, resume=None, images=())
         return {"codex": [Path(root) for root in codex["permissions"]["altitude-task"]["workspace_roots"]],
                 "claude": [Path(os.path.realpath(str(root).rstrip("*"))) for root in claude]}
 

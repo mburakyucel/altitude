@@ -33,7 +33,10 @@ voice remains usable; failed or cancelled updates wait for your Retry in Setting
   Set Git's `user.name` and `user.email` too.
 - **Codex or Claude Code**, installed and signed in with its own setup as the same account. One is
   enough. For a CLI outside its default location, set `CODEX_BIN` or `CLAUDE_BIN` to its absolute
-  path before installing.
+  path before installing. Altitude's Claude runs use a sign-in of their own from your subscription,
+  so your own Claude sign-in and settings stay yours: once installed, run `alt sign-in claude`, which
+  opens Claude's sign-in in your browser and then asks you to paste the token it prints at a hidden
+  prompt. It lasts a year; when it ends, project chat names the command again.
 - **A GitHub project** you can push to and open pull requests in, with a clean `main` checkout that
   tracks `origin/main`.
 

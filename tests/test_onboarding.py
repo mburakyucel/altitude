@@ -336,10 +336,10 @@ class TestPrerequisites(OnboardingCase):
     def test_sign_in_reads_the_engine_cli_status_exit(self):
         script = self.tmp / "engine"
         for code, expected in ((0, True), (1, False)):
-            script.write_text(f"#!/bin/sh\n[ \"$1 $2\" = 'auth status' ] || exit 9\nexit {code}\n")
+            script.write_text(f"#!/bin/sh\n[ \"$1 $2\" = 'login status' ] || exit 9\nexit {code}\n")
             script.chmod(0o755)
-            with self.subTest(code=code), mock.patch.object(config, "CLAUDE_BIN", str(script)):
-                self.assertEqual(engines.sign_in("claude"), {"signed_in": expected, "command": "claude auth login"})
-        with mock.patch.object(config, "CLAUDE_BIN", str(self.tmp / "absent")):
-            self.assertEqual(engines.sign_in("claude"), {"signed_in": None, "command": "claude auth login"},
+            with self.subTest(code=code), mock.patch.object(config, "CODEX_BIN", str(script)):
+                self.assertEqual(engines.sign_in("codex"), {"signed_in": expected, "command": "codex login"})
+        with mock.patch.object(config, "CODEX_BIN", str(self.tmp / "absent")):
+            self.assertEqual(engines.sign_in("codex"), {"signed_in": None, "command": "codex login"},
                              "a status command that cannot run says nothing about the account")

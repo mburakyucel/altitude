@@ -60,7 +60,8 @@ class TestForegroundUnits(AltitudeCase):
 
     def test_ci_coordinator_and_private_review_timeouts_survive_daemon_exit_on_both_engines(self):
         """A coordinator turn on either engine runs as the job it is given and stops with that job, not with altd."""
-        for engine, execute in (("claude", engines.claude_print), ("codex", engines.codex_exec)):
+        claude = lambda *args, **kwargs: engines.claude_print(*args, home=self.tmp / "claude-home", **kwargs)
+        for engine, execute in (("claude", claude), ("codex", engines.codex_exec)):
             with self.subTest(engine=engine), mock.patch.object(engines.common.subprocess, "Popen",
                     side_effect=RuntimeError("fixture: execution intercepted")) as popen:
                 with self.assertRaisesRegex(RuntimeError, "intercepted"):
@@ -332,11 +333,11 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
 
     def test_incident_171446_legacy_adoption_requires_unit_and_session_transcript(self):
         self.patch(engines.claude, "JOBS_DIR", self.tmp / "legacy-jobs")
-        self.patch(config, "HOME", self.tmp / "legacy-home")
+        self.patch(engines.claude, "OPERATOR_HOME", self.tmp / "legacy-home/.claude")
         S.write_json(engines.claude.JOBS_DIR / "legacy" / "state.json",
                      {"name": "project/old-1", "state": "working"})
         task = {"agent_id": "legacy", "session_id": "legacy-session"}
-        transcript = config.HOME / ".claude/projects/project/legacy-session.jsonl"
+        transcript = engines.claude.OPERATOR_HOME / "projects/project/legacy-session.jsonl"
         transcript.parent.mkdir(parents=True)
         with mock.patch.object(engines.claude, "claude_agents", side_effect=AssertionError("poll must not read registry")), \
              mock.patch.object(platform, "job_active", return_value=True) as active:
@@ -400,7 +401,7 @@ class TestWorkerTokenInput(AltitudeCase):
         for engine in ("claude", "codex"):
             with self.subTest(engine=engine):
                 command, sent = self.launched(engine, "linux")
-                self.assertEqual(json.loads(sent)["github_token"], self.TOKEN)
+                self.assertEqual(json.loads(sent)["env"]["GH_TOKEN"], self.TOKEN)
                 # systemd-run --pipe hands the job its launcher's own input pipe.
                 job = subprocess.run(_unconfined(command[command.index("--") + 1:]), input=sent, capture_output=True, timeout=60)
                 self.assertEqual(job.returncode, 0, job.stderr)
