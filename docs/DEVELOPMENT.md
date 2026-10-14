@@ -1316,7 +1316,7 @@ synthetic versions from a committed revision (default: HEAD, which refuses uncom
 files), runs every phase
 and leaves the evidence in the results directory. The release builds and the published-release
 downloads take the GitHub repository from the checkout's `origin` remote, which the validation
-runner's copy carries, and a non-GitHub origin stops the run naming it:
+runner's copy carries; a non-GitHub origin stops the run:
 
 ```sh
 make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main
