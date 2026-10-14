@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo
-from altitude import access, config, dispatch, engines, git_policy, platform, state as S, tasks as T
+from altitude import access, config, dispatch, engines, git_policy, platform, server, state as S, tasks as T
 
 PROJECT = "door"
 
@@ -383,7 +383,7 @@ class TestDoor(AltitudeCase):
         self.register(PROJECT, path=self.repo)
 
     def _alt(self, *args, env=None):
-        return self.alt("--project", PROJECT, *args, env={"ALTITUDE_ACTOR": "l2", **(env or {})})
+        return self.alt("--project", PROJECT, *args, env={"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": PROJECT, **(env or {})})
 
     def test_l2_has_only_the_worker_commands(self):
         for args in (("task", "new", "--title", "x", "y"), ("dispatch", "s"),
@@ -403,11 +403,11 @@ class TestDoor(AltitudeCase):
         S.save_task(PROJECT, task)
         slug = task["slug"]
         out = self._alt("task", "block", slug, "--reason", "which key?")
-        self.assertIn("ALTITUDE_TASK", out.stderr)
+        self.assertIn("own project/task", out.stderr)
         stale = {"ALTITUDE_TASK": slug, "ALTITUDE_ATTEMPT": "1"}
         out = self._alt("task", "block", slug, "--reason", "which key?", env=stale)
         self.assertNotEqual(out.returncode, 0)
-        self.assertIn("attempt 1 is no longer current", out.stderr)
+        self.assertIn(server.TASK_DOOR_REFUSED, out.stderr)
         self.assertEqual(S.load_task(PROJECT, slug)["state"], "running")
         out = self._alt("task", "block", slug, "--reason", "which key?", env={**stale, "ALTITUDE_ATTEMPT": "2"})
         self.assertEqual(out.returncode, 0, out.stderr)

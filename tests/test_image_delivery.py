@@ -336,6 +336,7 @@ class TestImageInbox(ImageDeliveryCase):
                          "image-only admission is owned by the durable task status record")
         self.setenv("ALTITUDE_PROJECT", self.project)
         self.setenv("ALTITUDE_TASK", task["slug"])
+        self.setenv("ALTITUDE_ATTEMPT", "1")
         hook = config.HOOKS / "inbox.py"
         for failed in (True, False):
             output = io.StringIO()
@@ -350,7 +351,7 @@ class TestImageInbox(ImageDeliveryCase):
                 self.assertEqual(T.pending(self.project, task["slug"]), [row])
                 self.assertEqual(output.getvalue(), "")
             else:
-                self.assertTrue(output.getvalue(), (config.MONITOR_DIR / "hook-faults.log").read_text())
+                self.assertTrue(output.getvalue())
                 delivered = json.loads(output.getvalue())["hookSpecificOutput"]["additionalContext"]
                 self.assertIn("native view_image tool", delivered)
                 self.assertIn(self.image["path"], delivered)
@@ -362,6 +363,7 @@ class TestImageInbox(ImageDeliveryCase):
         row = self.message(task)
         self.setenv("ALTITUDE_PROJECT", self.project)
         self.setenv("ALTITUDE_TASK", task["slug"])
+        self.setenv("ALTITUDE_ATTEMPT", "1")
         prepare = engines.image_read_instructions
         def blocked(*args, **kwargs):
             text = prepare(*args, **kwargs)

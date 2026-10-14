@@ -27,7 +27,12 @@ def directory(root: Path | int, parts: list[str], *, create: bool = False, searc
     try:
         for part in parts:
             _component(part)
-            if create:
+            try:
+                child = os.open(part, flags, dir_fd=fd)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                # Only a missing folder is made: a task worker walks folders it cannot write.
                 try:
                     os.mkdir(part, mode=0o700, dir_fd=fd)
                 except FileExistsError:
@@ -35,7 +40,7 @@ def directory(root: Path | int, parts: list[str], *, create: bool = False, searc
                 else:
                     if not search:
                         os.fsync(fd)
-            child = os.open(part, flags, dir_fd=fd)
+                child = os.open(part, flags, dir_fd=fd)
             parent, fd = fd, child
             os.close(parent)
         yield fd
@@ -77,9 +82,10 @@ def regular_reader(directory: int, name: str):
 
 @contextmanager
 def lock_file(directory: int, name: str):
-    """Create a fixed regular lock leaf without following links or truncating existing bytes."""
+    """A fixed regular lock leaf, created when missing, without following links. It is opened for reading, which is
+    all flock needs, so a task worker that cannot write Altitude's home still takes the locks its reads share."""
     _component(name)
-    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
+    fd = _lock_open(name, directory)
     try:
         _regular(fd)
         yield fd
@@ -130,8 +136,26 @@ def opener(path, flags: int) -> int:
 
 
 def runtime_lock(path: Path):
-    """A lock file in the runtime root as an unbuffered binary handle for flock."""
-    return os.fdopen(open_runtime(path, os.O_WRONLY | os.O_CREAT), "wb", buffering=0)
+    """A lock file in the runtime root as an unbuffered binary handle for flock, opened for reading like
+    `lock_file`."""
+    *parents, name = _runtime_parts(path)
+    _component(name)
+    with runtime_directory(parents, create=True, search=True) as directory:
+        fd = _lock_open(name, directory)
+    try:
+        _regular(fd)
+    except BaseException:
+        os.close(fd)
+        raise
+    return os.fdopen(fd, "rb", buffering=0)
+
+
+def _lock_open(name: str, directory: int) -> int:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    try:
+        return os.open(name, flags, dir_fd=directory)
+    except FileNotFoundError:
+        return os.open(name, flags | os.O_CREAT, 0o600, dir_fd=directory)
 
 
 def append(path: Path, text: str, *, sync: bool = False) -> None:

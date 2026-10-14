@@ -189,7 +189,7 @@ class TestResumeRebinds(AltitudeCase):
             res = dispatch.resume(self.project, "resume-me")
         validate.assert_called_once()
         self.assertEqual((seen["name"], seen["sid"], seen["cwd"]), (f"{self.project}/resume-me-1", "old-sid", str(wt)))
-        self.assertEqual(seen["env"].get("ALTITUDE_SESSION_KEY"), f"{self.project}--resume-me-1")
+        self.assertEqual(seen["env"].get("ALTITUDE_ATTEMPT"), "1")
         t = S.load_task(self.project, "resume-me")
         self.assertGreaterEqual(datetime.fromisoformat(t["worker_started_at"]).timestamp(), before_resume)
         self.assertEqual((t["state"], t["agent_id"], t["session_id"], t["attempt"]), ("running", "new", "new-sid", 1),

@@ -137,8 +137,7 @@ class TestTaskConversation(ChatCase):
         self.assertNotIn("Need one decision.", seen["prompt"], "the session already asked it")
         self.assertEqual((seen["name"], seen["session_id"], seen["cwd"]),
                          (f"{self.project}/{self.slug}-1", "session-old", str(self.worktree)))
-        self.assertEqual((seen["env"]["ALTITUDE_ATTEMPT"], seen["env"]["ALTITUDE_SESSION_KEY"]),
-                         ("1", f"{self.project}--{self.slug}-1"))
+        self.assertEqual(seen["env"]["ALTITUDE_ATTEMPT"], "1")
         task = S.load_task(self.project, self.slug)
         self.assertEqual((task["state"], task["agent_id"], task["session_id"], task["attempt"]),
                          ("running", "agent-new", "session-new", 1))
@@ -150,7 +149,7 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(T.decisions(self.project), [], "the reply handed the turn to the resumed session")
 
     def worker_env(self):
-        return {"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
+        return {"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": self.project, "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
 
     def l3_queue(self):
         p = l3.queue_path(self.project)

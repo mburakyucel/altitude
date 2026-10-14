@@ -143,6 +143,39 @@ ALT = REPO / "bin" / "alt"
 #: The kernel the suite runs on; a case's `host` replaces `sys.platform` for its duration.
 NATIVE_PLATFORM = sys.platform
 
+#: Linux's start of a process that may write only beneath the directories its first argument lists (Landlock, by
+#: syscall number, the same on x86_64 and arm64); it then runs the rest of its arguments. Exit 125: no Landlock.
+LANDLOCK_LAUNCHER = r'''
+import ctypes, json, os, struct, sys
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall.restype = ctypes.c_long
+abi = libc.syscall(444, None, ctypes.c_size_t(0), ctypes.c_uint32(1))
+if abi < 1:
+    sys.exit(125)
+# Write a file, remove, make every kind of node; link across folders (ABI 2) and truncate (ABI 3).
+writes = sum(1 << bit for bit in (1, 4, 5, 6, 7, 8, 9, 10, 11, 12)) | (1 << 13 if abi >= 2 else 0) | (1 << 14 if abi >= 3 else 0)
+attr = struct.pack("=Q", writes)
+ruleset = libc.syscall(444, ctypes.c_char_p(attr), ctypes.c_size_t(len(attr)), ctypes.c_uint32(0))
+for root in json.loads(sys.argv[1]):
+    parent = os.open(root, os.O_PATH | os.O_CLOEXEC)
+    rule = struct.pack("=Qi", writes, parent)
+    if libc.syscall(445, ctypes.c_int(ruleset), ctypes.c_int(1), ctypes.c_char_p(rule), ctypes.c_uint32(0)) != 0:
+        sys.exit(f"landlock rule for {root}: errno {ctypes.get_errno()}")
+    os.close(parent)
+if libc.prctl(38, 1, 0, 0, 0) != 0 or libc.syscall(446, ctypes.c_int(ruleset), ctypes.c_uint32(0)) != 0:
+    sys.exit(f"landlock: errno {ctypes.get_errno()}")
+os.execvp(sys.argv[2], sys.argv[2:])
+'''
+
+
+def read_only_home(command: list[str], writable: tuple[Path, ...]) -> list[str]:
+    """`command` able to write beneath `writable` and devices (on macOS also where Altitude's profile admits every job),
+    never in Altitude's home: a task worker's view of the runtime once its writable roots leave the home out."""
+    if NATIVE_PLATFORM == "darwin":
+        return platform.confined(command, writable=writable, read_only=(config.ROOT,))
+    return [sys.executable, "-c", LANDLOCK_LAUNCHER, json.dumps([str(path) for path in (*writable, "/dev")]), *command]
+
+
 #: Fake gh: every call is logged; the answers come from files the test writes into $FAKE_GH_DIR.
 GH = r'''#!/usr/bin/env python3
 import json, os, re, subprocess, sys
@@ -374,6 +407,21 @@ def add_worktree(repo: Path, slug: str) -> Path:
     return path
 
 
+_door_server = None
+
+
+def door_port() -> int:
+    """The port of this test process's one altd, serving its HTTP routes from a thread."""
+    global _door_server
+    if _door_server is None:
+        import threading
+        from altitude import server
+        _door_server = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        _door_server.daemon_threads = True
+        threading.Thread(target=_door_server.serve_forever, kwargs={"poll_interval": .05}, daemon=True).start()
+    return _door_server.server_address[1]
+
+
 class AltitudeCase(unittest.TestCase):
     """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
     their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
@@ -385,6 +433,9 @@ class AltitudeCase(unittest.TestCase):
     gated = False
     host: str | None = None
     github = False
+    #: A task worker's verbs, landing, hooks and driver reach this process's own altd routes through the task door,
+    #: as from the task's current worker job. A case about the door's admission, or about an absent altd, unsets it.
+    door = True
 
     def setUp(self) -> None:
         super().setUp()
@@ -409,6 +460,10 @@ class AltitudeCase(unittest.TestCase):
         self.repo.mkdir()
         self.project = self._testMethodName.replace("_", "-")[:64]
         self.register(self.project)
+        if self.door:
+            from altitude import server
+            self.serving(door_port())
+            self.patch(server, "task_owner_connection", return_value=True)
 
     def register(self, name: str, *, path: Path | None = None, **fields) -> dict:
         """Register a project for this case; its record and runtime directory are removed afterwards."""

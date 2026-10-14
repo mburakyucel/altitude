@@ -93,6 +93,20 @@ def counts_path(project: str, task: dict) -> Path | None:
     return config.MONITOR_DIR / f"counts-{session_key(project, task['slug'], task['attempt'])}.json"
 
 
+def count_edit(project: str, task: dict, path: str | None) -> None:
+    """Count one edit of the task's current attempt, and the file it edited, for `alt task status`."""
+    counts = counts_path(project, task)
+    if counts is None:
+        return
+    with project_lock(project):
+        record = read_json(counts, {})
+        record = record if isinstance(record, dict) else {}
+        files = set(record.get("files") or [])
+        if path:
+            files.add(path)
+        write_json(counts, {"edits": int(record.get("edits", 0)) + 1, "files": sorted(files)[:200]})
+
+
 def slugify(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return s[:40].rstrip("-") or "task"

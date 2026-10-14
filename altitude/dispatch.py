@@ -370,14 +370,13 @@ def _send_handoff_checkpoint(project: str, task: dict, request: dict, job_root: 
         request["note"] = "This worker cannot receive the checkpoint request; switch now or cancel explicitly."
         S.save_task(project, task)
         return
-    folder = S.task_dir(project, task["slug"])
     receipt = {key: request[key] for key in ("id", "attempt", "agent_id", "session_id")}
     text = (f"[altitude] An explicit engine transfer is waiting for your safe checkpoint. "
-            f"Refresh {folder / 'progress.md'} with current work, checks actually completed, pending work, "
-            "risks and next steps. Do not start more implementation or publish a completion report. "
-            "Finish or safely stop pending work and record anything unfinished as unverified. "
-            f"Then atomically write {folder / ('handoff-' + request['id'] + '.ready.json')} containing exactly "
-            f"{json.dumps(receipt)}. This signals readiness; end your turn immediately without calling "
+            "Refresh your progress with current work, checks actually completed, pending work, risks and next "
+            "steps, and save it with `alt task save progress FILE`. Do not start more implementation or publish a "
+            "completion report. Finish or safely stop pending work and record anything unfinished as unverified. "
+            f"Then save the readiness receipt `{json.dumps(receipt)}` exactly, with `alt task save handoff -` and the "
+            "receipt on stdin. This signals readiness; end your turn immediately without calling "
             "task block, task done or writing a report. The readiness receipt is your supported handoff "
             "checkpoint instead of the normal end-of-turn block/report; the daemon owns the transfer. "
             f"This instruction belongs only to transfer {request['id']}. A later correction ending this "
@@ -1164,22 +1163,30 @@ def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
     return text
 
 
-def session_settings(project: str, slug: str, session_key: str) -> Path:
+#: A checkpoint hook's bound, above its task door request's own (`hooks/inbox.py`), so a slow answer is still read.
+HOOK_TIMEOUT = 30
+
+
+def session_settings(project: str, slug: str) -> Path:
     """Per-attempt settings: edit telemetry, the inbox hook that hands the operator's queued messages to the
     worker after a tool call or when it is about to stop, and native permission for the task's own `alt task run`.
+    Each launch also makes the leaf of the task's merge lock (`reviews.merge_lock`), which the worker's landing takes
+    in a home it cannot write.
 
     That one narrow allow rule decides before the engine's own action classifier, so a command the operator granted
     is not judged again; altd refuses `alt task run` unless the task holds a current grant, so the rule adds nothing
     without one and a grant or revocation takes effect in the running session."""
+    from . import reviews
+    storage.runtime_lock(reviews.merge_lock_path(project, slug)).close()
     hooks = config.HOOKS
-    inbox = [{"type": "command", "command": shlex.join([sys.executable, "-B", str(hooks / "inbox.py")]), "timeout": 10}]
+    inbox = [{"type": "command", "command": shlex.join([sys.executable, "-B", str(hooks / "inbox.py")]),
+              "timeout": HOOK_TIMEOUT}]
     settings = {"hooks": {
-        "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": shlex.join([sys.executable, "-B", str(hooks / "edit_count.py")]), "timeout": 10}]},
+        "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": shlex.join([sys.executable, "-B", str(hooks / "edit_count.py")]), "timeout": HOOK_TIMEOUT}]},
                         {"hooks": inbox}],
         "Stop": [{"hooks": inbox}],
     }, "permissions": {"allow": [f"Bash(alt task run {slug} *)"]},
-        "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
-               "ALTITUDE_SESSION_KEY": session_key},
+        "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2"},
         "autoCompactWindow": config.AUTOCOMPACT_WINDOW}
     p = S.task_dir(project, slug) / "settings.json"
     S.write_json(p, settings)
@@ -1255,7 +1262,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
     attempt = task.get("attempt", 0) + 1
     agent = {}
     try:
-        settings = session_settings(project, slug, S.session_key(project, slug, attempt))
+        settings = session_settings(project, slug)
         tried = []
         while True:
             brief_md = build_brief(project, slug, choice=choice)
@@ -1335,8 +1342,7 @@ def worker_name(project: str, slug: str, attempt: int) -> str:
 def l2_env(project: str, slug: str, attempt: int) -> dict:
     """What every L2 process needs to name its task and attempt to `alt`."""
     return {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug,
-            "ALTITUDE_ACTOR": "l2", "ALTITUDE_ATTEMPT": str(attempt),
-            "ALTITUDE_SESSION_KEY": S.session_key(project, slug, attempt)}
+            "ALTITUDE_ACTOR": "l2", "ALTITUDE_ATTEMPT": str(attempt)}
 
 
 def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> dict:
@@ -1461,7 +1467,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None,
         res = engines.resume_l2(
             engine, worker_name(project, slug, task["attempt"]), task["session_id"], prompt, cwd=cwd,
             persona=config.PERSONAS / "l2.md", model=model, effort=effort,
-            settings=session_settings(project, slug, S.session_key(project, slug, task["attempt"])),
+            settings=session_settings(project, slug),
             extra_env=l2_env(project, slug, task["attempt"]), job_root=job_root, images=attached)
         worker = res.get("agent") or {}
         if res.get("returncode") != 0:

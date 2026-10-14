@@ -59,6 +59,8 @@ image still under validation.
 - [Isolation and landing](ARCHITECTURE.md#isolation-and-landing): worktrees and branches, cleanup, merge
   line, CI gate, report verification, issue closure, PR adoption, approvals, grants, validation and
   confinement.
+  - [Task door](ARCHITECTURE.md#task-door): how a worker's verbs, landing, hooks and driver change records
+    through altd.
   - [Operator terminal](ARCHITECTURE.md#operator-terminal): per-task and per-project shells, replay,
     `run` blocks and output reads.
 - [Same-installation coordinator information](ARCHITECTURE.md#same-installation-coordinator-information):

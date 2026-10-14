@@ -161,8 +161,8 @@ live CLI/authentication compatibility or host confinement. [Release checkpoints]
 identify validated source versions without changing the automatic activation lifecycle.
 
 The L2 learns its attempt from `ALTITUDE_ATTEMPT`. Replies, completion, and landing name it, so
-a worker of an earlier attempt cannot act for the current one. `ALTITUDE_SESSION_KEY` (`project--slug-attempt`)
-keys the edit-count telemetry across worker replacements.
+a worker of an earlier attempt cannot act for the current one. altd keeps the edit count per attempt, across the
+attempt's sessions.
 
 ## Native helper instructions
 
@@ -1508,8 +1508,8 @@ completion report until a later authorized turn runs. A stale finished-worker ob
 a newer block with a worker-death fault.
 
 A worker's PATH resolves `alt` to the deployment checkout's `bin/alt`, so each invocation uses the
-current CLI; L2 commands and the inbox hook use locked durable state directly and keep working while
-altd is down. The daemon reads durable completion and inbox records at the next checkpoint after startup.
+current CLI. Its record changes go through altd's [task door](ARCHITECTURE.md#task-door): while altd restarts,
+a verb or landing waits for it and the hooks let the worker go on, its messages waiting for the next checkpoint.
 
 ## Live transcript
 

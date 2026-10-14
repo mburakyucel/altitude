@@ -1,9 +1,11 @@
 """Review interfaces preserve owner identity and the operator's bounded action surface."""
+import base64
 import contextlib
 import io
 import json
 import runpy
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase
@@ -19,10 +21,19 @@ class TestReviewInterfaces(AltitudeCase):
         self.setenv("ALTITUDE_ATTEMPT", "2")
         self.setenv("ALTITUDE_ACTOR", "l2")
 
-    def cli(self, *arguments, stdin=""):
+    def cli(self, *arguments, stdin="", files=None, door=True):
+        """Run an owner verb as altd runs it for the owner's task door: the content of its input files arrives with
+        the request, and `door=False` runs it in the owner's worker instead."""
         output = io.StringIO()
-        with contextlib.redirect_stdout(output), mock.patch("sys.stdin", io.StringIO(stdin)):
-            runpy.run_path(str(ALT))["main"](list(arguments))
+        if door:
+            self.setenv("ALTITUDE_DOOR", "1")
+            stdin = json.dumps({"stdin": stdin, "shown": {},
+                                "files": {path: base64.b64encode(data).decode() for path, data in (files or {}).items()}})
+        try:
+            with contextlib.redirect_stdout(output), mock.patch("sys.stdin", io.StringIO(stdin)):
+                runpy.run_path(str(ALT))["main"](list(arguments))
+        finally:
+            self.setenv("ALTITUDE_DOOR", None)
         return json.loads(output.getvalue())
 
     def post(self, body, path="/api/task/review"):
@@ -31,7 +42,7 @@ class TestReviewInterfaces(AltitudeCase):
         handler._body = lambda **kwargs: body
         handler._refused = lambda: None  # routing only; tests/test_request_boundary.py covers the boundary
         handler._admit = lambda _parts: True  # and tests/test_access.py covers pairing
-        handler._task_owner = lambda _body: True  # and tests/test_worker_authority.py covers the task door
+        handler._task_owner = lambda _body, **_: True  # and tests/test_worker_authority.py covers the task door
         handler._json = lambda value, status=200: (status, value)
         return handler.do_POST()
 
@@ -57,7 +68,7 @@ class TestReviewInterfaces(AltitudeCase):
         with mock.patch.object(reviews, "request") as request:
             for arguments in (("task", "review", "request", "other-task"),
                               ("--project", "other-project", "task", "review", "request")):
-                with self.subTest(arguments=arguments), self.assertRaisesRegex(SystemExit, "own task and project"):
+                with self.subTest(arguments=arguments), self.assertRaisesRegex(SystemExit, "own project/task"):
                     self.cli(*arguments)
             self.setenv("ALTITUDE_ATTEMPT", "")
             with self.assertRaisesRegex(SystemExit, "ALTITUDE_ATTEMPT"):
@@ -67,14 +78,13 @@ class TestReviewInterfaces(AltitudeCase):
     def test_assess_reads_stdin_or_file_and_preserves_attempt_fence(self):
         payload = {"dispositions": [{"finding_id": "f1", "disposition": "fixed", "reason": "Added regression coverage"}],
                    "reason": "Final candidate includes the reviewed fix"}
-        path = self.tmp / "assessment.json"
-        path.write_text(json.dumps(payload))
         for proposal_id in (None, "revised-proposal"):
             proposal_args = ("--proposal-message", proposal_id) if proposal_id else ()
-            for args, stdin in (((), json.dumps(payload)), (("--file", str(path)), "")):
+            for args, stdin in (((), json.dumps(payload)), (("--file", "assessment.json"), "")):
                 with self.subTest(proposal_id=proposal_id, args=args), \
                         mock.patch.object(reviews, "assess", return_value={"state": "completed"}) as assess:
-                    self.cli("task", "review", "assess", "--review-id", "review", *args, *proposal_args, stdin=stdin)
+                    self.cli("task", "review", "assess", "--review-id", "review", *args, *proposal_args, stdin=stdin,
+                             files={"assessment.json": json.dumps(payload).encode()})
                     assess.assert_called_once_with(self.project, self.slug, "review", actor="l2", expected_attempt=2,
                                                    proposal_id=proposal_id, **payload)
         with self.assertRaisesRegex(SystemExit, "invalid assessment JSON"):
@@ -94,7 +104,7 @@ class TestReviewInterfaces(AltitudeCase):
             response = mock.MagicMock()
             response.__enter__.return_value = io.BytesIO(b'{"ok":true,"review":{"id":"review","state":"completed"}}')
             with self.subTest(proposal_id=proposal_id), mock.patch("urllib.request.urlopen", return_value=response) as transport:
-                result = self.cli("task", "review", "run", "--review-id", "review", *arguments)
+                result = self.cli("task", "review", "run", "--review-id", "review", *arguments, door=False)
                 self.assertEqual(result["state"], "completed")
                 request = transport.call_args.args[0]
                 self.assertTrue(request.full_url.endswith("/api/task/review/run"))
@@ -103,20 +113,25 @@ class TestReviewInterfaces(AltitudeCase):
                                                            **({"context_ids": ["source"], "proposal_id": proposal_id}
                                                               if proposal_id else {})})
                 self.assertIsNone(transport.call_args.kwargs["timeout"])
-        # Shown paths travel as data; the daemon copies the files they name.
+        # The owner's `alt` sends the content of the files it shows; the daemon never opens a path it names.
+        task = S.load_task(self.project, self.slug)
+        task["worktree"] = str(config.project_path(self.project) / config.WORKTREE_ROOT / self.slug)
+        S.save_task(self.project, task)
+        (Path(task["worktree"]) / "docs").mkdir(parents=True)
+        (Path(task["worktree"]) / "docs" / "spec.md").write_text("# Spec\n")
         response = mock.MagicMock()
         response.__enter__.return_value = io.BytesIO(b'{"ok":true,"review":{"id":"review","state":"completed"}}')
         with mock.patch("urllib.request.urlopen", return_value=response) as transport:
             self.cli("task", "review", "run", "--review-id", "review", "--proposal-message", "proposal",
-                     "--show", "docs/spec.md", "--show", "docs/phone.png")
-            self.assertEqual(json.loads(transport.call_args.args[0].data)["show"], ["docs/spec.md", "docs/phone.png"])
+                     "--show", "docs/spec.md", door=False)
+            self.assertEqual(json.loads(transport.call_args.args[0].data)["show"], {"docs/spec.md": "IyBTcGVjCg=="})
 
     def test_streamed_execution_error_is_not_a_success_receipt(self):
         self.serving(8890)  # the transport is replaced; nothing listens
         response = mock.MagicMock()
         response.__enter__.return_value = io.BytesIO(b'  {"ok":false,"error":"Review interrupted"}')
         with mock.patch("urllib.request.urlopen", return_value=response), self.assertRaisesRegex(SystemExit, "Review interrupted"):
-            self.cli("task", "review", "run", "--review-id", "review")
+            self.cli("task", "review", "run", "--review-id", "review", door=False)
 
     def test_operator_cannot_run_or_assess(self):
         self.setenv("ALTITUDE_ACTOR", T.OPERATOR_MESSAGE_ROLE)
@@ -157,7 +172,8 @@ class TestReviewInterfaces(AltitudeCase):
             request.assert_not_called()
             run.assert_not_called()
             assess.assert_not_called()
-        for proposal_id, show in ((None, None), ("original-proposal", None), ("original-proposal", ["docs/spec.md"])):
+        # The owner's `alt` sends the content of the files it shows; altd records exactly that content.
+        for proposal_id, show in ((None, None), ("original-proposal", None), ("original-proposal", {"docs/spec.md": "IyBTcGVjCg=="})):
             fields = {**({"proposal_id": proposal_id} if proposal_id else {}), **({"show": show} if show else {})}
             with self.subTest(proposal_id=proposal_id, show=bool(show)), \
                     mock.patch.object(reviews, "run", return_value={"id": "review"}) as run:
@@ -165,7 +181,8 @@ class TestReviewInterfaces(AltitudeCase):
                                           "/api/task/review/run")
                 self.assertEqual((status, value), (200, {"ok": True, "review": {"id": "review"}}))
                 run.assert_called_once_with(self.project, self.slug, "review", actor="l2", expected_attempt=2,
-                                            context_ids=["source"], proposal_id=proposal_id, show=show, on_wait=mock.ANY)
+                                            context_ids=["source"], proposal_id=proposal_id,
+                                            show={"docs/spec.md": b"# Spec\n"} if show else None, on_wait=mock.ANY)
 
     def test_http_repeat_names_the_review_it_replaces_and_wake_failure_keeps_receipt(self):
         task = S.load_task(self.project, self.slug)
@@ -198,7 +215,7 @@ class TestReviewInterfaces(AltitudeCase):
         with mock.patch.object(reviews, "view", return_value={"history": []}) as view, \
                 mock.patch.object(reviews, "request") as request, mock.patch.object(server.monitor, "sessions", return_value=[]):
             self.assertEqual(server.task_view(self.project, self.slug)["review"], {"history": []})
-            self.assertEqual(self.cli("task", "review", "status"), {"history": []})
+            self.assertEqual(self.cli("task", "review", "status", door=False), {"history": []})
         self.assertEqual(view.call_count, 2)
         request.assert_not_called()
 

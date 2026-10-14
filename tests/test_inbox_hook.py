@@ -5,9 +5,10 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 from tests.support import REPO, AltitudeCase
-from altitude import config, dispatch, state as S, tasks as T
+from altitude import config, dispatch, incidents, state as S, tasks as T
 
 HOOK = REPO / "hooks" / "inbox.py"
 
@@ -22,7 +23,7 @@ class InboxHook(AltitudeCase):
 
     def run_hook(self, event, project=None, slug=None, **inputs):
         env = dict(os.environ, ALTITUDE_HOME=str(config.ROOT), ALTITUDE_PROJECT=project or self.project,
-                   ALTITUDE_TASK=slug or self.slug)
+                   ALTITUDE_TASK=slug or self.slug, ALTITUDE_ATTEMPT="1")
         payload = {"hook_event_name": event, "session_id": "sid",
                    **({"tool_name": "Bash"} if event == "PostToolUse" else {"stop_hook_active": False}),
                    **inputs}
@@ -86,7 +87,7 @@ class InboxHook(AltitudeCase):
     def test_required_background_validation_survives_premature_clean_completion(self):
         # The provider boundary is scripted; the hook, task storage and validation process are real.
         # Without the Stop guard the scripted provider cleans up its still-running child.
-        settings = S.read_json(dispatch.session_settings(self.project, self.slug, "fixture-key"))
+        settings = S.read_json(dispatch.session_settings(self.project, self.slug))
         self.assertIn(str(HOOK), settings["hooks"]["Stop"][0]["hooks"][0]["command"])
         for exit_code in (0, 1):
             with self.subTest(exit_code=exit_code):
@@ -183,11 +184,13 @@ class InboxHook(AltitudeCase):
     def test_a_corrupt_inbox_is_a_fault_line_not_a_crash(self):
         (S.task_dir(self.project, self.slug) / "inbox.jsonl").write_text("{not json\n")
 
-        done = self.run_hook("PostToolUse")
+        with mock.patch.object(incidents, "system_fault") as fault:
+            done = self.run_hook("PostToolUse")
 
         self.assertEqual((done.returncode, done.stdout), (0, ""))
-        faults = (config.MONITOR_DIR / "hook-faults.log").read_text()
-        self.assertIn(f"inbox.py {self.project}/{self.slug}: corrupt task inbox", faults)
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args[0], "hook")
+        self.assertIn(f"inbox {self.project}/{self.slug}: corrupt task inbox", fault.call_args.args[1])
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -59,7 +59,7 @@ L3_VERB_MAX_OUTPUT = 8 << 20
 L3_VERB_REFUSED = "this socket serves only the project's running coordinator turn"
 #: The commands a task's owner runs through altd. Its worker job, not this machine's key, admits them.
 TASK_DOOR = (["api", "task", "run"], ["api", "task", "validate"], ["api", "task", "terminal"],
-             ["api", "task", "review", "run"])
+             ["api", "task", "review", "run"], ["api", "task", "door"])
 TASK_DOOR_REFUSED = "Only the running owner of this task, from its own worker, may use this command."
 # The coordinator's `gh` only reads, from any repository its login can see; `alt issue` verbs are its only writes.
 L3_GH_GROUPS = {"pr", "issue", "release", "repo", "run", "workflow", "ruleset", "label", "cache"}
@@ -1215,23 +1215,11 @@ def dispatch_waiting(project: str) -> None:
     (config.project_dir(project) / "hold.json").unlink(missing_ok=True)
 
 
-def drain_hook_faults() -> None:
-    """Hooks run inside L2 sessions and cannot reach the server: they append to monitor/hook-faults.log; the tick raises them."""
-    p = config.MONITOR_DIR / "hook-faults.log"
-    if not p.exists():
-        return
-    lines = [ln for ln in p.read_text().splitlines() if ln.strip()]
-    p.unlink()
-    for ln in lines[-20:]:
-        incidents.system_fault("hook", ln[:400])
-
-
 def tick() -> None:
     try:
         engines.refresh_quotas()
     except Exception as e:  # noqa: BLE001
         log(f"[quota] refresh failed: {e}")
-    drain_hook_faults()
     dispatch.run_settings()
     terminal.sweep()
     access.settle()
@@ -1949,17 +1937,19 @@ class Handler(BaseHTTPRequestHandler):
         secure = "; Secure" if isinstance(self.connection, ssl.SSLSocket) else ""
         return f"{access.COOKIE}={key}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
 
-    def _task_owner(self, o: dict) -> bool:
-        """Whether this connection comes from the current worker job of the running task attempt the body names: the
-        whole admission of the task door, decided before anything else reads the task, so every other caller,
-        with or without this machine's key, gets one refusal that tells nothing about tasks."""
+    def _task_owner(self, o: dict, *, running: bool = True) -> bool:
+        """Whether this connection comes from the current worker job of the task attempt the body names, running unless
+        `running` is false: the whole admission of the task door, decided before anything else reads the task, so
+        every other caller, with or without this machine's key, gets one refusal that tells nothing about tasks.
+        A record change is admitted after the task left running, as when the worker's stop checkpoint follows its
+        block, while that attempt's worker job lasts."""
         try:
             project, slug, attempt = o["project"], o["slug"], o["attempt"]
             if type(attempt) not in (str, int):
                 return False
             config.project(project)
             task = S.load_task(project, slug)
-            return (task.get("state") == "running" and str(task.get("attempt")) == str(attempt)
+            return ((not running or task.get("state") == "running") and str(task.get("attempt")) == str(attempt)
                     and task_owner_connection(project, slug, task, self.client_address, self.connection.getsockname()))
         except (KeyError, TypeError, ValueError, OSError, RuntimeError):  # RuntimeError: no worker record to match
             return False
@@ -2466,6 +2456,13 @@ class Handler(BaseHTTPRequestHandler):
             log(f"GET {self.path}: {e}\n{traceback.format_exc()}")
             return self._json({"error": "Image temporarily unavailable." if len(parts) > 1 and parts[1] == "images" else self._detail(e)}, 500)
 
+    def _task_door(self, o: dict):
+        """A record change from a task worker's own processes (`door`), applied as the admitted task's L2."""
+        try:
+            return self._json(door.handle(o["project"], o["slug"], int(o["attempt"]), o))
+        except (T.TransitionError, ValueError, KeyError, TypeError) as exc:
+            return self._json({"error": str(exc)}, 409)
+
     def _review_run(self, body):
         streamed = False
 
@@ -2490,7 +2487,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             review = reviews.run(body["project"], body["slug"], body["review_id"], actor="l2",
                                  expected_attempt=int(body["attempt"]), context_ids=body.get("context_ids"),
-                                 proposal_id=body.get("proposal_id"), show=body.get("show"),
+                                 proposal_id=body.get("proposal_id"), show=door.decode(body.get("show")),
                                  on_wait=heartbeat)
             result, code = {"ok": True, "review": review}, 200
         except (T.TransitionError, ValueError, KeyError) as exc:
@@ -2507,8 +2504,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": refused}, 403)
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
-        door = parts in TASK_DOOR
-        if not self._admit(parts) and not door:
+        owned = parts in TASK_DOOR
+        if not self._admit(parts) and not owned:
             self.close_connection = True
             return self._json({"error": UNPAIRED, "pair": True}, 401)
         image_submission = False
@@ -2521,7 +2518,7 @@ class Handler(BaseHTTPRequestHandler):
             if api == "voice" and len(parts) > 2:
                 return self._host_voice(parts, parse_qs(u.query))
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
-            if door and not self._task_owner(o):
+            if owned and not self._task_owner(o, running=parts != ["api", "task", "door"]):
                 return self._json({"error": TASK_DOOR_REFUSED}, 403)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
             if api in ("terminal", "terminal-access"):
@@ -2538,6 +2535,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._update_post(parts, o)
             if parts == ["api", "validation-access"]:
                 return self._validation_post(o)
+            if parts == ["api", "task", "door"]:
+                return self._task_door(o)
             if parts == ["api", "task", "review", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id", "show"}:
