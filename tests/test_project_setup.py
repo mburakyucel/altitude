@@ -577,8 +577,8 @@ class ProjectSetup(AltitudeCase):
                 self.assertIn("Install the agent sandbox (Coding tools)", detail())
             with mock.patch.object(route, "routed_engines", return_value=["codex"]):
                 self.assertEqual(self.step("coordinator")["status"], "pending", "an agent with its own sandbox is ready")
-        with mock.patch.object(route, "pick_engine", return_value={"engine": None, "held": [{"engine": "claude", "limit": True}]}):
-            self.assertEqual(self.step("coordinator")["status"], "pending", "a usage limit is not a missing tool")
+        with mock.patch.object(engines, "sign_in", return_value={"signed_in": None, "command": "fixture login"}):
+            self.assertEqual(self.step("coordinator")["status"], "pending", "a status command that cannot answer holds nothing")
 
     def test_a_first_conversation_that_failed_for_a_missing_tool_waits_on_retry(self):
         self.patch(engines, "installation", return_value={"available": False, "why": "fixture"})

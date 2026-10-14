@@ -190,7 +190,7 @@ else:
         print("     If it asks for a code, use a still-valid code or run ~/.local/bin/alt pair.")
         print("     Making a new code replaces any earlier one.")
 if local and os.environ.get("SSH_CONNECTION"):
-    port = urlsplit(result["url"]).port
+    port = urlsplit(result["url"]).port or 443
     print(f"     Over SSH, from your own computer run `ssh -L {port}:127.0.0.1:{port} <this server>`, then open the link there.")
 print("\nFor a phone or another computer, see Settings → Network.")
 print("\nTerminal (optional):")

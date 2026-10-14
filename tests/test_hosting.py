@@ -61,7 +61,8 @@ class Hosting(ProbeCase):
     def test_doctor_next_follows_the_first_unfinished_step(self):
         self.patch(access, "DIR", self.tmp / "pairing")
         self.patch(installation, "_gh_signed_in", return_value=True)
-        missing = {"key": "agents", "label": "Install at least one coding agent: Alpha or Beta", "state": "unmet",
+        missing = {"key": "agents", "label": "Install at least one coding agent: Alpha or Beta",
+                   "step": "Install at least one coding agent: Alpha or Beta", "state": "unmet",
                    "command": None, "options": [{"label": "Alpha", "command": "alpha-install"}]}
         self.patch(installation, "prerequisites", return_value=[missing])
         access.issue_code()
@@ -76,6 +77,11 @@ class Hosting(ProbeCase):
         self.assertEqual(report["next"], ["Next: Install at least one coding agent: Alpha or Beta.", "  Alpha: alpha-install"])
         self.assertIn({"name": "coding agent", "state": "unavailable",
                        "detail": "Install at least one coding agent: Alpha or Beta; Alpha: alpha-install"}, report["checks"])
+        signed_out = {"key": "github", "label": "GitHub CLI signed in", "step": "Sign in to the GitHub CLI", "state": "unmet",
+                      "command": "gh auth login"}
+        installation.prerequisites.return_value = [signed_out, missing]
+        self.assertEqual(installation.doctor()["next"], ["Next: Sign in to the GitHub CLI.", "  gh auth login"],
+                         "Next names the action, never the state the row reaches")
         installation.prerequisites.return_value = []
         self.assertEqual(installation.doctor()["next"], ["Next: nothing is left to set up; open Altitude in your browser."])
 

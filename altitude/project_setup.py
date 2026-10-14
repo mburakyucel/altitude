@@ -137,7 +137,8 @@ def missing_tool(project: str) -> str | None:
     None once one is ready; usage limits and provider refusals are the turn's own outcomes."""
     routed = route.routed_engines("l3", config.project(project))
     installed = [engine for engine in routed if engines.installation(engine)["available"] is not False]
-    signed = [engine for engine in installed if engines.sign_in(engine)["signed_in"]]
+    # A status command that could not answer does not hold the first turn: only a reported sign-out does.
+    signed = [engine for engine in installed if engines.sign_in(engine)["signed_in"] is not False]
     sandbox = platform.sandbox_tool()
     if any(not engines.common.implementation(engine).JOB_PROFILE or not sandbox or sandbox["enabled"] for engine in signed):
         return None

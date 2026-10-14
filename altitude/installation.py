@@ -551,22 +551,23 @@ _GH_TOO_OLD = "Agents land pull requests with GitHub CLI 2.72 or newer; this one
 
 def prerequisites() -> list[dict]:
     """What agents need before the first task, in the order First run shows it: each item is met, unmet or optional,
-    with the command the operator runs in their own terminal. Nothing here takes a password or token."""
+    with the step that meets it and the command the operator runs in their own terminal. Nothing here takes a password or token."""
     from . import config, engines, platform
     gh = shutil.which("gh")
     lacks = _gh_lacks() if gh else []
     install = None if platform.containerized() else platform.install_command("gh")
     page = "" if install else f" ({platform.INSTALL_PAGES['gh']})"
     if not gh:
-        github = {"label": "GitHub CLI not installed", "state": "unmet", "command": install,
+        github = {"label": "GitHub CLI not installed", "step": "Install the GitHub CLI", "state": "unmet", "command": install,
                   "detail": f"Agents push branches and open pull requests through the GitHub CLI. Install it{page}, "
                   "then sign in with gh auth login."}
     elif lacks:
-        github = {"label": "GitHub CLI too old", "state": "unmet", "command": install,
+        github = {"label": "GitHub CLI too old", "step": "Update the GitHub CLI", "state": "unmet", "command": install,
                   "detail": _GH_TOO_OLD.format(", ".join(lacks)) + f" Install the current release{page}, then check again."}
     else:
         signed = _gh_signed_in()
-        github = {"label": "GitHub CLI signed in", "state": "met" if signed else "unmet", "command": "gh auth login",
+        github = {"label": "GitHub CLI signed in", "step": "Sign in to the GitHub CLI", "state": "met" if signed else "unmet",
+                  "command": "gh auth login",
                   "detail": "Agents push branches and open pull requests through the GitHub CLI."}
     if platform.containerized() and (lacks or not gh):
         github["detail"] = "GitHub CLI is bundled in the image. Replace this incomplete image from the host."
@@ -576,16 +577,18 @@ def prerequisites() -> list[dict]:
         # One agent is enough, so a fresh computer shows one requirement with each agent's install command.
         names = " or ".join(config.ENGINE_LABELS[engine] for engine in config.ENGINES)
         lead = "Install at least one coding agent" if len(config.ENGINES) > 1 else "Install a coding agent"
-        items.append({"key": "agents", "label": f"{lead}: {names}", "state": "unmet",
+        items.append({"key": "agents", "label": f"{lead}: {names}", "step": f"{lead}: {names}", "state": "unmet",
                       "detail": "Then sign in to it.", "command": None,
                       "options": [{"label": config.ENGINE_LABELS[engine], "command": engines.install_command(engine)}
                                   for engine in config.ENGINES]})
-    agents = []
+    agents, ready = [], []
     for engine in installed:
         label = config.ENGINE_LABELS[engine]
         signed = engines.sign_in(engine)
+        if signed["signed_in"]:
+            ready.append(engine)
         agents.append({"key": engine, "label": f"{label} signed in" if signed["signed_in"] else f"{label} installed",
-                       "state": "met" if signed["signed_in"] else "unmet",
+                       "step": f"Sign in to {label}", "state": "met" if signed["signed_in"] else "unmet",
                        "detail": None if signed["signed_in"] else f"{label} is installed but not signed in.",
                        "command": None if signed["signed_in"] else signed["command"]})
     if any(agent["state"] == "met" for agent in agents):
@@ -595,9 +598,11 @@ def prerequisites() -> list[dict]:
     items += agents
     sandbox = platform.sandbox_tool()
     if sandbox:
-        # Only agents Altitude confines itself run inside it; one that brings its own sandbox does not need it.
-        needed = not installed or any(engines.common.implementation(engine).JOB_PROFILE for engine in installed)
-        items.append({"key": "sandbox", "label": "Agent sandbox",
+        # Only agents Altitude confines itself run inside it: a signed-in agent with its own sandbox is enough, as
+        # project setup judges the coordinator ready.
+        confined = lambda engine: engines.common.implementation(engine).JOB_PROFILE
+        needed = not any(not confined(engine) for engine in ready) and (not installed or any(map(confined, ready or installed)))
+        items.append({"key": "sandbox", "label": "Agent sandbox", "step": "Install the agent sandbox",
                       "state": "met" if sandbox["enabled"] else "unmet" if needed else "optional",
                       "detail": None if sandbox["enabled"] else "Altitude runs agents inside bubblewrap on Linux."
                       + ("" if sandbox["command"] else " Install it with this computer's package manager."),
@@ -605,7 +610,8 @@ def prerequisites() -> list[dict]:
     git = shutil.which("git")
     install = None if git else platform.install_command("git")
     detail = "Agents work in Git checkouts." + ("" if install else f" Install it ({platform.INSTALL_PAGES['git']}).")
-    items.append({"key": "git", "label": "Git installed" if git else "Git not installed", "state": "met" if git else "unmet",
+    items.append({"key": "git", "label": "Git installed" if git else "Git not installed", "step": "Install Git",
+                  "state": "met" if git else "unmet",
                   "detail": None if git else detail, "command": install})
     if not git and platform.containerized():
         items[-1].update(detail="Git is bundled in the image. Replace this incomplete image from the host.", command=None)
@@ -687,7 +693,7 @@ def _next(hosting: dict, pairing: dict, needs: list[dict]) -> list[str]:
         return ["Next: compare the certificate below with what your browser shows, trust it, then run alt pair."]
     if needs:
         first = needs[0]
-        return [f"Next: {first['label']}.",
+        return [f"Next: {first['step']}.",
                 *([f"  {first['command']}"] if first.get("command") else []),
                 *[f"  {option['label']}: {option['command']}" for option in first.get("options") or []]]
     return ["Next: nothing is left to set up; open Altitude in your browser."]

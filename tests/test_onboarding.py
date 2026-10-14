@@ -150,6 +150,7 @@ class TestPrerequisites(OnboardingCase):
         items = self.items(gh=False, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": True})
         self.assertEqual(list(items)[0], "github")
         self.assertEqual((items["github"]["state"], items["github"]["command"]), ("unmet", "gh auth login"))
+        self.assertEqual(items["github"]["step"], "Sign in to the GitHub CLI", "alt doctor's Next names the action")
 
     def test_a_missing_tool_shows_the_command_that_installs_it(self):
         with mock.patch.object(installation.shutil, "which", return_value=None), \
@@ -185,6 +186,12 @@ class TestPrerequisites(OnboardingCase):
         own = self.items(gh=True, signed={"claude": False, "codex": True}, installed={"claude": False, "codex": True},
                          sandbox=missing)
         self.assertEqual(own["sandbox"]["state"], "optional", "an agent with its own sandbox does not need it")
+        mixed = self.items(gh=True, signed={"claude": False, "codex": True}, installed={"claude": True, "codex": True},
+                           sandbox=missing)
+        self.assertEqual(mixed["sandbox"]["state"], "optional", "a signed-in agent with its own sandbox is enough, as setup judges")
+        waiting = self.items(gh=True, signed={"claude": False, "codex": False}, installed={"claude": True, "codex": False},
+                             sandbox=missing)
+        self.assertEqual(waiting["sandbox"]["state"], "unmet", "the only installed agent is confined")
         unknown = self.items(gh=True, signed={"claude": True, "codex": True}, installed={"claude": True, "codex": True},
                              sandbox={**missing, "command": None})
         self.assertIn("package manager", unknown["sandbox"]["detail"])
@@ -333,3 +340,6 @@ class TestPrerequisites(OnboardingCase):
             script.chmod(0o755)
             with self.subTest(code=code), mock.patch.object(config, "CLAUDE_BIN", str(script)):
                 self.assertEqual(engines.sign_in("claude"), {"signed_in": expected, "command": "claude auth login"})
+        with mock.patch.object(config, "CLAUDE_BIN", str(self.tmp / "absent")):
+            self.assertEqual(engines.sign_in("claude"), {"signed_in": None, "command": "claude auth login"},
+                             "a status command that cannot run says nothing about the account")
