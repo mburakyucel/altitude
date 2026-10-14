@@ -291,7 +291,13 @@ Altitude trusts its own code only through its copy of the repository beside its 
 (`~/.altitude-repository`), a bare repository only altd writes. The copy is seeded once from the checkout's
 `origin/<branch>` and afterwards fetched from the origin. The service starts, exports and self-deploys only
 when the checkout's files are exactly a commit on the copy's branch, compared by content with the copy's
-objects; self-deploy fast-forwards the checkout to the copy's fetched tip and checks it again. `config.REPO` identifies the deployment checkout;
+objects; self-deploy fast-forwards the checkout to the copy's fetched tip and checks it again. The guard lets
+the branch move only to the checkout's cached `origin/<branch>`, and two fetches straddling a fresh merge can see
+different tips, so self-deploy fetches the checkout once more when its origin ref differs from the copy's tip and
+otherwise leaves the step to the next tick as a failed fetch, as it does when another fetch moves that ref on before
+the branch moves. The fast-forward rebuilds the checkout's index from the verified commit, moves the branch through
+the guard and only then writes the files, without another refusal; a refused move leaves the branch and files as
+they were. `config.REPO` identifies the deployment checkout;
 `config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
 These exports sit outside worker writable roots. The maintenance tick removes an export nothing names:
 the running service's export, the target of `current` and every export named in the brief or session
@@ -1294,14 +1300,17 @@ of clean main. Dirty, diverged, ahead or off-main deployment remains untouched a
 failure; otherwise valid isolated tasks continue. Publication retains its current-candidate checks,
 ownership boundaries and review holds.
 
-A failing `git fetch origin main` for self-deploy raises `git_policy.FetchError`. The tick logs each
+A failing `git fetch origin main` for self-deploy, or a checkout fetch that still disagrees with Altitude's copy
+of its repository, raises `git_policy.FetchError`. The tick logs each
 such failure, and each command of the tick that outlives its time limit on a busy host (#724), and
 retries it on the next tick. It raises the system fault (`self-deploy`, or `tick` for the setup check
 and the rest of the tick) only once the same step has failed for five minutes without a success in
 between, carrying the latest error. The post-delivery fast-forward returns a note for a failed fetch
 and leaves the retry to the tick. Every other self-deploy failure, including a dirty, diverged, ahead
-or off-main checkout and a failed fast-forward, raises the fault immediately. The failure start is
-held in daemon memory, so a restart starts a new grace period.
+or off-main checkout and a failed fast-forward, raises the fault immediately. The tick files an unchanged
+refusal once and then waits: later ticks with the same error leave the fault record as it is, until the step
+succeeds or its error changes. The failure start and the filed refusal are held in daemon memory, so a restart
+starts a new grace period and files a remaining refusal again.
 
 Base fetching tolerates one competing update of the same remote-tracking ref across linked
 worktrees, including ordinary Git commands and landing fetches. `git_policy.fetch_origin` uses

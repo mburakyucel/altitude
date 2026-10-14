@@ -1025,7 +1025,10 @@ activation does not release an operator hold.
 Fetch housekeeping may pack protected refs while local main is behind its fetched remote. The
 hook permits unchanged logical tips and pruning of loose copies retained at the same packed tip;
 actual unauthorized protected moves and deletions still refuse. Housekeeping does not advance main;
-the supported guarded fast-forward performs that move.
+the supported guarded fast-forward performs that move. Altitude's own source checkout moves its branch through the
+guard first and only then writes the files, so a refusal leaves it clean and the next tick retries. A
+self-deploy whose checkout fetch lags the tip in Altitude's copy of its repository fetches once more, then retries
+on the next tick like a failed fetch.
 Its real-Git validation runs with captured output and open caller stdin; fixture packing supplies
 its own revision input so it cannot wait for the worker's input stream to close.
 The shared CLI test fixture likewise supplies explicit empty input; the same open-input regression
