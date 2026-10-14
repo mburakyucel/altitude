@@ -26,7 +26,7 @@ class SelfDeployFastForward(AltitudeCase):
         git("clone", "-q", "-b", "main", str(self.tmp / "origin.git"), str(other), cwd=self.tmp)
         (other / path).parent.mkdir(parents=True, exist_ok=True)
         (other / path).write_text("# merged\n")
-        git("add", "-A", cwd=other)
+        git("add", path, cwd=other)
         git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Merged", cwd=other)
         git("push", "-q", "origin", "HEAD:main", cwd=other)
         return git("rev-parse", "HEAD", cwd=other).strip()
@@ -62,26 +62,29 @@ class SelfDeployFastForward(AltitudeCase):
     def test_a_lagging_origin_ref_is_fetched_level_before_the_fast_forward(self):
         tip = self.merged()
         self.assertEqual(git("rev-parse", "refs/remotes/origin/main", cwd=self.repo).strip(), self.head)
+        # An entry a worker staged in the checkout's index is not carried into the deployment.
+        blob = git("rev-parse", "HEAD:README.md", cwd=self.repo).strip()
+        git("update-index", "--add", "--cacheinfo", f"100644,{blob},staged-by-a-worker.txt", cwd=self.repo)
         self.assertEqual(git_policy.deploy_source(self.repo, "main"), (self.head, tip, ["altitude/x.py"]))
         self.assertEqual(git("rev-parse", "HEAD", "refs/remotes/origin/main", cwd=self.repo).split(), [tip, tip])
+        self.assertEqual(git("ls-files", cwd=self.repo).split(), git("ls-tree", "-r", "--name-only", tip,
+                                                                      cwd=self.repo).split())
+        self.assertEqual(git("status", "--porcelain", "--untracked-files=all", cwd=self.repo), "")
         self.assertEqual(git_policy.source_head(self.repo, "main"), tip)
 
-    def test_fetches_that_still_disagree_leave_the_step_to_the_next_tick(self):
+    def test_a_file_appearing_after_the_check_does_not_strand_a_moved_branch(self):
         tip = self.merged()
-        before = self.snapshot()
-        # The replica the checkout's fetch reaches has not seen the merge yet; Altitude's copy has.
-        with mock.patch.object(git_policy, "fetch_origin", return_value=self.head):
-            with self.assertRaisesRegex(git_policy.FetchError, "disagree"):
-                git_policy.deploy_source(self.repo, "main")
-            self.assert_untouched(before)
-            with mock.patch("altitude.incidents.system_fault") as fault, mock.patch.object(server, "log") as log:
-                server.self_deploy("altitude")
-            fault.assert_not_called()
-            self.assertIn("[altitude] self-deploy failed; retrying next tick:", log.call_args.args[0])
-            self.assert_untouched(before)
-        with mock.patch("altitude.incidents.system_fault") as fault:
-            server.self_deploy("altitude")   # the next tick
-        fault.assert_not_called()
+        run = git_policy._run
+
+        def racing(repo, *args, **kwargs):
+            if args[0] == "update-ref":   # an untracked file lands where the merged commit tracks one
+                (self.repo / "altitude").mkdir(exist_ok=True)
+                (self.repo / "altitude" / "x.py").write_text("# a worker's file\n")
+            return run(repo, *args, **kwargs)
+
+        with mock.patch.object(git_policy, "_run", side_effect=racing):
+            self.assertEqual(git_policy.deploy_source(self.repo, "main"), (self.head, tip, ["altitude/x.py"]))
+        self.assertEqual((self.repo / "altitude" / "x.py").read_text(), "# merged\n")
         self.assertEqual(git_policy.source_head(self.repo, "main"), tip)
 
     def test_a_fast_forward_marks_activation_pending(self):

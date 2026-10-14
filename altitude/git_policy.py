@@ -508,13 +508,16 @@ def deploy_source(repo: str | Path, branch: str) -> tuple[str, str, list[str]]:
         raise FetchError(f"the checkout's origin/{branch} and Altitude's copy of its repository disagree on its tip "
                          f"({tip[:12]}); the next tick fetches again")
     env = _copy_objects()
-    _run(root, "update-index", "-q", "--refresh", env=env)
-    _output(_run(root, "read-tree", "-n", "-m", "-u", head, tip, env=env), "fast-forward refused")
+    # The files are `head` by content; the index workers can write is rebuilt from it rather than trusted.
+    _output(_run(root, "read-tree", head, env=env), "cannot read the service checkout's commit")
+    _run(root, "update-index", "-q", "--refresh", env=env)   # unchanged files are not rewritten
     # #961: `git merge --ff-only` writes the files before the guard refuses the branch move, leaving them changed.
-    # The branch moves first, through the guard, so a refused move leaves the checkout exactly as it was.
+    # The branch moves first, through the guard, so a refused move leaves the checkout exactly as it was; the
+    # files then follow without another refusal, replacing anything that appeared where `tip` tracks a file.
     _output(_run(root, "update-ref", "-m", "self-deploy: fast-forward", f"refs/heads/{branch}", tip, head, env=env),
             "fast-forward failed")
-    _output(_run(root, "read-tree", "-m", "-u", head, tip, env=env), "fast-forward failed after moving the branch")
+    _output(_run(root, "read-tree", "--reset", "-u", tip, env=env, timeout=300),
+            "fast-forward failed after moving the branch")
     if source_head(root, branch) != tip:
         raise GitPolicyError(f"after the fast-forward the service checkout is not {tip[:12]}")
     return head, tip, _copy("diff", "--name-only", head, tip).split()
