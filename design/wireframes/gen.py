@@ -361,7 +361,7 @@ def rail(selected, needs=3, first_run=False):
         engines = (
             '<div class="engines">'
             '<div class="erow"><div class="t"><b>Claude</b><span>connected</span></div><div class="meter"><i style="width:6%"></i></div></div>'
-            '<div class="erow"><div class="t"><b>Codex</b><span>not configured</span></div><div class="meter"><i style="width:0"></i></div></div>'
+            '<div class="erow"><div class="t"><b>Codex</b><span>not installed</span></div><div class="meter"><i style="width:0"></i></div></div>'
             '</div>'
         )
     else:
@@ -369,7 +369,7 @@ def rail(selected, needs=3, first_run=False):
             '<div class="rsec"><span>Projects</span><span class="plus">' + I("plus", "i sm") + '</span></div>'
             f'<div class="ri{sel("altitude")}"><span class="dot held"></span>altitude</div>'
             f'<div class="ri{sel("harbor")}"><span class="dot idle"></span>harbor</div>'
-            '<div class="ri" style="color:var(--text-muted);font-weight:400;font-size:13px">' + I("folder") + '2 folders not managed</div>'
+            '<div class="ri" style="color:var(--text-muted);font-weight:400;font-size:13px">' + I("folder") + '2 folders found — add them</div>'
         )
         engines = (
             '<div class="engines">'

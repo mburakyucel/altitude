@@ -653,7 +653,7 @@ Task owners run installation VMs, containers and ordinary sandboxed-browser chec
 time, started by altd as the operator's account. Its image, image layers and the cached Ubuntu cloud
 image live in `~/.altitude-validation`, beside Altitude's home. A run needs 20 GiB free there, and its own area is removed
 when it ends; the first run builds the image, which takes several minutes. Settings → **Validation
-runs** turns the runner off: a running run stops and its container and scratch files are removed
+runs**, shown only where this computer can run them, turns the runner off: a running run stops and its container and scratch files are removed
 after its log and results are retained. Each run appears on its task as a machine run with purpose
 `validation`. Activation waits for admitted validation to finish recording evidence, and new runs are
 refused while activation is pending. After an
