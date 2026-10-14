@@ -444,8 +444,9 @@ def score(out: Path) -> dict:
     keyed, grades = S.read_json(out / "grading-key.json"), S.read_json(out / "grades.json")
     graded = {(k["scenario"], *k["call"]): grades[item] for item, k in keyed.items()}
     rows = [json.loads(line) for line in (out / "calls.jsonl").read_text().splitlines()]
-    # Only the whole held-back set and any others run with it, every repeat, uninterrupted, can recommend a model.
-    full = ("heldback" in summary["sets"] and summary["complete"] and summary["repeats"] >= REPEATS
+    # Only the whole held-back set, with the scale set at most, every repeat, uninterrupted, can recommend a model:
+    # develop scenarios shaped the reviewer's instructions.
+    full = ("heldback" in summary["sets"] and set(summary["sets"]) <= {"heldback", "scale"} and summary["complete"] and summary["repeats"] >= REPEATS
             and sorted(summary["scenarios"]) == sorted(prepared))
     table = {}
     for short in summary["models"]:

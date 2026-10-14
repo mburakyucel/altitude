@@ -1985,8 +1985,9 @@ signals with the places that produced them and what each event recorded (its rea
 what verification found in a replaced report), each question on one line with every revision's place
 and how it was settled, review findings with their dispositions, and up to four paired quotes (the
 message answered, the operator's words, the reply, 300 characters each). Sheets are whole lines, at
-most 3 KiB each and 48 KiB together: after the signals, the operator's quotes take the room first, then
-questions, then findings, and a last line counts what did not fit. Tasks that do not fit are listed
+most 3 KiB each and 48 KiB together: after the head and signal counts, the operator's quotes take the room
+first, then what the signals' events recorded, then questions, then findings, and a last line counts what
+did not fit. Tasks that do not fit are listed
 by counts. Operator chat turns fill the remaining room as paired quotes, followed by
 current task titles and earlier suggestions with their outcome (their decision, lapse or L3's reason for
 dropping them). The prompt is at most 64 KiB.

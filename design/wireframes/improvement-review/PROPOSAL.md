@@ -122,7 +122,8 @@ within 64 KiB, as the pilot's does.
    characters each, at most four pairs); every question on one line with its revisions, latest first
    sentence and how it was answered or resolved and by whom; review findings' titles with their
    dispositions; and the report's verdict. A sheet is whole lines: the operator's words come before
-   questions and findings when room runs short, and a last line counts what did not fit. Sheets are
+   what the events recorded, questions and findings when room runs short, and a last line counts what
+   did not fit. Sheets are
    built from finished tasks, so later corrections are inside them.
 3. **Coverage.** Tasks that did not fit are listed by title and counts, and the prompt says what was
    left out. Project chat adds paired excerpts the same way within the remaining room.

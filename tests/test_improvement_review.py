@@ -153,6 +153,21 @@ class TestPrompt(ImprovementCase):
         self.assertEqual(len(re.findall(r"^- Question \[A\d+(?:, A\d+){5}\] revs 1–6 ", sheet, re.M)), 3)
         self.assertRegex(sheet.splitlines()[-1], r"^- Not shown for room: \d+ operator quotes, \d+ reviews$")
 
+    def test_signal_details_share_the_sheet_bound_after_the_operators_words(self):
+        """A heavily signalled task's event details once came before any budget, so its sheet could pass the bound
+        with every quote dropped; and quotes past the fourth pair were counted as left out for room."""
+        kinds = {"ci-recheck": "reason", "resume-failed": "error", "merge-approval-refused": "reason"}
+        events = [{"id": f"e{k}{i}", "at": at(2, 0.1 * i), "kind": kind, field: f"{kind} {i}: " + "why " * 40}
+                  for k, (kind, field) in enumerate(kinds.items()) for i in range(8)]
+        messages = [message(f"m{i}", 2, 0.1 * i, "operator" if i % 2 else "l2", f"Note {i} on the layout.")
+                    for i in range(24)]
+        project, _ = self.load([task("noisy", 2, messages=messages, events=events)])
+        sheet = "## " + improve.prompt(project, end=NOW)["text"].split("\n\n## ")[1].split("\n\n# ")[0]
+        self.assertLessEqual(len(sheet.encode()), improve.SHEET_BYTES)
+        self.assertEqual(len(re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheet)), improve.PAIRS)
+        self.assertRegex(sheet, r"\n- retries \[A\d+\]: ci-recheck 0: ")
+        self.assertRegex(sheet.splitlines()[-1], r"^- Not shown for room: \d+ signal details$")
+
     def test_counted_events_show_what_they_recorded(self):
         project, _ = self.load([task("rewritten", 2, events=[
             {"id": "e1", "at": at(2, 1), "kind": "ci-recheck", "reason": "Lint job hit an unpinned rule"},
@@ -344,11 +359,11 @@ class TestEval(ImprovementCase):
         names = [name for name, _, _ in improve_eval.scenarios("heldback")]
         answer = {"call": {"error": None, "tokens": 10}, "suggestions": [], "dropped": [], "matched": {}}
 
-        def score(scenarios, repeats, complete=True):
+        def score(scenarios, repeats, complete=True, sets=("heldback",)):
             self.patch(config, "ROOT", self.tmp / f"home-{len(scenarios)}-{repeats}-{complete}")
             self.patch(config, "RUNTIME_ROOT", (self.tmp / f"home-{len(scenarios)}-{repeats}-{complete}").resolve())
             out.mkdir(exist_ok=True)
-            S.write_json(out / "run.json", {"sets": ["heldback"], "models": ["sonnet"], "repeats": repeats,
+            S.write_json(out / "run.json", {"sets": list(sets), "models": ["sonnet"], "repeats": repeats,
                                             "scenarios": scenarios,
                                             "complete": complete, "stopped": None, "spent": 0, "ceiling": 1})
             (out / "calls.jsonl").write_text("".join(json.dumps({**answer, "scenario": n, "model": "sonnet",
@@ -358,7 +373,9 @@ class TestEval(ImprovementCase):
             S.write_json(out / "grades.json", {})
             return improve_eval.score(out)
 
-        for partial in (score(names[:1], 3), score(names, 1), score(names, 3, complete=False)):
+        develop = [name for name, _, _ in improve_eval.scenarios("develop")]
+        for partial in (score(names[:1], 3), score(names, 1), score(names, 3, complete=False),
+                        score(develop + names, 3, sets=("develop", "heldback"))):
             self.assertFalse(partial["full_matrix"])
             self.assertFalse(partial["models"]["sonnet"]["passes"])
             self.assertIsNone(partial["recommended"])

@@ -1179,8 +1179,8 @@ python3 -m altitude.improve_eval score --out <private-dir>
 and of words-only patterns caught (counting only patterns whose places reached the prompt), wrong
 suggestions on the controls and elsewhere, invalid answers, tokens, per signal the planted patterns
 caught and the suggestions naming it graded wrong, the counts-alone column and the recommendation,
-the least plan use that clears the bar. Only a complete run of the held-back set with every scenario
-of the sets named, at least three repeats each, can pass a model; anything less reports `full_matrix`
+the least plan use that clears the bar. Only a complete run of the held-back set, with the scale set at
+most beside it, every scenario of the sets named and at least three repeats each, can pass a model; anything less reports `full_matrix`
 false and no recommendation. A pattern is caught when the matcher pairs a suggestion with it by at
 least two shared planted places and the grader marks it caught. The output directory is private
 evidence; the PR carries the table.

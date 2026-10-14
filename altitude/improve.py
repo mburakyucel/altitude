@@ -239,9 +239,9 @@ def _pairs(slug: str, messages: list[dict], place: Places) -> list[str]:
 
 
 def sheet(project: str, item: dict, found: dict[str, list[str]], place: Places) -> str:
-    """One task's sheet: whole lines, at most SHEET_BYTES. The head, signals and what their events recorded come
-    first; the operator's own words, then questions, then review findings fill the room left, and a last line says
-    what did not fit."""
+    """One task's sheet: whole lines, at most SHEET_BYTES. The head and its signals come first; the operator's own
+    words, then what the signals' events recorded, then questions, then review findings fill the room left, and a
+    last line says what did not fit."""
     task, slug = item["task"], item["task"]["slug"]
     verdict = next((e.get("verdict") for e in reversed(item["events"])
                     if e.get("kind") == "state" and e.get("to") == "reported"), None)
@@ -249,7 +249,7 @@ def sheet(project: str, item: dict, found: dict[str, list[str]], place: Places) 
     head = (f"## \"{_cut(task['title'], 120)}\" · {task['state']} · {_short(task['created'])} to "
             f"{_short(item['finished'])} ({hours:.0f} h) · {(task.get('token_usage') or {}).get('total_tokens', 0):,} tokens"
             + (f" · report: {_cut(verdict, 80)}" if verdict else ""))
-    lines = [head]
+    lines, details = [head], []
     if found:
         lines.append("Signals: " + "; ".join(f"{key} ×{len(anchors)} [" + ", ".join(place(a) for a in anchors[:6]) + "]"
                                              for key, anchors in found.items()))
@@ -258,21 +258,21 @@ def sheet(project: str, item: dict, found: dict[str, list[str]], place: Places) 
             for anchor in anchors[:6]:
                 said = detail(events[anchor]) if anchor in events else None
                 if said:
-                    lines.append(f"- {key} [{place(anchor)}]: {said}")
+                    details.append(f"- {key} [{place(anchor)}]: {said}")
     waited = hours_waiting(item)
     if waited >= 1:
         lines.append(f"Hours waiting on the operator: {waited:.0f}")
-    groups = {"operator quotes": _pairs(slug, item["messages"], place), "questions": _questions(task, place),
-              "reviews": _reviews(task, place)}
-    room = SHEET_BYTES - len("\n".join(lines).encode()) - 80  # the closing line's room
+    groups = {"operator quotes": _pairs(slug, item["messages"], place)[:PAIRS], "signal details": details,
+              "questions": _questions(task, place), "reviews": _reviews(task, place)}
+    room = SHEET_BYTES - len("\n".join(lines).encode()) - 100  # the closing line's room
     shown: dict[str, list[str]] = {}
     for name, group in groups.items():
         shown[name] = []
-        for line in group[:PAIRS] if name == "operator quotes" else group:
+        for line in group:
             if len(line.encode()) + 1 <= room:
                 shown[name].append(line)
                 room -= len(line.encode()) + 1
-    lines += shown["questions"] + shown["reviews"] + shown["operator quotes"]
+    lines += shown["signal details"] + shown["questions"] + shown["reviews"] + shown["operator quotes"]
     left = [f"{len(group) - len(shown[name])} {name}" for name, group in groups.items() if len(group) > len(shown[name])]
     if left:
         lines.append("- Not shown for room: " + ", ".join(left))
