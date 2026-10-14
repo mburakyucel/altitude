@@ -62,7 +62,7 @@ function agent(value: string) {
 const step = (name: RegExp) => screen.getByRole("heading", { name }).closest("li") as HTMLElement;
 
 const installLink: PairingLink = { code: "ABCD-2345" };
-const localHttps = { local: true, https: true, check: false, certificate: null };
+const localHttps = { local: true, https: true, check: true, certificate: { name: "Altitude CA 4F7K" } };
 const recovery = "Run ~/.local/bin/alt pair on the computer running Altitude for a new code.";
 const transportRecovery = "Could not confirm pairing. Reopen the install link, or run ~/.local/bin/alt pair for a new code.";
 
@@ -73,7 +73,7 @@ function deferred<T>() {
 }
 
 /** Keep the application's access/trust/pair API real while controlling only fixture HTTP replies. */
-function linkService(trust: Trust = localHttps, answers: Answer[] = []) {
+function linkService(trust: Trust = localHttps, answers: Answer[] = trust === localHttps ? ["trusted", "trusted"] : []) {
   service(trust, answers);
   const original = globalThis.fetch;
   const fixture = {
@@ -338,12 +338,25 @@ describe("Install pairing link", () => {
 });
 
 describe("Pair this device", () => {
+  it("probes HTTPS even on the host and keeps code entry absent until the probe succeeds", async () => {
+    const calls = service({ ...remote, local: true, guide: "https://example.test/v1/docs/SETUP.md" }, ["untrusted", "trusted"]);
+    const user = renderGate();
+    expect(await screen.findByText("Not trusted yet")).toBeVisible();
+    expect(calls.challenges).toBe(1);
+    expect(screen.queryByLabelText("Pairing code")).toBeNull();
+    expect(screen.getByText(/If they differ, delete the download and stop/)).toBeVisible();
+    expect(screen.getByText("full SHA-256")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Certificate guide" })).toHaveAttribute("href", "https://example.test/v1/docs/SETUP.md");
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByLabelText("Pairing code")).toBeVisible();
+    expect(calls.pairs).toEqual([]);
+  });
   it("on the computer running Altitude, needs no certificate step and pairs with a code", async () => {
     const calls = service({ local: true, https: false, check: false, certificate: null });
     const user = renderGate();
     expect(await screen.findByRole("button", { name: "Pair" })).toBeVisible();
     expect(screen.queryByText("This is the computer running Altitude.")).toBeNull();
-    expect(within(step(/^Trust Altitude’s certificate/)).getByRole("status", { name: "Trusted" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: /^Trust Altitude’s certificate/ })).toBeNull();
     expect(screen.queryByRole("link", { name: /Download/ })).toBeNull();
     const field = screen.getByLabelText("Pairing code");
     await user.type(field, "2222-2222");
@@ -364,7 +377,7 @@ describe("Pair this device", () => {
     const user = renderGate();
     await screen.findByText("Not trusted yet");
     expect(screen.queryByText("You opened Altitude’s HTTPS address.")).toBeNull();
-    expect(await screen.findByText("Not trusted yet. The usual missing step is the switch in Certificate Trust Settings.")).toBeVisible();
+    expect(await screen.findByText("The usual missing step is the switch in Certificate Trust Settings.")).toBeVisible();
     const trust = step(/^Trust Altitude’s certificate/);
     expect(within(trust).getByText("Not trusted yet")).toBeVisible();
     expect(within(trust).getByRole("link", { name: "Download the profile" })).toHaveAttribute("href", "/api/certificate/altitude.mobileconfig");
@@ -385,7 +398,7 @@ describe("Pair this device", () => {
     // The refused second certificate rejects the fetch; the next attempt reads the refusal Altitude recorded.
     const calls = service(remote, ["refused", "untrusted", "trusted"]);
     const user = renderGate();
-    expect(await screen.findByText("Not trusted yet. Install the certificate as a CA certificate.")).toBeVisible();
+    expect(await screen.findByText("Install the certificate as a CA certificate.")).toBeVisible();
     expect(calls.checks).toEqual(["c1", "c1"]);
     const trust = step(/^Trust Altitude’s certificate/);
     expect(within(trust).getByRole("link", { name: "Download the certificate" })).toHaveAttribute("href", "/api/certificate/altitude.crt");
@@ -427,8 +440,8 @@ describe("Pair this device", () => {
   it("on a desktop browser, explains importing the certificate and links the setup guide", async () => {
     service(remote);
     renderGate();
-    expect(await screen.findByText("Not trusted yet. Import the certificate as a trusted authority, then restart the browser.")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Setup guide" })).toHaveAttribute("href", expect.stringContaining("docs/SETUP.md#trust-https-on-each-device"));
+    expect(await screen.findByText("Import the certificate as a trusted authority, then restart the browser.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Certificate guide" })).toHaveAttribute("href", expect.stringContaining("docs/SETUP.md#trust-https-on-each-device"));
     expect(screen.getByText(/Keychain Access › login/)).toBeVisible();
   });
 

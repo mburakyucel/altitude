@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
+import { Command } from "../components/Onboarding";
 import { ApiError, checkTrust, pairDevice, readAccess, UNPAIRED_EVENT } from "../data/api";
 import type { Access, Trust } from "../data/api";
 import { forgetVisits } from "../components/visitMemory";
@@ -34,9 +35,9 @@ function formatCode(text: string): string {
 }
 
 const untrusted: Record<Kind, string> = {
-  apple: "Not trusted yet. The usual missing step is the switch in Certificate Trust Settings.",
-  android: "Not trusted yet. Install the certificate as a CA certificate.",
-  desktop: "Not trusted yet. Import the certificate as a trusted authority, then restart the browser.",
+  apple: "The usual missing step is the switch in Certificate Trust Settings.",
+  android: "Install the certificate as a CA certificate.",
+  desktop: "Import the certificate as a trusted authority, then restart the browser.",
 };
 
 function Step({ mark, title, aside, children }: { mark: Mark; title: string; aside?: ReactNode; children?: ReactNode }) {
@@ -51,41 +52,31 @@ function Step({ mark, title, aside, children }: { mark: Mark; title: string; asi
 
 /** Where to download the certificate and how this kind of device installs and trusts it. The SHA-256 to compare
  * comes from the computer running Altitude, never from this page, which a forged one could imitate. */
-function Instructions({ kind, name, installLink }: { kind: Kind; name: string; installLink: boolean }) {
-  if (kind === "apple") {
-    return <ol className="pair-instructions">
-      <li><a className="btn btn-primary" href="/api/certificate/altitude.mobileconfig">Download the profile</a></li>
-      <li>Open Settings › Profile Downloaded. It must list one Certificate, “{name}”. Tap More Details: the SHA-256 must end
-        with the 8 pairs the installer or <code>alt pair</code> shows on your computer. Anything else: tap Remove and stop. Otherwise tap Install.</li>
-      <li>Turn it on: Settings › General › About › Certificate Trust Settings › “{name}”.</li>
-      <li>Come back here; this checks itself.</li>
-    </ol>;
-  }
-  if (kind === "android") {
-    return <ol className="pair-instructions">
-      <li><a className="btn btn-primary" href="/api/certificate/altitude.crt">Download the certificate</a></li>
-      <li>Install it: Settings › Security › Encryption &amp; credentials › Install a certificate › CA certificate (names vary).
-        Its name must be “{name}” and its SHA-256 must end with the 8 pairs the installer or <code>alt pair</code> shows on your computer; otherwise stop.</li>
-      <li>Come back here; this checks itself.</li>
-    </ol>;
-  }
-  return <ol className="pair-instructions">
-    <li><a className="btn btn-primary" href="/api/certificate/altitude.crt">Download the certificate</a></li>
-    <li>Check its name is “{name}” and its SHA-256 ends with the 8 pairs the installer or <code>alt pair</code> shows. Import it as a trusted
-      authority in this browser or system (macOS: Keychain Access › login, set Secure Sockets Layer to Always Trust).</li>
-    <li>{installLink ? <>Restart the browser, then reopen the original private link from the installer. If it has expired, run <code>~/.local/bin/alt pair</code> for a new code.</>
-      : <>Restart the browser and reopen this page.</>}</li>
-    <li><a className="link" href={SETUP_GUIDE} target="_blank" rel="noopener noreferrer">Setup guide</a></li>
-  </ol>;
+function Instructions({ kind, name, guide, installLink }: { kind: Kind; name: string; guide: string; installLink: boolean }) {
+  return <>
+    <p className="pair-lead">A page opened past a certificate warning cannot prove it is Altitude. Check the certificate against the hosting computer before trusting it.</p>
+    <ol className="pair-instructions">
+      <li><a className="btn btn-primary" href={kind === "apple" ? "/api/certificate/altitude.mobileconfig" : "/api/certificate/altitude.crt"}>{kind === "apple" ? "Download the profile" : "Download the certificate"}</a></li>
+      <li>Compare its name, “{name}”, and its <strong>full SHA-256</strong> with the installer or <code>alt doctor</code> on the hosting computer. If they differ, delete the download and stop.</li>
+      {kind === "apple" ? <>
+        <li>Open Settings › Profile Downloaded. It must list one Certificate, “{name}”. Tap More Details to compare the SHA-256, then tap Install.</li>
+        <li>Turn it on: Settings › General › About › Certificate Trust Settings › “{name}”.</li>
+      </> : kind === "android" ? <li>Install it: Settings › Security › Encryption &amp; credentials › Install a certificate › CA certificate (names vary).</li>
+        : <li>Import it as a trusted authority in this browser or system (macOS: Keychain Access › login, set Secure Sockets Layer to Always Trust).</li>}
+      <li>{installLink ? <>Restart the browser, then reopen the original private link from the installer. It must open without a certificate warning. If it has expired, run <code>~/.local/bin/alt pair</code> for a new code.</>
+        : <>Restart the browser and reopen this page. It must open without a certificate warning; if a warning remains, don’t pair.</>}</li>
+    </ol>
+    <p><a className="link" href={guide} target="_blank" rel="noopener noreferrer">Certificate guide</a></p>
+  </>;
 }
 
 type TrustState = { status: "checking" | "untrusted" | "unknown" | "manual" | "trusted" };
 
 /** Trust Altitude's certificate: checked as the page opens, whenever it becomes visible again, and on Check again.
- * The computer running Altitude is trusted as it is; an externally supplied certificate is confirmed by hand. */
+ * Host location never establishes HTTPS trust; an externally supplied certificate is confirmed by hand. */
 function useTrust(trust: Trust): [TrustState, () => void, () => void] {
-  const automatic = trust.https && !trust.local && trust.check && !!trust.certificate;
-  const [state, setState] = useState<TrustState>(() => trust.local ? { status: "trusted" } : automatic ? { status: "checking" } : { status: "manual" });
+  const automatic = trust.https && trust.check && !!trust.certificate;
+  const [state, setState] = useState<TrustState>(() => !trust.https && trust.local ? { status: "trusted" } : automatic ? { status: "checking" } : { status: "manual" });
   const live = useRef({ mounted: true, running: false, trusted: false });
   const check = useCallback(async () => {
     const current = live.current;
@@ -119,7 +110,7 @@ const pill: Record<TrustState["status"], { label: string; tone?: string }> = {
 const trustMark: Record<TrustState["status"], Mark> = { checking: "checking", untrusted: "pending", manual: "pending", unknown: "problem", trusted: "done" };
 
 /** Pair this device (SPEC.md §3.16): the one screen an unpaired browser gets. */
-function PairScreen({ trust, removed, onPaired, pairingLink }: { trust: Trust; removed: boolean; onPaired: () => void; pairingLink: PairingLink }) {
+function PairScreen({ trust, guide = SETUP_GUIDE, removed, onPaired, pairingLink }: { trust: Trust; guide?: string; removed: boolean; onPaired: () => void; pairingLink: PairingLink }) {
   const [kind] = useState(deviceKind);
   const [trusted, check, confirm] = useTrust(trust);
   const [code, setCode] = useState("");
@@ -203,27 +194,29 @@ function PairScreen({ trust, removed, onPaired, pairingLink }: { trust: Trust; r
     <div className="pair-brand"><BrandMark size={28} />Altitude</div>
     <section className="pair-card" aria-labelledby="pair-title">
       <h1 id="pair-title">Pair this device</h1>
+      <p className="pair-lead">Altitude runs on the hosting computer. Trust its certificate, then pair this browser.</p>
       {removed ? <p role="status" className="pair-removed">This device is no longer paired. Pair it again to continue.</p> : null}
       <ol className="pair-steps">
-        <Step mark={secure ? "done" : "problem"} title="HTTPS address">
-          {trust.https || trust.local ? null : <p className="pair-lead">This Altitude serves plain HTTP. Pair on the computer running it.</p>}
-        </Step>
-        {secure ? <Step mark={trustMark[trusted.status]} title="Trust Altitude’s certificate"
+        {!secure ? <p className="pair-lead">This Altitude serves plain HTTP. Pair on the computer running it.</p> : null}
+        {trust.https ? <Step mark={trustMark[trusted.status]} title="Trust Altitude’s certificate"
           aside={<span className="chip pair-pill" data-tone={status.tone}>{trusted.status === "checking" ? <StatusMark label={status.label} /> : trusted.status === "trusted" ? <StatusMark busy={false} label={status.label} /> : status.label}</span>}>
           {trusted.status === "trusted" ? null : trusted.status === "manual" ? <>
             <p className="pair-lead">Altitude can’t check this automatically. Open this address in a new Private tab; if it loads without a warning, tap Continue.</p>
+            <a className="link" href={guide} target="_blank" rel="noopener noreferrer">Certificate guide</a>
             <button type="button" className="btn btn-primary" onClick={confirm}>Continue</button>
           </> : <>
-            <Instructions kind={kind} name={name} installLink={!!linkReady} />
+            <Instructions kind={kind} name={name} guide={guide} installLink={!!linkReady} />
             {trusted.status === "untrusted" ? <p role="status" className="text-meta">{untrusted[kind]}</p> : null}
             {trusted.status === "unknown" ? <p role="alert" className="text-meta text-danger">Couldn’t check.</p> : null}
             <button type="button" className="btn" disabled={trusted.status === "checking"} onClick={check}>Check again</button>
           </>}
         </Step> : null}
-        {secure && trusted.status === "trusted" ? <Step mark={state.status === "pairing" || linkBusy ? "checking" : state.status === "failed" ? "problem" : "pending"} title="Pair">
+        {secure && trusted.status === "trusted" ? <Step mark={state.status === "pairing" || linkBusy ? "checking" : state.status === "failed" ? "problem" : "pending"} title="Pair this browser">
           {linkBusy ? <StatusMark label="Pairing…" /> :
           <form className="pair-form" onSubmit={(event) => void onSubmit(event)}>
-            <p className="pair-lead">Enter the code from <code>alt pair</code>, or from Settings › Devices on a paired device.</p>
+            <p className="pair-lead">On the hosting computer, run:</p>
+            <Command text="~/.local/bin/alt pair" />
+            <p className="text-meta text-muted">A paired browser can make a code in Settings → Devices.</p>
             <label className="pair-field">Pairing code
               <input value={code} onChange={onType}
                 placeholder="ABCD-2345" autoComplete="one-time-code" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
@@ -284,7 +277,7 @@ export default function PairGate({ children, pairingLink = null }: { children: R
     </main>;
   }
   if (!access.data.paired) {
-    return <PairScreen trust={access.data.trust} removed={removed} pairingLink={link.current} onPaired={() => {
+    return <PairScreen trust={access.data.trust} guide={access.data.trust.guide} removed={removed} pairingLink={link.current} onPaired={() => {
       link.current = null;
       // Replies cached while unpaired were refusals; the app starts fresh as the paired device, without kept drafts.
       client.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" });

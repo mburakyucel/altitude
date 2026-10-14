@@ -8,8 +8,9 @@ test.skip(process.platform !== "linux", "Disposable NSS trust is Linux Chromium 
 
 test("fresh verified installation prints a private link that pairs over trusted HTTPS into First run @chromium", async ({ page, altitude }, info) => {
   const walk = walkthrough(page, info);
-  expect(altitude.output!.indexOf("Trust the certificate")).toBeLessThan(altitude.output!.indexOf("private link"));
-  expect(altitude.output!.indexOf("private link")).toBeLessThan(altitude.output!.indexOf("Terminal setup (optional now)"));
+  const order = ["is installed and running", "1. Trust Altitude's certificate", "2. Open Altitude with this private link", "Terminal (optional):"]
+    .map((line) => altitude.output!.indexOf(line));
+  expect(order.every((at, index) => at >= 0 && (index === 0 || at > order[index - 1]))).toBe(true);
   let pairs = 0;
   let leaked = false;
   const secret = new URL(altitude.pairing!).hash.slice(6);

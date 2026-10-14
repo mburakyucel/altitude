@@ -10,7 +10,6 @@
 .onboarding-step-title { white-space: nowrap; }
 .onboarding-steps li[aria-current] { color: var(--text-primary); font-weight: 600; }
 .onboarding-steps li[aria-current] > span:first-child { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
-.onboarding-steps li.done > span:first-child { border-color: var(--accent); color: var(--accent); }
 .onboarding-step-count { display: none; font-weight: 600; }
 .onboarding-form { display: flex; flex-direction: column; gap: 14px; }
 .onboarding-form fieldset.settings-card { min-width: 0; padding-block: 2px; }
@@ -34,8 +33,17 @@
 .onboarding-projects { display: flex; flex-direction: column; gap: 14px; }
 .onboarding-folder { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; }
 .onboarding-projects .link:disabled { opacity: .6; }
+.hosting-card h2, .network-guidance h2 { font-weight: 600; margin-bottom: 8px; }
+.hosting-card dd { overflow-wrap: anywhere; }
+.hosting-card > .link { display: inline-block; padding-block: 10px; }
+.onboarding-recheck { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.network-guidance { display: flex; flex-direction: column; gap: 14px; }
+.network-instructions summary, .optional-settings .link { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.network-instructions p { margin-top: 12px; }
+.optional-settings { display: flex; flex-wrap: wrap; gap: 4px 18px; }
 .shell[data-phone] .onboarding { border: 0; background: transparent; padding: 4px 0 0; }
 .shell[data-phone] .onboarding-steps { display: none; }
 .shell[data-phone] .onboarding-step-count { display: block; }
 .shell[data-phone] .onboarding h1 { font-size: 1.1875rem; }
-.shell[data-phone] .onboarding-nav { position: sticky; bottom: 0; margin-inline: -16px; padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--hairline); }
+/* Sticks to the scroll area's edge, over the phone page's 32px bottom padding, so nothing shows beneath it. */
+.shell[data-phone] .onboarding-nav { position: sticky; bottom: -32px; margin-inline: -16px; padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--hairline); }

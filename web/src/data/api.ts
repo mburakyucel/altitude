@@ -63,6 +63,7 @@ function post<T = unknown>(path: string, body: unknown): Promise<T> {
  * Altitude can check this browser's trust in its certificate. */
 const TrustSchema = z.object({
   local: z.boolean(), https: z.boolean(), check: z.boolean(),
+  guide: z.string().optional(),
   certificate: z.object({ name: z.string() }).nullish(),
 });
 export type Trust = z.infer<typeof TrustSchema>;
@@ -79,7 +80,7 @@ const DevicesSchema = z.object({ devices: z.array(DeviceSchema), current: z.stri
 export type Devices = z.infer<typeof DevicesSchema>;
 export const PairingCodeSchema = z.object({
   code: z.string(), minutes: z.number(), address: z.string().nullish(), qr: z.array(z.string()).nullish(),
-  certificate: z.object({ name: z.string(), check: z.string() }).nullish(),
+  certificate: z.object({ name: z.string(), sha256: z.array(z.string()) }).nullish(),
 }).passthrough();
 export type PairingCode = z.infer<typeof PairingCodeSchema>;
 
@@ -1003,6 +1004,9 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
 }
 
 const MachineSchema = z.object({
+  network: z.union([z.object({ computer: z.string(), host: z.string(), port: z.number(), url: z.string(),
+    scope: z.enum(["local", "private", "network"]), listener_scope: z.enum(["local", "private", "all", "network"]),
+    state: z.literal("running"), packaged: z.boolean() }), z.object({ error: z.string() })]).nullish(),
   lifecycle: ContainerLifecycleSchema.nullish(),
   operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
   terminal: z.boolean().default(false), update_check: z.boolean().default(true), update_automatic: z.boolean().default(true),
@@ -1146,10 +1150,10 @@ export async function sendServiceVoice(selection: string, pcm: Int16Array, signa
 }
 
 /** What the agents need on the computer running Altitude; each read checks again. */
-export function usePrerequisites() {
+export function usePrerequisites(enabled = true) {
   return useQuery({
     queryKey: ["prerequisites"], queryFn: async () => PrerequisitesSchema.parse(await api("/api/prerequisites")).items,
-    refetchOnWindowFocus: false, retry: false, gcTime: 0,
+    enabled, refetchOnWindowFocus: false, retry: false, gcTime: 0,
   });
 }
 

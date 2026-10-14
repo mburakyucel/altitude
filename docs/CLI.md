@@ -675,8 +675,8 @@ issue and closes the issue this incident created as completed when still open; a
 tracks other occurrences and stays open for `alt issue close`. A GitHub failure leaves the incident
 open so the closure can be repeated. A pending issue needs no GitHub call to close the incident.
 
-The target repository is the machine setting **Settings → Incident reports** saves (a First run
-step), else `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in **altd's environment**: a GitHub
+The target repository is the machine setting **Settings → Incident reports** saves (an optional
+Settings link from First run), else `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in **altd's environment**: a GitHub
 `owner/repository` or GitHub repository URL. Off is the default for every installation: incidents
 stay on the machine, every record's issue bullet reads
 `pending — incidents stay on this machine until incident reports are turned on in Settings …`, and
@@ -789,9 +789,28 @@ including any merge hold.
 
 ## Device pairing
 
+`alt doctor` leads with the owned service's hosting computer, verified URL and listener exposure,
+then tool readiness, the paired-browser count and explicit unknown browser-trust/provider states.
+`alt doctor --json` retains
+structured diagnostics. `alt service status` uses the same hosting reading;
+`alt service status --json` includes service-manager details and hosting facts. Conflicting shell
+host/port/TLS values are explained separately from the running service.
+
+Packaged installs use `alt service configure --host <private-address>` to preview current/proposed
+URLs and retained identity, then the same command with `--apply` to change an assigned private or
+loopback address. This is an operator terminal action, with no new worker or browser authority.
+The configured port and CA stay fixed; interruption uses `alt recover`. Source and container
+deployments retain their own configuration flow. A VPN provides the connection separately.
+
+`alt recover --generated-bytecode` verifies declared release resources and quarantines only matching
+generated caches, retaining strict manifests, service state and automatic-attempt history. Older
+affected installs can use [verified standalone repair](OPERATIONS.md#generated-cache-recovery).
+The operation is manual recovery; `alt update` or the app's Try again explicitly retries a failed
+release. A new release may still receive its own automatic attempt.
+
 `alt pair` prints a one-time code that pairs one browser with Altitude, the running service's
 address to open on that browser (or the reason there is none), a QR code of that address when a
-phone can reach it, and the CA's name and the last eight pairs of its SHA-256 to compare before
+phone can reach it, and the CA's name and full SHA-256 to compare independently before
 installing it. The code never appears in a link. It writes the code straight to the private access store, so it
 works over SSH and without a browser; only the operator runs it, and L2 and L3 are refused. A code
 works once, for ten minutes; a new code cancels the previous one and five wrong codes cancel it.

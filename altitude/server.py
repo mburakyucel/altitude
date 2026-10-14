@@ -20,7 +20,7 @@ import threading
 import time
 import traceback
 import uuid
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
@@ -33,6 +33,10 @@ from . import access, config, digest, dispatch, engines, git_policy, images, imp
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    def __init__(self, server_address, handler, bind_and_activate=True):
+        self.address_family = socket.AF_INET6 if ":" in server_address[0] else socket.AF_INET
+        super().__init__(server_address, handler, bind_and_activate)
+
     def server_bind(self) -> None:
         # http.server names itself by a reverse lookup of the address, which held a Mac guest without a network in mDNS
         # past the installation's health deadline; nothing reads that name.
@@ -138,134 +142,6 @@ def _gzipped(path: Path, stream) -> bytes:
             _gzip_cache.popitem(last=False)
         return data
 
-
-@contextmanager
-def _static_path(root: int, base: Path, path: Path, places: tuple[str, ...], anchors: tuple[Path, ...]):
-    """Normalize within a pinned namespace; links never cause an unchecked target lookup."""
-    flags = platform.directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW
-    frames = [("", os.dup(root), None)]
-    unchecked = object()
-    active, completed = {}, {}
-    pending = deque(path.parts)
-
-    def pop():
-        _, fd, _ = frames.pop()
-        if fd is not None:
-            os.close(fd)
-
-    def identity(info):
-        return info.st_dev, info.st_ino, info.st_mode
-
-    try:
-        frames[0] = ("", frames[0][1], os.fstat(frames[0][1]))
-        while pending:
-            part = pending.popleft()
-            expected = unchecked
-            if isinstance(part, tuple):
-                if len(part) == 3:  # A completion marker ends this link's active expansion.
-                    completed[part] = active.pop(part), tuple((name, info) for name, _, info in frames[1:])
-                    continue
-                part, expected = part  # A reused address still requires fresh lookup/identity checks.
-            if part in ("", "."):
-                continue
-            if part == "..":
-                if len(frames) == 1:
-                    raise ValueError("website path leaves its root")
-                pop()
-                continue
-            candidate = base.joinpath(*(f[0] for f in frames[1:]), part)
-            if platform.private_prefix(candidate, places):
-                raise ValueError("private website path")
-            parent = frames[-1][1]
-            if parent is None:
-                if expected is not unchecked and expected is not None:
-                    raise ValueError("website target changed")
-                frames.append((part, None, None))
-                continue
-            try:
-                info = os.stat(part, dir_fd=parent, follow_symlinks=False)
-            except FileNotFoundError:
-                if expected is not unchecked and expected is not None:
-                    raise ValueError("website target changed") from None
-                frames.append((part, None, None))
-                continue
-            if expected is not unchecked and (expected is None or identity(info) != identity(expected)):
-                raise ValueError("website target changed")
-            if stat.S_ISLNK(info.st_mode):
-                parent_info = frames[-1][2]
-                key = parent_info.st_dev, parent_info.st_ino, part
-                if key in active:
-                    raise ValueError("cyclic website link")
-                signature = info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns
-                saved = completed.get(key)
-                if saved is not None:
-                    if saved[0] != signature:
-                        raise ValueError("website link changed")
-                    # Request-local verified addresses are rewalked through the same pinned root.
-                    # They contain no links; each component keeps private/no-follow/identity checks.
-                    while len(frames) > 1:
-                        pop()
-                    pending.extendleft(reversed(saved[1]))
-                    continue
-                target = Path(os.readlink(part, dir_fd=parent))
-                after = os.stat(part, dir_fd=parent, follow_symlinks=False)
-                if signature != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns):
-                    raise ValueError("website link changed")
-                active[key] = signature
-                if target.is_absolute():
-                    # Known spellings address the held root, never a mutable alias rewalk.
-                    parts = ("/", *target.parts[1:])
-                    anchor = next((a for a in sorted(anchors, key=lambda a: len(a.parts), reverse=True)
-                                   if parts[:len(a.parts)] == a.parts), None)
-                    if anchor is None:
-                        raise ValueError("website link leaves its root")
-                    while len(frames) > 1:
-                        pop()
-                    target_parts = parts[len(anchor.parts):]
-                else:
-                    target_parts = target.parts
-                pending.extendleft(reversed((*target_parts, key)))
-                continue
-            if stat.S_ISDIR(info.st_mode):
-                child = os.open(part, flags, dir_fd=parent)
-                frames.append((part, child, info))
-                if identity(os.fstat(child)) != identity(info):
-                    raise ValueError("website directory changed")
-            elif stat.S_ISREG(info.st_mode):
-                frames.append((part, None, info))
-            else:
-                raise ValueError("not a regular website path")
-        relative = Path(*(f[0] for f in frames[1:]))
-        yield frames[-2][1] if len(frames) > 1 else root, relative, frames[-1][1], frames[-1][2]
-    finally:
-        # Keep only live frames. ExitStack completes all closes even if one close raises.
-        with ExitStack() as closing:
-            for _, fd, _ in frames:
-                if fd is not None:
-                    closing.callback(os.close, fd)
-
-
-@contextmanager
-def _static_file(parent: int | None, relative: Path, info):
-    """Read the inspected regular file without following replacements or blocking on a FIFO."""
-    if info is None:
-        raise FileNotFoundError(relative)
-    if stat.S_ISDIR(info.st_mode):
-        raise IsADirectoryError(relative)
-    if parent is None:
-        raise NotADirectoryError(relative)
-    try:
-        fd = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-    except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
-        raise ValueError("website file changed") from None
-    try:
-        actual = os.fstat(fd)
-        if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (info.st_dev, info.st_ino):
-            raise ValueError("website file changed")
-        with os.fdopen(fd, "rb", closefd=False) as stream:
-            yield stream
-    finally:
-        os.close(fd)
 
 
 def _accepts_gzip(header: str | None) -> bool:
@@ -1774,17 +1650,19 @@ class Handler(BaseHTTPRequestHandler):
             with ExitStack() as opened:
                 filesystem = os.open("/", platform.directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW)
                 opened.callback(os.close, filesystem)
-                _, normalized, root, info = opened.enter_context(
-                    _static_path(filesystem, Path("/"), Path(*configured.parts[1:]), places, (Path("/"),)))
+                located = opened.enter_context(
+                    platform.namespace_path(filesystem, Path("/"), Path(*configured.parts[1:]), places, (Path("/"),)))
+                normalized, root, info = located.relative, located.fd, located.info
                 if root is None or info is None or not stat.S_ISDIR(info.st_mode):
                     return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
                 dist = Path("/") / normalized
                 anchors = (dist, configured)
-                parent, index_relative, _, info = opened.enter_context(
-                    _static_path(root, dist, Path("index.html"), places, anchors))
+                located = opened.enter_context(
+                    platform.namespace_path(root, dist, Path("index.html"), places, anchors))
+                parent, index_relative, info = located.parent, located.relative, located.info
                 index = dist / index_relative
                 try:
-                    page = opened.enter_context(_static_file(parent, index_relative, info))
+                    page = opened.enter_context(platform.namespace_file(parent, index_relative, info))
                 except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
                     return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
                 rel = unquote(raw_path).lstrip("/")
@@ -1792,11 +1670,12 @@ class Handler(BaseHTTPRequestHandler):
                 if html:
                     stream, resolved, relative = page, index, index_relative
                 else:
-                    parent, relative, _, info = opened.enter_context(
-                        _static_path(root, dist, Path(rel), places, anchors))
+                    located = opened.enter_context(
+                        platform.namespace_path(root, dist, Path(rel), places, anchors))
+                    parent, relative, info = located.parent, located.relative, located.info
                     resolved = dist / relative
                     try:
-                        stream = opened.enter_context(_static_file(parent, relative, info))
+                        stream = opened.enter_context(platform.namespace_file(parent, relative, info))
                     except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
                         if relative.parts[:1] == ("assets",):
                             # Missing resolved build assets are stale imports, never client-side routes.
@@ -2090,23 +1969,28 @@ class Handler(BaseHTTPRequestHandler):
         """What the pairing screen needs to walk a device through trusting this installation's certificate."""
         return {"local": self._local(), "https": isinstance(self.connection, ssl.SSLSocket),
                 "check": TRUST is not None and isinstance(self.connection, ssl.SSLSocket),
+                "guide": tls.setup_guide(),
                 "certificate": {"name": TRUST.name} if TRUST else None}
 
     def _certificate_download(self, name: str) -> None:
         """The public CA certificate a device installs to trust Altitude: the iPhone/iPad profile or the file."""
-        kinds = {"altitude.mobileconfig": "application/x-apple-aspen-config", "altitude.crt": "application/x-x509-ca-cert"}
+        downloads = {
+            "altitude.mobileconfig": ("application/x-apple-aspen-config", 'attachment; filename="altitude.mobileconfig"'),
+            "altitude.crt": ("application/x-x509-ca-cert", 'attachment; filename="altitude.crt"'),
+        }
         ca = config.TLS_DIR / "ca.crt"
-        if name not in kinds or not config.TLS or not ca.exists():
+        if name not in downloads or not config.TLS or not ca.exists():
             return self._json({"error": "not found"}, 404)
+        content_type, disposition = downloads[name]
         try:
             body = ca.read_bytes()
             data = tls.profile(body, tls.identity(ca)) if name.endswith(".mobileconfig") else body
         except (tls.TLSFailure, OSError, ValueError) as exc:
             return self._json({"error": f"Could not read the certificate: {self._detail(exc)}"}, 409)
         self.send_response(200)
-        self.send_header("Content-Type", kinds[name])
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.send_header("Content-Disposition", disposition)
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
@@ -3300,42 +3184,53 @@ class FolderError(ValueError):
 
 
 def folders(raw: str | None) -> dict:
-    """One folder the operator opened in the folder browser: its visible subfolders, never files or contents.
-
-    Browsing starts at the home folder and stays inside it after following links; hidden folders and macOS's private
-    places stay out, judged before anything inside them is touched.
-    """
-    home = (platform.CONTAINER_PROJECTS if platform.containerized() else config.HOME).resolve()
-    target = Path(raw).expanduser() if raw else home
-    if not target.is_absolute():
-        raise FolderError("Choose an absolute folder path.", 400)
-    if platform.private(target):
-        raise FolderError(config.PRIVATE_FOLDER, 403)
-    target = target.resolve()
-    if not target.is_relative_to(home) or any(part.startswith(".") for part in target.relative_to(home).parts):
-        raise FolderError("Choose a folder inside the container projects volume." if platform.containerized()
-                          else "Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
-    if not target.is_dir():
-        raise FolderError("This folder no longer exists.", 404)
-    view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": [],
-            **({"location": "container"} if platform.containerized() else {})}
+    """List one held folder; intermediate aliases may leave HOME safely, final browsing stays inside."""
     try:
-        entries = sorted(os.scandir(target), key=lambda entry: entry.name.lower())
-    except PermissionError:
-        return {**view, "readable": False}
-    managed = {str(Path(entry["path"]).expanduser().resolve()): name for name, entry in config.load_projects().items()
-               if not platform.private(Path(entry["path"]).expanduser())}
-    for entry in entries:
-        try:
-            if entry.name.startswith(".") or platform.private(entry.path) or not entry.is_dir():
-                continue
-            resolved = Path(entry.path).resolve()
-        except OSError:
-            continue
-        if resolved.is_relative_to(home) and not any(part.startswith(".") for part in resolved.relative_to(home).parts):
-            view["folders"].append({"name": entry.name, "path": entry.path, "project": managed.get(str(resolved)),
-                                    "git": os.path.exists(os.path.join(entry.path, ".git"))})
-    return view
+        with platform.inspected_path(platform.CONTAINER_PROJECTS if platform.containerized() else config.HOME,
+                                     limit=None, real=False, open_leaf=False) as anchor:
+            home = anchor.address
+            target = Path(raw).expanduser() if raw else home
+            if not target.is_absolute():
+                raise FolderError("Choose an absolute folder path.", 400)
+            with platform.inspected_path(target, limit=platform.folder_link_limit(normalize=True),
+                                         real=False, open_leaf=False) as inspected:
+                target = inspected.address
+                if not target.is_relative_to(home) or any(p.startswith(".") for p in target.relative_to(home).parts):
+                    raise FolderError("Choose a folder inside the container projects volume." if platform.containerized()
+                                      else "Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
+                if not platform.directory_type(inspected):
+                    raise FolderError("This folder no longer exists.", 404)
+                view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True,
+                        "folders": [], **({"location": "container"} if platform.containerized() else {})}
+                try:
+                    with platform.directory_listing(inspected) as directory:
+                        names = sorted(os.listdir(directory.fd), key=str.lower)
+                        managed = config.managed_addresses(config.load_projects())
+                        for name in names:
+                            if name.startswith("."):
+                                continue
+                            try:
+                                # Browser parent is canonical; the child operation resets its alias budget.
+                                with platform.inspected_child(directory, name, inherited_links=0,
+                                                              open_leaf=False) as child:
+                                    if not platform.directory_type(child):
+                                        continue
+                                    resolved = child.address
+                                    if resolved.is_relative_to(home) and not any(p.startswith(".") for p in resolved.relative_to(home).parts):
+                                        view["folders"].append({"name": name, "path": str(target / name),
+                                                                "project": managed.get(str(resolved)),
+                                                                "git": platform.git_marker(child)})
+                            except (OSError, ValueError):
+                                continue
+                except PermissionError:
+                    return {**view, "readable": False}
+                return view
+    except FolderError:
+        raise
+    except platform.PrivatePath:
+        raise FolderError(config.PRIVATE_FOLDER, 403) from None
+    except (OSError, ValueError):
+        raise FolderError("This folder no longer exists.", 404) from None
 
 
 def save_projects_folder(body: dict) -> dict:
@@ -3356,7 +3251,12 @@ def save_projects_folder(body: dict) -> dict:
 def machine_view() -> dict:
     """The operator's name, incident publication, the terminal, validation and update-check switches, as First run and
     Settings show them."""
+    try:
+        network = {**tls.address_view(_located()), "state": "running"}
+    except tls.TLSFailure as exc:
+        network = {"error": str(exc)}  # only the Network card reports it; the rest of the machine view still loads
     return {"lifecycle": platform.container_lifecycle(), "operator": config.operator_name(), "incident_repository": config.incident_repository(),
+            "network": network,
             "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled(),
             "terminal_unavailable": platform.container_unavailable("Terminal"),
             "container_shell": platform.container_shell_command(),
@@ -4010,6 +3910,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
         log(f"cannot bind {host}:{port} ({e}); exiting so the unit restarts (RestartSec)")
         raise SystemExit(1)
     srv.daemon_threads = True
+    config.HOST, config.PORT = host, srv.server_port
     try:
         if context is not None:
             srv.socket = context.wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
@@ -4068,7 +3969,7 @@ def service_address() -> str | None:
 
 def pairing_directions() -> dict:
     """What a new device needs beside its pairing code: the HTTPS address to open, as a QR code when a phone can
-    reach it, and the certificate whose SHA-256 ending it checks before installing."""
+    reach it, and the certificate whose name and full SHA-256 it checks before installing."""
     address, rows = service_address(), None
     try:
         tls.phone_address(_located())
@@ -4077,7 +3978,7 @@ def pairing_directions() -> dict:
         pass  # plain HTTP or an address only this computer can open: no QR code a phone could use
     view = certificate_view()
     return {"address": address if config.TLS else None, "qr": rows,
-            "certificate": {"name": view["name"], "check": tls.check_value(view["sha256"])}
+            "certificate": {"name": view["name"], "sha256": tls.fingerprint_rows(view["sha256"])}
             if view and "sha256" in view else None}
 
 

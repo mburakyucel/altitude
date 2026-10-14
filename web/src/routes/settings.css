@@ -74,7 +74,7 @@
 .device-pair { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
 .device-code { font-family: var(--font-mono); font-size: 1.75rem; font-weight: 500; letter-spacing: .12em; }
 .device-address { font-family: var(--font-mono); overflow-wrap: anywhere; color: var(--text-primary); }
-.device-check { font-family: var(--font-mono); white-space: nowrap; color: var(--text-primary); }
+.device-check { display: grid; font-family: var(--font-mono); white-space: nowrap; color: var(--text-primary); }
 .shell[data-phone] .device-row { flex-wrap: wrap; }
 .settings-version { flex-wrap: wrap; }
 .settings-version .onboarding-command { margin-top: 0; }

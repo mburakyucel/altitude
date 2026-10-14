@@ -10,16 +10,20 @@ export function Overlay({
   label,
   side,
   onClose,
+  returnFocus,
   children,
 }: {
   label: string;
   side: "right" | "bottom" | "center";
   onClose: () => void;
+  returnFocus?: () => HTMLElement | null;
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
+  const destination = useRef(returnFocus);
+  destination.current = returnFocus;
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     const node = panel.current!;
@@ -47,7 +51,8 @@ export function Overlay({
     return () => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("focusin", containFocus);
-      if (opener?.isConnected) opener.focus({ preventScroll: true });
+      const target = destination.current?.() ?? opener;
+      if (target?.isConnected) target.focus({ preventScroll: true });
     };
   }, []);
 

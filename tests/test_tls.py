@@ -83,7 +83,9 @@ class TestTLS(unittest.TestCase):
     def test_doctor_names_the_ca_fingerprint_url_and_device_steps(self):
         self.create()
         openssl = platform.openssl()
+        hosting = {"host": config.HOST, "tls_dir": str(self.directory), "url": tls.url()}
         with mock.patch.object(installation.shutil, "which", side_effect=lambda name, **kwargs: openssl if name == "openssl" else None), \
+             mock.patch.object(installation, "hosting_status", return_value=hosting), \
              mock.patch("altitude.platform.status", side_effect=RuntimeError("no service in tests")), \
              mock.patch("altitude.platform.lingering", return_value=None):
             trust = installation.doctor()["certificate_trust"]
@@ -93,6 +95,7 @@ class TestTLS(unittest.TestCase):
         self.assertEqual(trust["ca_sha256"], tls.info()["ca_sha256"])
         self.assertIn("Certificate Trust Settings", " ".join(trust["trust_steps"]))
         with mock.patch.object(installation.shutil, "which", return_value=None), \
+             mock.patch.object(installation, "hosting_status", return_value=hosting), \
              mock.patch("altitude.platform.status", side_effect=RuntimeError("no service in tests")), \
              mock.patch("altitude.platform.lingering", return_value=None), \
              mock.patch.object(tls, "info", side_effect=PermissionError("tls directory unreadable")):
@@ -424,7 +427,7 @@ class TestTLS(unittest.TestCase):
 
     def test_missing_openssl_and_unsafe_host_have_actionable_failures(self):
         with mock.patch.object(tls.subprocess, "run", side_effect=FileNotFoundError):
-            with self.assertRaisesRegex(tls.TLSFailure, "Install OpenSSL"):
+            with self.assertRaisesRegex(tls.TLSFailure, "[Ii]nstall.*[Oo]pen[Ss][Ss][Ll]"):
                 tls.initialize()
         with self.assertRaisesRegex(tls.TLSFailure, "without a port or URL"):
             tls.initialize("example.com\nDNS:another.example")
@@ -546,12 +549,11 @@ class TestIdentity(ServiceCase):
         with mock.patch.object(config, "TLS_DIR", other):
             tls.initialize()
         stranger = HealthServer(self, other, 4242)
-        with self.assertRaisesRegex(tls.TLSFailure, "does not prove its identity with the CA certificate "
-                                    + re.escape(str(self.service_tls / "ca.crt"))):
+        with self.assertRaisesRegex(tls.TLSFailure, "does not prove its identity.*CERTIFICATE_VERIFY_FAILED"):
             tls._proven(self.found(stranger.port))
         stranger.server.shutdown()
         stranger.server.server_close()
-        with self.assertRaisesRegex(tls.TLSFailure, r"^The Altitude service does not answer at https://127\.0\.0\.1"):
+        with self.assertRaisesRegex(tls.TLSFailure, r"^The Altitude service does not prove its identity at https://127\.0\.0\.1"):
             tls._proven(self.found(stranger.port))
         (self.service_tls / "ca.crt").unlink()
         with self.assertRaisesRegex(tls.TLSFailure, "Cannot read the Altitude service's CA certificate"):
@@ -806,10 +808,12 @@ class TestShareCommand(unittest.TestCase):
                       result.stderr)
         paired = self.alt("pair")
         self.assertEqual(paired.returncode, 0, paired.stderr)
-        self.assertIn("On the device, open https://10.20.30.40:9443 and type the code", paired.stdout)
+        self.assertIn("Open Altitude: https://10.20.30.40:9443", paired.stdout)
+        self.assertIn("new private window without a warning before entering the code", paired.stdout)
         self.assertNotIn("code=", paired.stdout)  # the code never rides in a link
         self.assertIn("Or scan this with a phone to open it:", paired.stdout)
-        self.assertNotIn("certificate", paired.stdout)  # no CA file of its own here: nothing to check against
+        self.assertIn("external certificate", paired.stdout)
+        self.assertNotIn("full SHA-256", paired.stdout)  # no locally managed CA to compare here
 
     def test_true_loopback_missing_service_and_other_actors_are_refused(self):
         self.service({"port": 9443})

@@ -1,146 +1,118 @@
-import { expect, type Route } from "@playwright/test";
+import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 import { fixtureHost } from "./hostVoice";
 
-// First run in a disposable service with nothing managed and an empty ~/Projects; fictional folders sit in ~/code.
-// The service's GitHub CLI is signed out and its one installed engine is signed in.
+// First run in a disposable real service; external sign-in and voice use bounded deterministic fixtures.
 test.use({ scenario: "folders" });
 
-test("first run walks the name, prerequisites, declined incident reports, voice setup and projects, then Settings", async ({ page, request }, info) => {
+test("first run establishes the host, checks real prerequisites and registers repositories before optional preferences", async ({ page, request, service }, info) => {
   const walk = walkthrough(page, info);
-  const host = await fixtureHost(page, { state: "absent", download_bytes: 698435338 });
   const firstRun = page.getByRole("region", { name: "First run" });
   const heading = (name: string) => firstRun.getByRole("heading", { name });
-  const name = firstRun.getByLabel("Your name");
-
   await walk.open("/projects");
-  await walk.state("01-welcome-name", {
-    visible: [heading("Welcome to Altitude"), name, firstRun.getByRole("button", { name: "Skip" })],
-    hidden: [firstRun.getByRole("button", { name: "‹ Back" })],
+  await walk.state("01-welcome-host", {
+    visible: [heading("Welcome to Altitude"), firstRun.getByText("Atlas host"), firstRun.getByText("Only the hosting computer"), firstRun.getByRole("button", { name: "Continue" })],
+    hidden: [firstRun.getByLabel("Your name"), firstRun.getByRole("button", { name: "Skip" })],
   });
-  await name.fill("Ada Fixture");
+  await firstRun.getByText("Optional settings", { exact: true }).click();
+  await walk.state("02-optional-preferences", {
+    visible: [firstRun.getByRole("link", { name: "Your name" }), firstRun.getByRole("link", { name: "Incident reports" }), firstRun.getByRole("link", { name: "Voice input" })],
+    hidden: [firstRun.getByRole("textbox")],
+  });
   await firstRun.getByRole("button", { name: "Continue" }).click();
-
   const github = firstRun.locator(".onboarding-check").filter({ hasText: "GitHub CLI" });
-  await walk.state("02-prerequisites-unmet", {
-    visible: [heading("What the agents need"), github.getByText("gh auth login"), firstRun.getByRole("button", { name: "Check again" }), firstRun.getByRole("button", { name: "Continue anyway" })],
-    hidden: [firstRun.getByRole("textbox"), name],
+  await walk.state("03-tools-unmet", {
+    visible: [heading("What the agents need"), github.getByText("gh auth login"), github.getByText("Needs attention"), firstRun.getByRole("button", { name: "Choose a project anyway" })],
+    hidden: [firstRun.getByRole("button", { name: "Continue", exact: true })],
   });
-  const met = (route: Route) => route.fetch().then(async (response) => {
-    const { items } = await response.json() as { items: { state: string }[] };
-    await route.fulfill({ json: { items: items.map((item) => ({ ...item, state: item.state === "unmet" ? "met" : item.state, command: null })) } });
-  });
-  await page.route("**/api/prerequisites", met, { times: 1 });
-  await walk.state("03-prerequisites-met", {
+  // Control only the external sign-in seam. The application reads and reduces its actual prerequisite checks.
+  expect((await request.post(`${service}/fixture/sign-in`)).ok()).toBe(true);
+  await walk.state("04-tools-met", {
     action: () => firstRun.getByRole("button", { name: "Check again" }).click(),
-    visible: [firstRun.getByRole("button", { name: "Continue", exact: true })],
-    hidden: [github.getByText("gh auth login"), firstRun.getByRole("button", { name: "Continue anyway" })],
+    visible: [github.getByText("Ready"), firstRun.getByRole("button", { name: "Continue", exact: true })],
+    hidden: [github.getByText("gh auth login"), firstRun.getByRole("button", { name: "Choose a project anyway" })],
   });
   await firstRun.getByRole("button", { name: "Continue", exact: true }).click();
-
-  const keep = firstRun.getByRole("radio", { name: "Keep incidents on this computer" });
-  const publish = firstRun.getByRole("radio", { name: "Also publish them as GitHub issues" });
-  const repository = firstRun.getByLabel("Repository");
-  await walk.state("04-incidents-kept-by-default", {
-    visible: [heading("Report Altitude’s own faults?"), keep, firstRun.getByText(/What leaves this computer/)],
-    hidden: [repository],
+  await walk.state("05-project-empty", {
+    visible: [heading("Add a project"), firstRun.getByText("No folders in ~/Projects yet"), firstRun.getByRole("button", { name: "Change…" }), firstRun.getByText(/Setup may start the coordinator’s first introduction/)],
+    hidden: [firstRun.getByRole("button", { name: "Skip" })],
   });
-  await expect(keep).toBeChecked();
-  await page.route("**/api/incident-reports", (route) => route.fulfill({ status: 400, json: { error: "The signed-in GitHub CLI cannot see fork-fixture/missing. Check the name, or sign in with gh auth login." } }), { times: 1 });
-  await publish.check();
-  await expect(repository).toHaveValue(/\/altitude$/);
-  await repository.fill("fork-fixture/missing");
-  await walk.state("05-repository-refused", {
-    action: () => firstRun.getByRole("button", { name: "Save and continue" }).click(),
-    visible: [firstRun.getByRole("alert").getByText(/cannot see fork-fixture\/missing/), repository],
-    hidden: [heading("Add your projects")],
-  });
-  await keep.check();
-  await walk.state("06-incidents-declined", {
-    visible: [firstRun.getByRole("button", { name: "Continue", exact: true })],
-    hidden: [repository, firstRun.getByRole("alert")],
-  });
-  await firstRun.getByRole("button", { name: "Continue", exact: true }).click();
-
-  const setUpVoice = firstRun.getByRole("button", { name: "Set up voice", exact: true });
-  await walk.state("06a-voice-download-offered", {
-    visible: [heading("Voice to text"), firstRun.getByText("Voice to text runs on this computer. It needs a one-time download of about 698 MB.", { exact: true }),
-      setUpVoice, firstRun.getByRole("button", { name: "Use browser recognition instead", exact: true }), firstRun.getByRole("button", { name: "Skip" })],
-    hidden: [keep],
-  });
-  await setUpVoice.click();
-  await expect.poll(() => host.requests).toEqual(["setup"]);  // the click sends it; wait for it to arrive
-
+  await expect(firstRun.getByRole("list", { name: "Step 3 of 3" }).locator(".done")).toHaveCount(0);
   const browser = page.getByRole("region", { name: "Choose a folder" });
-  await walk.state("07-projects-folder-empty", {
-    visible: [heading("Add your projects"), firstRun.getByText("No folders in ~/Projects yet"), firstRun.getByRole("button", { name: "Change…" }), firstRun.getByRole("button", { name: "Choose a folder elsewhere…" })],
-    hidden: [browser, firstRun.getByRole("button", { name: "Skip" })],
-  });
   await firstRun.getByRole("button", { name: "Change…" }).click();
   await browser.getByRole("button", { name: /^code\b/ }).click();
   const row = (folder: string) => firstRun.getByRole("listitem").filter({ hasText: folder });
-  await walk.state("08-projects-listed", {
+  await walk.state("06-projects-listed", {
     action: () => browser.getByRole("button", { name: "Use “code”" }).click(),
-    visible: [firstRun.getByText("~/code", { exact: true }), firstRun.getByRole("button", { name: "Add all 3" }), row("atlas").getByRole("button", { name: "Add project" }), row("new-idea"), row("notes")],
-    hidden: [browser, firstRun.getByText("No folders in ~/Projects yet")],
+    visible: [firstRun.getByText("~/code", { exact: true }), firstRun.getByRole("button", { name: "Add all 3" }), row("atlas").getByRole("button", { name: "Add project" })],
+    hidden: [browser],
   });
-
   await page.route("**/api/project/add", (route) => route.fulfill({ status: 503, json: { error: "Registration unavailable. Try again." } }), { times: 1 });
-  await walk.state("09-add-all-failed", {
+  await walk.state("07-add-all-failed", {
     action: () => firstRun.getByRole("button", { name: "Add all 3" }).click(),
     visible: [firstRun.getByRole("alert").getByText("Could not add atlas: Registration unavailable. Try again."), firstRun.getByRole("button", { name: "Retry Add all" })],
-    hidden: [firstRun.getByRole("button", { name: "Add all 3" })],
+    hidden: [page.getByRole("dialog", { name: "Project setup" })],
   });
-  await walk.state("10-added-opens-setup", {
-    action: () => firstRun.getByRole("button", { name: "Retry Add all" }).click(),
-    visible: [page.getByRole("dialog", { name: "Project setup" })],
-    hidden: [firstRun],
-  });
-  await expect(page).toHaveURL(/\/projects\/atlas\?setup=1$/);
-  const overview = await (await request.get("/api/overview")).json() as { projects: { name: string; managed: boolean }[]; operator: string };
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/project/add", async (route) => { await held; await route.continue(); }, { times: 1 });
+  await firstRun.getByRole("button", { name: "Retry Add all" }).click();
+  await walk.state("08-registration-pending", { visible: [firstRun.getByText("Adding 1 of 3…")], hidden: [page.getByRole("dialog", { name: "Project setup" })] });
+  await expect(firstRun.getByRole("button", { name: "‹ Back" })).toBeDisabled();
+  release();
+  await walk.state("09-registration-opens-setup", { visible: [page.getByRole("dialog", { name: "Project setup" })], hidden: [firstRun] });
+  const overview = await (await request.get("/api/overview")).json() as { projects: { name: string; managed: boolean }[] };
   expect(overview.projects.filter((project) => project.managed).map((project) => project.name).sort()).toEqual(["atlas", "new-idea", "notes"]);
-  expect(overview.operator).toBe("Ada Fixture");
 
-  await walk.open("/settings");
-  const nameRow = page.getByRole("link", { name: /Your name/ });
-  const reportsRow = page.getByRole("link", { name: /Incident reports/ });
-  await walk.state("11-settings-machine-rows", {
-    visible: [nameRow.getByText("Ada Fixture"), page.getByRole("link", { name: /Prerequisites/ }), reportsRow.getByText("Kept on this computer")],
-    hidden: [firstRun],
-  });
-  await reportsRow.click();
-  await walk.state("12-settings-incident-reports", {
-    visible: [page.getByRole("radio", { name: "Keep incidents on this computer" }), page.getByRole("button", { name: "Save" })],
-    hidden: [page.getByRole("button", { name: "Skip" })],
-  });
-  await page.getByRole("link", { name: "‹ Settings" }).click();
-  await page.getByRole("link", { name: /Prerequisites/ }).click();
-  await walk.state("13-settings-prerequisites", {
-    visible: [page.getByText("gh auth login"), page.getByRole("button", { name: "Check again" })],
-    hidden: [page.getByRole("button", { name: "Continue anyway" })],
-  });
+  await walk.open("/settings/name");
+  const name = page.getByLabel("Your name");
+  await name.fill("Ada Fixture");
+  await page.getByRole("button", { name: "Save" }).click();
+  await walk.state("10-optional-name-saved-later", { visible: [page.getByRole("status", { name: "Saved." }), name], hidden: [firstRun] });
+  await walk.open("/settings/incident-reports");
+  const keep = page.getByRole("radio", { name: "Keep incidents on this computer" });
+  const publish = page.getByRole("radio", { name: "Also publish them as GitHub issues" });
+  await walk.state("11-reporting-default-privacy", { visible: [keep, page.getByText(/What leaves this computer/)], hidden: [page.getByLabel("Repository")] });
+  await expect(keep).toBeChecked();
+  await page.route("**/api/incident-reports", (route) => route.fulfill({ status: 400, json: { error: "The signed-in GitHub CLI cannot see fork-fixture/missing." } }), { times: 1 });
+  await publish.check();
+  await page.getByLabel("Repository").fill("fork-fixture/missing");
+  await walk.state("12-reporting-refused", { action: () => page.getByRole("button", { name: "Save" }).click(), visible: [page.getByRole("alert")], hidden: [] });
+  await keep.check();
+  await walk.state("13-reporting-declined", { visible: [keep, page.getByRole("button", { name: "Save" })], hidden: [page.getByLabel("Repository"), page.getByRole("alert")] });
 });
 
-test("first run's voice step: browser recognition instead, or why this computer cannot run voice", async ({ page }, info) => {
+test("address reads show loading and errors, retry the actual host, and explain optional private networking", async ({ page }, info) => {
   const walk = walkthrough(page, info);
-  const firstRun = page.getByRole("region", { name: "First run" });
-  const host = await fixtureHost(page, { state: "absent", download_bytes: 698435338 });
-  await walk.open("/projects?step=voice");
-  await walk.state("voice-01-browser-instead", {
-    action: () => firstRun.getByRole("button", { name: "Use browser recognition instead", exact: true }).click(),
-    visible: [firstRun.getByRole("heading", { name: "Add your projects" })],
-    hidden: [firstRun.getByRole("heading", { name: "Voice to text" })],
-  });
-  expect(host.backend).toBe("browser");
-  expect(host.requests).toEqual([]);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const fail = async (route: import("@playwright/test").Route) => { await held; await route.fulfill({ status: 503, json: { error: "Address temporarily unavailable" } }); };
+  await page.route("**/api/machine", fail);
+  await walk.open("/settings/network");
+  await walk.state("network-01-loading", { visible: [page.getByRole("status", { name: "Reading service address…" })], hidden: [page.getByText("Atlas host")] });
+  release();
+  await expect(page.getByText("Could not read service address.")).toBeVisible({ timeout: 15_000 });
+  await walk.state("network-02-unreadable", { visible: [page.getByText("Could not read service address."), page.getByRole("button", { name: "Retry" })], hidden: [page.getByText("Atlas host")] });
+  await page.unroute("**/api/machine", fail);
+  await walk.state("network-03-host-restored", { action: () => page.getByRole("button", { name: "Retry" }).click(), visible: [page.getByText("Atlas host"), page.getByText("Only the hosting computer"), page.getByText(/other devices can’t reach it yet/)], hidden: [page.getByText("Could not read service address.")] });
+  await page.getByText("Use another device…", { exact: true }).click();
+  await walk.state("network-04-source-guidance", { visible: [page.getByText(/For a source deployment, configure/), page.getByText(/A VPN changes neither Altitude’s address, certificate trust nor pairing/)], hidden: [] });
+});
 
-  host.backend = "browser";
-  host.state = { state: "unavailable", reason: "voice runs on Linux x86_64 only for now" };
-  await walk.state("voice-02-unavailable", {
-    action: () => firstRun.getByRole("button", { name: "‹ Back" }).click(),
-    visible: [firstRun.getByText("Voice to text can’t run on this computer: voice runs on Linux x86_64 only for now.", { exact: true }),
-      firstRun.getByRole("button", { name: "Continue", exact: true })],
-    hidden: [firstRun.getByRole("button", { name: "Set up voice" }), firstRun.getByRole("button", { name: /Use browser recognition/ }), firstRun.getByRole("button", { name: "Skip" })],
-  });
+test("optional voice setup remains in Settings with its current privacy, download and unavailable explanations", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const host = await fixtureHost(page, { state: "absent", download_bytes: 698435338 });
+  await walk.open("/settings/voice");
+  const setUp = page.getByRole("button", { name: "Set up voice", exact: true });
+  await walk.state("voice-01-download-choice", { visible: [setUp, page.getByText(/698 MB/)], hidden: [page.getByRole("button", { name: "Skip" })] });
+  await setUp.click();
+  await expect.poll(() => host.requests).toEqual(["setup"]);
+  await walk.state("voice-02-setting-up", { visible: [page.getByText(/Setting up/, { exact: false }).first()], hidden: [setUp] });
+  host.state = { state: "unavailable", reason: "Fictional capability unavailable" };
+  await page.reload();
+  await expect(setUp).toHaveAttribute("aria-disabled", "true");
+  // aria-disabled remains pressable to disclose the reason; Playwright's enabled check needs the explicit press.
+  await walk.state("voice-03-unavailable", { action: () => setUp.click({ force: true }), visible: [setUp, page.getByText(/Fictional capability unavailable/).first()], hidden: [] });
+  expect(host.requests).toEqual(["setup"]);
 });

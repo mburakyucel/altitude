@@ -72,9 +72,8 @@ test("on the computer running Altitude, pairing needs only a code, and wrong and
   const { heading, trust, field, pair, alert, app } = screen(page);
   await walk.open("/projects");
   await walk.state("01-local", {
-    visible: [heading, trust.getByRole("status", { name: "Trusted", exact: true }),
-      field, page.getByText("Enter the code from alt pair, or from Settings › Devices on a paired device.")],
-    hidden: [alert, app, page.getByRole("link", { name: /^Download/ }), page.getByText(/without a warning/)],
+    visible: [heading, field, page.getByText("On the hosting computer, run:")],
+    hidden: [trust, alert, app, page.getByRole("link", { name: /^Download/ }), page.getByText(/without a certificate warning/)],
   });
   await expect(pair).toBeDisabled();
   const cancelled = await code(request);
@@ -187,15 +186,20 @@ test("a code pairs the browser, and removing it in Settings returns it to the pa
   expect(devices.devices.map((device: { name: string }) => device.name)).toEqual(["Playwright browser"]);
 });
 
-test("Settings shows the address-only QR and certificate check beside a real pairing code", async ({ page, request }, info) => {
+test("Settings shows the address-only QR and the full certificate SHA-256 beside a real pairing code", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await walk.open("/");
   await pairWith(page, await code(request));
   await page.goto("/settings/devices");
   const panel = page.getByRole("region", { name: "Pair another device" });
   const directions = { address: "https://pairing.example.test:9443", qr: ["11111110100100011011101111111", "10000010100110110110101000001", "10111010011001110011101011101", "10111010110110001111001011101", "10111010011101000001001011101", "10000010011010100111001000001", "11111110101010101010101111111", "00000000101001100100100000000", "10110111010001101111101001011", "01101000100000011001111110001", "10101010001100110110001110110", "01101101011111110001111000001", "01100010101010000101000101100", "00001000010111000101001000111", "11000011111110100011110100111", "10011101110111000000011000010", "11011011000000001010110111010", "00000101001111011010100101110", "10101111100110010110000110100", "00011101011110001110111100100", "01010111000101000110111111100", "00000000111001100001100011111", "11111110100111000111101011010", "10000010110110000000100011011", "10111010000010111110111110110", "10111010110000110011100111001", "10111010101111000100000100101", "10000010001111110010101011010", "11111110100100011001101101010"],
-    certificate: { name: "Altitude CA 4F7K", check: "AA BB CC DD EE FF 00 11" } };
-  // Only network directions are a presentation fixture; code issuance stays in real API/storage.
+    certificate: { name: "Altitude CA 4F7K", sha256: ["AA BB CC DD EE FF 00 11", "22 33 44 55 66 77 88 99", "AA BB CC DD EE FF 00 12", "22 33 44 55 66 77 88 9A"] } };
+  // Only network directions and the matching private listener are presentation fixtures; code issuance stays in real API/storage.
+  await page.route("**/api/machine", async (route) => {
+    const answer = await route.fetch();
+    const machine = await answer.json();
+    await route.fulfill({ response: answer, json: { ...machine, network: { ...machine.network, scope: "private", listener_scope: "private" } } });
+  });
   await page.route("**/api/devices/code", async (route) => {
     const answer = await route.fetch();
     await route.fulfill({ response: answer, json: { ...await answer.json(), ...directions } });
@@ -204,8 +208,8 @@ test("Settings shows the address-only QR and certificate check beside a real pai
   await walk.state("01-before-code", { visible: [panel.getByRole("button", { name: "Make a pairing code" })], hidden: [image] });
   await walk.state("02-address-qr-and-check", {
     action: () => panel.getByRole("button", { name: "Make a pairing code" }).click(),
-    visible: [image, panel.getByLabel("Pairing code"), panel.getByText(/Certificate “Altitude CA 4F7K”/),
-      panel.getByText(directions.certificate.check)], hidden: [panel.getByText(/pair\?code=/)],
+    visible: [image, panel.getByLabel("Pairing code"), panel.getByText(/check it is named “Altitude CA 4F7K”/),
+      panel.getByText(directions.certificate.sha256[3])], hidden: [panel.getByText(/pair\?code=/), panel.getByText(/works only on the hosting computer/)],
   });
   const previous = await panel.getByLabel("Pairing code").textContent();
   await walk.state("03-new-code", { action: () => panel.getByRole("button", { name: "Make a new code" }).click(), visible: [image], hidden: [] });
@@ -255,7 +259,7 @@ test.describe("on an iPhone", () => {
     await walk.state("01-iphone-not-trusted", {
       visible: [trust.getByRole("link", { name: "Download the profile" }), trust.getByText(/^Open Settings › Profile Downloaded\./),
         trust.getByText("Turn it on: Settings › General › About › Certificate Trust Settings › “Altitude CA 4F7K”."),
-        page.getByText("Not trusted yet. The usual missing step is the switch in Certificate Trust Settings.")],
+        page.getByText("The usual missing step is the switch in Certificate Trust Settings.")],
       hidden: [trust.getByRole("link", { name: "Download the certificate" }), field],
     });
     await expect(trust.getByRole("link", { name: "Download the profile" })).toHaveAttribute("href", "/api/certificate/altitude.mobileconfig");
@@ -273,12 +277,14 @@ test("a device on the network checks that it trusts Altitude's certificate befor
   await walk.state("01-not-trusted", {
     visible: [heading, trust.getByText("Not trusted yet", { exact: true }),
       trust.getByRole("link", { name: apple ? "Download the profile" : "Download the certificate" }), check,
-      page.getByText(apple ? "Not trusted yet. The usual missing step is the switch in Certificate Trust Settings."
-        : android ? "Not trusted yet. Install the certificate as a CA certificate."
-        : "Not trusted yet. Import the certificate as a trusted authority, then restart the browser.")],
+      page.getByText(apple ? "The usual missing step is the switch in Certificate Trust Settings."
+        : android ? "Install the certificate as a CA certificate."
+        : "Import the certificate as a trusted authority, then restart the browser.")],
     hidden: [field, trust.getByRole("link", { name: apple ? "Download the certificate" : "Download the profile" }), trust.getByText(/^[0-9A-F]{2}( [0-9A-F]{2}){7}$/)],
   });
-  if (!apple && !android) await expect(trust.getByRole("link", { name: "Setup guide" })).toBeVisible();
+  await expect(trust.getByRole("link", { name: "Certificate guide" })).toBeVisible();
+  await expect(trust.getByText(/If they differ, delete the download and stop/)).toBeVisible();
+  await expect(trust.getByText(/if a warning remains, don’t pair/)).toBeVisible();
   const release = device.hold();
   await walk.state("02-checking", { action: () => check.click(), visible: [trust.getByRole("status", { name: "Checking…", exact: true })], hidden: [field] });
   await expect(check).toBeDisabled();
@@ -325,7 +331,7 @@ test("with an externally supplied certificate, the device confirms it by hand be
   await walk.open("/");
   const proceed = page.getByRole("button", { name: "Continue" });
   await walk.state("01-external-certificate", {
-    visible: [page.getByText("Altitude can’t check this automatically. Open this address in a new Private tab; if it loads without a warning, tap Continue."), proceed],
+    visible: [page.getByText(/Altitude can’t check this automatically. Open this address in a new Private tab/), proceed],
     hidden: [field, trust.getByRole("link", { name: /^Download/ })],
   });
   await walk.state("02-confirmed", { action: () => proceed.click(), visible: [trust.getByRole("status", { name: "Trusted", exact: true }), field], hidden: [proceed] });

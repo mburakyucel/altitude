@@ -386,12 +386,16 @@ The installation lock covers the entire manual or detached update, including dow
 A unique attempt identity reserves the interval before the detached child acquires that lock;
 expired children cannot run or finish a later request. Each release gets one automatic attempt,
 retained in `update.json`; explicit retries remain available. Failed activation restores the prior
-version, or keeps the recovery receipt if recovery cannot finish. An abandoned reservation becomes
-failed after thirty minutes only while the installation lock is free and no activation receipt is
-pending. Age in the UI never releases a live updater's fence. The app announces a successful
-automatic update with its installed version and release notes after reconnecting.
-The page shows a failure only as "Run alt update in a terminal to see why."; causes, which can name
-private paths, stay in the daemon log, the update unit's journal or the terminal.
+version, or keeps the recovery receipt if recovery cannot finish. Reconciliation marks a reservation
+failed when the current installed release fails verification, without changing its files or reporting
+an upgrade. Other abandoned reservations become failed after thirty minutes only while the
+installation lock is free and no activation receipt is pending. Age in the UI never releases a
+live updater's fence. The app announces a successful automatic update with its installed version
+and release notes after reconnecting.
+The page names a failed installed-release check and offers the terminal diagnostic action; other
+failures say "Run alt update in a terminal to see why." Specific causes, which can name private
+paths, stay in the daemon log, the update unit's journal or the terminal. Detached updater failures
+settle their own reservation even when preflight fails before activation.
 
 `source_tls.py` prepares an existing Linux source service for explicit TLS configuration.
 The operator selects its existing certificate directory; native unit/process/listener evidence and
@@ -474,7 +478,13 @@ In the container deployment, published-port forwarding gives every peer one addr
 arms and settles that shared address: while one device checks, a device that only clicked past the
 warning fails its new connections for those seconds, and a device checking at the same moment can
 read Not trusted yet until Check again.
-The computer running Altitude (a loopback peer) needs no check. The screen downloads the public CA
+An HTTPS loopback peer follows the same trust flow; being on the host is not evidence of browser
+CA trust. A warning-bypassed page provides instructions but cannot authenticate itself. Before
+pairing-code entry, the operator independently compares the CA name and full SHA-256 against the
+hosting terminal, stops on mismatch, imports the matching CA, restarts the browser and reopens the
+page or the original private link without a warning. The probe is a convenience rather than that security boundary;
+the pairing API authenticates the code, not the browser's trust store. Plain HTTP is only a local
+development flow. The screen downloads the public CA
 from `/api/certificate/altitude.mobileconfig` (the iPhone/iPad profile) or
 `/api/certificate/altitude.crt`.
 
@@ -540,8 +550,8 @@ JSON body, never in paths, queries, referrers, DOM text, browser storage, caches
 The originally clicked URL can reach terminal/OS handlers, browser history synchronization,
 extensions or an initial TLS warning before cleanup; cleanup does not erase those systems' copies.
 
-Automatic redemption waits for the existing managed-CA challenge on remote devices, or explicit
-Continue after the external-certificate Private-tab check; the local exemption stays unchanged.
+Automatic redemption waits for the managed-CA challenge on every HTTPS browser, the hosting computer's
+included, or explicit Continue after the external-certificate Private-tab check.
 Ordinary TLS verification precedes page load, and plain remote HTTP never redeems a link. An
 unreachable access read holds the pending code for Retry; already-paired access discards it without
 adding a device. A lost redemption response triggers an access recheck, never a blind retry of the
@@ -2258,9 +2268,10 @@ compact cards in one column, answered through `POST /api/decide`), the project p
 `/projects/<name>` (the §3.2 header with its status line and overflow menu, the L3 conversation, and
 the work panel), the task conversation (including redirects from `/projects/<name>/decisions/<slug>`), and
 Monitor. `/projects` and `/chat/<name>` redirect to the project
-page, and with no managed project every project route shows First run: the steps name, what the
-agents need, incident reports and projects, held in `?step=`, each skippable and a Settings row
-afterwards. What the agents need reads `GET /api/prerequisites`, `installation.prerequisites()`: the
+page, and with no managed project every project route shows First run: hosting, coding tools and
+one project, held in `?step=` with Back and Continue controls. Numbered positions describe navigation,
+not completion. Name, incident reporting and voice are optional Settings links. What the agents need
+reads `GET /api/prerequisites`, `installation.prerequisites()`: the
 doctor's GitHub CLI checks (the pull request fields `alt land` reads, from the list `gh pr view --json` prints
 without a repository, sign-in or network request, then sign-in), each engine's local sign-in status through the
 engine seam (`engines.sign_in`) and Git, as met, unmet with the terminal command to run (the install command from
@@ -2285,15 +2296,25 @@ projects folder First run names and the operator's configured name.
 
 First run's folder browser reads `GET /api/folders?path=<absolute path>` (no path means the home
 folder), one folder per request and only when the operator opens it; nothing is scanned, indexed or
-kept. `server.folders` refuses a path in one of macOS's [private places](DEVELOPMENT.md#macos-private-places),
-judged before anything inside it is touched, then resolves the path and refuses one outside the home folder
-or through a hidden (dot) folder, then returns `path`, `parts` (relative to home) and `readable`, plus one row per visible
+kept. Folder operations and website serving share the platform seam's descriptor traversal. It judges
+each candidate against the [private policy](DEVELOPMENT.md#macos-private-places) before lookup,
+holds accepted ancestors and verifies opened identities. Browser aliases may traverse a nonprivate
+exterior location and return inside HOME; the final inspected address establishes containment and
+hidden-folder filtering. Website aliases retain their stricter build anchors. Browsing returns
+`path`, `parts` (relative to home) and `readable`, plus one row per visible
 subfolder whose resolved target stays inside home and outside the private places: `name`, `path`, the registered `project` for that
 folder and whether it holds `.git`. It never returns file names, sizes or contents, and an unreadable
 folder returns `readable: false`. The browser adds through the existing `POST /api/project/add`;
 **Type a path instead** covers folders outside home. `POST /api/projects-folder` applies the
 operator's choice through the machine settings request, like `alt machine set --projects-folder`.
-Registration, the projects folder and project discovery refuse or skip the private places the same way;
+Selection, discovery, registered-address matching and child/`.git` metadata use the inspected
+namespace. Registration checks final directory type without requiring final read/list/execute
+permission; selection requires read/search. Caller-specific raw and canonical alias budgets remain
+distinct, and completed-address reuse retains full logical expansion cost. Marker presence checks
+never read marker contents; unavailable or private targets report no marker. Container containment
+uses inspected candidate and volume addresses. Settings retain the selected spelling.
+Later Git, hooks, engines, other runtime path uses and unrelated private-check consumers remain
+outside this operation boundary; saved strings are not persistent safe capabilities.
 TLS and installation location checks read the same `config.project_roots()`.
 
 Task, decision and project reads refresh through one change stream per browser app. The shell opens
@@ -3011,8 +3032,7 @@ desktop operator row open Settings. `POST /api/voice` saves `{backend, selection
 durable request/apply path as the CLI, with no restart or provider probe; a selection that no longer
 matches the saved one is refused (409) and asks the person to reload settings. Failed saves leave the
 persisted choice unchanged. Fresh settings reads update the form as well as the composer's selection.
-First run offers built-in or browser recognition in its Voice step (see the design spec §3.12); a setup failure there
-never blocks onboarding.
+First run links to optional **Settings → Voice input**; voice setup never blocks onboarding.
 
 On start, `dispatch.forget_speech_service()` deletes only untagged legacy service settings and
 receipts, including their keys. New deliberate service configurations carry `backend: service`

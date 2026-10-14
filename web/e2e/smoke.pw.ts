@@ -140,7 +140,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       // Models are picked where they apply (beside quota, under a chat, in a task), never in Settings.
       await expect(main.getByRole("combobox")).toHaveCount(0);
       await expect(main.getByRole("link", { name: /^All projects 1 project · folder / })).toHaveAttribute("href", "/settings/projects");
-      await expect(main.getByText(`${new URL(page.url()).origin} · HTTPS off`, { exact: true })).toBeVisible();
+      await expect(main.getByRole("link", { name: /Network.*This computer only/ })).toHaveAttribute("href", "/settings/network");
       await expect(main.getByRole("button", { name: /^Use / })).toHaveCount(0);
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
     } else if (route === "/settings/voice") {
@@ -165,6 +165,17 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("region", { name: "Choose a folder", exact: true })).toBeVisible();
       await expect(main.getByRole("button", { name: "Use “Home”", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
+    } else if (route === "/settings/network") {
+      await expect(main.getByRole("heading", { name: "Where Altitude runs", exact: true })).toBeVisible();
+      const network = (await (await request.get("/api/machine")).json()).network;
+      await expect(main.getByRole("region", { name: "Where Altitude runs" })).toContainText(network.computer);
+      await expect(main.getByText("Only the hosting computer", { exact: true })).toBeVisible();
+      await expect(main.getByRole("link", { name: network.url, exact: true })).toHaveAttribute("href", network.url);
+      await expect(main.getByText(/A VPN changes neither Altitude’s address, certificate trust nor pairing/)).toBeVisible();
+      const preview = main.getByText(/If the host’s address changes or its VPN goes away/);
+      await expect(preview).toBeHidden();
+      await main.getByText("Use another device…", { exact: true }).click();
+      await expect(preview).toBeVisible();
     } else if (route === "/settings/name") {
       await expect(main.getByRole("heading", { name: "Your name", exact: true })).toBeVisible();
       await expect(main.getByLabel("Your name")).toBeEditable();
