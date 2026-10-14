@@ -97,6 +97,7 @@ class TestClaudeFolders(AltitudeCase):
         self.patch(engines.claude, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=True)
         self.patch(platform.sys, "platform", "linux")
+        self.patch(platform, "bubblewrap_profile", return_value=[])  # confinement itself is test_worker_roots'
         self.fake_engines()
         (self.operator / "settings.json").write_text("{}")
         (self.operator / "skills").mkdir(exist_ok=True)

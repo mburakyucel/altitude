@@ -64,7 +64,7 @@ def main():
 
     engines.activity_source = activity_source
     engines.transcript_sources = transcript_sources
-    engines.session_context_source = lambda _task: None
+    engines.session_context_source = lambda _project, _slug, _task: None
     engines.transcript_rows = lambda engine, record, _worktree: [
         {"source": engine, "kind": "message", "role": "assistant", "type": "public", "at": record.get("at"), "text": record["fixture_text"]}
     ] if "fixture_text" in record else [
