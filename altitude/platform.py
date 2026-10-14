@@ -1143,6 +1143,7 @@ def definition(prefix: Path, python: Path, settings: Path, environment: dict[str
 SYSTEMD_RUN = shutil.which("systemd-run") or "systemd-run"
 SYSTEMCTL = shutil.which("systemctl") or "systemctl"
 ENV_BIN = shutil.which("env") or "/usr/bin/env"
+BWRAP = shutil.which("bwrap") or "/usr/bin/bwrap"
 
 
 def manager_env(env: dict) -> dict:
@@ -1188,9 +1189,9 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
                 writable: tuple[Path, ...] | None = None, read_only: tuple[Path, ...] = ()) -> list[str]:
     """Run a command synchronously, piped to the caller, in a job of its own that holds every descendant.
 
-    `writable` confines the job with Altitude's Seatbelt profile on macOS: it may signal only its own processes and
-    write only under these roots and the user's temporary directories, except under `read_only`. Linux leaves file
-    confinement to the engine.
+    `writable` confines the job with Altitude's own sandbox, Seatbelt on macOS and bubblewrap on Linux: it may signal
+    only its own processes and write only under these roots and the temporary directories, except under `read_only`,
+    and never reads Altitude's credentials. Without it, file confinement is left to the engine.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
     creates the child. This lets nested bwrap initialize without weakening altd's ``NoNewPrivileges=yes`` boundary.
@@ -1206,7 +1207,60 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
             "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
             "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no",
             *([f"--property=RuntimeMaxSec={runtime_max}", "--property=TimeoutStopSec=5"] if runtime_max else []),
-            "--", *_scrub(env), *command]
+            "--", *_scrub(env),
+            *([] if writable is None else bubblewrap_profile([str(root) for root in writable],
+                                                             [str(path) for path in read_only])),
+            *command]
+
+
+def bubblewrap_profile(writable: list[str], read_only: list[str] = ()) -> list[str]:
+    """Altitude's bubblewrap sandbox on Linux, the counterpart of `seatbelt_profile`, as the command that runs a job's
+    own command inside it. The file system is read-only except `writable` (a root ending in * admits every name in its
+    folder that starts with it), /tmp, /var/tmp and devices, with `read_only` read-only again, the most specific path
+    deciding; the control groups are read-only too. The job sees only its own processes, and neither the user
+    manager's sockets nor Altitude's credentials. The home is a fresh folder holding its entries read-only, so a program
+    that replaces a writable file by renaming a sibling over it (an engine's account file) creates the sibling there, sees
+    the rename refused and writes in place. Paths that do not exist are left as they are: a mount would create them."""
+    home = os.path.realpath(Path.home())
+    mounts = []
+    with os.scandir(home) as entries:
+        for entry in entries:
+            if entry.is_symlink():
+                mounts.append((entry.path, 0, ["--symlink", os.readlink(entry.path), entry.path]))
+            else:
+                mounts.append((entry.path, 0, ["--ro-bind", entry.path, entry.path]))
+    for root in dict.fromkeys((*writable, "/tmp", "/var/tmp")):
+        if root.endswith("*"):
+            folder, prefix = os.path.realpath(os.path.dirname(root)), os.path.basename(root)[:-1]
+            try:
+                paths = [os.path.join(folder, name) for name in sorted(os.listdir(folder)) if name.startswith(prefix)]
+            except OSError:
+                paths = []
+        else:
+            paths = [os.path.realpath(root)]
+        mounts.extend((path, 1, ["--bind-try", path, path]) for path in paths)
+    mounts.extend((path, 2, ["--ro-bind-try", path, path]) for path in map(os.path.realpath, read_only))
+    mounts.sort(key=lambda mount: (mount[0].count("/"), mount[1]))
+    masks = []
+    for place in map(str, (*job_control_paths(), *private_places(), *secret_places())):
+        if os.path.isdir(place):
+            masks += ["--tmpfs", place]
+        elif os.path.lexists(place):
+            masks += ["--ro-bind", "/dev/null", place]
+    return [BWRAP, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev",
+            "--proc", "/proc", "--tmpfs", home, *(arg for mount in mounts for arg in mount[2]), *masks, "--"]
+
+
+def sandbox_tool() -> dict | None:
+    """Whether the program Altitude's own sandbox runs in is installed: bubblewrap on Linux, None on macOS, whose
+    Seatbelt is part of the system. A job confined without it fails to start."""
+    if _darwin():
+        return None
+    found = shutil.which("bwrap")
+    command = {"apt": "sudo apt install bubblewrap", "dnf": "sudo dnf install bubblewrap",
+               "pacman": "sudo pacman -S bubblewrap", "zypper": "sudo zypper install bubblewrap"}.get(package_manager())
+    return {"enabled": bool(found), "detail": found or f"Install bubblewrap{f' ({command})' if command else ''}: "
+                                                       "agents that Altitude confines itself run inside it"}
 
 
 def logged_job_command(name: str, command: str, *, log: Path, status: Path, env: dict[str, str],
@@ -1780,8 +1834,8 @@ def _filters(kind: str, values) -> list[str]:
 
 def secret_places() -> tuple[str, ...]:
     """Altitude's own credentials, which no sandbox Altitude applies may read or write: the access folder with the
-    CLI's key and the pairing record, and the HTTPS folder with the certificate keys. Resolved, as sandboxes match
-    paths, and only those present, since a sandbox masks a folder that exists."""
+    CLI's key, the pairing record and the push signing key, and the HTTPS folder with the certificate keys. Resolved,
+    as sandboxes match paths, and only those present, since a sandbox masks a folder that exists."""
     from . import access, config
     return tuple(dict.fromkeys(os.path.realpath(path) for path in (access.DIR, config.TLS_DIR) if path.exists()))
 
@@ -2769,10 +2823,11 @@ def local_names() -> dict[str, set[str]]:
 
 
 def job_confinement(*, profile: bool) -> str:
-    """The job a worker runs in; `profile` is whether Altitude's own Seatbelt profile wraps it on macOS."""
+    """The job a worker runs in; `profile` is whether Altitude's own sandbox wraps it."""
     if _darwin():
         return "launchd job with Altitude's Seatbelt profile" if profile else "launchd job"
-    return "systemd user unit in the Altitude container" if containerized() else "systemd user unit"
+    unit = "systemd user unit in the Altitude container" if containerized() else "systemd user unit"
+    return f"{unit} with Altitude's bubblewrap sandbox" if profile else unit
 
 
 def validation_runroot() -> str:

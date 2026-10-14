@@ -15,6 +15,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   After the update Altitude replaces its access key, and once more when the agents running at the
   update have finished; each replacement ends open design-board links, and the first cancels a
   pairing code in progress. Linux needs kernel 6.5 or newer.
+- On Linux, Claude agents run inside Altitude's own sandbox, as on macOS: they write only their task's
+  folders, Altitude's data and temporary folders, see only their own processes, and cannot reach the
+  service manager or read Altitude's keys. Linux needs bubblewrap, which `alt doctor` checks. The alert
+  signing key moves where no agent can read it and is replaced, so turn alerts off and on once on each
+  phone or browser that uses them.
 
 ## v0.6.0 — 2026-10-13
 

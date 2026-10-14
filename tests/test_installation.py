@@ -373,7 +373,10 @@ class Installation(InstallationCase):
                 checks = {check["name"]: check for check in installation.doctor()["checks"]}
             if self.HOST == "darwin":
                 self.assertNotIn("runs without a login", checks)
+                self.assertNotIn("agent sandbox", checks, "Seatbelt is part of macOS")
                 continue
+            self.assertEqual(checks["agent sandbox"]["state"], "unavailable")
+            self.assertIn("Install bubblewrap", checks["agent sandbox"]["detail"])
             self.assertEqual(checks["runs without a login"],
                              {"name": "runs without a login", "state": "configured" if lingers else "unavailable",
                               "detail": "fixture lingering"})

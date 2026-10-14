@@ -17,6 +17,8 @@ voice remains usable; failed or cancelled updates wait for your Retry in Setting
   finds Homebrew's `openssl@3` even when macOS's LibreSSL comes first on PATH; another OpenSSL 3
   must be on PATH. Linux uses OpenSSL on PATH. The installer stops before downloading if a required
   tool is missing.
+- **bubblewrap on Linux** (`sudo apt install bubblewrap` on Ubuntu), the sandbox Altitude runs Claude agents in;
+  `alt doctor` shows whether it is installed. macOS has its sandbox built in.
 - **GitHub CLI (`gh`) 2.72 or newer.** Debian and Ubuntu package an older release that fails at the
   first landing, so install it from
   [GitHub's package repository](https://github.com/cli/cli/blob/trunk/docs/install_linux.md);

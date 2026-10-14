@@ -587,6 +587,10 @@ def doctor() -> dict:
     if lingering:
         checks.append({"name": "runs without a login", "state": "configured" if lingering["enabled"] else "unavailable",
                        "detail": lingering["detail"]})
+    sandbox = platform.sandbox_tool()
+    if sandbox:
+        checks.append({"name": "agent sandbox", "state": "configured" if sandbox["enabled"] else "unavailable",
+                       "detail": sandbox["detail"]})
     if shutil.which("gh"):
         lacks = _gh_lacks()
         checks.append({"name": "GitHub CLI pull request fields",

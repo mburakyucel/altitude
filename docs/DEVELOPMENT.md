@@ -27,6 +27,10 @@ Contributors work from a repository checkout; the private archive is for running
 With repository access, clone it, then use the commands below from its root.
 Owners and helpers run tests relevant to their changes during development. The required PR
 check runs the full suite; a local full run is available for investigation but is not a landing prerequisite.
+A Claude owner or helper on Linux runs these inside Altitude's bubblewrap sandbox, as on macOS inside its
+Seatbelt profile: tools write their caches to the task's own folders, and a program that starts a sandbox or
+container of its own (Chromium's sandbox, rootless Podman) cannot start there, so those checks run through
+`alt task validate`.
 
 Use Python 3.12+, Node 22.22.2+ (22.x), 24.15+ (24.x) or 26+, and the pnpm version pinned in
 `web/package.json`. From the repository root:

@@ -24,12 +24,13 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import config, digest, state as S
+from . import access, config, digest, state as S
 
 # Apple refuses a token whose contact has no real domain (403 BadJwtToken for altitude@localhost), so the
 # default is a well-formed address at a reserved domain: it names no one, and a real one overrides it.
 CONTACT = os.environ.get("ALTITUDE_PUSH_CONTACT") or "mailto:altitude@example.com"
-KEY_DIR = config.ROOT / "push"
+# Beside the device keys in the folder task agents can neither read nor write, so no task can sign a wake.
+KEY = access.DIR / "vapid.key"
 RECORD = config.ROOT / "push.json"
 DEVICES = 5  # the operator's own devices; a bounded list keeps replaced phones from accumulating
 TTL_SECONDS = 12 * 60 * 60  # a decision older than half a day is read in Altitude, not from a banner
@@ -61,7 +62,7 @@ def _openssl(*args, stdin: bytes | None = None) -> bytes:
 
 def _key() -> Path:
     """The signing key stays on this machine; the push service only ever sees its public half."""
-    path = KEY_DIR / "vapid.key"
+    path = KEY
     with _KEY_LOCK:
         # A browser binds the key it subscribed with for good, so a second key must never replace it.
         if not path.exists():

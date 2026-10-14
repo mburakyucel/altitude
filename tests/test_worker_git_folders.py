@@ -126,6 +126,16 @@ class WorkerGitFolders(AltitudeCase):
         self.assertEqual(order, sorted(order), "Seatbelt's last matching rule decides")
         self.assertTrue(text.endswith(platform.private_rule() + platform.SERVICE_ESCAPES))
 
+    def test_bubblewrap_applies_the_most_specific_git_rule(self):
+        writable, read_only = git_policy.worker_git_access(self.worktree)
+        argv = " ".join(platform.bubblewrap_profile([str(self.worktree), *map(str, writable)],
+                                                    [str(path) for path in read_only]))
+        common = os.path.realpath(self.repo / ".git")
+        order = [argv.index(f"{option} {path} {path}") for option, path in (
+            ("--bind-try", common), ("--ro-bind-try", f"{common}/worktrees"),
+            ("--bind-try", f"{common}/worktrees/{self.slug}"), ("--ro-bind-try", f"{common}/worktrees/{self.slug}/gitdir"))]
+        self.assertEqual(order, sorted(order), "a later mount inside an earlier one decides")
+
 
 class SourceCopy(AltitudeCase):
     """Altitude's own code comes through its copy of its repository, never the checkout's shared Git store."""
