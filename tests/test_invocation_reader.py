@@ -227,6 +227,10 @@ class TestInvocationReader(_CodexTranscriptCase):
             # A replaced record no longer withholds activity: it was parsed once, before its replacement.
             self.assertEqual(transcript.activity(self.project, self.slug), expected)
         record.unlink()
+        record.symlink_to(outside)
+        # A record already replaced by a link when activity opens it refuses activity, as stdout does.
+        self.assertEqual(transcript.activity(self.project, self.slug)["state"], "unavailable")
+        record.unlink()
         S.write_json(record, current)
         self.assertEqual(self._view(mode="delta", cursor=before["cursor"])["events"], [])
         self.assertIn("inside", json.dumps(self._view()))
