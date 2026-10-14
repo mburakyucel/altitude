@@ -40,31 +40,26 @@ service keeps that PATH. With nvm, see [noninteractive toolchain](DEVELOPMENT.md
 
 ## Install the application
 
-Run one of these as the account that will use Altitude, not as root. Installation saves the
-address Altitude listens on, so choose now. For use only on this computer:
+Run this as the account that will use Altitude, not as root. The default starts with access only
+on the hosting computer; other-device access is an optional choice afterwards:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
 ```
 
-To also use it from a phone or another computer, give it the private-network address those devices
-reach (a LAN or VPN address), and allow its port, 8890, through the firewall:
-
-```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | ALTITUDE_HOST=<private address> sh
-```
-
 The script checks the machine first and stops with the fix for anything missing. It downloads the
 latest stable release anonymously, runs nothing that does not match the checksums built into it,
 installs into your home folder and starts Altitude as a per-user service. It ends by printing the
-address, the certificate's name and fingerprint, whether Altitude keeps running after logout and
-the next steps. On a fresh installation without paired devices or an unexpired pairing code,
-it also prints a private link for the first browser after verified HTTPS readiness.
-[Trust the certificate](#trust-https-on-each-device), then open that link: the browser pairs
-automatically after its existing trust check and opens [First run](#first-run-in-the-browser).
-The link works once, for ten minutes. Keep it private, including in terminal recordings and
-screenshots. If it expires or is refused, run `~/.local/bin/alt pair` on the computer running
-Altitude and follow [manual pairing](#pair-each-device).
+service's state and where it runs, the certificate's name and full fingerprint, whether Altitude
+keeps running after logout, the next steps and whether other devices can reach the address. On a
+fresh installation without paired devices or an unexpired pairing code, it also prints a private
+link for the first browser after verified HTTPS readiness.
+[Trust the certificate](#trust-https-on-each-device), comparing its name and full fingerprint with
+the installer's output, then open that link: the browser pairs automatically after its trust check
+and opens [First run](#first-run-in-the-browser). The link works once, for ten minutes. Keep it
+private, including in terminal recordings and screenshots. If it expires or is refused, run
+`~/.local/bin/alt pair` on the computer running Altitude and follow [manual pairing](#pair-each-device).
+Closing the terminal or the browser leaves the service running.
 
 The installer opens no browser and changes no trust stores. Clicking the link uses the terminal
 or operating system's normal link handler, usually the default browser; some terminals require
@@ -77,16 +72,19 @@ A fresh installation retaining an unexpired manual code leaves it intact; run
 `~/.local/bin/alt pair` when ready to replace it. If link issuance fails after the service starts,
 the installer reports the running installation and the same manual recovery command.
 
-Terminal setup is optional before First run, which checks tools and sign-ins. When ready, put
-`~/.local/bin` on PATH, in your shell profile as well, and check the result:
+Terminal setup is optional before First run, which checks tools and sign-ins. If `alt` is absent
+in a new shell, use `~/.local/bin/alt` and put `~/.local/bin` on PATH in your shell profile:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
-alt doctor
 ```
 
-`alt doctor` checks the tools, sign-ins and service, and shows the command that fixes each failure.
-It cannot see whether your browsers trust Altitude's certificate.
+`alt doctor` and `alt service status` lead with whether the service runs, its actual address and
+which devices can reach it, verified against the native process and TLS health, then the next
+action. They separate the saved configuration from shell overrides they ignore. `alt doctor` also
+checks tools and sign-ins, shows the command that fixes each failure and counts paired browsers;
+`--json` gives structured output for automation. Neither can see whether your browsers trust
+Altitude's certificate or whether a coding provider accepts your account.
 
 The command trusts GitHub's HTTPS and the published release for `install.sh` itself. To verify the
 script before running it with GitHub's release attestation, run the commands below; to install one
@@ -100,10 +98,44 @@ curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/
 ```
 
 Altitude installs newer releases by itself at a quiet moment; running tasks keep going. Turn
-**Automatic updates** off in **Settings → This machine** to confirm each update yourself. If an
+**Automatic updates** off in **Settings → About** to confirm each update yourself. If an
 installation or update is interrupted, `alt recover` restores the previous version. `alt uninstall`
-removes the service and the `alt` command and keeps your settings, certificates and data. See the
+removes the service and the `alt` command and keeps your settings, certificates, paired browsers and
+data, so installing again continues the same installation rather than starting a fresh first run. See the
 [installed application lifecycle](OPERATIONS.md#installed-application-lifecycle) for all three.
+
+### Optional other-device access
+
+**Settings → Network** shows the daemon's hosting computer, URL and listening scope. A localhost
+certificate URL is separate from listener exposure: a wildcard listener listens on all interfaces
+even when its certificate URL is localhost. Neither proves another device can reach it. Container
+listeners are inside the container; its host launcher controls port publishing. While Altitude
+listens only on the hosting computer, the page says other devices cannot reach it yet and points
+to changing the address; a VPN changes neither the address, certificate trust nor pairing.
+
+For a packaged installation, choose a concrete private LAN/VPN address already assigned to the
+hosting computer: loopback, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, the `100.64.0.0/10`
+range many mesh VPNs use, or unique-local IPv6 (`fc00::/7`), the ranges Altitude's certificate
+authority may certify. Preview the change, then explicitly apply it:
+
+```sh
+alt service configure --host <private-address>
+alt service configure --host <private-address> --apply
+```
+
+Both IPv4 and IPv6 addresses use matching daemon listeners; IPv6 URLs enclose the address in brackets.
+The preview shows current/proposed URLs, the retained CA fingerprint, certificate action and
+`alt recover`. Apply retains the port, CA, keys, pairing and projects, updates the owned service
+and verifies its HTTPS API and UI directly, without ambient proxies, if running. Failure restores the original configuration and
+certificate. An interruption leaves a receipt for `alt recover`; a stopped service stays stopped.
+External certificates must already cover the new address. Wildcard, public and link-local binds
+are outside this operation. Preview and apply `--host 127.0.0.1` to return to local-only access.
+
+On the same LAN, the other device must reach that private address and port. Away from home,
+arrange a separate private VPN, such as [WireGuard](https://www.wireguard.com/quickstart/), first.
+The host must be available. A VPN changes neither Altitude's bind address nor certificate trust
+nor pairing. Address changes or lost VPN connectivity can make the URL unavailable. Source and
+[container deployments](CONTAINERS.md) use their own deployment configuration, not this command.
 
 ### Keep running after logout
 
@@ -265,8 +297,8 @@ invalid link, run this in a terminal on the computer running Altitude, locally o
 ~/.local/bin/alt pair
 ```
 
-It prints an eight-character code, the address with a QR code a phone can scan, and the end of the
-certificate's fingerprint. Open the address on the device and follow **Pair this device**. A code
+It prints an eight-character code, the address with a QR code a phone can scan, and the
+certificate's name and full fingerprint. Open the address on the device and follow **Pair this device**. A code
 works once, for ten minutes; making a new code replaces the previous one, and five wrong attempts
 cancel it. Once `~/.local/bin` is on PATH, the command is `alt pair`. A paired device stays paired
 until it goes 400 days unused, its site data is cleared or you remove it in **Settings → Devices**,
@@ -285,16 +317,23 @@ conversation text ([decision alerts](OPERATIONS.md#decision-alerts-on-a-device))
 
 ## First run in the browser
 
-After pairing, the browser opens First run. Each step can be skipped and changed later in
-**Settings → This machine**:
+After pairing, First run has three numbered position indicators, with Back and Continue controls.
+Positions do not claim that skipped or unmet work is complete:
 
 | Step | What it does |
 | --- | --- |
-| **Your name** | The name screens and agents use for you, filled in from Git's `user.name`. |
+| **Welcome** | Explains the actual hosting computer, service URL and local/private access. |
 | **What the agents need** | Checks that GitHub CLI and a coding agent are signed in, showing the command to run in a terminal for anything missing. The browser never asks for a password or token. |
-| **Report Altitude's own faults?** | Off keeps fault reports on this computer; on sends sanitized reports to Altitude's issue tracker or a fork you name. |
-| **Voice** | Sets up dictation on this computer where it can run, or uses the browser's recognition. |
 | **Add your projects** | Lists the folders inside your projects folder (`~/Projects` unless you pick another). **Add project** registers one and opens its Setup. |
+
+Name, incident reporting and voice remain optional links to Settings. Skipping preference setup
+does not write choices or mark tools ready. Tool checks show required, optional, unmet and failed
+readings; refresh them after completing the displayed hosting-terminal commands. Registering a
+project enables integration and starts its coordinator's introduction using the coding account's
+allowance. Project Setup observes integration and tool readiness, then offers **Open conversation**;
+that action focuses the composer without starting a task. Remaining blockers link to their fix.
+A non-Git folder can be conversation-ready with a ready coding agent; Git/GitHub checks concern
+Git task delivery. No task delivery is offered without a repository.
 
 ## Your speech service
 
@@ -303,7 +342,7 @@ service** and press **Use your speech service**. Enter its complete transcriptio
 example `https://speech.example.test/v1/audio/transcriptions`, and expand **Key or model
 (optional)** if your server requires them. Choose **Use this service**. Saving does not contact the endpoint.
 The computer running Altitude must be able to reach it; a loopback address refers to that computer,
-not the phone. Existing defaults and first-run setup stay unchanged.
+not the phone. Voice remains optional and is configured in Settings.
 
 The server accepts a multipart POST with `file` containing mono 16 kHz signed 16-bit PCM WAV,
 `response_format=json`, an optional `model`, and optional `Authorization: Bearer` key. It returns

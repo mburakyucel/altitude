@@ -477,11 +477,12 @@ def describe_scope(scope: dict | None) -> str:
     return f"{parts[0]}; {parts[1]}."
 
 
-def info(host: str | None = None) -> dict:
+def info(host: str | None = None, *, directory: Path | None = None) -> dict:
     """Return public identity evidence; local certificate validity does not prove device trust."""
     from . import platform
-    directory = config.TLS_DIR
-    check(host, renew=False)
+    directory = directory or config.TLS_DIR
+    _load(directory)
+    _verify(directory, host)
     ca = directory / "ca.crt"
     details = _openssl("x509", "-noout", "-dates", "-fingerprint", "-sha256",
                        "-in", directory / "server.crt").stdout.strip()
@@ -553,6 +554,33 @@ def located(found: dict) -> dict:
             "url": f"{'https' if found['tls'] else 'http'}://{address}:{found['port']}"}
 
 
+def address_view(found: dict) -> dict:
+    """Hosting facts, never proof that a browser trusts HTTPS or another device can connect."""
+    from . import platform
+    found = located(found)
+    try:
+        address = ipaddress.ip_address(found["name"])
+        scope = "local" if address.is_loopback else "private" if platform.private_address(address) else "network"
+    except ValueError:
+        scope = "local" if found["name"] == "localhost" else "private" if found["name"].endswith(
+            (".local", ".internal", ".home.arpa")) else "network"
+    listener = found["host"]
+    try:
+        bound = ipaddress.ip_address(listener)
+        exposure = "all" if bound.is_unspecified else "local" if bound.is_loopback else "private" if platform.private_address(bound) else "network"
+    except ValueError:
+        exposure = "local" if listener == "localhost" else "network"
+    return {"computer": platform.computer_name(), "host": found["host"], "port": found["port"],
+            "url": found["url"], "scope": scope, "listener_scope": exposure,
+            "packaged": config.RELEASE is not None and not platform.containerized()}
+
+
+def setup_guide() -> str:
+    """The trust guide for this release, or the source branch's for a checkout or container."""
+    reference = (config.RELEASE or {}).get("version") or config.SOURCE_BRANCH
+    return f"https://github.com/{config.ALTITUDE_REPOSITORY}/blob/{reference}/docs/SETUP.md#trust-https-on-each-device"
+
+
 def phone_address(found: dict) -> None:
     """Refuse a service a phone cannot open over HTTPS."""
     if not found["tls"]:
@@ -561,33 +589,44 @@ def phone_address(found: dict) -> None:
         raise TLSFailure(f"The Altitude service is configured for {found['host']}, which only this computer can "
                          "open. For this computer, run alt doctor and import only its public ca_cert file "
                          "using your browser's certificate settings. Sharing with another device needs the "
-                         "service's ALTITUDE_HOST set to its reachable private-network address and a service restart.")
+                         "hosting terminal to preview `alt service configure --host <private-address>`, then add "
+                         "--apply to use the reviewed address. A source deployment uses its service configuration; "
+                         "a container uses its host launcher. A VPN alone does not change this binding.")
+
+
+def verify_service(found: dict) -> None:
+    """Verify the recorded service's TLS identity and responding process without using shell overrides."""
+    ca = found["tls_dir"] / "ca.crt"
+    context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
+    _health(found, context)
+
+
+def _health(found: dict, context: ssl.SSLContext | None) -> None:
+    import json
+    import urllib.request
+    handlers = [urllib.request.ProxyHandler({})]
+    if context is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=context))
+    try:
+        with urllib.request.build_opener(*handlers).open(found["url"] + "/api/health", timeout=10) as response:
+            health = json.load(response)
+    except (OSError, ValueError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise TLSFailure(f"The Altitude service does not prove its identity at {found['url']}: {reason}.") from exc
+    if not isinstance(health, dict) or health.get("pid") != found["pid"]:
+        raise TLSFailure(f"Another process answers at {found['url']}, not the running Altitude service.")
 
 
 def _proven(found: dict) -> bytes:
     """The CA certificate the service proves it serves under: its health, fetched over HTTPS trusting only
     that certificate for the service's name, comes from the service's own process."""
-    import json
-    import urllib.request
-
     ca = found["tls_dir"] / "ca.crt"
     try:
         body = ca.read_bytes()
         context = ssl.create_default_context(cadata=body.decode())
     except (OSError, ValueError, ssl.SSLError) as exc:
         raise TLSFailure(f"Cannot read the Altitude service's CA certificate {ca}: {exc}. Run alt doctor.") from exc
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
-    try:
-        with opener.open(found["url"] + "/api/health", timeout=10) as response:
-            health = json.load(response)
-    except (OSError, ValueError) as exc:
-        reason = getattr(exc, "reason", exc)
-        if isinstance(reason, ssl.SSLCertVerificationError):
-            raise TLSFailure(f"The Altitude service at {found['url']} does not prove its identity with the CA "
-                             f"certificate {ca}: {reason.verify_message}. Run alt doctor.") from exc
-        raise TLSFailure(f"The Altitude service does not answer at {found['url']}: {reason}.") from exc
-    if not isinstance(health, dict) or health.get("pid") != found["pid"]:
-        raise TLSFailure(f"Another process answers at {found['url']}, not the running Altitude service.")
+    _health(found, context)
     return body
 
 
@@ -611,11 +650,6 @@ def profile(body: bytes, authority: dict) -> bytes:
                            "PayloadOrganization": "Altitude", "PayloadContent": [certificate],
                            "PayloadDescription": "Lets this device check that it is talking to your Altitude on "
                                                  "your own network. It holds only Altitude's public certificate."})
-
-
-def check_value(sha256: str) -> str:
-    """The last eight byte pairs of a SHA-256 fingerprint, which a device's certificate details must end with."""
-    return " ".join(sha256.split(":")[-8:])
 
 
 def fingerprint_rows(sha256: str) -> list[str]:

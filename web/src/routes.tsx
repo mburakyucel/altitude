@@ -88,6 +88,7 @@ export const routes: RouteObject[] = [
       { path: "/settings/prerequisites", element: <Settings page="prerequisites" /> },
       { path: "/settings/incident-reports", element: <Settings page="incident-reports" /> },
       { path: "/settings/devices", element: <Settings page="devices" /> },
+      { path: "/settings/network", element: <Settings page="network" /> },
       { path: "/settings/projects/:name", element: <ProjectSettings /> },
       // Last: a typo'd deep link lands on Needs you inside the shell, not on react-router's bare
       // error page outside it.

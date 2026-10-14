@@ -64,7 +64,7 @@ describe("First run", () => {
   it("lists the folders in the projects folder and keeps the browser closed", async () => {
     mockFetch();
     renderApp({ route: "/projects?step=projects" });
-    await screen.findByRole("heading", { name: "Add your projects" });
+    await screen.findByRole("heading", { name: "Add a project" });
     expect(screen.getByText("~/Projects")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add all 2" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Add project" })).toHaveLength(2);

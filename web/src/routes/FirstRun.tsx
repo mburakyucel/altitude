@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
@@ -27,8 +27,9 @@ export default function FirstRun({
   compact?: boolean;
   onStarted?: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
   if (compact || onStarted) return <Folders overview={overview} compact={compact} onStarted={onStarted} />;
-  return <Onboarding projects={<Folders overview={overview} onboarding />} />;
+  return <Onboarding busy={busy} projects={<Folders overview={overview} onboarding onBusy={setBusy} />} />;
 }
 
 function Folders({
@@ -36,11 +37,13 @@ function Folders({
   compact = false,
   onboarding = false,
   onStarted,
+  onBusy,
 }: {
   overview: UseQueryResult<Overview>;
   compact?: boolean;
   onboarding?: boolean;
   onStarted?: () => void;
+  onBusy?: (busy: boolean) => void;
 }) {
   const navigate = useNavigate();
   const client = useQueryClient();
@@ -94,6 +97,7 @@ function Folders({
     if (opened) open(opened);
   };
   const busy = add.isPending || addAll.status === "adding" || folderSave.status === "saving";
+  useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
   const empty = !overview.isPending && !overview.isError && rows.length === 0;
   const heading = overview.isPending
     ? "Looking for folders…"

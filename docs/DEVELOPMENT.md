@@ -237,10 +237,21 @@ and the TLS folder (`platform.secret_places()`), so no confined agent reads the 
 devices or the certificate keys. Altitude code that runs outside a sandbox (altd, the coordinator launch,
 doctor, the installer, the speech runtime) follows one rule: it never lists, walks or searches the home
 folder or mounted volumes, and it starts no child in the home folder; it reads only its own named paths.
-Code that must take a path the operator chose (the folder browser, project discovery and registration,
-the projects folder) asks `platform.private(path)` first, which reads each link on the way and judges
-its target before following it, so nothing inside a private place is touched.
-`tests/test_folders.py` and `tests/test_platform_darwin.py` cover the rule with fictional homes;
+Folder selection, browsing, discovery and initial registration inspect paths through the platform
+seam's shared descriptor traversal. It judges each candidate against the private policy before
+metadata lookup and pins accepted ancestors; directory type, permissions, listing and `.git`
+presence use that same namespace. Readable typed selections outside HOME remain supported, and
+browser aliases may traverse a nonprivate exterior location before returning inside HOME. Container
+containment compares inspected candidate and volume addresses. Registration checks final type
+without requiring final read/list/execute access; selection requires read/search access.
+Each caller retains its original raw/canonical alias budget, including logical expansion costs on
+completed-target reuse and a separate directory-plus-marker budget. Website traversal retains its
+strict build anchors, completed-address work bound and long-chain support. The server copy is removed.
+These operation checks do not cover later Git, hook, engine or other runtime uses of saved path strings,
+regular content modified in place or unrelated `platform.private` consumers. They do not establish a
+global native privacy boundary.
+`tests/test_folder_namespace.py`, `tests/test_folders.py`, `tests/test_static_files.py` and
+`tests/test_platform_darwin.py` cover these contracts with fictional homes and deterministic replacements;
 the [native probe](#local-checks) checks that a sandboxed read of the Desktop or `/Volumes` fails with
 "operation not permitted" and that macOS's privacy log records no request for either (macOS logs a request even when it
 already holds an answer); it reads only after Seatbelt's own verdict refuses the read, and otherwise fails
@@ -1054,6 +1065,7 @@ when the observable behavior breaks. Keep the expected result independent of the
 | Journey | Programmatic evidence | Boundary / remaining limit |
 | --- | --- | --- |
 | Private archive lifecycle | `test_installation.py`: real archives/checksums, immutable versions, install/update/uninstall retention, failed/interrupted recovery, conflicting ownership, stopped service and unsafe archive refusal. | Native service calls use deterministic fixtures; [manual installation acceptance](#installation-lifecycle-acceptance) exercises native service operations separately. An unrun workflow establishes no host evidence. |
+| Connected browser onboarding and update recovery | `onboarding.pw.ts`, `pairing.pw.ts`, `trust.pw.ts`, `setup.pw.ts`, `update-recovery.pw.ts`: real application storage/API, host trust checks, optional preferences, observed readiness, failed automatic receipt → cache-only manual repair → explicit browser retry → succeeded fixture activation. `test_address_configuration.py` injects loss after each persisted/native boundary and checks ownership, rollback, stopped state, retained CA and strict cache recovery. `test_hosting.py` binds real TLS/PID health to native fixture identity and separates listener/URL scope. | Native service/download effects remain fixtures. Manual recovery and explicit retry do not establish an unattended native automatic upgrade. Record the automatic flag, terminal receipt, new release health and replacement native PID, with preserved CA/pairing/projects, separately on the change's acceptance issue. |
 | Installed task inputs | `test_installed_runtime.py`: no-checkout configuration, real Git guards, dispatch/resume ownership and hold retention, missing-guard refusal, installed/source separation. | Engine execution is deterministic; no live provider or native Mac confinement evidence. |
 | Local HTTPS | `test_tls.py`, `test_https_server.py`: real OpenSSL identities and TLS handshakes, hostname/trust failure, permissions, renewal, key mismatch and unchanged external certificates. | Local CA validation does not prove OS/browser trust. Physical desktop/mobile browser and home-screen-app trust need separate evidence. |
 | Source TLS preparation | `test_source_tls.py`: real TLS identity and isolated files, check-only, owned override/reload verification, reset command-history metadata, actual identity/command drift, private failure diagnostics and recovery; `test_release_archive.py` verifies the standalone archive path before installation. Worker command tests preserve role denial. | Native unit/process evidence is simulated; the operator must verify actual source preservation before activation. No production services or trust stores are changed by tests. |
@@ -1387,6 +1399,12 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   byte is refused with nothing installed, and the unaltered one installs the LaunchAgent and a
   service whose HTTPS health on the generated CA reports the release's version and commit, with
   `alt doctor` passing apart from its expected findings;
+- binds a finite throwaway coordinator socket before address transactions; the disposable Mac VM
+  home stays in the launcher's guest-owned shared tree so macOS's Unix socket pathname limit is met;
+- pairs a fixture device and records one fictional project without task dispatch; previews and
+  applies IPv4/IPv6 loopback changes while running and stopped, verifies actual HTTPS/native PID,
+  later-start loading and preserved CA/keys/pairing/registration; process loss after the durable
+  settings write leaves a receipt that `alt recover` restores;
 - publishes `v0.0.2`; the daemon installs it automatically with no browser terminal open, and
   the overview reports its successful automatic installation;
 - turns automatic updates off, publishes `v0.0.3`, checks its overview, terminal notice and
@@ -1396,6 +1414,13 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   `dev.altitude.job.altitude-update-…` launchd job, which activates it and is removed;
 - turns automatic updates on and publishes `v0.0.5`, whose startup exits; automatic activation
   restores `v0.0.4`. Two subsequent checks preserve the failed attempt and make no further download;
+- creates only declared-source Python caches in the installed tree and publishes healthy `v0.0.6`;
+  its automatic preflight fails without restarting the daemon, releases its receipt/fence and
+  preserves attempt history. Explicit `alt recover --generated-bytecode` quarantines caches,
+  preserves identity/registration and does not upgrade. A second affected-cache state exercises
+  the checksum-verified standalone archive repair entry point without activation, service restart
+  or attempt-history changes; a paired explicit retry then succeeds with a
+  replacement PID and `automatic=false`. This manual recovery is distinct from unattended success;
 - uninstalls: the LaunchAgent, its launchd job and the update job are gone, settings, TLS identity
   and fictional history and project files remain.
 

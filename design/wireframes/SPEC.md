@@ -1610,43 +1610,31 @@ chevron and no sheet when exactly one project is managed and no folder is unmana
 
 ### 3.12 First run and project setup
 
-Shown on any project route when no project is managed: a centred card with five steps, **Your
-name**, **Prerequisites**, **Incident reports**, **Voice** and **Projects**. Desktop shows a numbered stepper
-(done steps ticked); phone shows "Step N of 5 · Title" and keeps the step's buttons in a sticky bar
-above the tab bar. The step is `?step=` so reload and browser Back keep the place. The name,
-incident and voice steps have **Skip**, prerequisites always allow **Continue anyway**, and every step but the
-first has **‹ Back**, which saves nothing. Each step is also
-a Settings row (§3.15), and the name reads “you” wherever none is known.
+Shown on any project route when no project is managed: a centred card with three positions,
+**Welcome**, **Coding tools**, **Project**. Desktop shows inert numbered positions, never completion
+checkmarks or clickable navigation; phone shows "Step N of 3 · Title" and keeps Back/Continue in
+a sticky bar above the tab bar. `?step=` retains the position on reload and browser Back. Optional
+name, reporting and voice link to Settings and save nothing while omitted. The name reads “you”
+wherever none is known.
 
-- **Welcome to Altitude** (name): one field filled in from the saved name, `ALTITUDE_OPERATOR` or
-  Git's `user.name`; **Continue** saves it (empty clears it). Failure: the server sentence under the
-  field, the step stays.
+- **Welcome to Altitude**: the actual daemon's hosting computer, URL and listener scope (§3.15
+  Network); loading and read failure have explicit Retry, never inferred browser-origin facts.
+  Continue opens coding tools. Optional preference links remain visible.
 - **What the agents need**: one row per doctor check (GitHub CLI, each coding agent, Git), a green
   tick when met, a red mark when unmet, a hollow mark when optional (another agent is signed in).
   An unmet row explains itself and shows the terminal command with **Copy** (then Copied); no field
   asks for a password or token. **Check again** reads again (Checking…). The primary action reads
   **Continue** when nothing is unmet, else a secondary **Continue anyway**. States: checking, read
   failed (one sentence).
-- **Report Altitude’s own faults?**: two radios, **Keep incidents on this computer** (default) and
-  **Also publish them as GitHub issues**, which reveals **Repository** filled in with Altitude's
-  repository and the note that a fork receives them instead. The note **What leaves this computer**
-  states the sanitization and whether the repository is public. Publishing reads **Save and
-  continue** (Checking… while the GitHub CLI confirms the repository); a refusal shows the server
-  sentence under the choice and keeps the step. Keeping incidents local saves nothing.
-- **Voice to text**: where this computer can run the speech model, "Voice to text runs on this
-  computer. It needs a one-time download of about 698 MB." with **Set up voice** (saves This computer
-  and starts the download, which continues in the background), **Use browser recognition instead** and
-  **Skip**; once set up or setting up, the step says so and offers **Continue**. Where it cannot run,
-  "Voice to text can’t run on this computer: <reason>." with **Use browser recognition** (or
-  **Continue** when that is already the choice). A failed save shows the server sentence and keeps the
-  step; a setup that later fails is retried from Settings and never blocks first run.
 - **Add your projects**: a **Projects folder** card with **Change…**, which opens the folder browser
   with **Use "<folder>"** in place; with two or more folders, "N folders" and **Add all N**; one row per
   folder directly inside it with **Add project**; then "A project can live anywhere: **Choose a
   folder elsewhere…**". States: looking for folders; none found (a "No folders in <projects folder>
   yet" card, pointing at Change… and Choose a folder elsewhere…); adding ("Adding 2 of 3…"); failed
   (one sentence with **Retry**, or **Retry Add all** when nothing was added; a later refusal opens
-  the added project with a toast naming the folder left out). Adding opens the first project's Setup.
+  the added project with a toast naming the folder left out). Back is disabled while accepted
+  registration is pending. Adding explains integration and the coordinator introduction's coding-account
+  allowance, then opens the first project's Setup. Optional preferences remain in Settings.
 
 The rail's **Add a folder** dialog and the phone switcher sheet show only the folder list: "Altitude
 found N folders in <projects folder>", the rows and **Choose a folder elsewhere…**; with none found,
@@ -1680,6 +1668,12 @@ guards and coordinator rows. Problems appear before healthy checks. Text and ico
 pending/running, completed, reused, not applicable, failed and input-needed results. Completed rows
 have green checks and readable labels. No percentage, simulated progress or second attention count
 is introduced. A non-Git folder says conversation is available and Git tasks are unavailable.
+Current project integration and coding-tool readings support **Open conversation** only when ready;
+that action closes Setup and focuses the existing composer without sending or launching work.
+Unmet tools link to Settings → Prerequisites; loading or failed reads never count as ready.
+For an observed non-Git **Conversation ready** folder, Git and GitHub checks concern Git task
+delivery; coding-agent checks still gate readiness. The endpoint opens the existing conversation
+and never suggests Git delivery is available without a repository.
 
 The concise explanation reads: **Setup runs automatically. If a step fails, L3 can help.**
 **Check again** refreshes observations. **Retry** repeats supported programmatic setup;
@@ -1843,7 +1837,17 @@ buttons (§3.6.1), never here. **Projects** holds **All projects**
 its page, then **Projects folder**.
 **Voice** holds **Voice input**. **Notifications** holds this device's decision alerts (below).
 **Devices and access** holds Devices, the Terminal switch and the
-read-only Network row (address and HTTPS). **Coding agents** holds Prerequisites, the Validation
+Network row (daemon URL and listener scope), opening `/settings/network`. The page shows the actual
+hosting computer, URL and listening address, with loading, failure/Retry and success states. Wildcard
+listeners read All interfaces separately from a localhost certificate URL; other-device reachability
+stays unverified. Container listeners are inside the container and host port publishing stays explicit.
+Below it, **Another device** follows the listener: local-only reads "Altitude listens only on the
+hosting computer, so other devices can’t reach it yet. Change its address under Use another device…
+below."; otherwise "Open the URL above on the other device, then trust Altitude’s certificate and pair
+it there." **Away from home** keeps an optional private VPN (such as WireGuard) separate from
+Altitude's binding, HTTPS and pairing, and **Use another device…** discloses the address change. Packaged installs show terminal preview, explicit apply and
+recovery; source/container installs link their own configuration. No browser service-control action
+is added. **Coding agents** holds Prerequisites, the Validation
 runs switch and Incident reports. **About** holds the Version rows on an installed copy. Every row
 that opens a page has a chevron; switches save in place.
 
@@ -1881,8 +1885,9 @@ the current one) with **Cancel**, focused, and a red **Remove device**; Escape c
 current device shows §3.16. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes. On the other device, open <HTTPS address> and type it." (without HTTPS: "type it on the Pair this
-device screen."), the address's QR code with "Scan with a phone to open Altitude.", "Certificate "<name>" —
-SHA-256 ends with <last 8 pairs>" (monospace) and **Make a new code**. The code never appears in a link.
+device screen."), the address's QR code with "Scan with a phone to open Altitude.", "Before trusting the
+certificate there, check it is named "<name>" with this SHA-256:" and the full SHA-256 as four monospace
+rows of eight pairs, then **Make a new code**. The code never appears in a link.
 With HTTPS, a **Certificate** card follows: "Set up HTTPS trust on Linux, macOS, iPhone, iPad or Android.
 Open a setup link and QR code here, or run `alt tls-share` on the computer running
 Altitude.", the primary **Set up a device** button, "Before trusting the downloaded certificate, check that its
@@ -2103,69 +2108,69 @@ Composer listening, denied, unavailable, cancellation and transcript states rema
 
 ### 3.16 Pair this device
 
-An unpaired browser sees one centred card instead of the app, at every route: the Altitude mark and
-**Pair this device** with three items, each with a mark (✓ done, ○ to do, a spinner while checking, ! needs
+An unpaired browser sees one centred card instead of the app, at every route: the Altitude mark,
+**Pair this device**, the lead "Altitude runs on the hosting computer. Trust its certificate, then pair
+this browser." and two items, each with a mark (✓ done, ○ to do, a spinner while checking, ! needs
 attention). Manual pairing keeps its code separate from the address. The first-browser installer
 link carries a code in a dedicated `#pair=` fragment; it is removed before router creation and
 access/trust requests, including for malformed links and already-paired browsers. Pairing opens
 the route the browser asked for, with First run when no project exists.
 
-The installer prints certificate trust and the private link before optional PATH/doctor guidance.
-The link occupies one unbroken line, followed by "Works once, for 10 minutes. Keep it private."
-and "If it expires, run ~/.local/bin/alt pair." Normal terminal/OS link handlers choose the browser
-on the viewing device; over SSH, loopback refers to that device. The installer launches no browser
-and changes no trust stores.
+The installer leads with whether Altitude is installed and running on this computer, then
+"Address: <URL> (opens only on this computer)" (or "(reachability from other devices is not checked
+here)" for a network listener) and that closing the terminal or browser leaves it running, then
+**Next:** — 1. trust the certificate, with its name, full SHA-256, file and the versioned guide; 2. open
+the private link — then "For a phone or another computer, see Settings → Network." and the optional
+terminal setup. In an SSH session with a local-only address, step 2 adds "Over SSH, use a browser on
+this computer: on the computer you are typing from, this address is not Altitude." The link occupies one unbroken line, followed by "Works once, for 10 minutes. Keep it
+private." and "If it expires, run ~/.local/bin/alt pair." Normal terminal/OS link handlers choose
+the browser on the viewing device; over SSH, loopback refers to that device. The installer
+launches no browser and changes no trust stores.
 
 The card is at most 28rem wide, with 16px outer margin and horizontal padding on phone, 24px
 card padding on desktop, and 48px controls. Text and errors wrap naturally without truncation;
 commands use monospace, setup links are underlined and buttons have a border or fill. Phone is
 390×844, desktop 1440×900; long trust instructions scroll with the page.
 
-1. **HTTPS address**: "You opened Altitude's HTTPS address.", or on the computer running Altitude over plain
-   HTTP "This is the computer running Altitude." Plain HTTP elsewhere fails with "This Altitude serves plain
-   HTTP. Pair on the computer running it."; the other items are absent.
-2. **Trust Altitude's certificate** with a pill: Not trusted yet, Checking…, Trusted or Couldn't check. The
-   computer running Altitude is Trusted at once. Elsewhere the item shows instructions for the device:
-   iPhone and iPad (including iPadOS reporting a Mac with touch) get **Download the profile**, the Profile
-   Downloaded check (one Certificate named "<CA name>", SHA-256 ending with the 8 pairs the installer
-   or `alt pair` shows, otherwise Remove and stop), the Certificate Trust Settings switch and "Come back here; this checks
-   itself."; Android gets **Download the certificate** and the CA certificate install; other browsers get
-   **Download the certificate**, the name and SHA-256 check, importing it as a trusted authority and
-   restarting the browser, and a **Setup guide** link. With a pending link, the desktop instructions
-   end with "Restart the browser, then reopen the original private link from the installer. If it
-   has expired, run ~/.local/bin/alt pair for a new code." Manual pairing keeps its reopen-page
-   guidance. The page never shows the SHA-256 itself: the
-   reference is the computer. The check runs as the page opens, whenever it becomes visible again and on
+Plain HTTP away from the hosting computer shows only "This Altitude serves plain HTTP. Pair on the
+computer running it."; plain HTTP on the hosting computer (local development) shows only the Pair item.
+
+1. **Trust Altitude's certificate** (HTTPS only) with a pill: Not trusted yet, Checking…, Trusted or
+   Couldn't check. The hosting computer follows the same check; being on it never counts as trust.
+   The instructions start with "A page opened past a certificate warning cannot prove it is Altitude.
+   Check the certificate against the hosting computer before trusting it." and then list:
+   **Download the profile** (iPhone and iPad, including iPadOS reporting a Mac with touch) or
+   **Download the certificate** (everything else); "Compare its name, “<CA name>”, and its full SHA-256
+   with the installer or alt doctor on the hosting computer. If they differ, delete the download and
+   stop."; the device's install step (Profile Downloaded and Certificate Trust Settings on
+   iPhone/iPad, CA certificate install on Android, trusted-authority import elsewhere); and the
+   reopen step. With a pending install link it reads "Restart the browser, then reopen the original
+   private link from the installer. It must open without a certificate warning. If it has expired, run
+   ~/.local/bin/alt pair for a new code."; otherwise "Restart the browser and reopen this page. It must
+   open without a certificate warning; if a warning remains, don’t pair." A versioned **Certificate
+   guide** link follows. The page never shows the SHA-256 itself: the reference is the hosting
+   computer. The check runs as the page opens, whenever it becomes visible again and on
    **Check again**; Trusted collapses the instructions. With an externally supplied certificate Altitude
-   cannot check: "Altitude can't check this automatically. Open this address in a new Private tab; if it
-   loads without a warning, tap Continue." and **Continue** marks it done.
-3. **Pair**, once the certificate is trusted: "Enter the code from `alt pair`, or from Settings › Devices on
-   a paired device.", a large monospace **Pairing code** field (one-time-code autofill), a
-   full-width **Pair** button, disabled while the field is empty, and "Each code works once, for 10
-   minutes. This device stays paired until you remove it in Settings."
-   With a pending install link, Pair instead shows a spinner and "Pairing…", with no code field
-   or button, and redeems automatically once trust completes. The managed-CA check, local exemption
-   and external-certificate Continue remain the same; plain remote HTTP never redeems the link.
-
-The iPhone/iPad trust instructions retain the complete safe sequence:
-
-1. **Download the profile**.
-2. "Open Settings › Profile Downloaded. It must list one Certificate, “<CA name>”. Tap More Details:
-   the SHA-256 must end with the 8 pairs the installer or alt pair shows on your computer. Anything
-   else: tap Remove and stop. Otherwise tap Install."
-3. "Turn it on: Settings › General › About › Certificate Trust Settings › “<CA name>”."
-4. "Come back here; this checks itself."
+   cannot check: "Altitude can’t check this automatically. Open this address in a new Private
+   tab; if it loads without a warning, tap Continue.", the guide link and **Continue**, which marks it done.
+2. **Pair this browser**, once the certificate is trusted: "On the hosting computer, run:" with the
+   command `~/.local/bin/alt pair` and **Copy**, "A paired browser can make a code in Settings →
+   Devices.", a large monospace **Pairing code** field (one-time-code autofill), a full-width **Pair**
+   button, disabled while the field is empty, and "Each code works once, for 10 minutes. This device
+   stays paired until you remove it in Settings."
+   With a pending install link, the item instead shows a spinner and "Pairing…", with no code field
+   or button, and redeems automatically once trust completes; plain remote HTTP never redeems it.
 
 | State | What appears and what actions do |
 | --- | --- |
 | Loading | The mark alone while Altitude answers whether this browser is paired. |
 | Unreachable | "Could not reach Altitude." and Retry. |
-| Local | Completed step marks, a check named Trusted, and the Pair item. |
+| Local HTTP development | No certificate claim; the Pair item. Local HTTPS follows the trust states below. |
 | Plain HTTP | ! with the plain-HTTP sentence; no other items. |
-| Not trusted yet | ○ with the device's instructions, its reason ("Not trusted yet. The usual missing step is the switch in Certificate Trust Settings." on iPhone/iPad, "…Install the certificate as a CA certificate." on Android, "…Import the certificate as a trusted authority, then restart the browser." elsewhere) and **Check again**; no Pair item. |
+| Not trusted yet | ○ with the device's instructions, its reason without repeating the pill ("The usual missing step is the switch in Certificate Trust Settings." on iPhone/iPad, "Install the certificate as a CA certificate." on Android, "Import the certificate as a trusted authority, then restart the browser." elsewhere) and **Check again**; no Pair item. |
 | Checking | A spinner named Checking… and a disabled **Check again**. |
 | Couldn't check | ! and "Couldn't check." with **Check again**, never phrased as untrusted. |
-| External certificate | ○ with the Private tab sentence and **Continue**. |
+| External certificate | ○ with the Private tab sentence, the guide link and **Continue**. |
 | Trusted | A check named Trusted, instructions collapsed, the Pair item with an empty field; Pair disabled. |
 | Typing | The field owns the dash: it keeps letters and digits, uppercased, up to eight, and shows `ABCD-` once four are typed. A typed dash or space is ignored; deleting the dash deletes the fourth character. A pasted `abcd 2345` or `ABCD-2345` shows `ABCD-2345`. An edit inside the code keeps the caret at the edit. |
 | Pairing | Pairing… and a disabled field and button. |
@@ -2180,7 +2185,7 @@ Install links add these states to the same card:
 | Initial TLS refusal | The browser's warning/error; the app cannot render or clean the link yet. Trust the checked certificate, then reopen the original link. |
 | Loading / unreachable | Existing mark and aria-busy screen; "Could not reach Altitude." with **Retry** after a failed access read. The code waits in page memory; Retry rereads access without a pair POST. |
 | Trust checking / untrusted / unknown | Existing status, device instructions and **Check again**. No Pair field or redemption while trust is pending. |
-| Trusted valid link | Completed HTTPS/trust steps and the Pair spinner with "Pairing…"; one redemption. |
+| Trusted valid link | The completed trust step and the Pair spinner with "Pairing…"; one redemption. |
 | Success / already paired | First run or the current app; the card disappears with no success dwell or new banner. Already-paired access discards the link without redemption or another device. |
 | Expired / used | "This pairing link has expired or was already used. Run ~/.local/bin/alt pair on the computer running Altitude for a new code." The link is discarded; the blank manual field and Pair button appear. |
 | Malformed | "This pairing link is not valid. Run ~/.local/bin/alt pair on the computer running Altitude for a new code." Clean URL, blank manual field, no wrong-code attempt. |

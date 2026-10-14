@@ -11,7 +11,7 @@ const overview = { projects: [{ name: "alpha", managed: false, path: "/home/ada/
 const unmet = [
   { key: "github", label: "GitHub CLI signed in", state: "unmet", detail: "Agents push branches and open pull requests through the GitHub CLI.", command: "gh auth login" },
   { key: "engine-a", label: "Engine A signed in", state: "met", detail: null, command: null },
-  { key: "engine-b", label: "Engine B not installed", state: "optional", detail: "Optional: Altitude works with any one coding agent.", command: null },
+  { key: "engine-b", label: "Engine B not installed", state: "optional", detail: "Altitude works with any one coding agent.", command: null },
   { key: "git", label: "Git installed", state: "met", detail: null, command: null },
 ];
 
@@ -20,7 +20,8 @@ type Host = HostVoice;
 function mockFetch(options: { refuseRepository?: boolean; host?: Host; backend?: "host" | "browser" } = {}) {
   const voice = { backend: options.backend ?? (options.host?.state === "unavailable" ? "browser" : "host"), selection: "fixture-1",
     host: options.host ?? { state: "absent", download_bytes: 698_435_338 } as Host };
-  const machine = { operator: "Ada Fixture" as string | null, incident_repository: null as string | null, altitude_repository: "product-fixture/altitude" };
+  const machine = { operator: "Ada Fixture" as string | null, incident_repository: null as string | null, altitude_repository: "product-fixture/altitude",
+    network: { computer: "Atlas host", host: "127.0.0.1", port: 8890, url: "https://127.0.0.1:8890", scope: "local", listener_scope: "local", state: "running", packaged: true } };
   let checks = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -57,160 +58,74 @@ const posted = (fetchMock: ReturnType<typeof mockFetch>, path: string) =>
   fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(path) && init?.method === "POST").map(([, init]) => JSON.parse(String(init?.body)));
 
 describe("First run onboarding", () => {
-  it("supported voice stays set up while a replacement downloads", async () => {
-    const fetchMock = mockFetch({ host: { state: "ready", download_bytes: 701000000,
-      update: { state: "downloading", done_bytes: 12000000, download_bytes: 40000000 } } });
-    renderApp({ route: "/projects?step=voice" });
-    expect(await screen.findByText("Voice to text runs on this computer and is set up.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Set up voice" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
-    expect(posted(fetchMock, "/api/voice/host")).toEqual([]);
-  });
-  it("starts with the name filled in, saves it on Continue and moves to the prerequisites", async () => {
+  it("leads with the host and leaves preferences optional without saving", async () => {
     const fetchMock = mockFetch();
     const { user, router } = renderApp({ route: "/projects" });
     await screen.findByRole("heading", { name: "Welcome to Altitude" });
-    const field = await screen.findByLabelText("Your name");
-    expect(field).toHaveValue("Ada Fixture");
-    expect(screen.queryByRole("button", { name: "‹ Back" })).toBeNull();
-    await user.clear(field);
-    await user.type(field, "Ada Lovelace");
+    expect(await screen.findByText("Atlas host")).toBeVisible();
+    expect(screen.queryByLabelText("Your name")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
+    await user.click(screen.getByText("Optional settings"));
+    for (const title of ["Your name", "Incident reports", "Voice input"]) expect(screen.getByRole("link", { name: title })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByRole("heading", { name: "What the agents need" });
     expect(router.state.location.search).toBe("?step=agents");
-    expect(posted(fetchMock, "/api/operator-name")).toEqual([{ name: "Ada Lovelace" }]);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([]);
   });
 
-  it("shows an unmet check with its terminal command, checks again and continues", async () => {
+  it("shows real unmet checks, copies fixes and checks again before continuing", async () => {
     mockFetch();
     const { user } = renderApp({ route: "/projects?step=agents" });
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const check = (await screen.findByText("GitHub CLI signed in")).closest(".onboarding-check") as HTMLElement;
-    expect(within(check).getByText("gh auth login")).toBeInTheDocument();
-    expect(within(check).getByText(/needs attention/)).toBeInTheDocument();
-    expect(screen.getByText("Engine B not installed")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(within(check).getByText("Needs attention")).toBeVisible();
+    expect(screen.getByText("Optional")).toBeVisible();
     await user.click(within(check).getByRole("button", { name: "Copy" }));
     expect(writeText).toHaveBeenCalledWith("gh auth login");
-    expect(await within(check).findByRole("button", { name: "Copied" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue anyway" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Choose a project anyway" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Check again" }));
     await waitFor(() => expect(screen.queryByText("gh auth login")).toBeNull());
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByRole("heading", { name: "Report Altitude’s own faults?" });
+    await screen.findByRole("heading", { name: "Add a project" });
+    expect(screen.getByText(/Setup may start the coordinator’s first introduction/)).toBeVisible();
   });
 
-  it("keeps incidents local by default and skipping publishes nothing", async () => {
-    const fetchMock = mockFetch();
-    const { user } = renderApp({ route: "/projects?step=incidents" });
-    expect(await screen.findByRole("radio", { name: "Keep incidents on this computer" })).toBeChecked();
-    expect(screen.queryByLabelText("Repository")).toBeNull();
-    expect(screen.getByText(/Only the system-level cause and a fictional or redacted/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByRole("heading", { name: "Voice to text" });
-    expect(posted(fetchMock, "/api/incident-reports")).toEqual([]);
-  });
-
-  it("fills in Altitude's repository when publishing is turned on and saves a fork", async () => {
-    const fetchMock = mockFetch();
-    const { user } = renderApp({ route: "/projects?step=incidents" });
-    await user.click(await screen.findByRole("radio", { name: "Also publish them as GitHub issues" }));
-    const repository = screen.getByLabelText("Repository");
-    expect(repository).toHaveValue("product-fixture/altitude");
-    expect(screen.getByText(/Altitude’s repository is public/)).toBeInTheDocument();
-    await user.clear(repository);
-    await user.type(repository, "fork-fixture/altitude");
-    await user.click(screen.getByRole("button", { name: "Save and continue" }));
-    await screen.findByRole("heading", { name: "Voice to text" });
-    expect(posted(fetchMock, "/api/incident-reports")).toEqual([{ repository: "fork-fixture/altitude" }]);
-  });
-
-  it("keeps a refused repository on the step with the server's reason", async () => {
-    mockFetch({ refuseRepository: true });
-    const { user } = renderApp({ route: "/projects?step=incidents" });
-    await user.click(await screen.findByRole("radio", { name: "Also publish them as GitHub issues" }));
-    await user.click(screen.getByRole("button", { name: "Save and continue" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("cannot see product-fixture/altitude");
-    expect(screen.getByRole("heading", { name: "Report Altitude’s own faults?" })).toBeInTheDocument();
-  });
-
-  it("skips each step and goes back without saving", async () => {
+  it("uses inert position numbers after moving forward or back, never completion checks", async () => {
     const fetchMock = mockFetch();
     const { user, router } = renderApp({ route: "/projects" });
-    await screen.findByLabelText("Your name");
-    await user.click(screen.getByRole("button", { name: "Skip" }));
-    await user.click(await screen.findByRole("button", { name: "Continue anyway" }));
-    await user.click(await screen.findByRole("button", { name: "Skip" }));
-    await screen.findByRole("heading", { name: "Voice to text" });
-    await user.click(await screen.findByRole("button", { name: "Skip" }));
-    await screen.findByRole("heading", { name: "Add your projects" });
-    expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "Continue" }));
+    await user.click(await screen.findByRole("button", { name: "Choose a project anyway" }));
+    await screen.findByRole("heading", { name: "Add a project" });
+    const positions = screen.getByRole("list", { name: "Step 3 of 3" });
+    expect(positions).toHaveTextContent("1Your Altitude2Coding tools3Project");
+    expect(within(positions).queryByRole("button")).toBeNull();
+    expect(within(positions).queryByText("✓")).toBeNull();
     await user.click(screen.getByRole("button", { name: "‹ Back" }));
-    expect(router.state.location.search).toBe("?step=voice");
-    expect(posted(fetchMock, "/api/operator-name")).toEqual([]);
-    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).includes("/api/voice") && init?.method === "POST")).toEqual([]);
+    expect(router.state.location.search).toBe("?step=agents");
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([]);
   });
 
-  it("offers the one-time voice download, starts it in the background and moves on", async () => {
-    const fetchMock = mockFetch();
-    const { user, router } = renderApp({ route: "/projects?step=voice" });
-    expect(await screen.findByText("Voice to text runs on this computer. It needs a one-time download of about 698 MB.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Use browser recognition instead" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Set up voice" }));
-    await screen.findByRole("heading", { name: "Add your projects" });
-    expect(router.state.location.search).toBe("?step=projects");
-    expect(posted(fetchMock, "/api/voice/host")).toEqual([{ action: "setup" }]);
-    expect(posted(fetchMock, "/api/voice")).toEqual([]);
-    await user.click(screen.getByRole("button", { name: "‹ Back" }));
-    expect(await screen.findByText("Voice to text is being set up on this computer. It continues in the background.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Set up voice" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByRole("heading", { name: "Add your projects" });
-  });
-
-  it("chooses browser recognition instead, and setting up from browser selects this computer first", async () => {
-    const fetchMock = mockFetch();
-    const { user } = renderApp({ route: "/projects?step=voice" });
-    await user.click(await screen.findByRole("button", { name: "Use browser recognition instead" }));
-    await screen.findByRole("heading", { name: "Add your projects" });
-    expect(posted(fetchMock, "/api/voice")).toEqual([{ backend: "browser", selection: "fixture-1" }]);
-    await user.click(screen.getByRole("button", { name: "‹ Back" }));
-    await user.click(await screen.findByRole("button", { name: "Set up voice" }));
-    await screen.findByRole("heading", { name: "Add your projects" });
-    expect(posted(fetchMock, "/api/voice").at(-1)).toEqual({ backend: "host", selection: "fixture-browser" });
-    expect(posted(fetchMock, "/api/voice/host")).toEqual([{ action: "setup" }]);
-  });
-
-  it("says when voice cannot run on this computer and keeps browser recognition", async () => {
-    mockFetch({ host: { state: "unavailable", reason: "voice runs on Linux x86_64 and on Macs with Apple silicon" } });
-    const { user } = renderApp({ route: "/projects?step=voice" });
-    expect(await screen.findByText("Voice to text can’t run on this computer: voice runs on Linux x86_64 and on Macs with Apple silicon.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Set up voice|Use browser recognition/ })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByRole("heading", { name: "Add your projects" });
-  });
-
-  it("keeps the step and its choices when setup cannot start", async () => {
+  it("never claims readiness on a failed prerequisite read, but permits project selection", async () => {
     const fetchMock = mockFetch();
     const answer = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (input, init) => String(input).endsWith("/api/voice/host") ? response({ error: "Voice setup could not start." }, 503) : answer(input, init));
-    const { user } = renderApp({ route: "/projects?step=voice" });
-    await user.click(await screen.findByRole("button", { name: "Set up voice" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Voice setup could not start.");
-    await user.click(screen.getByRole("button", { name: "Skip" }));
-    await screen.findByRole("heading", { name: "Add your projects" });
+    fetchMock.mockImplementation(async (input, init) => String(input).includes("/api/prerequisites") ? response({ error: "Tools unavailable" }, 503) : answer(input, init));
+    const { user } = renderApp({ route: "/projects?step=agents" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not check coding tools");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Choose a project anyway" }));
+    await screen.findByRole("heading", { name: "Add a project" });
   });
 
-  it("keeps Skip when the machine settings cannot be read", async () => {
-    mockFetch();
-    const fetchMock = vi.mocked(fetch);
+  it("keeps Continue when the address cannot be read and never invents an origin", async () => {
+    const fetchMock = mockFetch();
     const answer = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation(async (input, init) => String(input).includes("/api/machine") ? response({ error: "unavailable" }, 503) : answer(input, init));
     const { user } = renderApp({ route: "/projects" });
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not load this setting.");
-    await user.click(screen.getByRole("button", { name: "Skip" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not read service address");
+    expect(screen.queryByRole("link", { name: /^https?:/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByRole("heading", { name: "What the agents need" });
   });
 });

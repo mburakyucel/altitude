@@ -151,37 +151,50 @@ result = json.load(open(sys.argv[1]))
 home = os.path.expanduser("~")
 tilde = lambda path: "~" + path[len(home):] if path.startswith(home + "/") else path
 trust = result.get("trust") or {}
-print(f"\nAltitude {result['version']} is installed and its service is {result['service']}.")
-print(f"  Address: {result['url']}")
-if trust.get("ca_sha256"):
-    print(f"  Certificate authority: {tilde(trust['ca_cert'])}")
-    print(f"  Certificate name: {trust['ca_name']}")
-    print(f"  Its fingerprint: {trust['ca_sha256'].split('=', 1)[-1]}")
+local = (result.get("network") or {}).get("listener_scope") == "local"
+if result["service"] == "running":
+    print(f"\nAltitude {result['version']} is installed and running in the background on this computer.")
+else:
+    print(f"\nAltitude {result['version']} is installed on this computer; its service is stopped.")
+print(f"Address: {result['url']} ({'opens only on this computer' if local else 'reachability from other devices is not checked here'})")
+if result["service"] == "running":
+    print("Closing this terminal or the browser leaves it running.")
+else:
+    print("Start it with ~/.local/bin/alt service start.")
+if result.get("lifecycle"):
+    print(result["lifecycle"])
 if result.get("lingering"):
-    print(f"\n{result['lingering']['detail']}")
+    print(result["lingering"]["detail"])
 print("\nNext:")
 if trust.get("ca_sha256"):
-    print("  1. Trust the certificate authority in your browser, comparing its name and fingerprint above:")
+    print("  1. Trust Altitude's certificate in your browser. Before trusting it, check it shows:")
+    print(f"       Name:    {trust['ca_name']}")
+    print(f"       SHA-256: {trust['ca_sha256'].split('=', 1)[-1]}")
+    print(f"     Certificate file: {tilde(trust['ca_cert'])}")
+    print(f"     How to trust it: {sys.argv[2]}")
 else:
-    print("  1. Verify the HTTPS address opens in a new Private tab without a certificate warning:")
-print(f"       {sys.argv[2]}")
+    print("  1. Check that the address opens in a new private window without a certificate warning:")
+    print(f"       {sys.argv[2]}")
 pairing = result.get("pairing")
 if pairing:
-    print("  2. Open this private link to pair your browser and continue to First run:")
+    print("  2. Open Altitude with this private link. It pairs this browser and opens First run:")
     print(f"       {pairing['url']}")
     print(f"     Works once, for {pairing['minutes']} minutes. Keep it private.")
     print("     If it expires, run ~/.local/bin/alt pair.")
 else:
-    print("  2. Open the address; First run walks you through the rest.")
+    print(f"  2. Open Altitude: {result['url']}")
     if result.get("pairing_error"):
         print(f"     {result['pairing_error']}")
     else:
         print("     If it asks for a code, use a still-valid code or run ~/.local/bin/alt pair.")
         print("     Making a new code replaces any earlier one.")
-print("\nTerminal setup (optional now):")
+if local and os.environ.get("SSH_CONNECTION"):
+    print("     Over SSH, use a browser on this computer: on the computer you are typing from, this address is not Altitude.")
+print("\nFor a phone or another computer, see Settings → Network.")
+print("\nTerminal (optional):")
 if os.path.join(home, ".local/bin") not in os.environ.get("PATH", "").split(os.pathsep):
-    print('  Put alt on your PATH (add this line to your shell profile too):\n    export PATH="$HOME/.local/bin:$PATH"')
-print("  Check tools and sign-ins with alt doctor.")
+    print('  To use alt by name in new shells, add this line to your shell profile:\n    export PATH="$HOME/.local/bin:$PATH"')
+print("  alt doctor shows where Altitude runs and what is left to set up; alt service stop stops it.")
 EOF
 }
 

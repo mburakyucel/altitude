@@ -5,7 +5,7 @@
 .pair-card h1 { font-size: 1.375rem; font-weight: 600; }
 .pair-lead { color: var(--text-secondary); line-height: 1.55; }
 .pair-removed { padding: 10px 12px; border-radius: var(--radius-card); background: var(--bubble); color: var(--text-primary); font-size: var(--text-meta); }
-/* Three items, each with its mark: ✓ done, ○ to do, a spinner while checking, ! needs attention. */
+/* Trust and pairing, with marks for observed states. */
 .pair-steps { display: flex; flex-direction: column; }
 .pair-step { display: flex; gap: 12px; align-items: flex-start; padding: 14px 0; }
 .pair-step + .pair-step { border-top: 1px solid var(--hairline); }
