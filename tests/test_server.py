@@ -8,10 +8,11 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.support import AltitudeCase
 from tests.test_monitor_view import write_quota
-from altitude import config, route, server, state as S, tasks as T
+from altitude import config, engines, route, server, state as S, tasks as T
 
 
 class TestRepository(AltitudeCase):
@@ -53,6 +54,12 @@ class TestOverview(AltitudeCase):
     def test_no_reading_at_all_is_a_row_without_a_figure(self):
         for row in self._engines():
             self.assertEqual((row["week"], row["known"], row["stale"], row["at"]), (None, False, False, None))
+
+    def test_an_engine_whose_executable_is_missing_reads_not_installed(self):
+        first, *rest = config.ENGINES
+        with mock.patch.object(engines, "installation", side_effect=lambda engine: {"available": False if engine == first else None, "why": "fixture"}):
+            rows = {row["engine"]: row["installed"] for row in self._engines()}
+        self.assertEqual(rows, {first: False, **{engine: True for engine in rest}})
 
     def test_fresh_readings_carry_the_weekly_figure_and_their_time(self):
         at = int(time.time())

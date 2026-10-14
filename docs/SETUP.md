@@ -65,9 +65,11 @@ Closing the terminal or the browser leaves the service running.
 
 The installer opens no browser and changes no trust stores. Clicking the link uses the terminal
 or operating system's normal link handler, usually the default browser; some terminals require
-a modifier click. Over SSH, that browser opens on the device viewing the terminal:
-`127.0.0.1` refers to that device, not the server. Remote use needs the configured reachable
-address, its certificate trust and network access; the installer creates no tunnel.
+a modifier click. Over SSH, that browser opens on the device viewing the terminal, where
+`127.0.0.1` refers to that device, not the server, so the installer prints the tunnel to run on your own
+computer first, `ssh -L 8890:127.0.0.1:8890 <this server>` with the installed port; the link then opens
+there. The installer creates no tunnel itself. Lasting remote use needs the configured reachable
+address, its certificate trust and network access.
 
 Reruns and updates retain paired devices and existing codes and print no new pairing link.
 A fresh installation retaining an unexpired manual code leaves it intact; run
@@ -82,9 +84,11 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 `alt doctor` and `alt service status` lead with whether the service runs, its actual address and
-which devices can reach it, verified against the native process and TLS health, then the next
-action. They separate the saved configuration from shell overrides they ignore. `alt doctor` also
-checks tools and sign-ins, shows the command that fixes each failure and counts paired browsers;
+which devices can reach it, verified against the native process and TLS health. They separate the
+saved configuration from shell overrides they ignore. `alt doctor` then names the one next step from
+current state: the installer's private link while it still works, else trusting the certificate and
+running `alt pair` until a browser is paired, then the first missing tool with its command, such as
+a coding agent to install. It also checks tools and sign-ins, shows the command that fixes each failure and counts paired browsers;
 `--json` gives structured output for automation. Neither can see whether your browsers trust
 Altitude's certificate or whether a coding provider accepts your account.
 
@@ -325,14 +329,18 @@ Positions do not claim that skipped or unmet work is complete:
 | Step | What it does |
 | --- | --- |
 | **Welcome** | Explains the actual hosting computer, service URL and local/private access. |
-| **What the agents need** | Checks that GitHub CLI and a coding agent are signed in, showing the command to run in a terminal for anything missing. The browser never asks for a password or token. |
+| **What the agents need** | Checks that GitHub CLI and a coding agent are signed in, and on Linux that the agent sandbox is installed, showing the command to run in a terminal for anything missing. With no coding agent installed, one row offers each agent's install command; one is enough. The browser never asks for a password or token. |
 | **Add your projects** | Lists the folders inside your projects folder (`~/Projects` unless you pick another). **Add project** registers one and opens its Setup. |
 
 Name, incident reporting and voice remain optional links to Settings. Skipping preference setup
 does not write choices or mark tools ready. Tool checks show required, optional, unmet and failed
 readings; refresh them after completing the displayed hosting-terminal commands. Registering a
 project enables integration and starts its coordinator's introduction using the coding account's
-allowance. Project Setup observes integration and tool readiness, then offers **Open conversation**;
+allowance. Until a coding tool the coordinator may use is installed, signed in and, on Linux, has its
+sandbox, Setup shows the coordinator **Waiting** with the step still missing and starts the introduction
+by itself once it is ready. A local repository without a GitHub remote shows the command that
+publishes it, `gh repo create --source . --push`, since agents deliver through pull requests.
+Project Setup observes integration and tool readiness, then offers **Open conversation**;
 that action focuses the composer without starting a task. Remaining blockers link to their fix.
 A non-Git folder can be conversation-ready with a ready coding agent; Git/GitHub checks concern
 Git task delivery. No task delivery is offered without a repository.

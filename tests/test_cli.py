@@ -8,7 +8,7 @@ import urllib.request
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase
-from altitude import tls
+from altitude import config, tls
 
 
 class Sent(Exception):
@@ -43,3 +43,17 @@ class TestServicePayload(AltitudeCase):
         self.assertEqual(self.sent("issue", "new", "--title", "T", "-"), ("issue", base))
         self.assertEqual(self.sent("issue", "new", "--title", "T", "--label", "bug", "-"),
                          ("issue", {**base, "labels": ["bug"]}))
+
+
+class TestVersion(AltitudeCase):
+    def version(self, release) -> str:
+        output = io.StringIO()
+        with mock.patch.object(config, "RELEASE", release), mock.patch("sys.stdout", output), \
+                self.assertRaises(SystemExit) as done:
+            runpy.run_path(str(ALT))["main"](["--version"])
+        self.assertEqual(done.exception.code, 0)
+        return output.getvalue()
+
+    def test_version_prints_the_installed_release_or_says_source_checkout(self):
+        self.assertEqual(self.version({"version": "v9.8.7"}), "alt v9.8.7\n")
+        self.assertEqual(self.version(None), "alt source checkout\n")

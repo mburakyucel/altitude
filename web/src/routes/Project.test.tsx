@@ -73,7 +73,7 @@ const chatView = {
   l3: { session_id: "abcdef1234567890" },
 };
 
-type Fixtures = { overview?: unknown; project?: unknown; chat?: unknown };
+type Fixtures = { overview?: unknown; project?: unknown; chat?: unknown; setup?: unknown };
 
 function mockFetch(fixtures: Fixtures = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
@@ -82,6 +82,7 @@ function mockFetch(fixtures: Fixtures = {}) {
     if (url.includes("/api/project/sibling")) return jsonResponse({ ...project, name: "sibling" });
     if (url.includes("/api/project/altitude")) return jsonResponse(fixtures.project ?? project);
     if (url.includes("/api/chat/")) return jsonResponse(fixtures.chat ?? chatView);
+    if (url.includes("/api/setup/") && fixtures.setup) return jsonResponse(fixtures.setup);
     if (url.includes("/api/task/action")) return jsonResponse({ ok: true });
     if (url.includes("/api/l2/message")) return jsonResponse({ ok: true });
     if (url.includes("/api/l3/")) return jsonResponse({ ok: true });
@@ -165,6 +166,20 @@ describe("Project page", () => {
     await screen.findByText("L3 has not started");
     await user.click(screen.getByRole("button", { name: "Start L3" }));
     await waitFor(() => expect(posted(fetchMock, "/api/l3/start")).toEqual({ project: "altitude" }));
+  });
+
+  it("offers no Start L3 while setup waits for a coding tool", async () => {
+    mockFetch({
+      project: { ...project, l3: {} },
+      chat: { ...chatView, history: [], l3: {} },
+      setup: { project: "altitude", status: "waiting", steps: [{ id: "coordinator", label: "Coordinator", status: "waiting",
+        detail: "Waiting for a coding tool. Install Alpha (Coding tools), and setup continues by itself.", action: "tools" }] },
+    });
+    renderApp({ route: "/projects/altitude" });
+
+    await screen.findByText("L3 waits for a coding tool");
+    expect(await screen.findByText("L3 starts by itself once a coding tool is ready.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start L3" })).not.toBeInTheDocument();
   });
 
   it("shows the read error in the status line and keeps the conversation", async () => {

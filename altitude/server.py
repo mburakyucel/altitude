@@ -764,10 +764,6 @@ def start_l3(project: str) -> None:
         if held:
             project_setup.save(project, start_requested=True)
             return  # Setup maintenance retries this unclaimed first turn after host continuation.
-        if project_setup.missing_tool(project):
-            # Setup shows it waiting and starts it once a coding tool is installed; a failure it supersedes is cleared.
-            project_setup.save(project, start_requested=True, intro=None)
-            return
         _start_l3(project)
 
 
@@ -776,6 +772,11 @@ def _start_l3(project: str) -> None:
             and (l3.info(project).get("turns") or any(row.get("role") == "assistant" for row in l3.chat_history(project)))):
         if l3.has_queued_turn(project):
             request_l3_drain(project)
+        return
+    if project_setup.missing_tool(project):
+        # Setup shows the first conversation waiting and starts it once a coding tool is ready; a failure it
+        # supersedes is cleared, so the start continues by itself.
+        project_setup.save(project, start_requested=True, intro=None)
         return
     # The start reply belongs to the operator's conversation.
     project_setup.save(project, intro={"state": "running", "at": S.now()})

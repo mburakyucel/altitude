@@ -7,15 +7,15 @@ from altitude import config, engines, incidents, installation, l3, platform, pro
 
 def main():
     configure()
-    installed = False
+    installed, sandbox = False, False
     engines.installation = lambda engine: {"available": installed and engine == config.ENGINES[0],
                                            "why": "deterministic browser engine fixture"}
     engines.common.installation = engines.installation
     engines.sign_in = lambda engine: {"signed_in": installed and engine == config.ENGINES[0],
                                       "command": engines.SIGN_IN[engine][1]}
     installation._gh_signed_in = lambda: True
-    platform.sandbox_tool = lambda: {"enabled": False, "command": "sudo apt install bubblewrap",
-                                     "detail": "Install bubblewrap (sudo apt install bubblewrap)"}
+    platform.sandbox_tool = lambda: {"enabled": sandbox, "command": "sudo apt install bubblewrap",
+                                     "detail": "/usr/bin/bwrap" if sandbox else "Install bubblewrap (sudo apt install bubblewrap)"}
     platform.validation_unavailable = lambda: "validation runs need podman and slirp4netns on this computer"
     engines.claude_print = lambda _prompt, **_options: {"text": "The project conversation is ready.",
                                                          "session_id": "fixture-first-timer-session"}
@@ -35,9 +35,10 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
-            nonlocal installed
-            if self.path == "/fixture/install-tool":
-                installed = True
+            nonlocal installed, sandbox
+            if self.path in ("/fixture/install-agent", "/fixture/install-sandbox"):
+                installed = installed or self.path.endswith("agent")
+                sandbox = sandbox or self.path.endswith("sandbox")
                 # The daemon's next setup check, as its project tick runs it.
                 project_setup.maintain("atlas")
                 with server._bg_guard:

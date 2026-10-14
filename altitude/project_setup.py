@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, engines, git_policy, l3, state as S, storage, tasks as T
+from . import config, engines, git_policy, l3, platform, route, state as S, storage, tasks as T
 
 
 GITHUB_CREATE = "gh repo create --source . --push"
@@ -132,13 +132,20 @@ def _repository(project: str) -> tuple[dict, bool]:
 
 
 def missing_tool(project: str) -> str | None:
-    """The coding tool to install when none the coordinator may use is installed, in First run's order;
-    None when one is installed or the first turn waits for something else, such as a usage limit."""
-    choice = l3._select(project)
-    routed = {row["engine"] for row in choice.get("held") or []}
-    if choice.get("engine") or not routed or any(engines.installation(engine)["available"] is not False for engine in routed):
+    """What the first conversation waits for while no coding tool the coordinator may use can run, as the step
+    Coding tools shows for it: install the first one, sign in to an installed one, or add the agent sandbox.
+    None once one is ready; usage limits and provider refusals are the turn's own outcomes."""
+    routed = route.routed_engines("l3", config.project(project))
+    installed = [engine for engine in routed if engines.installation(engine)["available"] is not False]
+    signed = [engine for engine in installed if engines.sign_in(engine)["signed_in"]]
+    sandbox = platform.sandbox_tool()
+    if any(not engines.common.implementation(engine).JOB_PROFILE or not sandbox or sandbox["enabled"] for engine in signed):
         return None
-    return next(config.ENGINE_LABELS[engine] for engine in config.ENGINES if engine in routed)
+    if signed:
+        return "Install the agent sandbox"
+    if installed:
+        return f"Sign in to {config.ENGINE_LABELS[installed[0]]}"
+    return f"Install {config.ENGINE_LABELS[routed[0]]}" if routed else None
 
 
 def _coordinator(project: str, record: dict) -> dict:
@@ -163,10 +170,10 @@ def _coordinator(project: str, record: dict) -> dict:
         return _step("coordinator", "Coordinator", "complete" if intro.get("state") == "complete" else "reused",
                      "First conversation ready." if intro.get("state") == "complete" else "Using the existing conversation and command connection.")
     if record.get("start_requested"):
-        tool = None if intro else missing_tool(project)
-        if tool:
+        step = None if intro else missing_tool(project)
+        if step:
             return _step("coordinator", "Coordinator", "waiting",
-                         f"Waiting for a coding tool. Install {tool} (Coding tools), and setup continues by itself.", action="tools")
+                         f"Waiting for a coding tool. {step} (Coding tools), and setup continues by itself.", action="tools")
         return _step("coordinator", "Coordinator", "pending", "Command connection ready; the first conversation is pending.")
     return _step("coordinator", "Coordinator", "complete", "Command connection ready. Open the conversation to speak with L3.")
 

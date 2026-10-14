@@ -1,6 +1,7 @@
 # Altitude CLI
 
-`bin/alt` is the one engine-neutral door into Altitude. `--project <name>` or
+`bin/alt` is the one engine-neutral door into Altitude. `alt --version` prints the installed release
+(`alt source checkout` from a checkout). `--project <name>` or
 `ALTITUDE_PROJECT=<name>` selects a project. Commands that change task state are validated against the
 task record and current attempt under the project lock.
 
@@ -790,7 +791,10 @@ including any merge hold.
 ## Device pairing
 
 `alt doctor` leads with the owned service's hosting computer, verified URL and listener exposure,
-then tool readiness, the paired-browser count and explicit unknown browser-trust/provider states.
+then one next step from current state (the installer's private link while it works, trusting the
+certificate and `alt pair` until a browser is paired, then the first missing tool with its command),
+then tool readiness including a coding agent, the paired-browser count, the browser-trust state until a
+browser is paired, and the unknown provider state.
 `alt doctor --json` retains
 structured diagnostics. `alt service status` uses the same hosting reading;
 `alt service status --json` includes service-manager details and hosting facts. Conflicting shell
@@ -813,7 +817,8 @@ automatic attempt.
 
 `alt pair` prints a one-time code that pairs one browser with Altitude, the running service's
 address to open on that browser (or the reason there is none), a QR code of that address when a
-phone can reach it, and the CA's name and full SHA-256 to compare independently before
+phone can reach it (for a local-only address, the line "Other devices can't reach this address yet — see
+Settings → Network."), and the CA's name and full SHA-256 to compare independently before
 installing it. The code never appears in a link. It writes the code straight to the private access store, so it
 works over SSH and without a browser; only the operator runs it, and L2 and L3 are refused. A code
 works once, for ten minutes; a new code cancels the previous one and five wrong codes cancel it.

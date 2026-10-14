@@ -43,18 +43,41 @@ class Hosting(ProbeCase):
         self.patch(access, "DIR", self.tmp / "no-paired-browsers")
         with mock.patch.object(installation, "_gh_signed_in", return_value=False):
             report = installation.doctor()
-        self.assertEqual(report["pairing"], {"paired": 0})
-        self.assertIn("Browser pairing: no browser is paired yet; trust the certificate, then run alt pair.",
-                      installation.describe_doctor(report))
+        self.assertEqual(report["pairing"], {"paired": 0, "code_expires": None})
+        text = installation.describe_doctor(report)
+        self.assertIn("Browser pairing: no browser is paired yet.", text)
+        self.assertIn("Browser certificate trust: unverified until a browser opens Altitude without a warning.", text)
         two = [{"id": "a"}, {"id": "b"}]
         with mock.patch.object(installation, "_gh_signed_in", return_value=False), \
                 mock.patch.object(access, "devices", return_value=two):
             text = installation.describe_doctor(installation.doctor())
         self.assertIn("Browser pairing: 2 browsers paired; alt pair prints a code for another.", text)
+        self.assertNotIn("Browser certificate trust", text, "a paired browser already trusts the certificate")
         with mock.patch.object(installation, "_gh_signed_in", return_value=False), \
                 mock.patch.object(access, "devices", side_effect=ValueError("Pairing data is invalid; the file is retained.")):
             text = installation.describe_doctor(installation.doctor())
         self.assertIn("Browser pairing: unknown; Pairing data is invalid; the file is retained.", text)
+
+    def test_doctor_next_follows_the_first_unfinished_step(self):
+        self.patch(access, "DIR", self.tmp / "pairing")
+        self.patch(installation, "_gh_signed_in", return_value=True)
+        missing = {"key": "agents", "label": "Install at least one coding agent: Alpha or Beta", "state": "unmet",
+                   "command": None, "options": [{"label": "Alpha", "command": "alpha-install"}]}
+        self.patch(installation, "prerequisites", return_value=[missing])
+        access.issue_code()
+        first = installation.describe_doctor(installation.doctor())
+        self.assertRegex(first, r"Next: open the private link the installer printed\. It works once, until .+\.")
+        self.assertNotIn("Next: open the URL for browser setup.", first)
+        self.patch(access, "code_expires", return_value=None)
+        self.assertIn("Next: compare the certificate below with what your browser shows, trust it, then run alt pair.",
+                      installation.describe_doctor(installation.doctor()))
+        self.patch(access, "devices", return_value=[{"id": "a"}])
+        report = installation.doctor()
+        self.assertEqual(report["next"], ["Next: Install at least one coding agent: Alpha or Beta.", "  Alpha: alpha-install"])
+        self.assertIn({"name": "coding agent", "state": "unavailable",
+                       "detail": "Install at least one coding agent: Alpha or Beta; Alpha: alpha-install"}, report["checks"])
+        installation.prerequisites.return_value = []
+        self.assertEqual(installation.doctor()["next"], ["Next: nothing is left to set up; open Altitude in your browser."])
 
     def test_stopped_address_is_configured_and_never_probed(self):
         self.native["ActiveState"] = "inactive"

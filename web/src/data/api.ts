@@ -1572,6 +1572,11 @@ export function useSetup(project: string) {
   });
 }
 
+/** Whether setup holds the first conversation until a coding tool is ready; Start L3 would only wait the same way. */
+export function useWaitsForTool(project: string) {
+  return useSetup(project).data?.steps.find((step) => step.id === "coordinator")?.status === "waiting";
+}
+
 export function useSetupAction(project: string) {
   const client = useQueryClient();
   return useMutation({

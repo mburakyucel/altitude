@@ -561,13 +561,16 @@ class AltitudeCase(unittest.TestCase):
             return tasks.set_hold_merge(project, slug, why)
 
     def quiet_engines(self, agents: list[dict] | None = None) -> None:
-        """No usage hold, known quota, and only the given Claude agents: the dispatcher sees a free machine."""
+        """No usage hold, known quota, signed-in engines, an installed sandbox and only the given Claude agents: the
+        dispatcher sees a free machine."""
         agents_fixture = self.patch(engines, "claude_agents", return_value=list(agents or []))
         self.patch(engines.claude, "claude_agents", new=agents_fixture)
         hold = self.patch(engines, "usage_hold", return_value=None)
         self.patch(engines.common, "usage_hold", new=hold)
         installation = self.patch(engines, "installation", return_value={"available": None, "why": "test installation"})
         self.patch(engines.common, "installation", new=installation)
+        self.patch(engines, "sign_in", side_effect=lambda engine: {"signed_in": True, "command": engines.SIGN_IN[engine][1]})
+        self.patch(platform, "sandbox_tool", return_value={"enabled": True, "command": None, "detail": "test sandbox"})
         self.patch(monitor, "quota", return_value={"known": True})
 
     def private_ledgers(self) -> None:

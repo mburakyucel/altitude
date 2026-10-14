@@ -409,6 +409,14 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
         return {**empty, "why": str(exc)}
 
 
+def routed_engines(role: str, project: dict) -> list[str]:
+    """The engines this role's choice, pin or routing tiers may use, in configured engine order."""
+    pin = config.pinned_option(role, project)
+    choice = config.role_choice(role, project) or {}
+    named = {option["engine"] for tier in ([[pin]] if pin else config.role_routing(role, project)) for option in tier}
+    return [engine for engine in config.ENGINES if engine in named or engine == choice.get("engine")]
+
+
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,
                 project: dict | None = None, current: str | None = None,
                 current_model: str | None = None, excluded: tuple = (), effort: str | None = None,

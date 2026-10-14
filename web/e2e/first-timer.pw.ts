@@ -8,7 +8,7 @@ test.setTimeout(60_000);
 const setupPanel = (page: Page) => page.getByRole("dialog", { name: "Project setup" });
 const step = (panel: Locator, label: string) => panel.getByRole("listitem").filter({ has: panel.page().getByRole("heading", { name: label, exact: true }) });
 
-test("a fresh computer names one coding agent and the sandbox, and setup waits for the tool, then continues by itself", async ({ page, request, service }, info) => {
+test("a fresh computer names one coding agent and the sandbox, and setup waits until a tool is ready, then continues by itself", async ({ page, request, service }, info) => {
   const walk = walkthrough(page, info);
   const firstRun = page.getByRole("region", { name: "First run" });
   await walk.open(`${service}/projects`);
@@ -33,14 +33,23 @@ test("a fresh computer names one coding agent and the sandbox, and setup waits f
       coordinator.getByText("Waiting for a coding tool. Install Claude (Coding tools), and setup continues by itself."),
       coordinator.getByRole("link", { name: "Coding tools" }),
       repository.getByText("This repository isn't on GitHub yet. Agents deliver through pull requests:"),
-      repository.getByText("gh repo create --source . --push")],
-    hidden: [coordinator.getByText("Failed", { exact: true }), panel.getByText(/engine hold/), panel.getByText(/Discuss with L3/)],
+      repository.getByText("gh repo create --source . --push"), page.getByText("L3 starts by itself once a coding tool is ready.")],
+    hidden: [coordinator.getByText("Failed", { exact: true }), panel.getByText(/engine hold/), panel.getByText(/Discuss with L3/),
+      page.getByRole("button", { name: "Start L3" })],
   });
   const before = await (await request.get(`${service}/fixture/evidence`)).json();
   expect(before.faults, "a missing tool and an unpublished repository file no incident").toEqual({});
   expect(before.history.filter((row: { role: string }) => row.role !== "user")).toEqual([]);
-  expect((await request.post(`${service}/fixture/install-tool`)).ok()).toBe(true);
-  await walk.state("03-setup-continued-by-itself", {
+  expect((await request.post(`${service}/fixture/install-agent`)).ok()).toBe(true);
+  await walk.state("03-setup-waits-for-the-sandbox", {
+    action: () => page.reload(),
+    visible: [coordinator.getByText("Waiting", { exact: true }),
+      coordinator.getByText("Waiting for a coding tool. Install the agent sandbox (Coding tools), and setup continues by itself."),
+      coordinator.getByRole("link", { name: "Coding tools" })],
+    hidden: [coordinator.getByText(/Install Claude/), coordinator.getByText("Failed", { exact: true })],
+  });
+  expect((await request.post(`${service}/fixture/install-sandbox`)).ok()).toBe(true);
+  await walk.state("04-setup-continued-by-itself", {
     action: () => page.reload(),
     visible: [coordinator.getByText("First conversation ready."), repository.getByText("gh repo create --source . --push"),
       panel.getByRole("status").filter({ hasText: /^Needs attention$/ }),
@@ -55,7 +64,7 @@ test("a fresh computer names one coding agent and the sandbox, and setup waits f
 test("Settings hides validation runs on a computer that cannot run them", async ({ page, service }, info) => {
   const walk = walkthrough(page, info);
   await walk.open(`${service}/settings`);
-  await walk.state("04-settings-without-validation", {
+  await walk.state("05-settings-without-validation", {
     visible: [page.getByRole("link", { name: /Prerequisites/ })],
     hidden: [page.getByRole("switch", { name: /Validation runs/ }), page.getByText(/Not available here/)],
   });
