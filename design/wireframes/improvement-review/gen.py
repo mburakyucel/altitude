@@ -45,7 +45,7 @@ S1 = ("How agents work", "1. Owners re-ask merge approval after a routine rebase
 S2 = ("altitude", "2. The phone swipe walkthrough fails the web shard about once a week",
       "Two landings waited on a rerun of the same browser walkthrough. Making its tab-switch step wait for the view to settle would remove the reruns.",
       ["Tidy the settings page", "Release notes for 0.4"],
-      "CI and landing retries in 4 of 14 tasks")
+      "CI rechecks in 4 of 14 tasks")
 S3 = ("How agents work", "3. Review rounds repeat on unchanged findings",
       "One task ran nine implementation reviews, most re-reporting findings already assessed. Passing earlier assessments to the reviewer would let it skip them.",
       ["Add search to the task list"],

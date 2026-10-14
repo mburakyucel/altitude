@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,18 +17,18 @@ from pathlib import Path
 from . import config, engines, improve, state as S
 
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "improvement"
-HALVES = ("develop", "heldback")
+SETS = ("develop", "heldback", "scale")
 EVENT_KINDS = {"merge-approval-refused", "grant-refused", "ci-recheck", "delivery", "resume-failed",
                "dispatch-failed", "report-superseded", "escalated", "fault", "fyi"}
 ROLES = {"operator": config.OPERATOR_ACTOR, "l2": "l2", "l3": "l3", "system": "system"}
 
 
-def scenarios(half: str) -> list[tuple[str, dict, dict]]:
-    """(name, scenario, key) for every scenario of one half, in name order."""
-    if half not in HALVES:
-        raise ValueError(f"unknown half: {half}")
+def scenarios(group: str) -> list[tuple[str, dict, dict]]:
+    """(name, scenario, key) for every scenario of one set, in name order."""
+    if group not in SETS:
+        raise ValueError(f"unknown set: {group}")
     out = []
-    for path in sorted((FIXTURES / half).glob("*.json")):
+    for path in sorted((FIXTURES / group).glob("*.json")):
         if path.name.endswith(".key.json"):
             continue
         key = path.with_name(path.stem + ".key.json")
@@ -69,7 +70,8 @@ def _events(task: dict) -> list[dict]:
     rows = [(task["created"], {"kind": "new", "by": "l3"}),
             (task["created"], {"kind": "state", "frm": "queued", "to": "running", "by": "l3"})]
     for review in task.get("reviews", []):
-        rows.append((review["requested"], {"kind": "review-requested", "review_id": review["id"], "by": "l2"}))
+        rows.append((review["requested"], {"kind": "review-requested", "review_id": review["id"], "by": "l2",
+                                           "_id": review["id"]}))
     for event in task.get("events", []):
         kind = event["kind"]
         if kind not in EVENT_KINDS:
@@ -79,9 +81,11 @@ def _events(task: dict) -> list[dict]:
             data = {"kind": "state", "frm": "running", "to": "blocked", "by": "altitude",
                     "reason": f"system fault [{event['fault']}]: {event.get('reason', '')}".rstrip(": ")}
         elif kind == "report-superseded":
-            # Altitude records the replaced report, not a reason; `unmerged` names the PRs it reported unmerged.
-            data = {"kind": kind, "report": {"landed": {"prs": [{"number": n, "merged": False}
-                                                               for n in event.get("unmerged", [])]}}}
+            # Altitude records the replaced report and its verification, not a reason; `contradicted` is the problem
+            # verification found in it.
+            data = {"kind": kind, "report": {"landed": {"prs": []}},
+                    "verified": {"verdict": "contradicted", "problems": [event["contradicted"]]}
+                    if event.get("contradicted") else None}
         else:
             data = {"kind": kind, **data}
         rows.append((event["at"], {**data, "_id": event["id"]}))
@@ -165,34 +169,107 @@ def load(scenario: dict) -> dict[str, str]:
     return anchors
 
 
-def check(half: str) -> list[str]:
-    """Problems with one half's scenarios and keys; loads each under this process's Altitude home."""
+def _consistent(name: str, scenario: dict, key: dict, anchors: dict[str, str]) -> list[str]:
+    """Problems with one loaded scenario's key."""
     problems = []
-    names = [name for name, _, _ in scenarios(half)]
-    for name, scenario, key in scenarios(half):
-        try:
-            anchors = load(scenario)
-        except (KeyError, ValueError) as exc:
-            problems.append(f"{name}: {exc!r}")
-            continue
-        if key.get("expect") not in ("suggestions", "nothing"):
-            problems.append(f"{name}: expect is suggestions or nothing")
-        if (key["expect"] == "nothing") != (not key.get("patterns")):
-            problems.append(f"{name}: only a scenario expecting nothing has no patterns")
-        for item in key.get("patterns", []) + key.get("decoys", []):
-            missing = [a for a in item["anchors"] if a not in anchors]
-            if missing:
-                problems.append(f"{name} {item['id']}: unknown anchors {missing}")
-        for pattern in key.get("patterns", []):
-            if len(pattern["anchors"]) < 3:
-                problems.append(f"{name} {pattern['id']}: fewer than three anchors")
-            if pattern["kind"] not in ("counted", "words", "shared") or pattern["target"] not in ("project", "agents"):
-                problems.append(f"{name} {pattern['id']}: kind or target")
-            if pattern["kind"] == "shared" and not pattern.get("wrong_explanation"):
-                problems.append(f"{name} {pattern['id']}: shared cause without wrong_explanation")
-    if len(set(s["project"] for _, s, _ in scenarios(half))) != len(names):
-        problems.append("two scenarios share a project name")
+    if key.get("expect") not in ("suggestions", "nothing"):
+        problems.append(f"{name}: expect is suggestions or nothing")
+    if (key["expect"] == "nothing") != (not key.get("patterns")):
+        problems.append(f"{name}: only a scenario expecting nothing has no patterns")
+    for item in key.get("patterns", []) + key.get("decoys", []):
+        missing = [a for a in item["anchors"] if a not in anchors]
+        if missing:
+            problems.append(f"{name} {item['id']}: unknown anchors {missing}")
+    fired = _fired(scenario["project"], scenario["now"])
+    for pattern in key.get("patterns", []):
+        if pattern.get("signal", "") not in (*improve.SIGNALS, None):
+            problems.append(f"{name} {pattern['id']}: signal is a signal key or null")
+        elif pattern["signal"] and sum(fired.get(anchors.get(a)) == pattern["signal"] for a in pattern["anchors"]) < 2:
+            problems.append(f"{name} {pattern['id']}: fewer than two places fire {pattern['signal']}")
+        if len(pattern["anchors"]) < 3:
+            problems.append(f"{name} {pattern['id']}: fewer than three anchors")
+        if pattern["kind"] not in ("counted", "words", "shared") or pattern["target"] not in ("project", "agents"):
+            problems.append(f"{name} {pattern['id']}: kind or target")
+        if pattern["kind"] == "shared" and not pattern.get("wrong_explanation"):
+            problems.append(f"{name} {pattern['id']}: shared cause without wrong_explanation")
     return problems
+
+
+def _fired(project: str, now: str) -> dict[str, str]:
+    """Place -> the signal it fires, over the window a first review at `now` reads."""
+    end = _date(now)
+    items, _ = improve.finished(project, end, end - improve.FIRST_WINDOW)
+    return {a: key for item in items for key, anchors in improve.signals(project, item).items() for a in anchors}
+
+
+def _sheets(text: str) -> dict[str, str]:
+    """Task title -> its sheet in a built prompt."""
+    return {sheet.split("\n")[0].split('"')[1]: sheet.split("\n\n# ")[0] for sheet in text.split("\n\n## ")[1:]}
+
+
+def _bounded(name: str, built: dict) -> list[str]:
+    """Problems with a built prompt's size: the prompt and every sheet within their bounds."""
+    problems = [] if len(built["text"].encode()) <= improve.PROMPT_BYTES else [f"{name}: the prompt is over its bound"]
+    return problems + [f"{name}: the sheet of \"{title}\" is over its bound"
+                       for title, sheet in _sheets(built["text"]).items()
+                       if len(("## " + sheet).encode()) > improve.SHEET_BYTES]
+
+
+def offline() -> dict:
+    """The eval's model-free part, run in `make check`: every scenario loads with a consistent key and builds a
+    bounded prompt its planted patterns reach; in the signals project each signal fires on exactly its planted places
+    and nothing on ordinary work, and each fired place reaches its own task's sheet under its alias, beside the
+    operator's quoted words. Loads everything under this process's Altitude home."""
+    problems, kinds = [], {kind: {"planted": 0, "fired": 0, "reached": 0, "ordinary_fired": 0, "patterns": 0,
+                                  "patterns_reached": 0} for kind in improve.SIGNALS}
+    try:
+        prepared = prepare(SETS)
+    except ValueError as exc:
+        return {"problems": [str(exc)], "kinds": kinds}
+    for p in prepared:
+        problems += _bounded(p["name"], p["built"])
+        for pattern in p["patterns"]:
+            if pattern["signal"]:
+                kinds[pattern["signal"]]["patterns"] += 1
+                kinds[pattern["signal"]]["patterns_reached"] += pattern["reached"]
+            if not pattern["reached"]:
+                problems.append(f"{p['name']} {pattern['id']}: fewer than two of its places reach the prompt")
+    scenario = json.loads((FIXTURES / "signals.json").read_text())
+    key = json.loads((FIXTURES / "signals.key.json").read_text())
+    anchors, project = load(scenario), scenario["project"]
+    built = improve.prompt(project, end=_date(scenario["now"]))
+    problems += _bounded("signals", built)
+    fired, alias = _fired(project, scenario["now"]), {v: k for k, v in built["anchors"].items()}
+    titles = {t["slug"]: t["title"] for t in scenario["tasks"]}
+    sheets = _sheets(built["text"])
+    planted = {anchors[a]: kind for kind, names in key["fire"].items() for a in names}
+    for place, kind in fired.items():
+        if place not in planted:
+            kinds[kind]["ordinary_fired"] += 1
+            problems.append(f"signals: {place} fires {kind} outside the key")
+    for place, kind in planted.items():
+        row = kinds[kind]
+        row["planted"] += 1
+        row["fired"] += fired.get(place) == kind
+        # The alias must stand in the sheet of the task the place belongs to, and name that same place.
+        reached = place in alias and alias[place] in re.findall(r"A\d+", sheets.get(titles[place.split("/")[0]], ""))
+        row["reached"] += reached
+        if fired.get(place) != kind:
+            problems.append(f"signals: {place} does not fire {kind}")
+        if not reached:
+            problems.append(f"signals: {place} does not reach its task's sheet")
+    for kind, row in kinds.items():
+        if not row["planted"]:
+            problems.append(f"signals: nothing planted for {kind}")
+    for name in key["quiet"]:
+        if anchors[name] in fired:
+            problems.append(f"signals: ordinary {name} fires {fired[anchors[name]]}")
+    for slug in key["quoted"]:
+        if not re.search(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheets.get(titles[slug], "")):
+            problems.append(f"signals: the sheet of {slug} quotes no operator message")
+    return {"problems": problems, "kinds": kinds, "scenarios": len(prepared),
+            "patterns": sum(len(p["patterns"]) for p in prepared),
+            "patterns_reached": sum(pattern["reached"] for p in prepared for pattern in p["patterns"])}
 
 
 #: Short names ("sonnet") for the models the engine seam offers the review, cheapest plan use first.
@@ -210,27 +287,34 @@ def _date(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def prepare(half: str) -> list[dict]:
-    """Every scenario of a half loaded and its prompt built, with the key's anchors made canonical."""
-    out = []
-    for name, scenario, key in scenarios(half):
-        anchors = load(scenario)
-        built = improve.prompt(scenario["project"], end=_date(scenario["now"]))
-        shown = set(built["anchors"].values())
-        patterns = [{**p, "places": {anchors[a] for a in p["anchors"]}} for p in key.get("patterns", [])]
-        for p in patterns:
-            p["reached"] = len(p["places"] & shown) >= 2
-            p["counts"] = len(p["places"] & _signal_places(scenario["project"], built)) >= 2
-        decoys = [{**d, "places": {anchors[a] for a in d["anchors"]}} for d in key.get("decoys", [])]
-        out.append({"name": name, "scenario": scenario, "key": key, "built": built, "patterns": patterns,
-                    "decoys": decoys, "names": {v: k for k, v in anchors.items()}})
+def prepare(groups) -> list[dict]:
+    """Every scenario of the named sets loaded and its prompt built, with the key's anchors made canonical. A key
+    that does not fit its records is refused."""
+    out, problems = [], []
+    for group in groups:
+        for name, scenario, key in scenarios(group):
+            try:
+                anchors = load(scenario)
+            except (KeyError, ValueError) as exc:
+                problems.append(f"{name}: {exc!r}")
+                continue
+            problems += _consistent(name, scenario, key, anchors)
+            if problems:
+                continue
+            built = improve.prompt(scenario["project"], end=_date(scenario["now"]))
+            shown, fired = set(built["anchors"].values()), set(_fired(scenario["project"], scenario["now"]))
+            patterns = [{**p, "places": {anchors[a] for a in p["anchors"]}} for p in key.get("patterns", [])]
+            for p in patterns:
+                p["reached"] = len(p["places"] & shown) >= 2
+                p["counts"] = len(p["places"] & fired) >= 2
+            decoys = [{**d, "places": {anchors[a] for a in d["anchors"]}} for d in key.get("decoys", [])]
+            out.append({"name": name, "group": group, "scenario": scenario, "key": key, "built": built,
+                        "patterns": patterns, "decoys": decoys, "names": {v: k for k, v in anchors.items()}})
+    if len({p["scenario"]["project"] for p in out}) != len(out):
+        problems.append("two scenarios share a project name")
+    if problems:
+        raise ValueError("; ".join(problems))
     return out
-
-
-def _signal_places(project: str, built: dict) -> set[str]:
-    """Places a counts-only report would point at: those that produced a signal in the reviewed window."""
-    items, _ = improve.finished(project, _date(built["end"]), _date(built["start"]))
-    return {a for item in items for anchors in improve.signals(project, item).values() for a in anchors}
 
 
 def match(suggestions: list[dict], patterns: list[dict]) -> dict[int, str]:
@@ -246,9 +330,11 @@ def match(suggestions: list[dict], patterns: list[dict]) -> dict[int, str]:
     return out
 
 
-def run(half: str, models: list[str], repeats: int, ceiling: float, out: Path, only: list[str] | None = None) -> dict:
-    """Call the reviewer for every scenario, model and repeat, stopping before the yardstick passes the ceiling."""
-    prepared = [p for p in prepare(half) if not only or p["name"] in only]
+def run(groups: list[str], models: list[str], repeats: int, ceiling: float, out: Path,
+        only: list[str] | None = None) -> dict:
+    """Call the reviewer for every scenario of the sets, model and repeat, stopping before the yardstick passes the
+    ceiling."""
+    prepared = [p for p in prepare(groups) if not only or p["name"] in only]
     out.mkdir(parents=True, exist_ok=True)
     calls, spent, stopped = out / "calls.jsonl", 0.0, None
     for repeat in range(1, repeats + 1):
@@ -261,7 +347,7 @@ def run(half: str, models: list[str], repeats: int, ceiling: float, out: Path, o
                 result = improve.review(p["built"], model=model)
                 cost = result["call"].get("cost")
                 spent += cost if cost is not None else engines.improvement_budget(model)
-                row = {"half": half, "scenario": p["name"], "model": short, "repeat": repeat, **result,
+                row = {"set": p["group"], "scenario": p["name"], "model": short, "repeat": repeat, **result,
                        "matched": match(result["suggestions"], p["patterns"])}
                 with calls.open("a") as f:
                     f.write(json.dumps(row) + "\n")
@@ -271,7 +357,7 @@ def run(half: str, models: list[str], repeats: int, ceiling: float, out: Path, o
                 break
         if stopped:
             break
-    summary = {"half": half, "models": models, "repeats": repeats, "ceiling": ceiling, "spent": round(spent, 4),
+    summary = {"sets": groups, "models": models, "repeats": repeats, "ceiling": ceiling, "spent": round(spent, 4),
                "scenarios": [p["name"] for p in prepared], "complete": stopped is None, "stopped": stopped}
     S.write_json(out / "run.json", summary)
     grading_sheet(prepared, out)
@@ -298,6 +384,9 @@ def _place(scenario: dict, name: str) -> str:
     for m in task.get("messages", []):
         if m["id"] == ref:
             return f"{slug} message, {m['role']}: {m['text']}"
+    for review in task.get("reviews", []):
+        if review["id"] == ref:
+            return f"{slug} {review['subject']} review requested"
     event = next(e for e in task.get("events", []) if e["id"] == ref)
     return f"{slug} event: {event}"
 
@@ -340,15 +429,23 @@ not help; sound when it addresses no planted pattern but is supported and would 
 "outcome": "caught" | "wrong" | "sound", "why": "one sentence"}, ...}"""
 
 
-def score(half: str, out: Path) -> dict:
-    """The results table: per model, each run's catch rates and the bar, from the matcher and the blind grades."""
-    prepared = {p["name"]: p for p in prepare(half)}
+def _caught(r: dict, pattern: dict, graded: dict) -> bool:
+    """Whether call `r` caught `pattern`: the matcher pairs a suggestion with it and the grader marks it caught."""
+    n = next((int(n) for n, pid in r["matched"].items() if pid == pattern["id"]), None)
+    grade = graded.get((r["scenario"], r["model"], r["repeat"], n)) if n else None
+    return bool(grade and grade["outcome"] == "caught" and grade.get("pattern") == pattern["id"])
+
+
+def score(out: Path) -> dict:
+    """The results table: per model, each run's catch rates and the bar, and per signal the planted patterns caught
+    and the suggestions naming it that were wrong, from the matcher and the blind grades."""
     summary = S.read_json(out / "run.json")
+    prepared = {p["name"]: p for p in prepare(summary["sets"])}
     keyed, grades = S.read_json(out / "grading-key.json"), S.read_json(out / "grades.json")
     graded = {(k["scenario"], *k["call"]): grades[item] for item, k in keyed.items()}
     rows = [json.loads(line) for line in (out / "calls.jsonl").read_text().splitlines()]
-    # Only the whole held-back half, every repeat, uninterrupted, can recommend a model.
-    full = (half == "heldback" and summary["complete"] and summary["repeats"] >= REPEATS
+    # Only the whole held-back set and any others run with it, every repeat, uninterrupted, can recommend a model.
+    full = ("heldback" in summary["sets"] and summary["complete"] and summary["repeats"] >= REPEATS
             and sorted(summary["scenarios"]) == sorted(prepared))
     table = {}
     for short in summary["models"]:
@@ -358,26 +455,31 @@ def score(half: str, out: Path) -> dict:
         for repeat in sorted({r["repeat"] for r in mine}):
             caught, reached = Counter(), Counter()
             for r in (r for r in mine if r["repeat"] == repeat):
-                p = prepared[r["scenario"]]
-                for pattern in p["patterns"]:
+                for pattern in prepared[r["scenario"]]["patterns"]:
                     if pattern["reached"]:
                         group = "words" if pattern["kind"] == "words" else "counted"
                         reached[group] += 1
-                        n = next((int(n) for n, pid in r["matched"].items() if pid == pattern["id"]), None)
-                        grade = graded.get((r["scenario"], short, repeat, n)) if n else None
-                        if grade and grade["outcome"] == "caught" and grade.get("pattern") == pattern["id"]:
-                            caught[group] += 1
+                        caught[group] += _caught(r, pattern, graded)
             runs.append({group: caught[group] / reached[group] if reached[group] else None for group in ("counted", "words")})
+        kinds = {kind or "none": {"caught": 0, "planted": 0, "suggested": 0, "wrong": 0}
+                 for kind in (*improve.SIGNALS, None)}
         for r in mine:
             invalid += bool(r["call"].get("error") or r["dropped"])
             tokens.append(r["call"].get("tokens") or 0)
+            for pattern in prepared[r["scenario"]]["patterns"]:
+                if pattern["reached"]:
+                    kinds[pattern["signal"] or "none"]["planted"] += 1
+                    kinds[pattern["signal"] or "none"]["caught"] += _caught(r, pattern, graded)
             for s in r["suggestions"]:
                 outcome = graded[(r["scenario"], short, r["repeat"], s["n"])]["outcome"]
+                kinds[s.get("signal") or "none"]["suggested"] += 1
                 if prepared[r["scenario"]]["key"]["expect"] == "nothing":
                     wrong_controls += outcome != "sound"
+                    kinds[s.get("signal") or "none"]["wrong"] += outcome != "sound"
                 else:
                     kept += 1
                     wrong += outcome == "wrong"
+                    kinds[s.get("signal") or "none"]["wrong"] += outcome == "wrong"
         passes = (full and len(calls) == len(mine) == len(prepared) * summary["repeats"] and runs
                   and all((run["counted"] is None or run["counted"] >= BAR["counted"])
                           and (run["words"] is None or run["words"] >= BAR["words"]) for run in runs)
@@ -385,56 +487,72 @@ def score(half: str, out: Path) -> dict:
                   and invalid / max(1, len(mine)) <= BAR["invalid"])
         table[short] = {"runs": runs, "wrong_on_controls": wrong_controls, "wrong_elsewhere": f"{wrong}/{kept}",
                         "invalid": f"{invalid}/{len(mine)}", "mean_tokens": round(sum(tokens) / max(1, len(tokens))),
-                        "max_tokens": max(tokens, default=0), "passes": bool(passes)}
+                        "max_tokens": max(tokens, default=0), "passes": bool(passes),
+                        "signals": {kind: {"caught": f"{row['caught']}/{row['planted']}",
+                                           "wrong": f"{row['wrong']}/{row['suggested']}"}
+                                    for kind, row in kinds.items() if row["planted"] or row["suggested"]}}
     patterns = [pattern for p in prepared.values() for pattern in p["patterns"]]
     passing = [m for m in MODELS if table.get(m, {}).get("passes")]
-    result = {"half": half, "complete": summary["complete"], "full_matrix": full, "stopped": summary["stopped"],
-              "yardstick_spent": summary["spent"], "ceiling": summary["ceiling"], "models": table,
-              "counts_alone": f"{sum(p['counts'] for p in patterns)}/{len(patterns)}",
+    result = {"sets": summary["sets"], "complete": summary["complete"], "full_matrix": full,
+              "stopped": summary["stopped"], "yardstick_spent": summary["spent"], "ceiling": summary["ceiling"],
+              "models": table, "counts_alone": f"{sum(p['counts'] for p in patterns)}/{len(patterns)}",
               "reached": f"{sum(p['reached'] for p in patterns)}/{len(patterns)}",
               "recommended": passing[0] if passing else None}
     S.write_json(out / "score.json", result)
     return result
 
 
+def _table(result: dict) -> str:
+    """The offline eval's result as plain lines: one per signal, then the scenarios and what went wrong."""
+    lines = [f"{'signal':14} {'planted':>7} {'fired':>5} {'reached':>7} {'ordinary fired':>14} {'patterns reached':>16}"]
+    for kind, row in result["kinds"].items():
+        lines.append(f"{kind:14} {row['planted']:>7} {row['fired']:>5} {row['reached']:>7} {row['ordinary_fired']:>14} "
+                     f"{str(row['patterns_reached']) + '/' + str(row['patterns']):>16}")
+    if "scenarios" in result:
+        lines.append(f"{result['scenarios']} scenarios load within their bounds; "
+                     f"{result['patterns_reached']}/{result['patterns']} planted patterns reach their prompt")
+    return "\n".join(lines + result["problems"])
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="python3 -m altitude.improve_eval")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("check").add_argument("half", choices=HALVES)
+    sub.add_parser("offline", help="the model-free eval: signals, prompts and keys")
     show = sub.add_parser("show", help="print a develop scenario's prompt")
     show.add_argument("name")
     go = sub.add_parser("run", help="call the reviewer on the plan; stops before the ceiling")
-    go.add_argument("half", choices=HALVES)
+    go.add_argument("sets", help=f"comma-separated sets: {', '.join(SETS)}")
     go.add_argument("--models", default=",".join(MODELS))
     go.add_argument("--repeats", type=int, default=3)
     go.add_argument("--ceiling", type=float, required=True, help="usage ceiling in the engine's reported-cost yardstick")
     go.add_argument("--only", help="comma-separated scenario names")
     go.add_argument("--out", type=Path, required=True)
     graded = sub.add_parser("score", help="combine the matcher and grades.json into the results table")
-    graded.add_argument("half", choices=HALVES)
     graded.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     if config.ROOT.resolve() == (config.HOME / ".altitude").resolve():
         parser.error("set ALTITUDE_HOME to a throwaway directory: the eval writes fictional records")
-    if args.command == "check":
-        problems = check(args.half)
-        print("\n".join(problems) or f"{args.half}: {len(scenarios(args.half))} scenarios load")
-        return 1 if problems else 0
+    if args.command == "offline":
+        result = offline()
+        print(_table(result))
+        return 1 if result["problems"] else 0
     if args.command == "show":
-        p = next((p for p in prepare("develop") if p["name"] == args.name), None)
+        p = next((p for p in prepare(["develop"]) if p["name"] == args.name), None)
         if p is None:
             parser.error("show reads develop scenarios only")
         print(p["built"]["text"])
         return 0
     if args.command == "run":
-        models = args.models.split(",")
+        models, groups = args.models.split(","), args.sets.split(",")
         if any(m not in MODELS for m in models):
             parser.error(f"models are {', '.join(MODELS)}")
-        print(json.dumps(run(args.half, models, args.repeats, args.ceiling, args.out,
+        if any(g not in SETS for g in groups):
+            parser.error(f"sets are {', '.join(SETS)}")
+        print(json.dumps(run(groups, models, args.repeats, args.ceiling, args.out,
                              args.only.split(",") if args.only else None), indent=2))
         return 0
-    print(json.dumps(score(args.half, args.out), indent=2))
+    print(json.dumps(score(args.out), indent=2))
     return 0
 
 

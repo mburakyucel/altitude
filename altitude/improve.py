@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 from . import config, engines, github_intake, l3, route, state as S, tasks as T
 
-SIGNALS_VERSION = 1
+SIGNALS_VERSION = 2
 CUTOFF = datetime(2026, 9, 22, 7, tzinfo=timezone.utc)
 FIRST_WINDOW = timedelta(days=14)
 OLDEST = timedelta(days=30)
@@ -40,9 +40,9 @@ SIGNALS = {
     "after_report": "Your messages after a report",
     "review_rounds": "Review rounds beyond the first",
     "open_findings": "Review findings open at completion",
-    "retries": "CI and landing retries",
+    "retries": "CI rechecks",
     "failures": "Resume or dispatch failures",
-    "rewritten": "Reports rewritten",
+    "rewritten": "Reports rewritten after verification contradicted them",
     "escalations": "Escalations",
 }
 
@@ -150,7 +150,9 @@ def finished(project: str, end: datetime, start: datetime) -> tuple[list[dict], 
 
 
 def signals(project: str, item: dict) -> dict[str, list[str]]:
-    """Signal key -> canonical anchors of the places that produced it (SIGNALS_VERSION)."""
+    """Signal key -> canonical anchors of the places that produced it (SIGNALS_VERSION). A delivery is recorded for
+    every pushed head and a report is superseded whenever a message continues a reported task: both are ordinary
+    work, so pushes never count and a superseded report counts only when verification contradicted it."""
     task, events, messages = item["task"], item["events"], item["messages"]
     slug = task["slug"]
     found = {key: [] for key in SIGNALS}
@@ -168,7 +170,7 @@ def signals(project: str, item: dict) -> dict[str, list[str]]:
         found["after_report"] = [f"{slug}/m/{m['id']}" for m in messages
                                  if T.from_operator(m) and _date(m["at"]) > reported[0]]
     subjects = {r["id"]: r.get("subject") for r in task.get("reviews", [])}
-    seen_subjects, pushed = set(), set()
+    seen_subjects = set()
     for index, e in enumerate(events):
         kind, anchor = e.get("kind"), f"{slug}/e/{index}"
         if kind in ("merge-approval-refused", "grant-refused"):
@@ -180,14 +182,10 @@ def signals(project: str, item: dict) -> dict[str, list[str]]:
             seen_subjects.add(subject)
         elif kind == "ci-recheck":
             found["retries"].append(anchor)
-        elif kind == "delivery":
-            if e.get("number") in pushed:
-                found["retries"].append(anchor)
-            pushed.add(e.get("number"))
         elif kind in ("resume-failed", "dispatch-failed") or (
                 kind == "state" and e.get("to") == "blocked" and str(e.get("reason", "")).startswith("system fault [")):
             found["failures"].append(anchor)
-        elif kind == "report-superseded":
+        elif kind == "report-superseded" and (e.get("verified") or {}).get("verdict") == "contradicted":
             found["rewritten"].append(anchor)
         elif kind == "escalated":
             found["escalations"].append(anchor)
@@ -198,11 +196,10 @@ def signals(project: str, item: dict) -> dict[str, list[str]]:
 
 
 def detail(event: dict) -> str | None:
-    """What a counted event records about itself: its reason or error, or the unmerged PRs a replaced report named."""
+    """What a counted event records about itself: its reason or error, or what verification found in a replaced report."""
     if event.get("kind") == "report-superseded":
-        prs = [pr.get("number") for pr in ((event.get("report") or {}).get("landed") or {}).get("prs", [])
-               if isinstance(pr, dict) and pr.get("merged") is False]
-        return "the replaced report named unmerged PR " + ", ".join(f"#{n}" for n in prs) if prs else None
+        text = "; ".join(map(str, (event.get("verified") or {}).get("problems") or []))
+        return _cut("verification found: " + text, 160) if text else None
     text = event.get("reason") or event.get("error")
     return _cut(text, 160) if text else None
 
@@ -242,7 +239,9 @@ def _pairs(slug: str, messages: list[dict], place: Places) -> list[str]:
 
 
 def sheet(project: str, item: dict, found: dict[str, list[str]], place: Places) -> str:
-    """One task's sheet, at most SHEET_BYTES; conversation pairs are dropped from the end to fit."""
+    """One task's sheet: whole lines, at most SHEET_BYTES. The head, signals and what their events recorded come
+    first; the operator's own words, then questions, then review findings fill the room left, and a last line says
+    what did not fit."""
     task, slug = item["task"], item["task"]["slug"]
     verdict = next((e.get("verdict") for e in reversed(item["events"])
                     if e.get("kind") == "state" and e.get("to") == "reported"), None)
@@ -263,30 +262,58 @@ def sheet(project: str, item: dict, found: dict[str, list[str]], place: Places) 
     waited = hours_waiting(item)
     if waited >= 1:
         lines.append(f"Hours waiting on the operator: {waited:.0f}")
+    groups = {"operator quotes": _pairs(slug, item["messages"], place), "questions": _questions(task, place),
+              "reviews": _reviews(task, place)}
+    room = SHEET_BYTES - len("\n".join(lines).encode()) - 80  # the closing line's room
+    shown: dict[str, list[str]] = {}
+    for name, group in groups.items():
+        shown[name] = []
+        for line in group[:PAIRS] if name == "operator quotes" else group:
+            if len(line.encode()) + 1 <= room:
+                shown[name].append(line)
+                room -= len(line.encode()) + 1
+    lines += shown["questions"] + shown["reviews"] + shown["operator quotes"]
+    left = [f"{len(group) - len(shown[name])} {name}" for name, group in groups.items() if len(group) > len(shown[name])]
+    if left:
+        lines.append("- Not shown for room: " + ", ".join(left))
+    return "\n".join(lines)
+
+
+def _questions(task: dict, place: Places) -> list[str]:
+    """One line per question: every revision's alias, the latest wording and how it was settled."""
+    slug, revisions = task["slug"], {}
     for q in sorted(task.get("questions", []), key=lambda q: (q["asked"], q["revision"])):
-        resolution = q.get("resolution") or {}
+        revisions.setdefault(q["id"], []).append(q)
+    lines = []
+    for qid, entries in revisions.items():
+        last = entries[-1]
+        resolution = last.get("resolution") or {}
         how = resolution.get("disposition", "open")
         if resolution.get("by"):
             how += " by " + ("operator" if resolution["by"] == config.OPERATOR_ACTOR else resolution["by"])
         if resolution.get("message_id"):
             how += f" [{place(slug + '/m/' + resolution['message_id'])}]"
-        alias = place(f"{slug}/q/{q['id']}/{q['revision']}")
-        first = SENTENCE.split(q["question"].strip())[0]
-        again = ", re-parked after a reply" if q.get("asked_again") else ""
-        lines.append(f"- Question [{alias}] rev {q['revision']} to {q.get('audience', 'operator')}, "
-                     f'{_short(q["asked"])}{again}: "{_cut(first, 160)}" → {how}')
+        aliases = ", ".join(place(f"{slug}/q/{qid}/{q['revision']}") for q in entries)
+        when = _short(entries[0]["asked"]) + (f" to {_short(last['asked'])}" if len(entries) > 1 else "")
+        revs = f"rev {last['revision']}" if len(entries) == 1 else f"revs {entries[0]['revision']}–{last['revision']}"
+        again = ", re-parked after a reply" if any(q.get("asked_again") for q in entries) else ""
+        first = SENTENCE.split(last["question"].strip())[0]
+        lines.append(f"- Question [{aliases}] {revs} to {last.get('audience', 'operator')}, {when}{again}: "
+                     f'"{_cut(first, 160)}" → {how}')
+    return lines
+
+
+def _reviews(task: dict, place: Places) -> list[str]:
+    """One line per review with findings: each finding's title and its disposition."""
+    lines = []
     for review in task.get("reviews", []):
         outcomes = {d["finding_id"]: d["disposition"] for d in review.get("dispositions", [])}
-        findings = [(place(f"{slug}/r/{review['id']}/{f['id']}"), _cut(f.get("title", ""), 80),
+        findings = [(place(f"{task['slug']}/r/{review['id']}/{f['id']}"), _cut(f.get("title", ""), 80),
                      outcomes.get(f["id"], "unassessed")) for f in (review.get("result") or {}).get("findings", [])]
         if findings:
             lines.append(f"- Review ({review.get('subject')}): "
                          + "; ".join(f'[{alias}] "{title}" {outcome}' for alias, title, outcome in findings))
-    pairs = _pairs(slug, item["messages"], place)[:PAIRS]
-    while pairs and len("\n".join(lines + pairs).encode()) > SHEET_BYTES:
-        pairs.pop()
-    text = "\n".join(lines + pairs)
-    return text if len(text.encode()) <= SHEET_BYTES else text.encode()[:SHEET_BYTES].decode(errors="ignore")
+    return lines
 
 
 def _chat(project: str, start: datetime, end: datetime, place: Places, room: int) -> list[str]:

@@ -117,11 +117,13 @@ within 64 KiB, as the pilot's does.
 1. **Signals.** A fixed, versioned catalog of counted predicates per task (below).
 2. **Task sheets**, ranked by their signals and added in that order until 48 KiB, each at most 3 KiB:
    title, outcome and durations; signal counts, each with the anchors that produced it and what each event recorded (its reason or
-   error, or the unmerged PRs a replaced report named); every question
-   with its first sentence, revisions, how it was answered or resolved and by whom; each operator
+   error, or what verification found in a replaced report); each operator
    message as a paired excerpt (the message it answered, the operator's words, the next reply, 300
-   characters each, at most four pairs); review findings' titles with their dispositions; and the
-   report's verdict. Sheets are built from finished tasks, so later corrections are inside them.
+   characters each, at most four pairs); every question on one line with its revisions, latest first
+   sentence and how it was answered or resolved and by whom; review findings' titles with their
+   dispositions; and the report's verdict. A sheet is whole lines: the operator's words come before
+   questions and findings when room runs short, and a last line counts what did not fit. Sheets are
+   built from finished tasks, so later corrections are inside them.
 3. **Coverage.** Tasks that did not fit are listed by title and counts, and the prompt says what was
    left out. Project chat adds paired excerpts the same way within the remaining room.
 4. **Context.** Titles of current tasks and of earlier suggestions with their outcome, so the reviewer
@@ -142,9 +144,9 @@ with like. The card names the signal itself, never a narrower claim the predicat
 | Your messages after a report | Operator messages on a task after its owner reported, before it closed |
 | Review rounds beyond the first | `review-requested` events beyond the first per subject (proposal, changes) |
 | Review findings open at completion | Findings the owner's final report leaves `open` |
-| CI and landing retries | `ci-recheck` events and `delivery` events beyond the first for one PR |
+| CI rechecks | `ci-recheck` events (a delivery is recorded for every pushed head, so pushes never count) |
 | Resume or dispatch failures | `resume-failed` and `dispatch-failed` events and system faults |
-| Reports rewritten | `report-superseded` events |
+| Reports rewritten after verification contradicted them | `report-superseded` events whose replaced report verification had contradicted (a message continuing a reported task supersedes its report, so other supersessions are ordinary) |
 | Escalations | `escalated` events |
 | Hours waiting on you | Time a task's open question was the operator's turn |
 | Tokens used | The task's recorded token totals (not a cost) |
@@ -451,8 +453,11 @@ There are ten scenarios: six with one to three planted patterns among decoys (ab
 at least a third words-only and three shared-cause), two of decoys only, and two clean projects with
 nothing to suggest. Two of the planted scenarios are larger than the prompt's room, so some evidence is
 cut; the key records which planted anchors reached the prompt, and a pattern whose evidence was cut is
-reported as a loss in the prompt builder, not counted against the model. All of it is fiction, written
-to the repository's rules for examples.
+reported as a loss in the prompt builder, not counted against the model. A third set holds three
+projects at a real project's volume (a control and two planted), with ordinary pushes, continued
+reports, second reviews and long conversations at the rates real tasks show, so ordinary work fires
+signals and fills the prompt beside the planted friction. All of it is fiction, written to the
+repository's rules for examples.
 
 **Grading.** Code checks what it can; judgement is graded against a rubric:
 
@@ -503,12 +508,15 @@ controls are reported on their own rows, so a quiet failure on them is never ave
 **What it does not prove.** Fiction is cleaner than real work, and fifteen patterns are few. Your
 decisions on the first real suggestions are the measure that counts.
 
-**Afterwards.** The scenarios, keys and matcher stay in the repository. `make check` runs them with a
-scripted reviewer and no model: the scenarios load, signals fire on counted patterns and not on decoys,
-the key's record of what reached the prompt is right, and the code's matching and validation handle
-scripted answers correctly. The live eval runs only by hand, by the owner of a later change to the
-prompt, signals or model, on the held-back half and the chosen model: on Sonnet at most a quarter of
-the eval's ceiling. Its table goes in that PR, and a failure it finds becomes a new scenario.
+**Afterwards.** The scenarios, keys and matcher stay in the repository. `make check` runs the offline
+eval with no model: every scenario loads with a consistent key and builds a bounded prompt its planted
+patterns reach, and in a signals project beside ordinary activity each signal fires on exactly its
+planted places and on nothing ordinary, and reaches its own task's sheet under its alias, where the
+operator's words are still quoted. The code's matching and validation are tested with scripted
+answers. The live eval runs only by hand, by the owner of a later change to the prompt, signals or
+model, on the held-back and real-volume sets and the chosen model: on Sonnet at most a quarter of the
+eval's ceiling. Its table, with results per signal, goes in that PR, and a failure it finds becomes a
+new scenario.
 
 **Its own small harness.** What is under test is Altitude's prompt builder and its tool-free call
 through the engine seam on the plan. Open-source eval frameworks such as Inspect or promptfoo would
