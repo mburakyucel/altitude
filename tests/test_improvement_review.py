@@ -66,7 +66,8 @@ class TestSignals(ImprovementCase):
                          {"id": "e6", "at": at(5, 1.5), "kind": "delivery", "number": 8},
                          {"id": "e7", "at": at(5, 1.6), "kind": "fault", "fault": "worker", "reason": "lost"},
                          {"id": "e8", "at": at(5, 1.7), "kind": "resume-failed"},
-                         {"id": "e9", "at": at(5, 1.8), "kind": "report-superseded"},
+                         {"id": "e9", "at": at(5, 1.8), "kind": "report-superseded", "contradicted": "PR #8 is open"},
+                         {"id": "e12", "at": at(5, 1.85), "kind": "report-superseded"},
                          {"id": "e10", "at": at(5, 1.9), "kind": "escalated"},
                          {"id": "e11", "at": at(5, 2), "kind": "fyi", "text": "noted"}],
                  reviews=[{"id": "r1", "subject": "changes", "requested": at(5, 2.1), "findings": []},
@@ -80,7 +81,8 @@ class TestSignals(ImprovementCase):
         self.assertEqual(found["answered"], {})  # the operator answered between the two revisions
         busy = found["busy"]
         self.assertEqual(busy["refused"], [place("busy:e1"), place("busy:e2")])
-        self.assertEqual(busy["retries"], [place("busy:e3"), place("busy:e5")])
+        # Pushes are ordinary work, and so is a report superseded by a follow-up that verification never contradicted.
+        self.assertEqual(busy["retries"], [place("busy:e3")])
         self.assertEqual(busy["failures"], [place("busy:e7"), place("busy:e8")])
         self.assertEqual(busy["rewritten"], [place("busy:e9")])
         self.assertEqual(busy["escalations"], [place("busy:e10")])
@@ -133,14 +135,47 @@ class TestPrompt(ImprovementCase):
         extra = set(built["anchors"].values()) - set(anchors.values())
         self.assertTrue(extra and all(re.fullmatch(r"task-\d+/m/q\d-1", a) for a in extra), sorted(extra)[:5])
 
+    def test_a_full_sheet_keeps_the_operators_words_and_whole_lines(self):
+        """The 2026-10-14 review read 112 operator task messages and quoted 4: one line per question revision and the
+        review findings filled each sheet, its quotes were dropped first and the rest was cut mid-line."""
+        messages = [message(f"m{i}", 2, 0.1 * i, "operator" if i % 2 else "l2", f"Reply {i}: " + "detail " * 60)
+                    for i in range(24)]
+        questions = [{"id": f"q{i // 6}", "revision": i % 6 + 1, "asked": at(2, 0.05 * i),
+                      "text": "Which layout should the courier board use? " + "context " * 30} for i in range(18)]
+        reviews = [{"id": f"r{r}", "subject": "changes", "requested": at(2, 3 + r),
+                    "findings": [{"id": f"F{j}", "title": f"Finding {j} " + "x" * 70} for j in range(10)]}
+                   for r in range(3)]
+        project, _ = self.load([task("talkative", 2, messages=messages, questions=questions, reviews=reviews)])
+        sheet = improve.prompt(project, end=NOW)["text"].split("\n\n## ")[1].split("\n\n# ")[0]
+        self.assertLessEqual(len(("## " + sheet).encode()), improve.SHEET_BYTES)
+        self.assertGreaterEqual(len(re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheet)), 2)
+        # One line per question, naming every revision.
+        self.assertEqual(len(re.findall(r"^- Question \[A\d+(?:, A\d+){5}\] revs 1–6 ", sheet, re.M)), 3)
+        self.assertRegex(sheet.splitlines()[-1], r"^- Not shown for room: \d+ operator quotes, \d+ reviews$")
+
+    def test_signal_details_share_the_sheet_bound_after_the_operators_words(self):
+        """A heavily signalled task's event details once came before any budget, so its sheet could pass the bound
+        with every quote dropped; and quotes past the fourth pair were counted as left out for room."""
+        kinds = {"ci-recheck": "reason", "resume-failed": "error", "merge-approval-refused": "reason"}
+        events = [{"id": f"e{k}{i}", "at": at(2, 0.1 * i), "kind": kind, field: f"{kind} {i}: " + "why " * 40}
+                  for k, (kind, field) in enumerate(kinds.items()) for i in range(8)]
+        messages = [message(f"m{i}", 2, 0.1 * i, "operator" if i % 2 else "l2", f"Note {i} on the layout.")
+                    for i in range(24)]
+        project, _ = self.load([task("noisy", 2, messages=messages, events=events)])
+        sheet = "## " + improve.prompt(project, end=NOW)["text"].split("\n\n## ")[1].split("\n\n# ")[0]
+        self.assertLessEqual(len(sheet.encode()), improve.SHEET_BYTES)
+        self.assertEqual(len(re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheet)), improve.PAIRS)
+        self.assertRegex(sheet, r"\n- retries \[A\d+\]: ci-recheck 0: ")
+        self.assertRegex(sheet.splitlines()[-1], r"^- Not shown for room: \d+ signal details$")
+
     def test_counted_events_show_what_they_recorded(self):
         project, _ = self.load([task("rewritten", 2, events=[
             {"id": "e1", "at": at(2, 1), "kind": "ci-recheck", "reason": "Lint job hit an unpinned rule"},
-            {"id": "e2", "at": at(2, 2), "kind": "report-superseded", "unmerged": [143]},
+            {"id": "e2", "at": at(2, 2), "kind": "report-superseded", "contradicted": "PR #143 is not merged"},
             {"id": "e3", "at": at(2, 3), "kind": "escalated"}])])
         text = improve.prompt(project, end=NOW)["text"]
         self.assertRegex(text, r"- retries \[A\d+\]: Lint job hit an unpinned rule\n")
-        self.assertRegex(text, r"- rewritten \[A\d+\]: the replaced report named unmerged PR #143\n")
+        self.assertRegex(text, r"- rewritten \[A\d+\]: verification found: PR #143 is not merged\n")
         self.assertNotRegex(text, r"- escalations \[")
 
     def test_quoted_text_cannot_authorize_a_citation(self):
@@ -300,32 +335,47 @@ class TestReviewerCall(AltitudeCase):
 
 
 class TestEval(ImprovementCase):
-    def test_every_scenario_loads_with_a_consistent_key(self):
-        for half in improve_eval.HALVES:
-            with self.subTest(half=half):
-                self.patch(config, "ROOT", self.tmp / half)
-                self.patch(config, "RUNTIME_ROOT", (self.tmp / half).resolve())
-                self.assertEqual(improve_eval.check(half), [])
+    def test_the_offline_eval_finds_every_signal_kind_and_nothing_on_ordinary_work(self):
+        result = improve_eval.offline()
+        self.assertEqual(result["problems"], [])
+        for kind, row in result["kinds"].items():
+            with self.subTest(kind=kind):
+                self.assertGreater(row["planted"], 0)
+                self.assertEqual((row["fired"], row["reached"], row["ordinary_fired"]), (row["planted"], row["planted"], 0))
+        self.assertEqual(result["patterns_reached"], result["patterns"])
+
+    def test_the_offline_eval_reports_a_key_that_does_not_fit_its_records(self):
+        name, scenario, key = improve_eval.scenarios("heldback")[0]
+        key["patterns"][0]["signal"] = "escalations"
+        key["patterns"][1]["anchors"] = ["no-such-task:m1"]
+        with mock.patch.object(improve_eval, "scenarios", lambda group: [(name, scenario, key)] if group == "heldback" else []):
+            problems = improve_eval.offline()["problems"]
+        self.assertEqual(len(problems), 1)
+        self.assertIn(f"{name} P1: fewer than two places fire escalations", problems[0])
+        self.assertIn(f"{name} P2: unknown anchors ['no-such-task:m1']", problems[0])
 
     def test_only_the_full_held_back_matrix_can_pass_a_model(self):
         out = self.tmp / "eval"
         names = [name for name, _, _ in improve_eval.scenarios("heldback")]
         answer = {"call": {"error": None, "tokens": 10}, "suggestions": [], "dropped": [], "matched": {}}
 
-        def score(scenarios, repeats, complete=True):
+        def score(scenarios, repeats, complete=True, sets=("heldback",)):
             self.patch(config, "ROOT", self.tmp / f"home-{len(scenarios)}-{repeats}-{complete}")
             self.patch(config, "RUNTIME_ROOT", (self.tmp / f"home-{len(scenarios)}-{repeats}-{complete}").resolve())
             out.mkdir(exist_ok=True)
-            S.write_json(out / "run.json", {"models": ["sonnet"], "repeats": repeats, "scenarios": scenarios,
+            S.write_json(out / "run.json", {"sets": list(sets), "models": ["sonnet"], "repeats": repeats,
+                                            "scenarios": scenarios,
                                             "complete": complete, "stopped": None, "spent": 0, "ceiling": 1})
             (out / "calls.jsonl").write_text("".join(json.dumps({**answer, "scenario": n, "model": "sonnet",
                                                                   "repeat": r}) + "\n"
                                                      for n in scenarios for r in range(1, repeats + 1)))
             S.write_json(out / "grading-key.json", {})
             S.write_json(out / "grades.json", {})
-            return improve_eval.score("heldback", out)
+            return improve_eval.score(out)
 
-        for partial in (score(names[:1], 3), score(names, 1), score(names, 3, complete=False)):
+        develop = [name for name, _, _ in improve_eval.scenarios("develop")]
+        for partial in (score(names[:1], 3), score(names, 1), score(names, 3, complete=False),
+                        score(develop + names, 3, sets=("develop", "heldback"))):
             self.assertFalse(partial["full_matrix"])
             self.assertFalse(partial["models"]["sonnet"]["passes"])
             self.assertIsNone(partial["recommended"])

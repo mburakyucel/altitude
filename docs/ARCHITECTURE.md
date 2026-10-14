@@ -1975,15 +1975,20 @@ sheet shows.
 `improve.py` builds the evidence in code. Signals are exact, versioned predicates over existing task
 records (`SIGNALS_VERSION`): question revisions with no operator message since the previous one,
 refused merge approvals and grants, operator messages after a report, review requests beyond the
-first per subject, findings the final report leaves open, CI rechecks and repeated deliveries for one
-PR, resume and dispatch failures and system faults, superseded reports and escalations. The window is
+first per subject, findings the final report leaves open, CI rechecks, resume and dispatch failures
+and system faults, reports superseded after verification contradicted them, and escalations. A
+delivery is recorded for every pushed head and a message continuing a reported task supersedes its
+report, so neither counts on its own. The window is
 tasks finished in the last 14 days, never before 2026-09-22 07:00 UTC and never older than 30 days.
 Task sheets, ranked by signals and operator messages, carry title, outcome, durations and tokens,
 signals with the places that produced them and what each event recorded (its reason or error, or
-the unmerged PRs a replaced report named), questions with how they were settled, review findings
-with their dispositions, and up to four paired quotes (the message answered, the operator's words,
-the reply, 300 characters each). Sheets are at most 3 KiB each and 48 KiB together; tasks that do not
-fit are listed by counts. Operator chat turns fill the remaining room as paired quotes, followed by
+what verification found in a replaced report), each question on one line with every revision's place
+and how it was settled, review findings with their dispositions, and up to four paired quotes (the
+message answered, the operator's words, the reply, 300 characters each). Sheets are whole lines, at
+most 3 KiB each and 48 KiB together: after the head and signal counts, the operator's quotes take the room
+first, then what the signals' events recorded, then questions, then findings, and a last line counts what
+did not fit. Tasks that do not fit are listed
+by counts. Operator chat turns fill the remaining room as paired quotes, followed by
 current task titles and earlier suggestions with their outcome (their decision, lapse or L3's reason for
 dropping them). The prompt is at most 64 KiB.
 
@@ -2093,9 +2098,11 @@ since is refused. `weekly` and `run` presses on `POST /api/improve` come only fr
 cookie, never a client holding only the machine key. Projects other than Altitude have no section.
 
 `improve_eval.py` loads fictional scenarios from `tests/fixtures/improvement/` as ordinary task
-folders and project chat, runs the same prompt builder and reviewer, matches suggestions to planted
-patterns by shared places and writes a blind grading sheet; [the eval](DEVELOPMENT.md#improvement-review-eval)
-describes the hand run.
+folders and project chat and runs the same prompt builder and reviewer. Its offline part, in `make
+check`, checks without a model that each signal fires on exactly its planted places and nothing
+ordinary and that what fired reaches the prompt; its live part matches suggestions to planted patterns
+by shared places and writes a blind grading sheet. [The eval](DEVELOPMENT.md#improvement-review-eval)
+describes both.
 
 ### Image input
 

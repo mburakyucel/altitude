@@ -104,10 +104,7 @@
      "id": "e3",
      "at": "2026-10-09T18:22:00+00:00",
      "kind": "report-superseded",
-     "reason": "Reported before the PR merged; merge then failed on a conflict",
-     "unmerged": [
-      143
-     ]
+     "contradicted": "PR #143 is not merged"
     }
    ]
   },
@@ -290,10 +287,7 @@
      "id": "e3",
      "at": "2026-10-14T13:52:00+00:00",
      "kind": "report-superseded",
-     "reason": "Reported while checks were pending; a check then failed",
-     "unmerged": [
-      151
-     ]
+     "contradicted": "PR #151 is not merged"
     }
    ]
   },
@@ -434,10 +428,7 @@
      "id": "e3",
      "at": "2026-10-16T13:22:00+00:00",
      "kind": "report-superseded",
-     "reason": "Reported before merge; merge then failed on a check",
-     "unmerged": [
-      157
-     ]
+     "contradicted": "PR #157 is not merged"
     }
    ]
   },
