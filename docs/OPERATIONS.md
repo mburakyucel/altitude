@@ -565,7 +565,8 @@ Source-deployed Altitude activates merged backend and web changes itself. The re
 merges even while their workers run. A failed fetch of `origin/main`, or a Git call that outlives its
 time limit on a busy host, is logged and retried on the next tick, and becomes a system fault only after
 the same step has failed for five minutes without a success.
-Other self-deploy refusals fault immediately. A self-deploy fast-forward marks activation
+Other self-deploy refusals, such as a dirty checkout, fault immediately and once; the tick then waits
+for the checkout to change. A self-deploy fast-forward marks activation
 pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked web build inputs
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
 `web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it.

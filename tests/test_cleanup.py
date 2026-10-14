@@ -237,6 +237,7 @@ class TestSelfDeploy(AltitudeCase):
         self.private_ledgers()
         make_repo(self.repo)
         self.register("altitude", path=self.repo, self_deploy=True)
+        self.addCleanup(server._refused.clear)
         S.task_dir("altitude", "landed").mkdir(parents=True, exist_ok=True)
         S.save_task("altitude", {"slug": "landed", "title": "landed", "state": "done",
                                  "created": S.now(), "updated": S.now()})
@@ -334,6 +335,21 @@ class TestSelfDeploy(AltitudeCase):
         fault.assert_called_once()
         self.assertIn("uncommitted changes", fault.call_args.args[1])
         self.assertNotIn("[altitude] self-deploy", server._failing_since)
+
+    def test_tick_files_an_unchanged_refusal_once_and_waits_for_a_change(self):
+        readme = self.repo / "README.md"
+        readme.write_text("dirty deployment\n")
+        self.tick_self_deploy(1000.0)[0].assert_called_once()
+        for now in (1030.0, 1060.0):   # the same refusal: the fault stays filed, the tick waits
+            self.tick_self_deploy(now)[0].assert_not_called()
+        git("commit", "-qam", "direct main commit", cwd=self.repo)
+        fault, _ = self.tick_self_deploy(1090.0)   # a different refusal is filed
+        self.assertIn("ahead of origin/main", fault.call_args.args[1])
+        git("update-ref", "refs/heads/main", "HEAD~1", cwd=self.repo)
+        git("checkout", "-q", "HEAD", "--", "README.md", cwd=self.repo)
+        self.tick_self_deploy(1120.0)[0].assert_not_called()   # deployable again
+        readme.write_text("dirty deployment\n")
+        self.tick_self_deploy(1150.0)[0].assert_called_once()   # a refusal after a success is news
 
     def test_pull_after_done_leaves_a_failed_fetch_to_the_tick(self):
         self.unreachable_origin()

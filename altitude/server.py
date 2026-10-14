@@ -1264,6 +1264,7 @@ def tick() -> None:
 
 TICK_GRACE_SECONDS = 300
 _failing_since: dict[str, float] = {}  # a tick step that keeps failing → monotonic time its failures began
+_refused: dict[str, str] = {}  # a tick step that keeps refusing → the fault detail already filed for it
 
 
 def _retry_next_tick(step: str, exc: BaseException) -> bool:
@@ -1288,8 +1289,14 @@ def self_deploy(project: str) -> None:
             incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
         return
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
-        incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
+        # #961: a refusal the tick cannot clear, such as a dirty checkout, is filed once and then waits for a change.
+        if _refused.get(step) != str(e):
+            incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
+            _refused[step] = str(e)
+        _failing_since.pop(step, None)
+        return
     _failing_since.pop(step, None)
+    _refused.pop(step, None)
 
 
 def tick_project(project: str) -> None:

@@ -492,7 +492,10 @@ def source_head(repo: str | Path, branch: str) -> str:
 
 def deploy_source(repo: str | Path, branch: str) -> tuple[str, str, list[str]]:
     """Fast-forward Altitude's source checkout to `branch` on its origin, fetched into Altitude's copy of its
-    repository and written from the copy's objects. Returns the commits before and after and the files changed."""
+    repository and written from the copy's objects. Returns the commits before and after and the files changed.
+
+    The guard lets the branch move only to the checkout's cached `origin/<branch>`, so the checkout's fetch must name
+    the copy's tip; when they differ it fetches once more and otherwise leaves the step to the next tick."""
     root = Path(repo).resolve()
     _seed_source_copy(root, branch)
     _fetch_source_copy(branch)
@@ -500,7 +503,18 @@ def deploy_source(repo: str | Path, branch: str) -> tuple[str, str, list[str]]:
     head = source_head(root, branch)
     if head == tip:
         return head, tip, []
-    _output(_run(root, "merge", "-q", "--ff-only", tip, env=_copy_objects()), "fast-forward failed")
+    # #961: two fetches straddling a fresh merge on the origin can see different tips.
+    if capture_origin_sha(root, branch) != tip and fetch_origin(root, branch) != tip:
+        raise FetchError(f"the checkout's origin/{branch} and Altitude's copy of its repository disagree on its tip "
+                         f"({tip[:12]}); the next tick fetches again")
+    env = _copy_objects()
+    _run(root, "update-index", "-q", "--refresh", env=env)
+    _output(_run(root, "read-tree", "-n", "-m", "-u", head, tip, env=env), "fast-forward refused")
+    # #961: `git merge --ff-only` writes the files before the guard refuses the branch move, leaving them changed.
+    # The branch moves first, through the guard, so a refused move leaves the checkout exactly as it was.
+    _output(_run(root, "update-ref", "-m", "self-deploy: fast-forward", f"refs/heads/{branch}", tip, head, env=env),
+            "fast-forward failed")
+    _output(_run(root, "read-tree", "-m", "-u", head, tip, env=env), "fast-forward failed after moving the branch")
     if source_head(root, branch) != tip:
         raise GitPolicyError(f"after the fast-forward the service checkout is not {tip[:12]}")
     return head, tip, _copy("diff", "--name-only", head, tip).split()
