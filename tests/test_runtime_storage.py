@@ -201,7 +201,7 @@ class RuntimeStorage(AltitudeCase):
         with mock.patch.object(engines.common.subprocess, "Popen", side_effect=AssertionError("launched")), \
                 self.assertRaises((OSError, ValueError)):
             engines.start_l2("claude", "project/worker-1", "brief", cwd=worktree, persona=None, model=None,
-                             settings=None, extra_env={"ALTITUDE_TASK": "demo"}, job_root=jobs)
+                             settings=None, extra_env=self.worker_env("demo"), job_root=jobs)
         self.assertEqual(list(self.outside.iterdir()), [])
 
     def test_record_replacement_replaces_links_and_refuses_linked_folders(self):

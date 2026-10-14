@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Task agents change Altitude's records only by asking Altitude, for their own task, and write only their
+  worktree and a scratch folder of their own; Altitude's home is read-only to them on both engines.
+
 ## v0.7.0 — 2026-10-13
 
 Feature release of the early preview.

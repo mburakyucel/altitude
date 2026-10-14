@@ -170,9 +170,12 @@ os.execvp(sys.argv[2], sys.argv[2:])
 
 def read_only_home(command: list[str], writable: tuple[Path, ...]) -> list[str]:
     """`command` able to write beneath `writable` and devices (on macOS also where Altitude's profile admits every job),
-    never in Altitude's home: a task worker's view of the runtime once its writable roots leave the home out."""
+    never in Altitude's home: a task worker's view of the runtime once its writable roots leave the home out. The
+    suite's home lies in the temporary folder every Altitude sandbox admits, so this stands in for the worker's
+    sandbox rather than running it."""
     if NATIVE_PLATFORM == "darwin":
-        return platform.confined(command, writable=writable, read_only=(config.ROOT,))
+        return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile([str(root) for root in writable], [str(config.ROOT)]),
+                *command]
     return [sys.executable, "-c", LANDLOCK_LAUNCHER, json.dumps([str(path) for path in (*writable, "/dev")]), *command]
 
 
@@ -454,6 +457,7 @@ class AltitudeCase(unittest.TestCase):
         self.runtime_tmp.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.runtime_tmp, True)
         self.patch(config, "SOURCE_COPY", self.tmp / "source-copy")
+        self.patch(config, "SCRATCH", self.tmp / "task-scratch")
         if self.host == "linux" and NATIVE_PLATFORM != "linux":
             self.linux_process_facts()
         self.repo = self.tmp / "repo"
@@ -521,6 +525,10 @@ class AltitudeCase(unittest.TestCase):
         patcher = mock.patch.object(target, name, *new, **kwargs)
         self.addCleanup(patcher.stop)
         return patcher.start()
+
+    def worker_env(self, slug: str, **env: str) -> dict:
+        """A worker launch's task environment for `slug`, naming its scratch folder as `dispatch.l2_env` does."""
+        return {"ALTITUDE_TASK": slug, "ALTITUDE_SCRATCH": str(config.task_scratch(self.project, slug)), **env}
 
     def task_worktree(self, slug: str = "task", *args) -> Path:
         """The case project's task worktree for `slug`, made with the project's repository when missing; the extra

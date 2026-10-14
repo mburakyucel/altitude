@@ -100,8 +100,8 @@ class TestWorkerEnd(AltitudeCase):
             engine.wait(timeout=10)
 
     def launch(self, slug, *, engine_ends: bool, result: str, recovers: bool = False):
-        env = {"FIXTURE_COMMAND": str(self.command), "FIXTURE_RESULT": result, "ALTITUDE_TASK": slug,
-               "FIXTURE_ENGINE": "exits" if engine_ends else "recovers" if recovers else "waits"}
+        env = self.worker_env(slug, FIXTURE_COMMAND=str(self.command), FIXTURE_RESULT=result,
+                              FIXTURE_ENGINE="exits" if engine_ends else "recovers" if recovers else "waits")
         job_root, worktree = dispatch.l2_job_root(self.project, slug), self.task_worktree(slug)
         launched = engines.start_l2("claude", f"{self.project}/{slug}-1", "brief", cwd=worktree,
                                     persona=self.tmp / "persona.md", model=None, settings=self.tmp / "settings.json",

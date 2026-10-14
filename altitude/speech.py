@@ -37,7 +37,7 @@ from typing import Callable
 
 from . import config, platform, state as S
 
-# Beside Altitude's home: task workers can write the home, and this process imports the runtime's code.
+# Beside Altitude's home, outside every folder an agent session writes: this process imports the runtime's code.
 ROOT = config.beside_root("speech")
 WORKER = Path(__file__).resolve().parent / "speech_worker.py"
 

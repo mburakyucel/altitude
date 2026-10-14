@@ -819,7 +819,7 @@ class TestSetup(SpeechCase):
         self.assertEqual(speech.status()["state"], "ready")
         self.assertTrue(any("set up" in line for line in self.logs))
 
-    # Task workers can write Altitude's home; the speech worker imports the runtime's code outside any sandbox.
+    # The speech worker imports the runtime's code outside any sandbox, so no task worker may write it.
 
     def worktree(self) -> Path:
         return add_worktree(make_repo(self.tmp / "project"), "task")
@@ -828,11 +828,13 @@ class TestSetup(SpeechCase):
         """What the real launch code gives each engine's task worker: Codex's sandbox on both hosts, Claude's
         Seatbelt profile on macOS (which matches resolved paths)."""
         git_roots, read_only = git_policy.worker_git_access(tree)
-        codex = tomllib.loads("\n".join(engines.codex.codex_sandbox(tree, extra_roots=git_roots, read_only=read_only)))
+        scratch = config.task_scratch("fixture", "task")
+        codex = tomllib.loads("\n".join(engines.codex.codex_sandbox(tree, extra_roots=(*git_roots, scratch),
+                                                                   read_only=read_only)))
         self.patch(engines.claude, "claude_agents", return_value=[])
-        _, _, claude, _ = engines.claude.prepare_worker("task", "Fictional.", cwd=tree, persona=None, model=None,
-                                                     settings=self.tmp / "settings.json", effort=None, resume=None,
-                                                     images=())
+        _, _, claude, _ = engines.claude.prepare_worker("task", "Fictional.", cwd=tree, scratch=scratch, persona=None,
+                                                     model=None, settings=self.tmp / "settings.json", effort=None,
+                                                     resume=None, images=())
         return {"codex": [Path(root) for root in codex["permissions"]["altitude-task"]["workspace_roots"]],
                 "claude": [Path(os.path.realpath(str(root).rstrip("*"))) for root in claude]}
 
@@ -848,7 +850,7 @@ class TestSetup(SpeechCase):
                 runtime = Path(os.path.realpath(config.beside_root("speech")))  # roots are resolved too
                 self.assertFalse(runtime.is_relative_to(home.resolve()))
                 for engine, roots in self.writable_roots(tree).items():
-                    self.assertIn(home.resolve(), roots, engine)
+                    self.assertFalse([root for root in roots if home.resolve().is_relative_to(root)], engine)
                     for root in roots:
                         self.assertFalse(runtime.is_relative_to(root), f"{engine} may write {runtime} through {root}")
 

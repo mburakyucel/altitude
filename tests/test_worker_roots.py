@@ -1,0 +1,90 @@
+"""A task worker on either engine writes its worktree, the Git parts it needs and its own scratch folder, never
+Altitude's home: a process confined to the roots each engine's launch names is refused every record there, its own
+task's included (docs/ARCHITECTURE.md#task-door)."""
+import json
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+from tests.support import AltitudeCase, add_worktree, make_repo, read_only_home
+from altitude import config, dispatch, engines, state as S, tasks as T
+
+CHILD = r'''
+import json, os, sys
+out = {}
+for name, (kind, path) in json.loads(sys.argv[1]).items():
+    try:
+        if kind == "file":  # an existing record, opened for appending and left unchanged
+            os.close(os.open(path, os.O_WRONLY | os.O_APPEND))
+        else:  # a folder: a new file in it
+            target = os.path.join(path, "probe")
+            with open(target, "x") as f:
+                f.write("fictional")
+            os.unlink(target)
+        out[name] = True
+    except OSError:
+        out[name] = False
+print(json.dumps(out))
+'''
+
+
+class WorkerRoots(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        make_repo(self.repo)
+        task = T.new(self.project, "Worker roots", "Write only the worktree and the scratch folder.")
+        self.slug = task["slug"]
+        self.worktree = add_worktree(self.repo, self.slug)
+        other = T.new(self.project, "Another task", "A neighbour the worker must not write.")
+        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "A fictional message, so the conversation exists.")
+        folder = S.task_dir(self.project, self.slug)
+        record = engines.common._worker_paths(dispatch.l2_job_root(self.project, self.slug), "worker")["record"]
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text("{}")
+        (folder / "reviews").mkdir()
+        images = config.project_dir(self.project) / "images"
+        images.mkdir()
+        self.scratch = engines.common.task_scratch(dispatch.l2_env(self.project, self.slug, 1))
+        self.targets = {
+            "task record": ("file", S.status_path(self.project, self.slug)),
+            "worker record": ("file", record),
+            "conversation": ("file", folder / "conversation.jsonl"),
+            "project list": ("file", config.PROJECTS_FILE),
+            "task folder": ("folder", folder), "other task": ("folder", S.task_dir(self.project, other["slug"])),
+            "reviews folder": ("folder", folder / "reviews"), "image staging": ("folder", images),
+            "home": ("folder", config.ROOT), "scratch": ("folder", self.scratch)}
+        self.assertTrue(all(Path(path).exists() for _, path in self.targets.values()))
+
+    def roots(self, engine: str) -> tuple[list[Path], tuple]:
+        """The writable roots and read-only paths a worker launch on `engine` names."""
+        self.patch(engines.claude, "claude_agents", return_value=[])
+        cmd, _, writable, read_only = engines.common.implementation(engine).prepare_worker(
+            "fixture", "brief", cwd=self.worktree, scratch=self.scratch, persona=None, model=None,
+            settings=self.tmp / "settings.json", effort=None, resume=None, images=())
+        if writable is None:  # Codex names its roots in its own sandbox settings
+            settings = [cmd[n + 1] for n, part in enumerate(cmd[:-1]) if part == "-c"]
+            policy = tomllib.loads("\n".join(s for s in settings if s.startswith("permissions.")))
+            writable = list(policy["permissions"]["altitude-task"]["workspace_roots"])
+        return [Path(root) for root in writable], read_only
+
+    def written(self, command: list[str]) -> dict:
+        spec = json.dumps({name: (kind, str(path)) for name, (kind, path) in self.targets.items()})
+        run = subprocess.run([*command, sys.executable, "-I", "-c", CHILD, spec], capture_output=True, text=True,
+                             cwd=self.worktree, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        return json.loads(run.stdout)
+
+    def assert_only_scratch(self, written: dict):
+        self.assertEqual({name for name, allowed in written.items() if allowed}, {"scratch"}, written)
+
+    def test_each_engines_roots_admit_the_scratch_folder_and_no_record_in_the_home(self):
+        for engine in ("claude", "codex"):
+            with self.subTest(engine=engine):
+                writable, _ = self.roots(engine)
+                home = config.ROOT.resolve()
+                self.assertFalse([root for root in writable if home.is_relative_to(root.resolve())
+                                  or root.resolve().is_relative_to(home)], writable)
+                # Landlock names folders that exist; Claude's account file family is a name pattern, not a folder.
+                folders = tuple(root for root in writable if not str(root).endswith("*") and root.is_dir())
+                self.assert_only_scratch(self.written(read_only_home([], folders)))

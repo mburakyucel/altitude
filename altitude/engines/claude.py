@@ -641,7 +641,7 @@ def review_result_facts(records: list[dict]) -> dict:
     return facts
 
 
-def prepare_worker(name, prompt, *, cwd, persona, model, settings, effort, resume, images):
+def prepare_worker(name, prompt, *, cwd, scratch, persona, model, settings, effort, resume, images):
     cmd = [config.CLAUDE_BIN, "-p", "--input-format", "stream-json", "--replay-user-messages",
            "--output-format", "stream-json", "--verbose", "--name", name,
            "--permission-mode", "auto", "--allowedTools", "Bash(alt *)",
@@ -661,7 +661,7 @@ def prepare_worker(name, prompt, *, cwd, persona, model, settings, effort, resum
         if row.get("name") == name and row.get("state") not in ("done", "failed", "stopped"):
             claude_stop(row["id"])
     git_writable, read_only = git_policy.worker_git_access(cwd)
-    return cmd, content, _claude_writable(Path(cwd), *git_writable, config.ROOT), read_only
+    return cmd, content, _claude_writable(Path(cwd), *git_writable, scratch), read_only
 
 
 worker_unit_name = _claude_unit

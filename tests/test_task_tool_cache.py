@@ -1,4 +1,5 @@
-"""Issue #617: confined workers keep writable tool caches without moving installed managers."""
+"""Issue #617: confined workers keep writable tool caches without moving installed managers, in the task's own scratch
+folder beside Altitude's home, which is not among their writable roots (docs/ARCHITECTURE.md#task-door)."""
 import json
 import subprocess
 import sys
@@ -36,6 +37,7 @@ class TaskToolCache(AltitudeCase):
             for engine in ("claude", "codex"):
                 task = T.new(self.project, f"{host} {engine} cache", "Fictional worker")
                 root = S.task_dir(self.project, task["slug"]) / "l2-engine"
+                scratch = config.task_scratch(self.project, task["slug"])
                 worktree = self.task_worktree(task["slug"])
                 for resume in (False, True):
                     with self.subTest(host=host, engine=engine, resume=resume):
@@ -71,9 +73,13 @@ class TaskToolCache(AltitudeCase):
                             self.assertEqual(child_env["COREPACK_HOME"], "/fixture/managers")
                             for key in ("XDG_CACHE_HOME", "npm_config_cache", "npm_config_store_dir", "PIP_CACHE_DIR"):
                                 caches[key] = Path(child_env[key])
-                                self.assertTrue(caches[key].is_relative_to(root / "tool-cache"))
+                                self.assertTrue(caches[key].is_relative_to(scratch.resolve() / "tool-cache"))
                                 if engine == "claude":
                                     self.assertTrue(any(caches[key].is_relative_to(path) for path in kw["writable"]))
+                            if engine == "claude":
+                                self.assertFalse(any(config.ROOT.resolve().is_relative_to(Path(path).resolve())
+                                                     or Path(path).resolve().is_relative_to(config.ROOT.resolve())
+                                                     for path in kw["writable"]), kw["writable"])
                             self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", child_env)
                             return ["/usr/bin/env", "-i", *(f"{k}={v}" for k,v in child_env.items()), *argv]
                         with mock.patch.object(platform.sys, "platform", host), \
@@ -82,7 +88,8 @@ class TaskToolCache(AltitudeCase):
                              mock.patch.object(platform, "job_command", side_effect=command):
                             result = engines.common._start_worker(engine, "fixture", "continue", cwd=worktree,
                                 job_root=root, resume="session" if resume else None,
-                                extra_env={"ALTITUDE_TASK":task["slug"], "COREPACK_HOME":"/fixture/managers",
+                                extra_env={"ALTITUDE_TASK":task["slug"], "ALTITUDE_SCRATCH": str(scratch),
+                                           "COREPACK_HOME":"/fixture/managers",
                                            "XDG_CACHE_HOME":"/unwritable/service-cache", "PIP_CACHE_DIR":"/unwritable/pip"})
                             self.assertEqual(result["returncode"], 0, result)
                             worker_id = result["agent"]["id"]
@@ -100,29 +107,33 @@ class TaskToolCache(AltitudeCase):
                             roots = policy["permissions"]["altitude-task"]["workspace_roots"]
                             for cache in caches.values():
                                 self.assertTrue(any(cache.is_relative_to(path) for path in roots))
+                            self.assertFalse(any(config.ROOT.resolve().is_relative_to(path)
+                                                 or Path(path).is_relative_to(config.ROOT.resolve()) for path in roots), roots)
 
-    def test_archival_removes_only_this_tasks_tool_cache_and_retains_evidence(self):
+    def scratch(self, slug):
+        return config.task_scratch(self.project, slug)
+
+    def test_archival_removes_only_this_tasks_scratch_and_retains_evidence(self):
         self.assertTrue(T.shutil.rmtree.avoids_symlink_attacks)
         task = T.new(self.project, "Cache lifetime", "Fictional task")
         other = T.new(self.project, "Other lifetime", "Fictional task")
-        directory = S.task_dir(self.project, task["slug"])
-        cache = directory / "l2-engine/tool-cache/pnpm"
+        cache = self.scratch(task["slug"]) / "tool-cache/pnpm"
         cache.mkdir(parents=True)
         (cache / "package").write_text("fixture package")
-        evidence = directory / "l2-engine/worker.json"
+        evidence = S.task_dir(self.project, task["slug"]) / "l2-engine/worker.json"
+        evidence.parent.mkdir()
         evidence.write_text('{}')
-        other_cache = S.task_dir(self.project, other["slug"]) / "l2-engine/tool-cache"
-        other_cache.mkdir(parents=True)
+        other_scratch = self.scratch(other["slug"])
+        other_scratch.mkdir(parents=True)
         T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
-        archived = S.archive_dir(self.project) / task["slug"]
-        self.assertFalse((archived / "l2-engine/tool-cache").exists())
-        self.assertTrue((archived / "l2-engine/worker.json").exists())
+        self.assertFalse(self.scratch(task["slug"]).exists())
+        self.assertTrue((S.archive_dir(self.project) / task["slug"] / "l2-engine/worker.json").exists())
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "rejected")
-        self.assertTrue(other_cache.exists())
+        self.assertTrue(other_scratch.exists())
 
-    def test_cache_cleanup_failure_does_not_claim_archival(self):
+    def test_scratch_cleanup_failure_does_not_claim_archival(self):
         task = T.new(self.project, "Cache cleanup error", "Fictional task")
-        (S.task_dir(self.project, task["slug"]) / "l2-engine/tool-cache").mkdir(parents=True)
+        self.scratch(task["slug"]).mkdir(parents=True)
         with mock.patch.object(T.shutil, "rmtree", side_effect=PermissionError("cleanup refused")):
             with self.assertRaisesRegex(PermissionError, "cleanup refused"):
                 T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
@@ -130,32 +141,33 @@ class TaskToolCache(AltitudeCase):
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "queued")
         self.assertFalse((S.archive_dir(self.project) / task["slug"]).exists())
 
-    def test_cache_cleanup_refuses_linked_parent_and_never_follows_package_links(self):
-        task = T.new(self.project, "Cache linked parent", "Fictional task")
-        directory = S.task_dir(self.project, task["slug"])
+    def test_scratch_cleanup_refuses_a_linked_folder_and_never_follows_links_inside(self):
+        task = T.new(self.project, "Cache linked folder", "Fictional task")
         elsewhere = self.tmp / "elsewhere"
-        (elsewhere / "tool-cache").mkdir(parents=True)
-        keep = elsewhere / "tool-cache/package"
+        elsewhere.mkdir()
+        keep = elsewhere / "package"
         keep.write_text("unrelated data")
-        (directory / "l2-engine").symlink_to(elsewhere)
+        scratch = self.scratch(task["slug"])
+        scratch.parent.mkdir(parents=True)
+        scratch.symlink_to(elsewhere)
         with self.assertRaises(OSError):
             T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
         self.assertEqual(keep.read_text(), "unrelated data")
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "queued")
-        (directory / "l2-engine").unlink()
-        cache = directory / "l2-engine/tool-cache"
-        cache.mkdir(parents=True)
-        (cache / "linked-package").symlink_to(elsewhere)
+        scratch.unlink()  # the entry repair
+        (scratch / "tool-cache").mkdir(parents=True)
+        (scratch / "tool-cache/linked-package").symlink_to(elsewhere)
         T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
         self.assertEqual(keep.read_text(), "unrelated data")
-        self.assertFalse((S.archive_dir(self.project) / task["slug"] / "l2-engine/tool-cache").exists())
+        self.assertFalse(scratch.exists())
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "rejected")
 
     def test_completion_cleanup_failure_retains_reported_state_and_no_digest(self):
         task = T.new(self.project, "Completion cleanup error", "Fictional task")
         T.dispatch(self.project, task["slug"], attempt=1, session_id="fixture", agent_id="fixture",
                    worktree="/fictional/worktree", branch="fixture")
         T.report(self.project, task["slug"], {"verdict":"ok", "prs":[], "spend":{}})
-        (S.task_dir(self.project, task["slug"]) / "l2-engine/tool-cache").mkdir(parents=True)
+        self.scratch(task["slug"]).mkdir(parents=True)
         with mock.patch.object(T.shutil, "rmtree", side_effect=PermissionError("cleanup refused")):
             with self.assertRaisesRegex(PermissionError, "cleanup refused"):
                 T.done(self.project, task["slug"], "Fixture completion")
@@ -163,50 +175,32 @@ class TaskToolCache(AltitudeCase):
         self.assertFalse((S.archive_dir(self.project) / task["slug"]).exists())
         self.assertFalse((S.task_dir(self.project, task["slug"]) / "digest.md").exists())
 
-    def test_cache_cleanup_stays_on_open_job_when_its_parent_is_replaced(self):
+    def test_scratch_cleanup_stays_on_the_open_folder_when_its_parent_is_replaced(self):
         task = T.new(self.project, "Cache parent race", "Fictional task")
-        directory = S.task_dir(self.project, task["slug"])
-        job = directory / "l2-engine"
-        (job / "tool-cache").mkdir(parents=True)
+        project = self.scratch(task["slug"]).parent
+        (project / task["slug"] / "tool-cache").mkdir(parents=True)
         elsewhere = self.tmp / "elsewhere"
-        (elsewhere / "tool-cache").mkdir(parents=True)
-        keep = elsewhere / "tool-cache/package"
+        (elsewhere / task["slug"]).mkdir(parents=True)
+        keep = elsewhere / task["slug"] / "package"
         keep.write_text("unrelated data")
         remove = T.shutil.rmtree
         def replace_parent(path, **kwargs):
-            job.rename(directory / "old-job")
-            job.symlink_to(elsewhere)
+            project.rename(project.with_name("old-project"))
+            project.symlink_to(elsewhere)
             return remove(path, **kwargs)
         with mock.patch.object(T.shutil, "rmtree", side_effect=replace_parent):
-            T._remove_tool_cache(self.project, task["slug"])
-        self.assertFalse((directory / "old-job/tool-cache").exists())
+            T._remove_scratch(self.project, task["slug"])
+        self.assertFalse((project.with_name("old-project") / task["slug"]).exists())
         self.assertEqual(keep.read_text(), "unrelated data")
 
-    def test_linked_cache_is_refused_and_entry_repair_allows_retry(self):
-        task = T.new(self.project, "Cache entry repair", "Fictional task")
-        job = S.task_dir(self.project, task["slug"]) / "l2-engine"
-        job.mkdir()
-        elsewhere = self.tmp / "elsewhere"
-        elsewhere.mkdir()
-        keep = elsewhere / "package"
-        keep.write_text("unrelated data")
-        (job / "tool-cache").symlink_to(elsewhere)
-        with self.assertRaises(OSError):
-            T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
-        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "queued")
-        (job / "tool-cache").unlink()
-        T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
-        self.assertEqual(keep.read_text(), "unrelated data")
-        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "rejected")
-
-    def test_configured_home_link_is_a_trusted_anchor(self):
-        task = T.new(self.project, "Linked runtime home", "Fictional task")
-        cache = S.task_dir(self.project, task["slug"]) / "l2-engine/tool-cache"
+    def test_a_linked_home_parent_is_a_trusted_anchor(self):
+        task = T.new(self.project, "Linked scratch parent", "Fictional task")
+        cache = self.scratch(task["slug"]) / "tool-cache"
         cache.mkdir(parents=True)
-        home = self.tmp / "runtime-home"
-        home.symlink_to(config.ROOT)
-        with mock.patch.object(config, "ROOT", home):
-            T._remove_tool_cache(self.project, task["slug"])
+        linked = self.tmp / "linked-parent"
+        linked.symlink_to(config.SCRATCH.parent)
+        with mock.patch.object(config, "SCRATCH", linked / config.SCRATCH.name):
+            T._remove_scratch(self.project, task["slug"])
         self.assertFalse(cache.exists())
 
     def test_reject_stops_a_cache_writer_before_disposal_and_stop_failure_retains_cache(self):
@@ -217,7 +211,7 @@ class TaskToolCache(AltitudeCase):
                 task = T.dispatch(self.project, task["slug"], attempt=1, session_id="session", agent_id="fixture",
                                   worktree=str(self.repo), branch="fixture", l2_engine=engine)
                 root = dispatch.l2_job_root(self.project, task["slug"])
-                cache = root / "tool-cache"
+                cache = self.scratch(task["slug"]) / "tool-cache"
                 script = ("import pathlib,sys,time\np=pathlib.Path(sys.argv[1])\n"
                           "end=time.monotonic()+10\nwhile time.monotonic()<end:\n"
                           " p.mkdir(parents=True,exist_ok=True); (p/'package').write_text('fixture'); time.sleep(.01)\n")
@@ -251,5 +245,5 @@ class TaskToolCache(AltitudeCase):
                     result = dispatch.run_task_operation(self.project, task["slug"])
                 self.assertEqual(result["request"]["status"], "done", result)
                 self.assertFalse((S.tasks_dir(self.project) / task["slug"]).exists())
-                self.assertFalse((S.archive_dir(self.project) / task["slug"] / "l2-engine/tool-cache").exists())
+                self.assertFalse(cache.exists())
                 self.assertEqual(S.load_task(self.project, task["slug"])["state"], "rejected")

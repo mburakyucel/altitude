@@ -773,13 +773,13 @@ of cumulative turn usage. An integration with native compaction retains its conv
 context threshold; only the integration needing managed rotation uses Altitude's threshold reset.
 Explicit reset and confinement-policy changes retain their existing fresh-session behavior.
 Every L2 launch and resume supplies the same task-local tool-cache environment on Linux and Mac.
-GitHub CLI logs and package-tool caches live under `l2-engine/tool-cache` inside the task's existing
-writable runtime root; installed Corepack managers retain their original location. Tool-native
+GitHub CLI logs and package-tool caches live under `tool-cache` in the task's scratch folder (see
+[task door](#task-door)); installed Corepack managers retain their original location. Tool-native
 validation/invalidation rules apply, and live delivery checks remain authoritative. Archival removes
-this disposable cache subtree while retaining worker and review evidence. Cache cleanup precedes
+the scratch folder while retaining worker and review evidence. Its cleanup precedes
 the terminal state change under the project lock; failure retains the task's prior state and location.
-Deletion walks from the runtime root through open directories without following links, and removes
-only the cache subtree relative to the held job-directory descriptor.
+Deletion walks from the scratch folders' resolved parent through open directories without following
+links, and removes only that task's folder relative to the held project-folder descriptor.
 Rejection stops the attached worker through the engine seam before disposal, so no live writer
 recreates the cache after archival.
 [Development](DEVELOPMENT.md#local-checks)
@@ -1570,6 +1570,13 @@ reading, so a worker that cannot write the home still shares them. `tests/test_w
 verbs, both hooks and the driver on both engines, and `tests/test_land.py` a landing, with Altitude's home
 read-only to them.
 
+No worker's writable roots include Altitude's home. A worker writes its worktree, the Git parts
+[isolation](#isolation-and-landing) allows, temporary folders and its own scratch folder,
+`~/.altitude-scratch/<project>/<task>` (`ALTITUDE_SCRATCH`), for drafts, held patches, verb input files and tool
+caches. altd makes it at launch beside the home and deletes it, without following links, when the task is done or
+rejected; it never reads it. `tests/test_worker_roots.py` confines a process to each engine's roots and finds every
+record refused, its own task's included, and the scratch folder writable.
+
 ### Operator terminal
 
 `terminal.py` gives the operator one login shell per task worktree or project folder. It is off until
@@ -1918,8 +1925,8 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
-Workers can write the runtime root, so the daemon never writes its records there through a link: a
-planted link would let a sandboxed worker have Altitude write outside its sandbox. Every record
+The daemon never writes its records in the runtime root through a link: a planted link would let a
+process that can write there have Altitude write outside its own reach. No task worker's writable roots include it. Every record
 replacement, log append and lock in the runtime root, worker output and review snapshots go through
 `storage.py`. It walks from the runtime root fixed at startup without following a link at any
 component and opens a leaf only when it is one singly linked regular file, truncating only after
@@ -3118,9 +3125,8 @@ The existing document settings cache remains advisory, and no persistent browser
 
 With `host`, this computer transcribes: `altitude/speech.py` owns a pinned speech runtime and one
 speech worker, and the page streams samples to it. The runtime lives in `~/.altitude-speech`, beside
-Altitude's home rather than in it (`config.beside_root`, which validation's storage also uses): task
-workers can write the home, and the speech worker imports the runtime's code outside any sandbox, so
-no worker's writable roots contain it. At daemon start, `speech.remove_home_runtime()` deletes what
+Altitude's home rather than in it (`config.beside_root`, which validation's storage and the scratch folders also
+use): the speech worker imports the runtime's code outside any sandbox, so no worker's writable roots contain it. At daemon start, `speech.remove_home_runtime()` deletes what
 earlier releases kept in `~/.altitude/speech` without reusing or following any of it, leaving a
 registered project's state that shares the name in place, and nothing it fails to delete stops the start;
 when that folder held a finished runtime and host voice is selected, voice sets up again beside the home
