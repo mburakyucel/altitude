@@ -170,9 +170,12 @@ os.execvp(sys.argv[2], sys.argv[2:])
 
 def read_only_home(command: list[str], writable: tuple[Path, ...]) -> list[str]:
     """`command` able to write beneath `writable` and devices (on macOS also where Altitude's profile admits every job),
-    never in Altitude's home: a task worker's view of the runtime once its writable roots leave the home out."""
+    never in Altitude's home: a task worker's view of the runtime once its writable roots leave the home out. The
+    suite's home lies in the temporary folder every Altitude sandbox admits, so this stands in for the worker's
+    sandbox rather than running it."""
     if NATIVE_PLATFORM == "darwin":
-        return platform.confined(command, writable=writable, read_only=(config.ROOT,))
+        return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile([str(root) for root in writable], [str(config.ROOT)]),
+                *command]
     return [sys.executable, "-c", LANDLOCK_LAUNCHER, json.dumps([str(path) for path in (*writable, "/dev")]), *command]
 
 
