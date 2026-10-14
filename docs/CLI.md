@@ -55,7 +55,8 @@ its explicit `--json` form return the complete status record. `alt task show <sl
 that same record. Its `main_run` is the push-triggered main run of the newest merged commit, or null
 with a recorded error while that run does not exist yet; a hand-dispatched run on the same commit
 never qualifies. Status and `alt task list` carry one `waiting` label, which `alt queue` shows as a blocked task's reason: the operator's
-turn (open questions or a held review-ready PR), `L2 replying to <operator>` after they wrote,
+turn (a lone freeform question named by its first line while the task waits, otherwise counted, or a held
+review-ready PR), `L2 replying to <operator>` after they wrote,
 `paused · fault …`, `stopped by <operator>` or `stopped by L3`, `waiting on L3` or `paused`. `alt monitor` reports each
 seat's quota and model allowances, the routing each role would get now and live provider sessions; `alt decisions` reports what waits for the operator, including held
 reviews.
@@ -1420,6 +1421,22 @@ synopsis brings it to Needs you. It is Altitude's task UI, separate from the eng
 display. [Architecture and transport flow](ARCHITECTURE.md#from-model-judgment-to-a-task-question)
 explains the owner CLI and coordinator MCP/broker paths.
 
+A wait on an action only the operator can take, such as a command for their task terminal or a step posted
+in project chat, is their turn rather than L3's. The owner records it as a plain operator question whose first
+line names the step, which the operator's wait label and task card then show; a terminal step carries its
+`run` block, so the question card opens the terminal:
+
+````sh
+alt task block "$ALTITUDE_TASK" --for-operator --reason 'Run the sign-in command in the task terminal.
+
+```run
+example-tool sign-in
+```'
+````
+
+Their reply, the Terminal notice or L3's message wakes the owner, who verifies the step and resolves the
+question: `answered` citing their reply, or `withdrawn` with what it verified when no reply came.
+
 For up to three independent questions upfront, pass `--questions-file <file>` to `block` or
 `escalate`. Use `--questions-file -` with JSON on stdin when calling through the L3 broker; the
 broker never reads a server file supplied by the caller. The single `--reason` / `--question`
@@ -2298,7 +2315,9 @@ command hears about it. The notice names the command and is a prompt to check, n
 carries no exit status, and a command waiting for input, such as `read`, can look finished. The owner reads the
 output with `alt task terminal` and verifies that the command ended and how. Ctrl+C before Enter drops the command without a notice. The
 notice is not a chat message and grants no approval, access or authority; a stopped or faulted task keeps
-it for its next resume.
+it for its next resume. The owner hands the command in an operator question that carries its `run` block
+(`alt task block --for-operator`, [above](#conversational-decisions)), so the task shows the step as the operator's turn,
+and resolves that question once it has verified the outcome.
 
 ### Reading the project terminal
 

@@ -356,7 +356,7 @@ class QuestionGroups(AltitudeCase):
         coordinator = next(q for q in self.group()["questions"] if q["audience"] == "l3")
         self.assertEqual([a for _, _, a in self.open_members()], ["operator", "l3"])
         task = S.load_task(self.project, self.slug)
-        self.assertEqual((task["waiting_on"], T.wait_label(self.project, task)), ("burak", f"{name}'s turn · 1 question"))
+        self.assertEqual((task["waiting_on"], T.wait_label(self.project, task)), ("burak", f"{name}'s turn · Which team owns the rollout?"))
         self.assertIn("(authority: operator)", self.block_notices()[-1])
         T.resolve_question(self.project, self.slug, operator["id"], None, None, expected_attempt=1,
                            disposition="withdrawn", reason="The brief names the owning team.")

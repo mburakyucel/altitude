@@ -22,6 +22,13 @@ def short_reason(reason: str, limit: int = 200) -> str:
     first = re.split(r"(?<=[.!?])\s|\s[—–-]\s|:\s`", reason.strip(), maxsplit=1)[0].strip()
     return first if len(first) <= limit else first[:limit - 1].rstrip() + "…"
 
+
+def headline(text: str) -> str:
+    """A question's first line, as a one-line wait label names it: at most 120 characters, cut at a word. The web's
+    `turnLabel` cuts the same way, so the CLI and the task card name a step identically."""
+    first = text.strip().split("\n", 1)[0].strip()
+    return first if len(first) <= 120 else re.sub(r"\s+\S*$", "", first[:119]) + "…"
+
 TRANSITIONS = {
     "queued": {"running", "blocked", "rejected"},               # blocked: a dispatch-time fault
     "running": {"reported", "blocked", "rejected", "done"},
@@ -2960,17 +2967,21 @@ def review_pr(project: str, task: dict) -> int | None:
 
 
 def block_status(project: str, task: dict) -> tuple[str, str]:
-    """One wait label for the CLI, queue and restart notice; "paused" never hides an operator decision."""
+    """One wait label for the CLI, queue and restart notice; "paused" never hides an operator decision. While the
+    task waits, a lone freeform operator question is named by its first line, so a wait on the operator's step says
+    the step; a question with choices, several, or one already followed by a resume are counted."""
     name = config.operator_label()
     if task.get("fault"):
         return "fault", f"paused · fault {task['fault']}"
     if task.get("stop_id"):
         return "stopped", f"stopped by {'L3' if stopped_by(task) == 'l3' else name}"
     stopped = task.get("state") in ("blocked", "reported")
-    count, number = len(operator_questions(task)) if stopped else 0, review_pr(project, task)
+    asked, number = operator_questions(task) if stopped else [], review_pr(project, task)
     waits = []
-    if count:
-        waits.append(f"{count} question{'s' if count != 1 else ''}")
+    if len(asked) == 1 and not question_choices(asked[0]) and not task.get("resume_after"):
+        waits.append(headline(asked[0]["question"]))
+    elif asked:
+        waits.append(f"{len(asked)} question{'s' if len(asked) != 1 else ''}")
     if number:
         waits.append(f"review PR #{number}")
     if waits:

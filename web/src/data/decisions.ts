@@ -17,11 +17,22 @@ export function attentionSummary(rows: Decision[]): string {
     .filter(([count]) => count).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ");
 }
 
-/** One task's turn, as Work rows, the task header and its chat say it (SPEC.md §3.5). */
-export function turnLabel(rows: Decision[]): string | null {
-  const questions = rows.filter((row) => row.id).length;
+/** A question's first line, as a one-line wait label names it: at most 120 characters, cut at a word, exactly as
+ * altitude/tasks.py `headline` cuts it for the CLI. */
+export function headline(text: string | null | undefined): string {
+  const first = (text ?? "").trim().split("\n")[0]!.trim();
+  return first.length <= 120 ? first : `${first.slice(0, 119).replace(/\s+\S*$/, "")}…`;
+}
+
+/** One task's turn, as Work rows, the task header and its chat say it (SPEC.md §3.5). A waiting task's row is `named`:
+ * a lone freeform question shows its first line, so a wait on the operator's step says the step. The task page,
+ * which shows the question itself, and a question with choices keep the count. */
+export function turnLabel(rows: Decision[], named = false): string | null {
+  const questions = rows.filter((row) => row.id);
   const review = rows.find((row) => row.kind === "review");
-  const parts = [questions ? `${questions} question${questions === 1 ? "" : "s"}` : "", review ? `review PR #${review.pr}` : ""];
+  const lone = named && questions.length === 1 && !optionsFor(questions[0]!).length ? headline(questions[0]!.question) : "";
+  const count = questions.length ? `${questions.length} question${questions.length === 1 ? "" : "s"}` : "";
+  const parts = [lone || count, review ? `review PR #${review.pr}` : ""];
   return parts.some(Boolean) ? `Your turn · ${parts.filter(Boolean).join(" · ")}` : null;
 }
 

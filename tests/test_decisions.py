@@ -114,7 +114,8 @@ class TestDecisions(AltitudeCase):
         task = self.blocked("Rollback", "How long should the old index stay?")
         slug, name = task["slug"], config.operator_label()
         [row] = T.decisions(self.project)
-        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)),
+                         f"{name}'s turn · How long should the old index stay?")
         T.message(self.project, slug, "burak", "Could we roll back after day seven?")
         self.assertEqual(T.decisions(self.project), [], "sending anything hands the turn back")
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"L2 replying to {name}")
@@ -129,6 +130,34 @@ class TestDecisions(AltitudeCase):
         [revised] = T.decisions(self.project)
         self.assertEqual((revised["id"], revised["revision"]), (row["id"], 2))
         self.assertNotIn("asked_again", revised, "a revised question is asked for the first time")
+
+    def test_a_wait_on_the_operators_step_is_their_turn_and_names_the_step(self):
+        # Two owners waiting for the operator to run a step recorded it as an L3 question, so their tasks read
+        # "waiting on L3" and the operator took the coordinator for stuck. An operator-addressed wait names the step.
+        name = config.operator_label()
+        step = self.blocked("Sign in", "Run `example-tool sign-in` in this task's terminal.\n\n```run\nexample-tool sign-in\n```\n"
+                                       "Altitude resumes me when it finishes.")
+        several = self.blocked("Two asks", "Which region?")
+        T.resume(self.project, several["slug"])
+        T.block(self.project, several["slug"], "Two choices.", actor="l2", updates={"waiting_on": "burak"},
+                questions={"questions": [{"id": several["questions"][-1]["id"], "question": "Which region?"},
+                                         {"question": "Which size?"}]})
+        coordinator = self.blocked("Access", "CI export access is missing.", waiting_on="l3")
+        labels = {slug: T.block_status(self.project, S.load_task(self.project, slug))
+                  for slug in (step["slug"], several["slug"], coordinator["slug"])}
+        self.assertEqual(labels[step["slug"]], ("waiting-operator", f"{name}'s turn · Run `example-tool sign-in` in this task's terminal."))
+        # The web's `headline` (decisions.test.tsx) cuts these same examples to the same text.
+        long = "Restore the checkout to 1a2b3c4d5e from the step posted in project chat, then " + "wait " * 20
+        self.assertEqual([T.headline(text) for text in ("Run this in the task terminal: `example-tool sign-in`.\nThen wait.", long)],
+                         ["Run this in the task terminal: `example-tool sign-in`.",
+                          "Restore the checkout to 1a2b3c4d5e from the step posted in project chat, then wait wait wait wait wait wait wait wait…"])
+        self.assertEqual(labels[several["slug"]], ("waiting-operator", f"{name}'s turn · 2 questions"))
+        self.assertEqual(labels[coordinator["slug"]], ("waiting-l3", "waiting on L3"))
+        self.assertEqual({row["slug"] for row in T.decisions(self.project)}, {step["slug"], several["slug"]},
+                         "the step is on the operator's turn; the coordinator's wait is not")
+        T.notify(self.project, step["slug"], "Terminal: the command looks finished.", by="terminal", attempt=1)
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, step["slug"])), f"{name}'s turn · 1 question",
+                         "once the Terminal notice wakes the owner, the label no longer asks for the step")
 
     def test_a_fault_park_after_a_reply_keeps_the_turn_with_the_owner(self):
         # Only the owner's own park or report asks again; a fault is L3's to repair, not the operator's turn.
@@ -158,7 +187,7 @@ class TestDecisions(AltitudeCase):
                 S.save_task(self.project, {**S.load_task(self.project, slug), **blocker})
                 self.assertNotIn("review", [row["kind"] for row in T.decisions(self.project)])
                 S.save_task(self.project, {k: v for k, v in S.load_task(self.project, slug).items() if k not in blocker})
-        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question · review PR #42")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · Build the export next? · review PR #42")
         T.message(self.project, slug, "burak", "I will review PR #42 shortly.")
         self.assertEqual(T.decisions(self.project), [])
         T.resume(self.project, slug)
@@ -183,12 +212,13 @@ class TestDecisions(AltitudeCase):
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks"],
                          "a freeform question and an Approve card must not compete for the same PR")
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)),
-                         f"{name}'s turn · 1 question")
+                         f"{name}'s turn · Merge the checkout fix? {url}")
         T.resume(self.project, slug)
         T.block(self.project, slug, "Merge the checkout fix?", actor="l2", updates={"waiting_on": "burak"},
                 questions=approve(f"Merge the checkout fix? {url}"))
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks"])
-        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question",
+                         "a question with choices is counted, not named")
         question = S.load_task(self.project, slug)["questions"][-1]
         T.resume(self.project, slug)
         T.block(self.project, slug, "Merge the checkout fix now?", actor="l2", updates={"waiting_on": "burak"},

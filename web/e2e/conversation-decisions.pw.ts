@@ -269,7 +269,8 @@ test("owner records delegated L3 authority while operator decisions and independ
   expect(finalOverview.projects[0].counts).toEqual(initialOverview.projects[0].counts);
   await walk.open(info.project.name === "phone" ? "/projects/atlas?tab=work" : "/projects/atlas");
   const work = page.getByRole("region", { name: "Work", exact: true });
-  const projectRow = work.getByRole("link", { name: /^Lease and policy · Your turn · 1 question/ });
+  // The lone freeform question left on the operator's turn names itself on the row (SPEC.md §3.5).
+  const projectRow = work.getByRole("link", { name: `Lease and policy · Your turn · ${policy.question}` });
   await walk.state("05-project-retains-operator-choice-and-blocked-task", {
     visible: [projectRow],
     hidden: [work.getByRole("article"), work.getByText(policy.question, { exact: true }), work.getByText(lease.question, { exact: true })],
@@ -357,7 +358,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await park(request, slug);
   await walk.open(workPath);
   await walk.state("06-same-row-last-question", {
-    visible: [row.getByText(/Your turn · 1 question/), row.getByText("Needs you", { exact: true }), badge(3)], hidden: [work.getByRole("article")],
+    visible: [row.getByText(`Your turn · ${owner.question}`, { exact: true }), row.getByText("Needs you", { exact: true }), badge(3)], hidden: [work.getByRole("article")],
   });
   await row.click();
   await expect(page).toHaveURL(new RegExp(`question=${owner.id}&revision=${owner.revision}$`));

@@ -402,7 +402,9 @@ def main(argv=None) -> None:
                                 "\"review\": \"proposal\" (repeat; one .md/.txt, images)")
             x.add_argument("--recommendation"); x.add_argument("--label"); x.add_argument("--why")
             x.add_argument("--fault", action="store_true", help="the environment failed, not a decision: file the incident and tell L3")
-            x.add_argument("--for-operator", action="store_true", help="the brief says to ask the operator here, or the call is plainly theirs: skip L3")
+            x.add_argument("--for-operator", action="store_true", help="the brief says to ask the operator here, the call is plainly theirs, or the wait is "
+                                "on their action (a run command, a posted step): skip L3; the reason's first line "
+                                "names the step")
     es = ts.add_parser("escalate"); es.add_argument("slug"); es.add_argument("--question", help="one plain dilemma for the operator, with a recommendation")
     es.add_argument("--questions-file", help="JSON with one to three questions; L3 supplies '-' on stdin")
     es.add_argument("--recommendation"); es.add_argument("--label"); es.add_argument("--why")
