@@ -11,6 +11,15 @@ from tests.support import ALT, AltitudeCase, add_worktree, make_repo
 from altitude import config, dispatch, engines, platform, state as S, tasks as T
 
 
+def _unconfined(child: list[str]) -> list[str]:
+    """A Linux job's own command without Altitude's bubblewrap sandbox, which has its own tests and cannot start
+    inside another one."""
+    if platform.BWRAP not in child:
+        return child
+    start = child.index(platform.BWRAP)
+    return child[:start] + child[child.index("--", start) + 1:]
+
+
 class _Input(io.BytesIO):
     def close(self):
         pass
@@ -154,6 +163,10 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                             self.assertIn(f'(subpath "{os.path.realpath(config.ROOT)}")', specification["profile"])
                         else:
                             child = command[command.index("--") + 1:]
+                            for root in (self.worktree, config.ROOT):
+                                self.assertIn(f"--bind {os.path.realpath(root)} {os.path.realpath(root)}",
+                                              " ".join(child))
+                            child = _unconfined(child)
                             driver_index = len(child) - len(engines.common._driver_command())
                             environment = dict(argument.split("=", 1) for argument in child[2:driver_index])
                             wrapped = child[driver_index:]
@@ -384,7 +397,7 @@ class TestWorkerTokenInput(AltitudeCase):
                 command, sent = self.launched(engine, "linux")
                 self.assertEqual(json.loads(sent)["github_token"], self.TOKEN)
                 # systemd-run --pipe hands the job its launcher's own input pipe.
-                job = subprocess.run(command[command.index("--") + 1:], input=sent, capture_output=True, timeout=60)
+                job = subprocess.run(_unconfined(command[command.index("--") + 1:]), input=sent, capture_output=True, timeout=60)
                 self.assertEqual(job.returncode, 0, job.stderr)
                 self.assert_engine_read_only_the_prompt(job.stdout)
 
@@ -430,6 +443,6 @@ class TestWorkerTokenInput(AltitudeCase):
         saved = self.tmp / "input"
         saved.write_bytes(sent)
         with saved.open("rb") as stream:
-            job = subprocess.run(command[command.index("--") + 1:], stdin=stream, capture_output=True, timeout=60)
+            job = subprocess.run(_unconfined(command[command.index("--") + 1:]), stdin=stream, capture_output=True, timeout=60)
         self.assertEqual(job.returncode, 0, job.stderr)
         self.assert_engine_read_only_the_prompt(job.stdout)

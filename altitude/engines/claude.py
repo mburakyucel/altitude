@@ -277,7 +277,7 @@ class _ClaudeDriver(common._Driver):
 
 
 def _claude_writable(*roots: Path) -> tuple[Path, ...]:
-    """Where a Claude job may write when the platform confines its files (macOS): its roots, Claude's own state
+    """Where a Claude job may write inside Altitude's own sandbox: its roots, Claude's own state
     (sessions, settings, and the account file with its atomic replacements) and the GitHub CLI's configuration.
     Claude's permission boundary still decides within them."""
     home = Path.home()

@@ -563,7 +563,7 @@ class TestSystemAndSummary(IncidentIssueCase):
             "- platform: Linux", "- os: Ubuntu 24.04.1 LTS", "- kernel: Linux 6.8.0-45-generic",
             "- architecture: x86_64", "- model: LENOVO ThinkPad X1 Carbon Gen 11",
             f"- altitude: {incidents.version()}", "- deployment: source checkout", "- engine: claude 2.1.300",
-            "- confinement: systemd user unit, Claude permission rules"])
+            "- confinement: systemd user unit with Altitude's bubblewrap sandbox, Claude permission rules"])
         self.assertEqual(self.section(body, "Actual"),
                          "Fault l2-died during the L2 worker run (attempt 1). Last error: L2 worker [id] (attempt 1) "
                          "ended without a fresh report: worker state=failed on [host] as [user] via [address] and "
@@ -574,7 +574,7 @@ class TestSystemAndSummary(IncidentIssueCase):
         self.assertIn("- system: platform: Linux; os: Ubuntu 24.04.1 LTS;", record)
         row = self.row(incident)
         self.assertIn("Last error: L2 worker", row["summary"])
-        self.assertIn("engine: claude 2.1.300; confinement: systemd user unit", row["system"])
+        self.assertIn("engine: claude 2.1.300; confinement: systemd user unit with Altitude's bubblewrap sandbox", row["system"])
 
     def test_macos_issue_names_the_mac_model_and_release_and_the_error_inside_the_worker_output(self):
         asked = self.mac_host()

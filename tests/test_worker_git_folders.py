@@ -2,6 +2,7 @@
 repository's Git settings, hooks and worktree records read-only, and Altitude's own code comes through its copy of
 its repository."""
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -106,8 +107,16 @@ class WorkerGitFolders(AltitudeCase):
         self.assertEqual((self.tmp / "copy" / "change.txt").read_text(), "fictional\n")
 
     def test_workers_write_objects_branches_and_their_own_state_but_not_settings_or_records(self):
-        writable, read_only = git_policy.worker_git_access(self.worktree)
         common, record = self.repo / ".git", self.repo / ".git" / "worktrees" / self.slug
+        shutil.rmtree(common / "hooks", ignore_errors=True)
+        for optional in (common / "modules", common / "config.worktree", record / "config.worktree"):
+            self.assertFalse(optional.exists())
+        writable, read_only = git_policy.worker_git_access(self.worktree)
+        # A sandbox holds only an existing path read-only; Git reads these empty parts as absent.
+        self.assertTrue(all((common / name).is_dir() for name in ("hooks", "info", "modules")))
+        self.assertEqual([(path.read_text(), path.is_file()) for path in (common / "config.worktree",
+                                                                          record / "config.worktree")], [("", True)] * 2)
+        git("status", "--short", cwd=self.worktree)
         self.assertEqual(writable, (common, record))
         self.assertEqual(set(read_only), {common / "config", common / "config.worktree", common / "hooks",
                                           common / "info", common / "modules", common / "worktrees",
@@ -125,6 +134,16 @@ class WorkerGitFolders(AltitudeCase):
             f'(deny file-write* (subpath "{common}/worktrees/{self.slug}/gitdir"))')]
         self.assertEqual(order, sorted(order), "Seatbelt's last matching rule decides")
         self.assertTrue(text.endswith(platform.private_rule() + platform.SERVICE_ESCAPES))
+
+    def test_bubblewrap_applies_the_most_specific_git_rule(self):
+        writable, read_only = git_policy.worker_git_access(self.worktree)
+        argv = " ".join(platform.bubblewrap_profile([str(self.worktree), *map(str, writable)],
+                                                    [str(path) for path in read_only]))
+        common = os.path.realpath(self.repo / ".git")
+        order = [argv.index(f"{option} {path} {path}") for option, path in (
+            ("--bind", common), ("--ro-bind-try", f"{common}/worktrees"),
+            ("--bind", f"{common}/worktrees/{self.slug}"), ("--ro-bind-try", f"{common}/worktrees/{self.slug}/gitdir"))]
+        self.assertEqual(order, sorted(order), "a later mount inside an earlier one decides")
 
 
 class SourceCopy(AltitudeCase):

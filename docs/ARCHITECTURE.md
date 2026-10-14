@@ -508,9 +508,8 @@ source and project root). altd creates `machine.key` there when it starts; the `
 restart script send it as `X-Altitude-Key`, each only to an altd that proves itself with the installation's CA
 (the system trust store for an external certificate). The key is compared in constant time. Only the operator's
 account can read it, and no Altitude sandbox can: the Codex worker, coordinator and reviewer profiles
-and the macOS Seatbelt profiles deny the access and TLS folders (`platform.secret_places`), so the key
-proves a caller is the operator's own CLI rather than a confined agent. A Claude worker on Linux has no
-OS sandbox and still shares the operator's account and files. `key.json` records the key's
+and Altitude's own sandbox around every Claude job deny the access and TLS folders (`platform.secret_places`), so
+the key proves a caller is the operator's own CLI rather than a confined agent. `key.json` records the key's
 generation: when altd starts with a key from an earlier generation, whose sandboxes could still read
 this folder, it replaces the key, drops a pairing code in flight and notes the agent jobs then running
 (task workers, coordinator turns and reviews); once all of them have ended, the tick replaces the key once
@@ -571,7 +570,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
 | A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
-| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, never reads macOS's [private places](DEVELOPMENT.md#macos-private-places), signals only its own processes, no launchd control, Simulator service, app launches or Apple Events; browser checks run in validation | Isolation and landing |
+| Claude confinement | also Altitude's bubblewrap sandbox: writes only under its roots, never reads Altitude's credentials, sees only its own processes, no user manager or session bus; a sandbox cannot start inside it | also Altitude's Seatbelt profile: writes only under its roots, never reads macOS's [private places](DEVELOPMENT.md#macos-private-places), signals only its own processes, no launchd control, Simulator service, app launches or Apple Events; browser checks run in validation | Isolation and landing |
 | Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt), which denies macOS's private places and admits neither the Simulator service, app launches nor Apple Events; the two profiles cannot nest | Isolation and landing |
 | Candidate browser checks, both engines | `alt task validate` runs the disposable rootless container with Chromium's own sandbox (two layers) | `alt task validate` runs a job under the validation Seatbelt profile with Chromium's inner sandbox off because profiles cannot nest (one layer, fictional fixtures only); stock engines need no custom runtime | [Browser verification](DEVELOPMENT.md#browser-verification) |
 | Operator-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
@@ -1041,7 +1040,9 @@ that record, and Altitude's Git commands in a worktree run with `GIT_DIR`, `GIT_
 from the common folder. Workers on both engines keep the common folder's `config`, `config.worktree`,
 `hooks`, `info`, `modules`, `worktrees`, `commondir` and `gitdir` and their record's `commondir`,
 `gitdir` and `config.worktree` read-only (`git_policy.worker_git_access`): the repository's settings,
-hooks and worktree records stay as the operator and Altitude wrote them. Altitude's repository-level
+hooks and worktree records stay as the operator and Altitude wrote them. A worker's launch first creates
+the optional parts a repository lacks (empty `hooks`, `info` and `modules` folders and empty `config.worktree`
+files, which Git reads as absent), because a sandbox holds only an existing path read-only. Altitude's repository-level
 Git commands outside a task worktree (`git_policy.git_env`) name the Git folder explicitly too, so a
 redirection a worker plants in a shared folder does not steer them. Workers
 create branches with `--no-track` and pass a one-off setting with `git -c`; landing pushes without
@@ -1410,15 +1411,23 @@ walks (Add to Home Screen, and a profile through Settings) that altd builds from
 and runs on that phone with Apple's UI testing. See the
 [validation runner](DEVELOPMENT.md#validation-runner).
 Claude Code runs as a foreground CLI inside an independent job with Altitude's
-hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
-may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
-the worktree's Git directories except their [read-only parts](#isolation-and-landing), Altitude's home, Claude's own state, the GitHub CLI's configuration and
-temporary directories, and neither read nor write macOS's [private places](DEVELOPMENT.md#macos-private-places);
-launchd refuses service control to any sandboxed process. The profile also refuses
+hooks for inbox delivery and telemetry. That job also runs under Altitude's own sandbox, Seatbelt on macOS and
+bubblewrap on Linux (`platform.job_command`): it may signal only processes in its own sandbox, never its supervisor,
+and write only under its worktree, the worktree's Git directories except their [read-only parts](#isolation-and-landing),
+Altitude's home, Claude's own state, the GitHub CLI's configuration and temporary directories, and never reads
+Altitude's credentials. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places);
+launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
 whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
-Events, which script running apps with only macOS's Automation consent in the way. Every Claude L3 turn
-also runs as a job of its own under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
+Events, which script running apps with only macOS's Automation consent in the way. On Linux the job sees only
+its own processes and a device folder with its own terminals, reaches neither the session bus nor the user manager,
+and cannot write the control groups. It shares the network, /tmp and the rest of the per-user runtime folder, as
+Codex's profile does, so a socket another program keeps there stays reachable. Its
+home is a fresh folder holding the home's entries read-only, so a new name there lasts only as long as the job;
+Claude's account file stays writable and is saved in place, and Claude processes in different jobs do not share its
+lock. A
+sandbox cannot start inside it where the distribution restricts user namespaces, as Ubuntu 24.04 does. Every Claude
+L3 turn also runs as a job of its own under the same sandbox. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
 roots and the same read-only Git parts. The session bus and manager runtime directory (including its direct private socket) are denied;
 other runtime-directory paths retain their policy. The generated profile also supplies provider-free
 confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
@@ -1481,8 +1490,8 @@ snapshots alone cannot. This read recovers no collected history, identifies no h
 and changes no retention, service control or recovery policy.
 Git log/diff/show reads include full patches and historical files, disable external diff/text-conversion
 helpers and reject output-file options. Git and journal shims retain their checkout/service targets. Claude's native Bash sandbox
-is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
-the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
+is not enabled because it would start bubblewrap inside Altitude's own sandbox, which the host refuses;
+Altitude's sandbox and the permission boundary confine Claude instead, while Codex retains its native filesystem sandbox.
 `alt issue new --title '…' [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the AGENTS.md boundary, and record one project event with actor, title, and URL.
 `alt issue label <number> [--add <label>] [--remove <label>]` changes an issue's existing labels under the same boundary, publishes no text, and records the issue number and labels; L3 uses it for [pending device verification](DEVELOPMENT.md#pending-device-verification).
 `alt issue close <number> --reason completed|not-planned` uses the same boundary for requested closure
@@ -1630,8 +1639,7 @@ limits. A process an agent starts outside those units, through the user service 
 scheduler, is not recognized. A forwarder on this machine in front of altd (an SSH tunnel, a reverse
 proxy, a container's published port) holds the socket altd sees, so a worker connecting through it
 looks like the operator's browser, so the operator keeps the terminal off while one serves Altitude.
-On Linux, Claude L2 workers have no OS sandbox, so they can already change the
-operator's files directly. Every paired browser can use the terminal once it is
+Every paired browser can use the terminal once it is
 on. That is the same trust as its other
 operator controls, and the Settings copy says so. That includes `sudo`: a paired browser whose user knows
 the operator's password, or that uses a terminal while `sudo` still remembers an authentication there, can act
@@ -2348,8 +2356,8 @@ the banners whose key has left the queue, and the generic one, on each overview 
 on each return to the screen: WebKit ignores a close within 30 seconds of a banner appearing. A tab with
 alerts on keeps its change stream while hidden; every other hidden tab still closes it.
 
-A device is also woken while Altitude is closed. `altitude/push.py` keeps the VAPID signing key under
-`~/.altitude/push/` and the subscribed endpoints in `~/.altitude/push.json`, both written only by the
+A device is also woken while Altitude is closed. `altitude/push.py` keeps the VAPID signing key in
+the access folder, which no Altitude sandbox can read, and the subscribed endpoints in `~/.altitude/push.json`, both written only by the
 daemon; the switch registers its endpoint through `/api/alerts/subscription` and reads the public key
 from `/api/alerts`. Each tick, a decision key that newly may alert is recorded as owed to every device
 (`owes`), which is woken with one empty, signed POST, and logs `push wakes <n> device(s) for <m> new

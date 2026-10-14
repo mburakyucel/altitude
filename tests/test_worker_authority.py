@@ -1,6 +1,6 @@
 """A task worker cannot act as the project's coordinator or as the operator's CLI: the coordinator socket serves only
 the running coordinator turn's job, the task door admits only the task's own worker job, and no Altitude sandbox can
-read the CLI's key, the pairing record or the HTTPS keys."""
+read the CLI's key, the pairing record, the push signing key or the HTTPS keys."""
 import json
 import os
 import socket
@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import access, config, engines, l3, platform, server, state as S, tasks as T, tls
+from altitude import access, config, engines, l3, platform, push, server, state as S, tasks as T, tls
 
 TURN = "altitude-coordinator-0123.service"
 WORKER = "altitude-claude-4567.service"
@@ -148,7 +148,72 @@ class TestCredentialsHidden(AltitudeCase):
         for place in secrets:
             self.assertIn(f'(subpath "{place}")', rule)
         self.assertTrue(rule.startswith("(deny file-read* file-write* "))
+        sandbox = " ".join(platform.bubblewrap_profile([str(config.ROOT)]))
+        for place in secrets:
+            self.assertIn(f"--tmpfs {place}", sandbox)
+        self.assertEqual(push.KEY.parent, access.DIR, "no task can sign a wake for the operator's devices")
         self.assertNotEqual(tls.record().parent, access.DIR, "a sandboxed owner's alt still finds Altitude")
+
+
+class TestBubblewrapProfile(AltitudeCase):
+    """Altitude's Linux sandbox as the arguments bubblewrap receives; the probe on a real host is task evidence."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = self.tmp / "home"
+        (self.home / ".cache").mkdir(parents=True)
+        (self.home / ".account.json").write_text("{}")
+        (self.home / "projects").symlink_to(self.tmp / "elsewhere")
+        self.patch(platform.Path, "home", return_value=self.home)
+        self.bus, self.manager = self.tmp / "run" / "bus", self.tmp / "run" / "systemd"
+        self.manager.mkdir(parents=True)
+        self.bus.write_text("")
+        self.patch(platform, "job_control_paths", return_value=(self.bus, self.manager))
+        self.home = Path(os.path.realpath(self.home))
+
+    def mounts(self, argv: list[str]) -> list[tuple[str, ...]]:
+        """Each mount after the fresh home, in order, as its option and arguments."""
+        rest, mounts = argv[argv.index(str(self.home)) + 1:-1], []
+        while rest:
+            size = 2 if rest[0] == "--tmpfs" else 3
+            mounts.append(tuple(rest[:size]))
+            rest = rest[size:]
+        return mounts
+
+    def test_the_home_is_fresh_with_its_entries_read_only_and_writable_roots_reopened(self):
+        work = Path(os.path.realpath(self.tmp)) / "work"
+        (work / "settings").mkdir(parents=True)
+        argv = platform.bubblewrap_profile([str(work), str(self.home / ".account.json*"), str(self.tmp / "missing*")],
+                                           [str(work / "settings")])
+        self.assertEqual(argv[:12], [platform.BWRAP, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/",
+                                     "--dev", "/dev", "--proc", "/proc", "--tmpfs", str(self.home)])
+        self.assertEqual(argv[-1], "--")
+        mounts = self.mounts(argv)
+        account = str(self.home / ".account.json")
+        expected = [("--ro-bind", str(self.home / ".cache"), str(self.home / ".cache")),
+                    ("--ro-bind", account, account),
+                    ("--symlink", str(self.tmp / "elsewhere"), str(self.home / "projects")),
+                    ("--bind", account, account),
+                    ("--bind", str(work), str(work)),
+                    ("--ro-bind-try", str(work / "settings"), str(work / "settings")),
+                    ("--bind", "/tmp", "/tmp"), ("--bind", "/var/tmp", "/var/tmp")]
+        for mount in expected:
+            self.assertIn(mount, mounts)
+        for first, later in ((1, 3), (4, 5)):
+            self.assertLess(mounts.index(expected[first]), mounts.index(expected[later]),
+                            "the later mount of a path, or of a path inside it, decides")
+        self.assertFalse([mount for mount in mounts if "missing" in mount[-1]], "a mount would create the path")
+
+    def test_control_sockets_and_credentials_are_hidden_after_every_mount(self):
+        access.prepare()
+        argv = platform.bubblewrap_profile([str(config.ROOT)])
+        mounts = self.mounts(argv)
+        masks = [("--ro-bind", "/dev/null", str(self.bus)), ("--tmpfs", str(self.manager)),
+                 ("--tmpfs", os.path.realpath(access.DIR))]
+        hidden = [mount for mount in mounts if mount[0] == "--tmpfs" or mount[1] == "/dev/null"]
+        self.assertEqual(mounts[-len(hidden):], hidden, "no root a job may write reopens a hidden place")
+        for mask in masks:
+            self.assertIn(mask, hidden)
 
 
 class TestKeyGenerations(AltitudeCase):

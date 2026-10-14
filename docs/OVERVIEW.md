@@ -26,7 +26,7 @@ machine settings and the fault ledger. `~/.config/altitude` holds installation, 
 
 Seams keep operator-, provider- and machine-specific code in one place. The engine seam is
 `altitude/engines/`, `route.py` (Auto tiers, quota, pins) and `config.py`; the platform seam is
-`platform.py` (systemd user units on Linux; a LaunchAgent, launchd jobs and Seatbelt profiles on
+`platform.py` (systemd user units and bubblewrap on Linux; a LaunchAgent, launchd jobs and Seatbelt profiles on
 macOS 15 or newer). Optional capabilities such as voice degrade to an explicit unavailable state.
 
 Tasks move `queued → running → reported/blocked → done`, or `rejected`; planned waits defer dispatch,

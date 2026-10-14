@@ -1181,12 +1181,13 @@ Closing a PR does not finish, reject or resume its owner, release a hold, or pro
 Missing supported capabilities lead to scoped recommendations and authorized remediation under the
 [L3 guidance](../personas/l3.md), with permission changes still requiring their applicable approval.
 Claude's native Bash
-sandbox is unavailable on this host because unprivileged bwrap namespaces cannot be created, so enabling its
-hard-failure mode would prevent every headless L3 turn; the deny-by-default tool boundary and runtime cwd provide
-Claude's confinement, while Codex retains its native filesystem sandbox.
+sandbox is unavailable on Linux because it would start bubblewrap inside Altitude's own sandbox, which the host
+refuses, so enabling its hard-failure mode would prevent every headless L3 turn; Altitude's sandbox, the
+deny-by-default tool boundary and runtime cwd provide Claude's confinement, while Codex retains its native
+filesystem sandbox.
 
-Neither L2 launch carries the user service bus, so a worker cannot reload or restart a user service, and a
-Codex L2 cannot write outside its writable roots. A task that needs such a change, or any other action the
+Neither L2 launch carries the user service bus, so a worker cannot reload or restart a user service, and an
+L2 on either engine cannot write outside its writable roots. A task that needs such a change, or any other action the
 operator permits, asks the operator for an [operator grant](CLI.md#operator-grant) for one purpose; the owner resolves the answer and records the grant from a task-chat yes,
 or L3 or the operator records it (`alt task grant`), which altd accepts only when the cited message is the operator's own answer to
 that current question revision; L3 may instead cite the operator's answer to the identical purpose in another task of

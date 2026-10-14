@@ -61,7 +61,7 @@ class TestPush(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
-        self.patch(push, "KEY_DIR", self.tmp / "push")
+        self.patch(push, "KEY", self.tmp / "push" / "vapid.key")
         self.patch(push, "RECORD", self.tmp / "push.json")
         mine = {self.project: config.load_projects()[self.project]}
         self.patch(config, "load_projects", lambda: dict(mine))  # only this case's decisions
@@ -110,7 +110,7 @@ class TestPush(AltitudeCase):
         # The service can check the signature, which is the whole point of sending one.
         public = self.tmp / "vapid.pub"
         from altitude import platform
-        subprocess.run([platform.openssl(), "ec", "-in", push.KEY_DIR / "vapid.key", "-pubout", "-out", public],
+        subprocess.run([platform.openssl(), "ec", "-in", push.KEY, "-pubout", "-out", public],
                        check=True, capture_output=True)
         (self.tmp / "signed").write_text(f"{header}.{claims}")
         (self.tmp / "signature").write_bytes(_der(_unpad(signature)))
@@ -571,7 +571,7 @@ class TestAlertsAPI(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.setenv("ALTITUDE_TIMERS", "0")
-        self.patch(push, "KEY_DIR", self.tmp / "push")
+        self.patch(push, "KEY", self.tmp / "push" / "vapid.key")
         self.patch(push, "RECORD", self.tmp / "push.json")
         mine = {self.project: config.load_projects()[self.project]}
         self.patch(config, "load_projects", lambda: dict(mine))
