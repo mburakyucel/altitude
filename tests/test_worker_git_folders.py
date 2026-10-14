@@ -106,6 +106,20 @@ class WorkerGitFolders(AltitudeCase):
         self.assertEqual(commit, head)
         self.assertEqual((self.tmp / "copy" / "change.txt").read_text(), "fictional\n")
 
+    def test_validation_copy_carries_the_projects_github_origin(self):
+        common = self.repo / ".git"
+        # An empty folder a sandbox left as a mount point inside the shared Git folder.
+        (common / ".git").mkdir()
+        local = git("remote", "get-url", "origin", cwd=self.repo).strip()
+        for origin, expected in (("git@github.com:example/altitude.git", "git@github.com:example/altitude.git"),
+                                 (local, str(common))):
+            with self.subTest(origin=origin):
+                git("remote", "set-url", "origin", origin, cwd=self.repo)
+                copy = self.tmp / "copy"
+                shutil.rmtree(copy, ignore_errors=True)
+                validation._clone(self.worktree, copy, self.project)
+                self.assertEqual(git("remote", "get-url", "origin", cwd=copy).strip(), expected)
+
     def test_workers_write_objects_branches_and_their_own_state_but_not_settings_or_records(self):
         common, record = self.repo / ".git", self.repo / ".git" / "worktrees" / self.slug
         shutil.rmtree(common / "hooks", ignore_errors=True)
