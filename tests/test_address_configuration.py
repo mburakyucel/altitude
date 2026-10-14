@@ -199,6 +199,8 @@ class CacheRecovery(InstallationCase):
         self.assertEqual(self.actions, [])
         self.assertEqual({path: path.read_bytes() for path in original}, original)
         self.assertIn("manual repair", result["next"])
+        # A review or coordinator turn that starts before the retry re-creates the caches (issue 912).
+        self.assertIn("Run alt update now", result["next"])
 
     def test_changed_source_non_cache_and_foreign_unit_refuse_without_moving_anything(self):
         for fault in ("resource", "extra", "unit"):

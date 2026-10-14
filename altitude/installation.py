@@ -82,8 +82,8 @@ def metadata(root: Path) -> dict:
     if actual != expected:
         caches = expected <= actual and not actual - expected - _generated_caches(data, sys.implementation.cache_tag)
         raise ValueError("Release files do not match its manifest" + (
-            "; the only extra files look like generated Python caches: run alt recover --generated-bytecode, "
-            "then alt update" if caches else ""))
+            "; the only extra files look like generated Python caches: run "
+            "alt recover --generated-bytecode && alt update as one command" if caches else ""))
     _verify_declared(root, data)
     return data
 
@@ -793,8 +793,9 @@ def _quarantine_generated_bytecode(prefix: Path) -> dict:
     return {"repaired": True, "version": release["version"], "backup": str(backup),
             "quarantined": sorted(extras), "service": "unchanged",
             "retained": "declared release files, settings, certificate identity, pairing, projects and automatic-attempt history",
-            "next": "This is a manual repair, not an upgrade. Use alt update for an explicit retry, or let the daemon "
-                    "install a newer offered release automatically. A failed release is not automatically retried."}
+            "next": "This is a manual repair, not an upgrade. Run alt update now: on an affected release, a "
+                    "review or coordinator turn that starts first re-creates these caches. A failed release is not "
+                    "automatically retried."}
 
 
 def _recover(prefix: Path) -> dict:

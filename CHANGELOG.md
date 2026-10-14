@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The cache repair for an installation on v0.5.0 or older is one line that repairs and updates
+  back to back, because a review starting in between brings the cache files back. The repair's own
+  output and the release check's error say the same.
+
 ## v0.7.0 — 2026-10-13
 
 Feature release of the early preview.
