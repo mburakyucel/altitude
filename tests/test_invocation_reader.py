@@ -102,6 +102,23 @@ class TestInvocationReader(_CodexTranscriptCase):
         with mock.patch.object(transcript, "_projection", rewrite):
             self.assertIn("first", json.dumps(self._view(raw=True)))
 
+    def test_initialization_header_stops_at_its_first_thread_or_work_and_precedes_the_record(self):
+        def started(thread):
+            return {"type": "thread.started", "thread_id": thread}
+        work = {"type": "item.completed", "item": {"id": "r", "type": "agent_message", "text": "selected turn"}}
+        record = self.root / "w2.json"
+        cases = (("first thread wins", [started("thread-1"), started("thread-0"), work], None, True),
+                 ("work ends the header", [work, started("thread-1")], None, False),
+                 ("record fills a headerless turn", [work, started("thread-0")], "thread-1", True),
+                 ("header outranks the record", [started("thread-0"), work], "thread-1", False))
+        for name, events, session, selected in cases:
+            with self.subTest(name):
+                S.write_json(record, dict(S.read_json(record), session_id=session))
+                self.new.write_text("".join(json.dumps(event) + "\n" for event in events))
+                with transcript._indexes_lock:
+                    transcript._indexes.clear()
+                self.assertEqual("selected turn" in json.dumps(self._view(raw=True)), selected)
+
     def test_unavailable_at_discovery_cannot_consume_late_stdout(self):
         record = self.root / "w2.json"
         current = S.read_json(record)
