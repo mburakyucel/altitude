@@ -1439,7 +1439,8 @@ bubblewrap on Linux (`platform.job_command`): it may signal only processes in it
 and write only under its own roots (a task worker's worktree, the worktree's Git directories except their
 [read-only parts](#isolation-and-landing) and its scratch folder; a coordinator turn's runtime folder and Altitude's
 home), the job's own Claude folder and temporary directories, and never reads
-Altitude's credentials. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places);
+Altitude's credentials. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
+or the launcher's job folders, which hold each job's piped input and relay its output;
 launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
 whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
@@ -1482,10 +1483,11 @@ bus, reads the token with `gh auth token`, and the job receives it in its launch
 job's engine driver reads. The driver exports it as `GH_TOKEN` to the engine it starts, which reads only
 its own input pipe from the driver. Altitude never puts
 the token among the job's settings (they form its command line) or in a log, and writes it to disk only
-in the macOS launcher's private input copy until the job's supervisor starts. The engine and its tools
+in the macOS launcher's private input copy until the job's supervisor starts, in a job folder no sandbox Altitude
+applies can read. The engine and its tools
 hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex shell snapshot) can hold it
 too. A launcher without a sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
-(the two Seatbelt profiles cannot nest); its worker and coordinator profiles deny macOS's private places. Both use the same door; private worker records and output identify both engines' sessions
+(the two Seatbelt profiles cannot nest); its worker and coordinator profiles deny macOS's private places and the job folders. Both use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
 recorded coalition has members. Unknown states, bus failures and query timeouts

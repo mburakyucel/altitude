@@ -1216,11 +1216,14 @@ def job_env(env: dict) -> dict:
 
 
 def job_control_paths() -> tuple[Path, ...]:
-    """Deny the session bus and manager runtime, including its direct private socket.
+    """Deny the session bus and manager runtime, including its direct private socket; on macOS, the launcher's job
+    folders, which hold each job's piped launch input, with its tokens, until the job reads it, and relay its output.
 
     Issue #543: native file masks reuse a descriptor consumed by the first bind-data operation.
     Masking the manager directory uses a directory mount and keeps both control sockets denied.
     """
+    if _darwin():
+        return (Path(os.path.realpath(_jobs())),)
     runtime = Path(f"/run/user/{os.getuid()}")
     return runtime / "bus", runtime / "systemd"
 
@@ -2162,9 +2165,9 @@ def secret_places() -> tuple[str, ...]:
 
 
 def private_rule() -> str:
-    """Seatbelt's refusal of every private place and of Altitude's credentials. A profile puts it after its own file
-    rules, so no root it admits can reopen one."""
-    places = (*private_places(), *secret_places())
+    """Seatbelt's refusal of every private place, of Altitude's credentials and of its job folders. A profile puts it
+    after its own file rules, so no root it admits can reopen one."""
+    places = (*private_places(), *secret_places(), *map(str, job_control_paths()))
     return f"(deny file-read* file-write* {' '.join(_filters('subpath', places))})"
 
 

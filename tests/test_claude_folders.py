@@ -236,7 +236,17 @@ class TestClaudeFolders(AltitudeCase):
         self.assertIn(runtime, socket.parents, "sockets stay out of backups")
         self.assertNotIn(runtime, home.parents, "the per-user runtime folder is emptied on each restart")
         self.assertEqual(home.parent.parent, config.HOME / ".config/altitude")
+        self.assertEqual([path.stat().st_mode & 0o777 for path in (home, home.parent)], [0o700, 0o700])
         self.assert_none_shared([home])
+
+    def test_no_sandbox_on_a_mac_reads_the_launch_input_a_job_folder_holds(self):
+        jobs = os.path.realpath(platform._jobs())
+        with mock.patch.object(platform, "_darwin", return_value=True):
+            profile = platform.seatbelt_profile([str(self.tmp)])
+            codex = engines.codex.codex_sandbox(self.tmp)
+        self.assertIn('(deny file-read* file-write* ', profile)
+        self.assertIn(f'(subpath "{jobs}")', profile.rsplit("(deny file-read* file-write* ", 1)[1])
+        self.assertIn(f'"{jobs}"="deny"', " ".join(codex))
 
     def test_alt_sign_in_keeps_the_pasted_token_private_and_ends_the_lapse(self):
         refused = self.alt("sign-in", "claude", env={"ALTITUDE_ACTOR": "l2"})

@@ -55,7 +55,10 @@ def _engine_home(project: str, engine: str) -> Path:
     """The coordinator's own engine folder for this project, where its sessions persist across turns and restarts.
     It lives in the persistent coordinator folder, where no task worker can write."""
     name = hashlib.sha256(project.encode()).hexdigest()[:20]
-    return platform.coordinator_directory(persistent=True) / f"{engine}-{name}"
+    home = platform.coordinator_directory(persistent=True) / f"{engine}-{name}"
+    home.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    home.mkdir(mode=0o700, exist_ok=True)
+    return home
 
 
 def _remove_runtime(runtime: Path) -> None:
