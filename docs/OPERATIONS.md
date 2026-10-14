@@ -346,23 +346,27 @@ work cannot overlap them.
 `alt recover --generated-bytecode` is an explicit, narrow repair for an owned installed release
 whose only extra files are the saved interpreter's generated caches corresponding to declared
 Python sources. When a release check finds only such caches, its error, which `alt update` prints,
-names this command. It verifies every declared resource, rejects symlinks and any other extras, then
-moves caches into a private backup under the application prefix and repeats strict manifest
-validation. It changes neither service lifecycle nor settings, CA identity, pairing or projects.
-The backup records what moved, including an interruption. This is manual recovery, not an upgrade;
-use the explicit update retry afterwards. Archive and ordinary installed manifest checks accept no
-extra files. Isolated application-importing adapters use `-B` because `-I` ignores inherited
-bytecode-suppression environment settings.
+names this command together with its retry: `alt recover --generated-bytecode && alt update`. It
+verifies every declared resource, rejects symlinks and any other extras, then moves caches into a
+private backup under the application prefix and repeats strict manifest validation. It changes
+neither service lifecycle nor settings, CA identity, pairing or projects. The backup records what
+moved, including an interruption. This is manual recovery, not an upgrade, so the explicit update
+retry follows at once: on an affected release, a review or coordinator turn that starts in between
+re-creates the caches and the retry fails the same way. Archive and ordinary installed manifest
+checks accept no extra files. Isolated application-importing adapters use `-B` because `-I` ignores
+inherited bytecode-suppression environment settings.
 
 An affected older CLI without that recovery option needs the newer release's independently
 verified standalone `install.py` and matching archive/checksum from the same release:
 
 ```sh
-python3 -B install.py --archive altitude-<tag>.tar.gz --sha256 <trusted-sha256> --repair-generated-bytecode
+python3 -B install.py --archive altitude-<tag>.tar.gz --sha256 <trusted-sha256> --repair-generated-bytecode \
+  && ~/.local/bin/alt update
 ```
 
 This imports only the checksum/manifest-verified repair code and repairs the existing installation;
-it does not activate the supplied archive. Preserve the backup and distinguish this intervention
+it does not activate the supplied archive. The installed `alt update` that follows it at once
+downloads and installs the newest release. Preserve the backup and distinguish this intervention
 from an unattended automatic upgrade. Other integrity failures need diagnosis, not cache removal.
 
 Uninstall retains configuration, identity and runtime data, so reinstall reuses them. It is not a

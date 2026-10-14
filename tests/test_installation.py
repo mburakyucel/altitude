@@ -1297,7 +1297,7 @@ class AutomaticUpdates(NoticeCase):
         cache = self.prefix / f"current/altitude/__pycache__/config.{sys.implementation.cache_tag}.pyc"
         cache.parent.mkdir()
         cache.write_bytes(b"fixture generated cache")
-        with self.assertRaisesRegex(ValueError, "do not match its manifest; .*run alt recover --generated-bytecode, then alt update"):
+        with self.assertRaisesRegex(ValueError, "do not match its manifest; .*run alt recover --generated-bytecode && alt update as one command"):
             self.run_detached()  # the job log names the release check's cause and its recovery, not an expired request
         status = installation.update_status()
         self.assertEqual(status["attempt"]["state"], "failed")

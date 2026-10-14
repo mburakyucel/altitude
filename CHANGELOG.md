@@ -7,6 +7,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 - Task agents change Altitude's records only by asking Altitude, for their own task, and write only their
   worktree and a scratch folder of their own; Altitude's home is read-only to them on both engines.
+- The cache repair for an installation on v0.5.0 or older is one line that repairs and updates
+  back to back, because a review starting in between brings the cache files back. The repair's own
+  output and the release check's error say the same.
 
 ## v0.7.0 — 2026-10-13
 
