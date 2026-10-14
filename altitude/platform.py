@@ -1216,11 +1216,13 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
 def bubblewrap_profile(writable: list[str], read_only: list[str] = ()) -> list[str]:
     """Altitude's bubblewrap sandbox on Linux, the counterpart of `seatbelt_profile`, as the command that runs a job's
     own command inside it. The file system is read-only except `writable` (a root ending in * admits every name in its
-    folder that starts with it), /tmp, /var/tmp and devices, with `read_only` read-only again, the most specific path
-    deciding; the control groups are read-only too. The job sees only its own processes, and neither the user
-    manager's sockets nor Altitude's credentials. The home is a fresh folder holding its entries read-only, so a program
-    that replaces a writable file by renaming a sibling over it (an engine's account file) creates the sibling there, sees
-    the rename refused and writes in place. Paths that do not exist are left as they are: a mount would create them."""
+    folder that starts with it), /tmp and /var/tmp, with `read_only` read-only again, the most specific path deciding;
+    the control groups are read-only too. The job sees only its own processes and a device folder of its own with its
+    own terminals, and neither the user manager's sockets nor Altitude's credentials. A writable folder that does not exist yet is created first, so what
+    the job writes there lasts; a * root admits only the names present at launch. The home is a fresh folder holding
+    its entries read-only, so a program that replaces a writable file by renaming a sibling over it (an engine's account
+    file) creates the sibling there, sees the rename refused and writes in place; a new name there ends with the job.
+    A read-only path must exist, as a mount would create it: the caller creates what it protects."""
     home = os.path.realpath(Path.home())
     mounts = []
     with os.scandir(home) as entries:
@@ -1238,7 +1240,8 @@ def bubblewrap_profile(writable: list[str], read_only: list[str] = ()) -> list[s
                 paths = []
         else:
             paths = [os.path.realpath(root)]
-        mounts.extend((path, 1, ["--bind-try", path, path]) for path in paths)
+            os.makedirs(paths[0], exist_ok=True)
+        mounts.extend((path, 1, ["--bind", path, path]) for path in paths)
     mounts.extend((path, 2, ["--ro-bind-try", path, path]) for path in map(os.path.realpath, read_only))
     mounts.sort(key=lambda mount: (mount[0].count("/"), mount[1]))
     masks = []
@@ -1247,8 +1250,7 @@ def bubblewrap_profile(writable: list[str], read_only: list[str] = ()) -> list[s
             masks += ["--tmpfs", place]
         elif os.path.lexists(place):
             masks += ["--ro-bind", "/dev/null", place]
-    return [BWRAP, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev",
-            "--proc", "/proc", "--tmpfs", home, *(arg for mount in mounts for arg in mount[2]), *masks, "--"]
+    return [BWRAP, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", home, *(arg for mount in mounts for arg in mount[2]), *masks, "--"]
 
 
 def sandbox_tool() -> dict | None:

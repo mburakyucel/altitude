@@ -145,9 +145,14 @@ def worker_git_access(worktree: str | Path) -> tuple[tuple[Path, ...], tuple[Pat
     """The Git folders a task's worker writes, and the paths inside them it only reads; the most specific path
     decides. It writes objects, branches and its own worktree's state, but not what makes Git run a program or look
     in another folder: the settings, hooks, attribute rules, submodules and every worktree's record, its own
-    pointers included, all of which Altitude's own Git commands read outside any sandbox."""
+    pointers included, all of which Altitude's own Git commands read outside any sandbox. A sandbox holds only a path
+    that exists read-only, so the optional parts a repository lacks are created empty first, as Git reads them."""
     _, common, record = _task_layout(worktree)
     names = ("config", "config.worktree", "hooks", "info", "modules", "worktrees", "commondir", "gitdir")
+    for folder in (common / "hooks", common / "info", common / "modules"):
+        folder.mkdir(exist_ok=True)
+    for file in (common / "config.worktree", record / "config.worktree"):
+        file.touch(exist_ok=True)
     return ((common, record),
             (*(common / name for name in names),
              *(record / name for name in ("commondir", "gitdir", "config.worktree"))))

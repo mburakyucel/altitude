@@ -1030,7 +1030,9 @@ that record, and Altitude's Git commands in a worktree run with `GIT_DIR`, `GIT_
 from the common folder. Workers on both engines keep the common folder's `config`, `config.worktree`,
 `hooks`, `info`, `modules`, `worktrees`, `commondir` and `gitdir` and their record's `commondir`,
 `gitdir` and `config.worktree` read-only (`git_policy.worker_git_access`): the repository's settings,
-hooks and worktree records stay as the operator and Altitude wrote them. Altitude's repository-level
+hooks and worktree records stay as the operator and Altitude wrote them. A worker's launch first creates
+the optional parts a repository lacks (empty `hooks`, `info` and `modules` folders and empty `config.worktree`
+files, which Git reads as absent), because a sandbox holds only an existing path read-only. Altitude's repository-level
 Git commands outside a task worktree (`git_policy.git_env`) name the Git folder explicitly too, so a
 redirection a worker plants in a shared folder does not steer them. Workers
 create branches with `--no-track` and pass a one-off setting with `git -c`; landing pushes without
@@ -1408,8 +1410,12 @@ launchd refuses service control to any sandboxed process. The Seatbelt profile a
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
 whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
 Events, which script running apps with only macOS's Automation consent in the way. On Linux the job sees only
-its own processes, reaches neither the session bus nor the user manager, and cannot write the control groups. Its
-home is a fresh folder holding the home's entries read-only, so a new name there lasts only as long as the job. A
+its own processes and a device folder with its own terminals, reaches neither the session bus nor the user manager,
+and cannot write the control groups. It shares the network, /tmp and the rest of the per-user runtime folder, as
+Codex's profile does, so a socket another program keeps there stays reachable. Its
+home is a fresh folder holding the home's entries read-only, so a new name there lasts only as long as the job;
+Claude's account file stays writable and is saved in place, and Claude processes in different jobs do not share its
+lock. A
 sandbox cannot start inside it where the distribution restricts user namespaces, as Ubuntu 24.04 does. Every Claude
 L3 turn also runs as a job of its own under the same sandbox. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
 roots and the same read-only Git parts. The session bus and manager runtime directory (including its direct private socket) are denied;

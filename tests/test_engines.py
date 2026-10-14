@@ -164,7 +164,7 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                         else:
                             child = command[command.index("--") + 1:]
                             for root in (self.worktree, config.ROOT):
-                                self.assertIn(f"--bind-try {os.path.realpath(root)} {os.path.realpath(root)}",
+                                self.assertIn(f"--bind {os.path.realpath(root)} {os.path.realpath(root)}",
                                               " ".join(child))
                             child = _unconfined(child)
                             driver_index = len(child) - len(engines.common._driver_command())

@@ -185,19 +185,18 @@ class TestBubblewrapProfile(AltitudeCase):
         (work / "settings").mkdir(parents=True)
         argv = platform.bubblewrap_profile([str(work), str(self.home / ".account.json*"), str(self.tmp / "missing*")],
                                            [str(work / "settings")])
-        self.assertEqual(argv[:9], [platform.BWRAP, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/",
-                                    "--dev-bind", "/dev", "/dev"])
-        self.assertEqual(argv[9:13], ["--proc", "/proc", "--tmpfs", str(self.home)])
+        self.assertEqual(argv[:12], [platform.BWRAP, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/",
+                                     "--dev", "/dev", "--proc", "/proc", "--tmpfs", str(self.home)])
         self.assertEqual(argv[-1], "--")
         mounts = self.mounts(argv)
         account = str(self.home / ".account.json")
         expected = [("--ro-bind", str(self.home / ".cache"), str(self.home / ".cache")),
                     ("--ro-bind", account, account),
                     ("--symlink", str(self.tmp / "elsewhere"), str(self.home / "projects")),
-                    ("--bind-try", account, account),
-                    ("--bind-try", str(work), str(work)),
+                    ("--bind", account, account),
+                    ("--bind", str(work), str(work)),
                     ("--ro-bind-try", str(work / "settings"), str(work / "settings")),
-                    ("--bind-try", "/tmp", "/tmp"), ("--bind-try", "/var/tmp", "/var/tmp")]
+                    ("--bind", "/tmp", "/tmp"), ("--bind", "/var/tmp", "/var/tmp")]
         for mount in expected:
             self.assertIn(mount, mounts)
         for first, later in ((1, 3), (4, 5)):
