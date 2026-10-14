@@ -35,10 +35,10 @@ def main():
     saved = S.task_dir("atlas", slug) / "PLAN.md"
     saved.write_text(source)
     shown = tasks.message("atlas", slug, "l2", "Read the migration plan.", by="l2", expected_attempt=1,
-                          show=["PLAN.md"])["id"]
+                          show=tasks.shown_files("atlas", S.load_task("atlas", slug), ["PLAN.md"]))["id"]
     (worktree / "SECOND.md").write_text("# Second plan\n\nA different document stays readable.\n")
     second = tasks.message("atlas", slug, "l2", "Read the second plan.", by="l2", expected_attempt=1,
-                           show=["SECOND.md"])["id"]
+                           show=tasks.shown_files("atlas", S.load_task("atlas", slug), ["SECOND.md"]))["id"]
     l3.save_info("atlas", {"session_id": "fixture-documents", "engine_last": config.ENGINES[0], "turns": 1})
     l3.chat_log("atlas", "system", source, trigger="project-message", turn_id="fixture-document-message",
                 project_message={"sender": "lab", "recipient": "atlas", "summary": "Migration plan",

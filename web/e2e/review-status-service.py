@@ -38,7 +38,7 @@ def main():
         T.message("atlas", slug, "l2", "The screenshots show the proposed layout on phone and desktop.")
         T.block("atlas", slug, question, actor="l2", expected_attempt=1, updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
                 recommendation="Use the captured layout.", recommendation_label="Use this design",
-                show=["design/wireframes/proposal.md"])
+                show=T.shown_files("atlas", S.load_task("atlas", slug), ["design/wireframes/proposal.md"]))
         return slug
 
     def review(slug, subject, findings, dispositions, *, design=None, assessed=True, head=None):
@@ -138,7 +138,7 @@ def main():
         T.block("atlas", settings, f"Build settings layout revision {n} as shown?", actor="l2",
                 expected_attempt=S.load_task("atlas", settings)["attempt"], updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
                 recommendation="Use the revised layout.", recommendation_label="Use this design",
-                show=["design/wireframes/proposal.md"])
+                show=T.shown_files("atlas", S.load_task("atlas", settings), ["design/wireframes/proposal.md"]))
 
     fake.on_resume = lambda: threading.Thread(target=revise).start()
     serve()

@@ -107,14 +107,15 @@ def main():
     proposal.write_text(PROPOSAL)
 
     def reply(text, show):
-        return T.message("atlas", slug, "l2", text, by="l2", expected_attempt=1, show=show)["id"]
+        return T.message("atlas", slug, "l2", text, by="l2", expected_attempt=1,
+                         show=T.shown_files("atlas", S.load_task("atlas", slug), show))["id"]
 
     def present():
         if S.load_task("atlas", slug)["state"] == "blocked":
             T.resume("atlas", slug)
         question = T.block("atlas", slug, QUESTION, actor="l2", expected_attempt=1, updates={"waiting_on": "burak"},
                            recommendation="Build the README as proposed.", recommendation_label="Build as proposed",
-                           show=["design/PROPOSAL.md"])["questions"][-1]
+                           show=T.shown_files("atlas", S.load_task("atlas", slug), ["design/PROPOSAL.md"]))["questions"][-1]
         return {"id": question["id"], "revision": question["revision"]}
 
     ids = {"readme": reply("The README draft is ready to read.", ["README.md", "overview.png"]),
