@@ -45,9 +45,10 @@ def _write_executable(path: Path, text: str) -> None:
 
 
 def verb_socket_path(project: str) -> Path:
-    """One capability socket per project; the pathname, not model-supplied JSON, binds its authority."""
-    name = hashlib.sha256(project.encode()).hexdigest()[:20]
-    return platform.coordinator_directory() / f"{name}.sock"
+    """One capability socket per project; the pathname, not model-supplied JSON, binds its authority. Its short name
+    keeps the path within macOS's socket limit; a matching name only refuses the second project's broker, and
+    admission still serves each socket's own project alone."""
+    return platform.coordinator_directory() / hashlib.sha256(project.encode()).hexdigest()[:8]
 
 
 def _remove_runtime(runtime: Path) -> None:
