@@ -24,6 +24,25 @@ function deviceKind(): Kind {
   return /Android/.test(agent) ? "android" : "desktop";
 }
 
+/** Where a desktop browser keeps the authorities it trusts: macOS's keychain (Safari, Chrome, Edge), Firefox's own
+ * store, or Chrome's on Linux. The visitor can pick another when the browser's own report is wrong. */
+const desktops = {
+  "mac": "Mac · Safari, Chrome or Edge",
+  "mac-firefox": "Mac · Firefox",
+  "linux": "Linux · Chrome or Chromium",
+  "linux-firefox": "Linux · Firefox",
+  "other": "Another system",
+} as const;
+type Desktop = keyof typeof desktops;
+function desktopKind(): Desktop {
+  const agent = navigator.userAgent;
+  const firefox = /Firefox\//.test(agent);
+  if (/Macintosh/.test(agent)) return firefox ? "mac-firefox" : "mac";
+  if (/Linux|X11/.test(agent)) return firefox ? "linux-firefox" : /Chrome\/|Chromium\//.test(agent) ? "linux" : "other";
+  return "other";
+}
+const FINGERPRINT = "openssl x509 -noout -subject -fingerprint -sha256 -in ~/Downloads/altitude.crt";
+
 /** A code's characters by the server's rule: letters and digits only, uppercased. A mistyped O or 0 stays, so the
  * server can say the code is not right. */
 const codeChars = (text: string) => text.toUpperCase().replace(/[^\p{L}\p{N}]/gu, "");
@@ -52,20 +71,49 @@ function Step({ mark, title, aside, children }: { mark: Mark; title: string; asi
 
 /** Where to download the certificate and how this kind of device installs and trusts it. The SHA-256 to compare
  * comes from the computer running Altitude, never from this page, which a forged one could imitate. */
-function Instructions({ kind, name, guide, installLink }: { kind: Kind; name: string; guide: string; installLink: boolean }) {
+function Instructions({ kind, name, guide, installLink, here }: { kind: Kind; name: string; guide: string; installLink: boolean; here: boolean }) {
+  const [desktop, setDesktop] = useState(desktopKind);
+  const system = kind === "desktop" ? desktop : kind;
+  const compare = <>Compare its name, “{name}”, and its <strong>full SHA-256</strong> with the installer or <code>alt doctor</code> on the hosting computer. If they differ, delete the download and stop.</>;
+  const reopen = <li>{installLink ? <>Restart the browser, then reopen the original private link from the installer. It must open without a certificate warning. If it has expired, run <code>~/.local/bin/alt pair</code> for a new code.</>
+    : <>Restart the browser and reopen this page. It must open without a certificate warning; if a warning remains, don’t pair.</>}</li>;
+  const firefox = <>
+    <li>In Firefox, open Settings › Privacy &amp; Security › Certificates › View Certificates › Authorities › Import, then choose altitude.crt.</li>
+    <li>Tick Trust this CA to identify websites, then OK.</li>
+  </>;
+  const steps = <ol className="pair-instructions">
+    <li><a className="btn btn-primary" href={kind === "apple" ? "/api/certificate/altitude.mobileconfig" : "/api/certificate/altitude.crt"}>{kind === "apple" ? "Download the profile" : "Download the certificate"}</a></li>
+    {system === "mac" || system === "mac-firefox" ? <li>In Finder, select altitude.crt in Downloads and press Space. {compare}</li>
+      : system === "linux" || system === "linux-firefox" ? <li>{compare} This shows them: <Command text={FINGERPRINT} /></li>
+      : <li>{compare}</li>}
+    {system === "apple" ? <>
+      <li>Open Settings › Profile Downloaded. It must list one Certificate, “{name}”. Tap More Details to compare the SHA-256, then tap Install.</li>
+      <li>Turn it on: Settings › General › About › Certificate Trust Settings › “{name}”.</li>
+    </> : system === "android" ? <li>Install it: Settings › Security › Encryption &amp; credentials › Install a certificate › CA certificate (names vary).</li>
+      : system === "mac" ? <>
+        <li>Double-click altitude.crt and add it to the login keychain.</li>
+        <li>In Keychain Access, open “{name}”, expand Trust and set Secure Sockets Layer (SSL) to Always Trust. Close the window and enter your password.</li>
+      </> : system === "linux" ? <>
+        <li>Open this address in a new tab: <Command text="chrome://certificate-manager" /></li>
+        <li>Choose Local certificates › Custom › Installed by you › Trusted Certificates › Import, then altitude.crt.</li>
+      </> : system === "mac-firefox" || system === "linux-firefox" ? firefox
+      : <li>Import it as a trusted authority in this browser or system.</li>}
+    {reopen}
+  </ol>;
+  const chooser = kind === "desktop" ? <label className="pair-choose">Steps for
+    <select value={desktop} onChange={(event) => setDesktop(event.target.value as Desktop)}>
+      {Object.entries(desktops).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+    </select>
+  </label> : null;
   return <>
     <p className="pair-lead">A page opened past a certificate warning cannot prove it is Altitude. Check the certificate against the hosting computer before trusting it.</p>
-    <ol className="pair-instructions">
-      <li><a className="btn btn-primary" href={kind === "apple" ? "/api/certificate/altitude.mobileconfig" : "/api/certificate/altitude.crt"}>{kind === "apple" ? "Download the profile" : "Download the certificate"}</a></li>
-      <li>Compare its name, “{name}”, and its <strong>full SHA-256</strong> with the installer or <code>alt doctor</code> on the hosting computer. If they differ, delete the download and stop.</li>
-      {kind === "apple" ? <>
-        <li>Open Settings › Profile Downloaded. It must list one Certificate, “{name}”. Tap More Details to compare the SHA-256, then tap Install.</li>
-        <li>Turn it on: Settings › General › About › Certificate Trust Settings › “{name}”.</li>
-      </> : kind === "android" ? <li>Install it: Settings › Security › Encryption &amp; credentials › Install a certificate › CA certificate (names vary).</li>
-        : <li>Import it as a trusted authority in this browser or system (macOS: Keychain Access › login, set Secure Sockets Layer to Always Trust).</li>}
-      <li>{installLink ? <>Restart the browser, then reopen the original private link from the installer. It must open without a certificate warning. If it has expired, run <code>~/.local/bin/alt pair</code> for a new code.</>
-        : <>Restart the browser and reopen this page. It must open without a certificate warning; if a warning remains, don’t pair.</>}</li>
-    </ol>
+    {kind === "desktop" && here ? <>
+      <ol className="pair-instructions">
+        <li>On this computer, run: <Command text="~/.local/bin/alt trust" />It shows the certificate’s name and full SHA-256, then asks before trusting it in this computer’s browsers.</li>
+        {reopen}
+      </ol>
+      <details className="pair-manual"><summary className="link">Trust it by hand instead</summary>{chooser}{steps}</details>
+    </> : <>{chooser}{steps}</>}
     <p><a className="link" href={guide} target="_blank" rel="noopener noreferrer">Certificate guide</a></p>
   </>;
 }
@@ -205,8 +253,8 @@ function PairScreen({ trust, guide = SETUP_GUIDE, removed, onPaired, pairingLink
             <a className="link" href={guide} target="_blank" rel="noopener noreferrer">Certificate guide</a>
             <button type="button" className="btn btn-primary" onClick={confirm}>Continue</button>
           </> : <>
-            <Instructions kind={kind} name={name} guide={guide} installLink={!!linkReady} />
-            {trusted.status === "untrusted" ? <p role="status" className="text-meta">{untrusted[kind]}</p> : null}
+            <Instructions kind={kind} name={name} guide={guide} installLink={!!linkReady} here={trust.local} />
+            {trusted.status === "untrusted" ? <p role="status" className="text-meta">{kind === "desktop" && trust.local ? "The usual missing step is restarting the browser after alt trust." : untrusted[kind]}</p> : null}
             {trusted.status === "unknown" ? <p role="alert" className="text-meta text-danger">Couldn’t check.</p> : null}
             <button type="button" className="btn" disabled={trusted.status === "checking"} onClick={check}>Check again</button>
           </>}
