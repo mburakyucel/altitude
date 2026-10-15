@@ -146,7 +146,7 @@ main() {
         stop "the installer stopped with the message above." "Your existing data and any previous installation are kept."
 
     "$python" - "$workdir/result.json" "$REPOSITORY/blob/$VERSION/docs/SETUP.md#trust-https-on-each-device" <<'EOF'
-import json, os, sys
+import json, os, subprocess, sys
 from urllib.parse import urlsplit
 result = json.load(open(sys.argv[1]))
 home = os.path.expanduser("~")
@@ -166,9 +166,25 @@ if result.get("lifecycle"):
     print(result["lifecycle"])
 if result.get("lingering"):
     print(result["lingering"]["detail"])
+# alt trust asks in the terminal, which a piped install still has; over SSH the browser runs on another computer.
+trusted = False
+if result["service"] == "running" and trust.get("managed") and not os.environ.get("SSH_CONNECTION"):
+    try:
+        open("/dev/tty").close()
+    except OSError:
+        pass
+    else:
+        print(flush=True)
+        trusted = subprocess.run([os.path.join(home, ".local/bin/alt"), "trust"], stdin=subprocess.DEVNULL).returncode == 0
 print("\nNext:")
-if trust.get("ca_sha256"):
-    print("  1. Trust Altitude's certificate in your browser. Before trusting it, check it shows:")
+if trusted:
+    pass
+elif trust.get("ca_sha256"):
+    if trust.get("managed"):
+        print("  1. Trust Altitude's certificate: run ~/.local/bin/alt trust on this computer,")
+        print("     or follow the steps the page shows on another computer. Check it shows:")
+    else:
+        print("  1. Trust Altitude's certificate in your browser. Before trusting it, check it shows:")
     print(f"       Name:    {trust['ca_name']}")
     print(f"       SHA-256: {trust['ca_sha256'].split('=', 1)[-1]}")
     print(f"     Certificate file: {tilde(trust['ca_cert'])}")
@@ -176,14 +192,15 @@ if trust.get("ca_sha256"):
 else:
     print("  1. Check that the address opens in a new private window without a certificate warning:")
     print(f"       {sys.argv[2]}")
+step = "1. Restart your browser if it is open, then open" if trusted else "2. Open"
 pairing = result.get("pairing")
 if pairing:
-    print("  2. Open Altitude with this private link. It pairs this browser and opens First run:")
+    print(f"  {step} Altitude with this private link. It pairs this browser and opens First run:")
     print(f"       {pairing['url']}")
     print(f"     Works once, for {pairing['minutes']} minutes. Keep it private.")
     print("     If it expires, run ~/.local/bin/alt pair.")
 else:
-    print(f"  2. Open Altitude: {result['url']}")
+    print(f"  {step} Altitude: {result['url']}")
     if result.get("pairing_error"):
         print(f"     {result['pairing_error']}")
     else:

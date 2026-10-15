@@ -6,6 +6,7 @@ import { StatusMark, BusyLabel } from "./StatusMark";
 import { saveIncidentReports, saveOperatorName, useMachine, usePrerequisites } from "../data/api";
 import type { Machine } from "../data/api";
 import { HostingCard } from "./Network";
+import { SignIn } from "./SignIn";
 import "./onboarding.css";
 
 type Save = { status: "idle" | "saving" } | { status: "failed"; error: Error };
@@ -104,7 +105,8 @@ export function PrerequisiteList({ actions }: { actions: (check: ReactNode, read
               <strong>{item.label}</strong>
               <span className="block text-meta text-muted">{item.state === "met" ? "Ready" : item.state === "optional" ? "Optional" : "Needs attention"}</span>
               {item.detail ? <p className="text-meta text-muted">{item.detail}</p> : null}
-              {item.command && item.state === "unmet" ? <Command text={item.command} /> : null}
+              {item.sign_in ? <SignIn engine={item.sign_in.engine} label={item.sign_in.label} signedIn={item.state === "met"} />
+                : item.command && item.state === "unmet" ? <Command text={item.command} /> : null}
               {item.state === "unmet" ? item.options?.map((option) => <div key={option.label} className="onboarding-option">
                 <span className="text-meta">{option.label}</span><Command text={option.command} />
               </div>) : null}
@@ -194,7 +196,7 @@ export default function Onboarding({ projects, busy = false }: { projects: React
       </details>
       {nav(<button key="next" type="button" className="btn btn-primary" onClick={next}>Continue</button>)}
     </> : step === "agents" ? <>
-      <header><h1>What the agents need</h1><p className="onboarding-lead">{inContainer ? "These checks run inside the container. Open its shell from a host terminal, run the commands below there, then check again. Host tools and sign-ins do not count." : "Run these commands in a terminal on the hosting computer, then check again. Sign-ins stay in your terminal."} Altitude never asks for a password or token in the browser.</p></header>
+      <header><h1>What the agents need</h1><p className="onboarding-lead">{inContainer ? "These checks run inside the container. Open its shell from a host terminal, run the commands below there or use Sign in, then check again. Host tools and sign-ins do not count." : "Run any command below in a terminal on the hosting computer, or use Sign in, then check again."} Altitude never asks for your password or a token.</p></header>
       <PrerequisiteList actions={(check, ready) => <>
         <div className="onboarding-recheck">{check}
           {!ready ? <p className="text-meta text-muted">You can add a project now. Required tools still need attention before agent work.</p> : null}</div>

@@ -133,6 +133,37 @@ def _stdin_or_file(args) -> str:
     return sys.stdin.read()
 
 
+def _sign_in_request(engine: str, body: dict) -> dict:
+    """Ask the running service, with this computer's key, to start, finish or cancel its sign-in on the engine:
+    only altd runs the engine's setup and holds what it prints."""
+    import ssl
+    import urllib.error
+    import urllib.request
+    from altitude import access, platform, tls
+    try:
+        found = tls.service()
+    except tls.TLSFailure:
+        sys.exit("alt sign-in: Altitude is not running; start it, then sign in again")
+    url = f"https://localhost:{found['port']}" if platform.containerized() else found["url"]
+    request = urllib.request.Request(f"{url}/api/sign-in/{engine}", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json",
+                                              access.KEY_HEADER: access.machine_key() or ""})
+    try:
+        with urllib.request.urlopen(request, context=ssl.create_default_context(cadata=found["ca"])
+                                    if found["tls"] else None, timeout=180) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            sys.exit(f"alt sign-in: altd refused this machine's key; read access to {access.DIR / 'machine.key'} is required")
+        try:
+            error = json.load(exc).get("error")
+        except (ValueError, AttributeError):
+            error = None
+        sys.exit(f"alt sign-in: {error or exc.reason}")
+    except (OSError, ValueError):
+        sys.exit("alt sign-in: Altitude is not answering; check that it is running, then sign in again")
+
+
 def out(obj) -> None:
     print(json.dumps(obj, indent=2, sort_keys=True, default=str) if not isinstance(obj, str) else obj)
 
@@ -570,6 +601,7 @@ def main(argv=None) -> None:
     service.add_argument("--json", action="store_true", dest="as_json", help="structured service-manager status")
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
     sub.add_parser("tls-share", help="offer the HTTPS certificate to a phone on this network for ten minutes")
+    sub.add_parser("trust", help="trust Altitude's certificate in this computer's browsers, after asking")
     sub.add_parser("pair", help="print a one-time code that pairs one browser with Altitude")
     sub.add_parser("sign-in", help="create the sign-in Altitude's runs of an engine use, from your own account").add_argument(
         "engine", choices=engines.TOKEN_SETUP)
@@ -1144,6 +1176,15 @@ def main(argv=None) -> None:
         except tls.TLSFailure as exc:
             sys.exit(f"alt tls-share: {exc}")
         return
+    if c == "trust":
+        if ACTOR != config.OPERATOR_ACTOR:
+            sys.exit("alt trust: only the operator changes this computer's trust")
+        from altitude import tls
+        try:
+            trusted = tls.trust()
+        except tls.TLSFailure as exc:
+            sys.exit(f"alt trust: {exc}")
+        sys.exit(0 if trusted else 1)
     if c == "voice":
         from altitude import speech
         if args.vcmd != "status" and ACTOR != config.OPERATOR_ACTOR:
@@ -1165,11 +1206,21 @@ def main(argv=None) -> None:
     if c == "sign-in":
         if ACTOR != config.OPERATOR_ACTOR:
             sys.exit("alt sign-in: only the operator signs Altitude in")
+        label = config.ENGINE_LABELS[args.engine]
+        signing = {"attempt": None}
         try:
-            engines.save_sign_in(args.engine)
-        except (OSError, RuntimeError, ValueError) as exc:
-            sys.exit(f"alt sign-in: {exc}")
-        print(f"Altitude's {config.ENGINE_LABELS[args.engine]} runs now use this sign-in. Your own is unchanged.")
+            signing = _sign_in_request(args.engine, {"action": "start"})
+            if signing["state"] == "waiting":
+                print(f"Open this link, approve Altitude, then paste the code {label} shows:\n\n  {signing['link']}\n")
+                code = input("Code: ")
+                signing = _sign_in_request(args.engine, {"action": "finish", "attempt": signing["attempt"], "code": code})
+        except (KeyboardInterrupt, EOFError):
+            # Interrupted while it opened, the open sign-in is this one: starting replaced any other.
+            _sign_in_request(args.engine, {"action": "cancel", **({"attempt": signing["attempt"]} if signing["attempt"] else {})})
+            sys.exit("\nalt sign-in: cancelled; nothing changed")
+        if signing["state"] != "done":
+            sys.exit(f"alt sign-in: {signing.get('error') or 'The sign-in did not finish.'}")
+        print(f"Altitude's {label} runs now use this sign-in. Your own is unchanged.")
         return
     if c == "pair":
         if ACTOR != config.OPERATOR_ACTOR:

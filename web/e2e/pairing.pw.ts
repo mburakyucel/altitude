@@ -35,8 +35,8 @@ async function pairWith(page: Page, value: string) {
   await expect(app).toBeVisible();
 }
 
-type Trust = { local: boolean; https: boolean; check: boolean; certificate: { name: string } | null };
-const DEVICE: Trust = { local: false, https: true, check: true, certificate: { name: "Altitude CA 4F7K" } };
+type Trust = { local: boolean; https: boolean; check: boolean; command: boolean; certificate: { name: string } | null };
+const DEVICE: Trust = { local: false, https: true, check: true, command: false, certificate: { name: "Altitude CA 4F7K" } };
 
 /** This browser as another device on the network sees Altitude. The disposable service is plain-HTTP loopback, so
  * its access reply and trust check are answered here: each check takes the next answer, by default a refused
@@ -277,9 +277,10 @@ test("a device on the network checks that it trusts Altitude's certificate befor
   await walk.state("01-not-trusted", {
     visible: [heading, trust.getByText("Not trusted yet", { exact: true }),
       trust.getByRole("link", { name: apple ? "Download the profile" : "Download the certificate" }), check,
-      page.getByText(apple ? "The usual missing step is the switch in Certificate Trust Settings."
-        : android ? "Install the certificate as a CA certificate."
-        : "Import the certificate as a trusted authority, then restart the browser.")],
+      // A desktop's numbered steps already say it; a phone's one sentence names its usual missing step.
+      ...(apple ? [page.getByText("The usual missing step is the switch in Certificate Trust Settings.")]
+        : android ? [page.getByText("Install the certificate as a CA certificate.")]
+        : [trust.getByRole("combobox", { name: "Steps for" })])],
     hidden: [field, trust.getByRole("link", { name: apple ? "Download the certificate" : "Download the profile" }), trust.getByText(/^[0-9A-F]{2}( [0-9A-F]{2}){7}$/)],
   });
   await expect(trust.getByRole("link", { name: "Certificate guide" })).toBeVisible();

@@ -2,12 +2,12 @@
 # Only on an explicitly disposable Ubuntu VM. Never run on a development host.
 # PHASE reboot-install installs inside an SSH login of an account that does not linger, closes the login, checks the
 # service kept running with nobody logged in and keeps the account for the machine to restart; reboot-verify then
-# checks it and removes it. Every other phase turns lingering on itself, so its account needs no login. PHASE bootstrap points the release host, and PHASE update also its api. host, at this
-# machine's loopback for the duration of the test. PHASE public-install and public-update download from GitHub itself.
+# checks it and removes it. Every other phase turns lingering on itself, so its account needs no login. PHASE bootstrap and trust point the release host, and PHASE update also its api. host, at this
+# machine's loopback for the duration of the test; trust needs the browsers installation_vm.py --trust installs. PHASE public-install and public-update download from GitHub itself.
 # Each phase writes to RESULTS_DIR/PHASE.
 set -euo pipefail
-if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|bootstrap|update|reboot-install|reboot-verify|recovery|public-install|public-update)$ ]]; then
-    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR [BASELINE_COMMIT..]SOURCE_COMMIT [bootstrap|update|reboot-install|reboot-verify|recovery|public-install|public-update]' >&2
+if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|bootstrap|trust|update|reboot-install|reboot-verify|recovery|public-install|public-update)$ ]]; then
+    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR [BASELINE_COMMIT..]SOURCE_COMMIT [bootstrap|trust|update|reboot-install|reboot-verify|recovery|public-install|public-update]' >&2
     exit 2
 fi
 # BASELINE_COMMIT.. names a published baseline built from another commit.
@@ -104,7 +104,7 @@ else
     mkdir "$test_home/baseline" "$test_home/candidate" "$test_home/results"
     cp -a "$baseline/." "$test_home/baseline/"
     cp -a "$candidate/." "$test_home/candidate/"
-    cp "$script_dir/installation_lifecycle.py" "$test_home/"
+    cp "$script_dir/installation_lifecycle.py" "$script_dir/installation_browsers.mjs" "$test_home/"
     chown -R "$account:$account" "$test_home"
     if [[ $phase == reboot-install ]]; then
         # A key for this account's own SSH login, which starts its user manager as on a host reached only over SSH.
@@ -116,7 +116,7 @@ else
         timeout 30 systemctl start "user@$test_uid.service"
     fi
 fi
-if [[ $phase == bootstrap || $phase == update ]]; then
+if [[ $phase == bootstrap || $phase == trust || $phase == update ]]; then
     # The test account serves the release over HTTPS on 127.0.0.1:443 under the release's own host name,
     # and for update also under its API host.
     host=$(sed -n "s|^REPOSITORY='https://\([^/':]*\)/.*|\1|p" "$test_home/baseline/install.sh")

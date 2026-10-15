@@ -38,8 +38,11 @@ test("a host browser that proceeded past the certificate warning is not trusted 
   });
   const access = await (await request.get("/api/access", { ignoreHTTPSErrors: true })).json();
   expect(access.trust.local).toBe(true);
-  await expect(view.trust.getByText(/If they differ, delete the download and stop/)).toBeVisible();
-  await expect(view.trust.getByText(/if a warning remains, don’t pair/)).toBeVisible();
+  expect(access.trust.command).toBe(true);
+  // A desktop browser here is offered alt trust, with the comparison in the steps by hand; a phone compares first.
+  await expect(info.project.name === "desktop" ? view.trust.getByText("~/.local/bin/alt trust", { exact: true })
+    : view.trust.getByText(/If they differ, delete the download and stop/)).toBeVisible();
+  await expect(view.trust.getByText(/if a warning remains, don’t pair/).first()).toBeVisible();
   await walk.state("check-again-still-not-trusted", {
     action: () => view.trust.getByRole("button", { name: "Check again" }).click(),
     visible: [view.notTrusted],

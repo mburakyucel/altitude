@@ -157,17 +157,20 @@ the folder only to a place as private as `~/.config`.
 When an engine's login expires or is revoked, Altitude recognizes it from the CLI's own sign-in
 failure, whatever its wording, and the coordinator answers on the other configured engine. Project
 chat says so once per lapse, for example "Claude's sign-in has lapsed, so Codex is answering for now.
-To sign in, run `alt sign-in claude` on the computer running Altitude." With no other engine, or with
+Sign in again from Settings › Prerequisites." With no other engine, or with
 the project set to one engine, the line says your message waits, and it sends once the engine is
 signed in again. Codex runs use the CLI's own sign-in, which the five-minute usage check also reads,
 so a lapse it sees moves the next message before any turn fails, and its next successful reading ends
-the lapse. Claude runs use Altitude's own sign-in from `alt sign-in claude`, which lasts a year and
-which the usage check does not read. Each project's chat says once, two weeks before the year ends,
+the lapse. Claude runs use Altitude's own sign-in, made with **Sign in** on the Claude row of Settings ›
+Prerequisites (or `alt sign-in claude`), which lasts a year and which the usage check does not read. Each project's chat says once, two weeks before the year ends,
 that it needs renewing; a missing or ended one shows as a lapse on the first Claude run, and saving a
-new one ends it.
+new one ends it. A sign-in that fails says why in one sentence and changes nothing, so an earlier
+sign-in keeps working; **Try again** starts afresh. "Altitude couldn't follow Claude's sign-in" means
+the Claude CLI's setup screen changed in a way this Altitude version does not read, and it needs an
+update.
 
 Task owners hold with "provider rejected authentication or account access; sign in, then Retry or
-Resume". Sign in (`alt sign-in claude` or `codex login`), then press
+Resume". Sign in (Claude's **Sign in** in Settings › Prerequisites, or `codex login`), then press
 **Resume** on a held task, or **Retry** on a coordinator turn that stopped. That attempt launches;
 once an engine call succeeds, held tasks and report turns on the engine continue on their next tick.
 While the login is still invalid, the attempt records the rejection again and automatic retries keep
@@ -849,10 +852,16 @@ browser fixtures do not establish it.
 
 ### Desktop certificate trust
 
-Use the [Linux and macOS trust guide](SETUP.md#trust-https-on-each-device) for each desktop browser,
-including on the computer hosting Altitude. `alt doctor` reports the public `ca.crt` path and its
-identity; use that local file when the service listens only on loopback. For another desktop at an
-already-configured network address, **Settings → Devices → Set up a device** or `alt tls-share`
+On the computer hosting Altitude, `alt trust` adds its own CA to this account's browser stores,
+the login keychain on a Mac or the Chrome and Firefox NSS databases on Linux, for websites only,
+after showing its name, full SHA-256 and scope and asking in the terminal; it prints one undo
+command per store. `alt doctor` names which stores trust it and offers `alt trust` until a browser
+is paired. A store it cannot write (no `certutil`, a remote Mac terminal, a Flatpak Chrome, a Firefox
+Primary Password) stays a step by hand from the
+[Linux and macOS trust guide](SETUP.md#trust-https-on-each-device), which also covers every other
+desktop; the pair page shows the same steps for the visitor's system and browser. Uninstalling
+leaves this trust; a new CA needs it again. For another desktop at an already-configured network
+address, **Settings → Devices → Set up a device** or `alt tls-share`
 offers the public certificate for ten minutes. Open the link on that computer; no camera is needed.
 Compare the downloaded certificate's full SHA-256 with the trusted terminal or Settings screen,
 then deliberately import it in the browser or macOS Keychain as the guide describes. Restart the
