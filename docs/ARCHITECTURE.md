@@ -1605,6 +1605,8 @@ checkpoint hooks and its engine driver each send one short request to `POST /api
 altd admits a request as it admits the owner's other commands, from a process in the task's current worker job
 carrying the task's current attempt (see [Isolation and landing](#isolation-and-landing)), and applies it as that task's L2, with the
 project, task and attempt its record names. A request names its project and task, and altd refuses one for another.
+A request connects to altd directly, past any proxy the worker's network settings name, because altd admits the
+connecting process.
 - **Verbs.** `alt` in the worker reads the content of each input file it names (`--file`, `--questions-file`) and of
   each file it shows (`--show`, with the document's own images), with its standard input, and sends them with its
   arguments. altd runs the verb as the task's L2 with that content and never opens a path the worker names.
