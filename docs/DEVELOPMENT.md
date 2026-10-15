@@ -1142,9 +1142,12 @@ without ignored files, to a scratch folder, installs mutmut from the hash-pinned
 `scripts/mutation-requirements.txt` into a scratch virtual environment, and makes one small wrong
 edit at a time: a flipped comparison, a dropped call, a changed constant, string or return value.
 For each edit it runs the selected tests that reach the edited function. The module and test lists
-sit at the top of `scripts/mutation.py`. The run needs `python3 -m venv` and the package index, takes
-MINUTES on a 24-CPU Linux machine and removes its scratch folder at the end. It is a
-measurement, not a check: `make check` and the required CI never run it, and its counts gate nothing.
+sit at the top of `scripts/mutation.py`. The run needs `python3 -m venv` and the package index and
+removes its scratch folder at the end. On a 24-CPU Linux machine a full run takes about seven hours,
+nearly five of them for `altitude/land.py`, whose every surviving edit reruns some two hundred
+Git-backed tests, so start it overnight; task records and transitions alone take about 75 minutes.
+It is a measurement, not a check: `make check` and the required CI never run it, and its counts gate
+nothing.
 
 `RESULTS/report.md` has one row per module, then each surviving edit's diff grouped by function;
 `RESULTS/mutmut.log` keeps mutmut's own output.
