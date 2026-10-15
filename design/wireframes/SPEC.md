@@ -1632,8 +1632,21 @@ wherever none is known.
   and, under it, each agent's label and install command with **Copy**. A missing sandbox reads "Altitude
   runs agents inside bubblewrap on Linux." with the package manager's command (`sudo apt install
   bubblewrap` on Ubuntu), or adds "Install it with this computer's package manager." without one.
-  An unmet row explains itself and shows the terminal command with **Copy** (then Copied); no field
-  asks for a password or token. **Check again** reads again (Checking…). The primary action reads
+  An unmet row explains itself and shows the terminal command with **Copy** (then Copied); an installed
+  agent that is not signed in reads "<Agent> not signed in". The row of an agent Altitude signs in itself
+  (Claude) shows **Sign in** instead of a command, and a secondary **Sign in again** once signed in. The
+  service runs the agent's setup: "Opening Claude sign-in…", then the numbered steps "Approve Altitude on
+  Claude's page." with **Open Claude sign-in ↗** (new tab) and the field "Paste the code Claude shows"
+  (placeholder "Code from Claude"), the note "The code works once, for this sign-in only.", a ghost
+  **Cancel** and a primary **Finish sign-in** (disabled while empty; Enter finishes; "Signing in…" while
+  the agent answers; returning to the tab focuses the empty field). Success reads "Signed in. Altitude's
+  Claude runs use this sign-in for a year." A failure is one sentence ("Claude didn't accept that code.",
+  "The sign-in expired after ten minutes.", "The sign-in was interrupted." or "Altitude couldn't follow
+  Claude's sign-in. If this repeats, Altitude needs an update for this Claude version."), followed by
+  "Your earlier sign-in still works." when one is saved, with **Try again**. The sign-in lives in the
+  service: a reload or another paired browser finds it open, and Cancel stops it. The block is at most
+  32rem wide, with full-width buttons on phone. No field asks for a password, and the token never reaches
+  the page. Walkthroughs: `web/e2e/sign-in.pw.ts`. **Check again** reads again (Checking…). The primary action reads
   **Continue** when nothing is unmet, else a secondary **Continue anyway**. States: checking, read
   failed (one sentence).
 - **Add your projects**: a **Projects folder** card with **Change…**, which opens the folder browser

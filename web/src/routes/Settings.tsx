@@ -729,7 +729,7 @@ function MachinePage({ page }: { page: "name" | "prerequisites" | "incident-repo
     <IncidentReportsForm save="Save" onSaved={() => setSaved(true)} actions={submitRow} />
   </>;
   return <>
-    <p className="text-meta text-muted">{inContainer ? "These checks run inside the container. Open its shell from a host terminal and run the commands below there, then check again. Host tools and sign-ins do not count." : "What the agents need on the computer running Altitude. Run any missing command in a terminal there, then check again."} Altitude never asks for a password or token in the browser.</p>
+    <p className="text-meta text-muted">{inContainer ? "These checks run inside the container. Open its shell from a host terminal and run the commands below there or use Sign in, then check again. Host tools and sign-ins do not count." : "What the agents need on the computer running Altitude. Run any missing command in a terminal there, or use Sign in, then check again."} Altitude never asks for your password or a token.</p>
     <PrerequisiteList actions={(check) => <div className="onboarding-nav">{check}</div>} />
   </>;
 }

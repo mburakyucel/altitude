@@ -740,10 +740,11 @@ engine that turn then attempts, and each explicit task resume request withdraws 
 engine. A credential still invalid records it again on that attempt, within the same lapse, and
 automatic turns and resumes keep waiting. On an engine whose runs share the CLI's sign-in (Codex), the
 quota refresh records a lapse when its read is refused for sign-in and its successful read ends it;
-Claude's runs use Altitude's own sign-in, so saving it with `alt sign-in claude` ends theirs. A
+Claude's runs use Altitude's own sign-in, so saving a new one ends theirs. A
 successful coordinator turn ends a lapse on either engine. Each project's
 conversation gets one heads-up line per lapse naming the engine, what the turn did (answered on
-another engine, waits, or stopped) and the engine's sign-in command; failed turns show the
+another engine, waits, or stopped) and how to sign in again: Settings › Prerequisites for an engine
+Altitude signs in itself, else the engine's sign-in command; failed turns show the
 rejection's plain reason, never provider text. A current model-specific weekly reading at 100% also
 excludes only that model. The router never derives model allowances from an
 account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
@@ -1464,13 +1465,28 @@ and output styles into it, read-only to the job; the folder's own state file sta
 A session resumed for the first time in its folder is first copied there from the operator's folder,
 where Claude kept every session before jobs had folders of their own. Workers read the project's notes
 from the operator's folder (`autoMemoryDirectory`) without being able to change them. Every Claude job
-signs in with Altitude's own subscription token (`alt sign-in claude`, kept in the private access
+signs in with Altitude's own subscription token (made by the sign-in below and kept in the private access
 store), handed over in its launch input like the GitHub token below and exported by the driver as
 `CLAUDE_CODE_OAUTH_TOKEN`, so a job never reads or refreshes the operator's sign-in; a review, which
 runs without the driver, reads the same environment from the first line of its input. Without that
 token Claude reports itself signed out, which is an ordinary [sign-in lapse](#engine-integration-boundary);
 two weeks before its year ends, counted from when it was saved, each project's conversation gets one
 heads-up line to renew it.
+Altitude makes that sign-in itself (`engines/token_setup.py`) for an engine whose runs take a token from the
+operator (`TOKEN_SETUP`), through `GET` and `POST /api/sign-in/<engine>` from a paired browser or with the
+machine key (`alt sign-in`); workers cannot read the key. Starting runs the engine's setup command
+(`claude setup-token`) as the session leader of a pseudo-terminal of altd's own, 4000 columns wide so nothing
+wraps, in a fresh settings folder inside the private access store that is removed afterwards, with no sign-in
+of its own in its environment and a browser command that does nothing. altd reads that screen through a small
+terminal model and returns only the sign-in link it shows; finishing types the code the operator pasted
+(printable characters only) and waits for the outcome. A token is accepted only when the command exits 0
+after the code and exactly one distinct token of the engine's shape stood alone on a line; it goes straight
+to `access.save_engine_token` and ends the sign-in lapse. Anything else fails with one of four fixed sentences
+(code not accepted, expired after ten minutes, interrupted, not followed) and saves nothing, so an earlier
+sign-in keeps working. One sign-in per engine is open at a time, held in altd's memory: starting another
+replaces it; cancelling, failing or the ten minutes ending kill the command's whole process group, and altd's
+exit hangs up its terminal. Nothing read from the screen is logged, recorded or returned except the link,
+and a failed request answers with fixed text and logs only the exception's type.
 Altitude reads a task's transcript, context and token usage in its job's folder, without following a
 link the job planted there, and in the operator's folder for a session recorded before. Altitude's usage
 readings and improvement reviews still run outside any job on the operator's sign-in.
@@ -2399,7 +2415,8 @@ without a repository, sign-in or network request, then sign-in), each engine's l
 engine seam (`engines.sign_in`), on Linux the agent sandbox (`platform.sandbox_tool`, optional when a signed-in agent
 brings its own sandbox) and Git, as met, unmet with the terminal command to run (the install command from
 `platform.install_command` or `engines.install_command` for a missing tool or a GitHub CLI too old to land, else
-its sign-in command), or optional once one engine is signed in. With no engine installed, one row asks for at least
+its sign-in command, or, for an engine Altitude signs in itself, `sign_in`, which shows **Sign in** in its row
+instead), or optional once one engine is signed in. With no engine installed, one row asks for at least
 one coding agent and lists each engine's install command as an option. The projects step lists the folders under the projects folder
 (`config.project_roots()`: the machine setting `projects_folder`, else `ALTITUDE_ROOTS`), changes
 that folder in place and starts L3 for one or all of them through `POST /api/project/add`, in order,

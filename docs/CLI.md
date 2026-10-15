@@ -828,15 +828,17 @@ an owner sends for its own task (`alt task run`, `validate`, `terminal`, `review
 its records), which altd admits from that owner's worker job instead. No Altitude sandbox can read the store. See
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
-`alt sign-in claude` (operator only) gives Altitude's Claude runs a sign-in of their own. It runs
-`claude setup-token`, which signs in to the operator's subscription in a browser and prints a token valid
-for a year, then reads that token at a hidden prompt, joining the lines a copy wrapped onto up to an empty
-line, and keeps it in the private access store as `claude.token`. Workers, reviewers and coordinator turns receive it in their launch input, never on a
-command line or in a log, and the operator's own Claude sign-in stays untouched. Saving it ends the
+`alt sign-in claude` (operator only) gives Altitude's Claude runs a sign-in of their own, the same one
+**Sign in** makes on Settings › Prerequisites. It asks the running service, with the machine key, to start
+the sign-in, prints the link to open, reads the code Claude's page then shows at a `Code:` prompt and hands
+it to the service; Ctrl+C or the end of input cancels it, and without a running service it refuses. The
+service runs `claude setup-token` and keeps the year-long token it prints in the private access store as
+`claude.token` ([Altitude's own engine sign-in](ARCHITECTURE.md#isolation-and-landing)); the token never
+reaches the terminal. Workers, reviewers and coordinator turns receive it in their launch input, never on
+a command line or in a log, and the operator's own Claude sign-in stays untouched. Saving it ends the
 engine's [sign-in lapse](OPERATIONS.md#engine-sign-in-recovery), and each project's chat reminds the
-operator to run it again two weeks before the year ends, counted from when it was saved. Usage
-readings and improvement reviews still read the operator's own sign-in. The token appears on the screen, so the operator runs it in a
-terminal of their own: an Altitude terminal's output reaches its reader, the task's owner or the coordinator.
+operator to sign in again two weeks before the year ends, counted from when it was saved. Usage
+readings and improvement reviews still read the operator's own sign-in.
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
 from the record the service wrote when it started, and checks over HTTPS that the

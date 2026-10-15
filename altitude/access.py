@@ -7,7 +7,8 @@ it is the proof of being the operator on this machine. `devices.json` holds each
 paired browser's name, times and the SHA-256 of its random key (never the key itself), plus at most one
 pairing code, also hashed. `alt pair` writes a code here directly, so pairing and lockout recovery need no
 running browser, no particular bind address and nothing platform-specific. `<engine>.token` is the sign-in
-Altitude's runs of that engine use instead of the operator's own; `alt sign-in` stores it.
+Altitude's runs of that engine use instead of the operator's own; the service's sign-in (`engines.token_setup`)
+stores it, and `<engine>.setup.<id>` is that sign-in's throwaway settings folder while it runs.
 """
 from __future__ import annotations
 
@@ -86,7 +87,7 @@ def machine_key() -> str | None:
 
 
 def engine_token(engine: str) -> str | None:
-    """The sign-in of Altitude's own runs on an engine that takes one from the operator (`alt sign-in`)."""
+    """The sign-in of Altitude's own runs on an engine that takes one from the operator (`engines.token_setup`)."""
     try:
         return (DIR / f"{engine}.token").read_text().strip() or None
     except OSError:
