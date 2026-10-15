@@ -55,8 +55,9 @@ instructions replace the host-only patch command without changing writable roots
 Two local named volumes hold `/home/altitude` and `/home/altitude/Projects`. No host home, credential
 directory, device, runtime socket or source checkout is mounted. The launcher's `sign-in` command is the one
 way a host credential enters: it copies the sign-in Altitude's own runs use on this computer (`alt sign-in`) into
-the container's private access store over the copy command's standard input. The operator's own engine and
-GitHub logins are never read, copied or mounted. Clone/import projects inside the
+the container's private access store over the copy command's standard input. From then on, anything that runs
+commands in that container as its user can read that sign-in, as Altitude's Claude runs on the host already
+receive it. The operator's own engine and GitHub logins are never read, copied or mounted. Clone/import projects inside the
 project volume. Provider/Git credentials, machine credentials and TLS private keys remain accessible
 to same-UID software where the engine's confinement permits; the image does not isolate mutually
 hostile tasks or engines. Each task worker receives the container's GitHub CLI token from its

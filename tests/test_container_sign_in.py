@@ -69,7 +69,7 @@ class TestContainerSignIn(AltitudeCase):
             container.sign_in("fictional", "claude")
         self.assertEqual(self.commands, [])
 
-    def test_only_engines_with_a_sign_in_of_altitudes_own_are_offered(self):
+    def test_engines_without_a_sign_in_of_altitudes_own_are_refused(self):
         others = [engine for engine in config.ENGINES if engine not in engines.TOKEN_SETUP]
         for engine in others:
             with self.subTest(engine=engine), mock.patch.object(sys, "argv", ["container.py", "sign-in", engine]), \

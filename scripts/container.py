@@ -230,7 +230,9 @@ def sign_in(instance: str, engine: str) -> str:
     fresh container starts its jobs without a sign-in of its own. It is a fixed long-lived sign-in, so copies do not
     sign each other out; the copy keeps its saved time, from which its year runs. It travels only on the command's
     input, never on a command line or in output. The operator's own engine login is never read."""
-    from altitude import access, config
+    from altitude import access, config, engines
+    if engine not in engines.TOKEN_SETUP:
+        raise ValueError(f"Altitude keeps no sign-in of its own for {engine}; sign in inside the container")
     label = config.ENGINE_LABELS[engine]
     token, saved = access.engine_token(engine), access.engine_token_saved(engine)
     if token is None:
@@ -545,7 +547,6 @@ def recreate(instance: str) -> str:
 
 
 def main() -> None:
-    from altitude import engines
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
     image = sub.add_parser("build", help="verify the existing application release and build a local image")
@@ -577,7 +578,7 @@ def main() -> None:
     recover=sub.add_parser('recover-transfer',help='clean one inactive interrupted transfer, preserving completed backups')
     recover.add_argument('--id',required=True)
     signing = sub.add_parser("sign-in", help="give a running container this computer's Altitude sign-in (alt sign-in)")
-    signing.add_argument("engine", choices=engines.TOKEN_SETUP)
+    signing.add_argument("engine")
     signing.add_argument("--name", default="altitude")
     for action in ("status", "pause", "continue", "stop", "restart", "recreate", "remove", "pair", "shell", "certificate"):
         command = sub.add_parser(action)
