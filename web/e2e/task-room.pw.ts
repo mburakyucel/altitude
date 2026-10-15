@@ -45,8 +45,9 @@ for (const scene of scenes) test(`task room: ${scene.key}`, async ({ page, reque
     visible: [page.getByText("Merge held", { exact: false }).first(), ...(scene.line ? [status.getByText(scene.line, { exact: true })] : []), ...(audience ? [card] : [])],
     hidden: [...(scene.line ? [] : [status]), ...(audience ? [] : [card])],
   });
-  // The line follows any card, so at the latest messages it is the last thing above Activity & evidence.
+  // The line follows any card, so at the latest messages it is the last content in the chat.
   if (scene.line && audience) expect(await status.evaluate((node) => node.previousElementSibling?.classList.contains("conversation-question"))).toBe(true);
+  if (scene.line) expect(await status.evaluate((node) => node.nextElementSibling === null)).toBe(true);
   const scroller = page.locator(".convo-scroll");
   await scroller.evaluate((node) => { node.scrollTop = 0; });
   // Reading older messages scrolls the line away; the header keeps the state and nothing sits above the tabs.

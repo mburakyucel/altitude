@@ -747,7 +747,6 @@ export const TaskViewSchema = z
     question: DecisionSchema.nullish(),
     questions: z.array(DecisionSchema).nullish(),
     question_group: QuestionGroupSchema.nullish(),
-    events: z.array(z.record(z.string(), z.unknown())).nullish(),
     report_json: z.unknown().nullish(),
     token_usage: TokenUsageSchema.nullish(),
     live: z.unknown().nullish(),

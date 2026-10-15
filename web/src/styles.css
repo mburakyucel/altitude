@@ -867,8 +867,7 @@
 .shell[data-phone] .coordination-line .link,
 .shell[data-phone] .needs-alerts .link,
 .shell[data-phone] .report-page > .text-meta > a { display: inline-block; padding: 13px 6px; margin: -13px -6px; }
-.shell[data-phone] .wp-fold-summary,
-.shell[data-phone] .conversation-activity summary { min-height: 44px; padding-block: 12px; }
+.shell[data-phone] .wp-fold-summary { min-height: 44px; padding-block: 12px; }
 .shell[data-phone] .wp-fold[open] .wp-fold-summary { margin-bottom: 0; }
 
 /* First run (§3.12). */
@@ -1289,12 +1288,9 @@
 .conversation-turn { color: var(--accent-text); font-size: var(--text-meta); font-weight: 600; }
 .conversation-jumps { position: absolute; bottom: 12px; right: 16px; display: flex; gap: 8px; max-width: calc(100% - 32px); font-size: var(--text-meta); }
 .conversation-jumps .btn { box-shadow: var(--shadow-card); }
-.conversation-activity { color: var(--text-secondary); font-size: var(--text-meta); }
 .conversation-status { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--text-secondary); font-size: var(--text-meta); overflow-wrap: anywhere; }
 .conversation-status > .dot { margin-top: 0.5em; }
 .conversation-status[data-tone="danger"] { color: var(--danger); }
-.conversation-activity summary { cursor: pointer; padding: 8px 0; }
-.conversation-activity p { overflow-wrap: anywhere; }
 
 /* The restart notice (§3.13): a compact strip above page headers, with details in Monitor. */
 .restart-banner {
@@ -2708,8 +2704,7 @@ a.irc-name { color: var(--accent-text); text-decoration: underline; text-underli
 .sys-line[data-progress] .sys-dot {
   animation: voice-pulse 1.6s ease-in-out infinite;
 }
-.sys-time,
-.event-time {
+.sys-time {
   flex: none;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

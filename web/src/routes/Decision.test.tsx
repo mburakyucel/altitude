@@ -15,7 +15,7 @@ const initial = TaskViewSchema.parse({ slug: "index", title: "Index rollout", st
     { id: "before", role: "l2", text: "The rollback plan needs a retention period.", at },
     { id: "question-message", role: "l3", text: question.question, at },
     { id: "after", role: "l2", text: "I also checked the current index size.", at },
-  ], events: [{ kind: "tool", text: "Later technical activity" }] });
+  ] });
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }); }
 function setup({ archived = false, denied = false, missing = false } = {}) {
   let task = structuredClone(initial);
@@ -253,7 +253,7 @@ describe("Independent questions in one conversation", () => {
 });
 
 describe("Conversation-first decisions", () => {
-  it("replaces a saved decision URL with the anchored L2 conversation and keeps evidence folded", async () => {
+  it("replaces a saved decision URL with the anchored L2 conversation", async () => {
     setViewport(1440);
     setup();
     const { router } = renderApp({ route: "/projects/atlas/decisions/index" });
@@ -263,7 +263,6 @@ describe("Conversation-first decisions", () => {
     expect(convo()).toHaveTextContent("L3 brought this question to the L2");
     // The anchor takes focus in an effect after the question renders.
     await waitFor(() => expect(document.activeElement).toHaveClass("conversation-question"));
-    expect(document.querySelector("details")).not.toHaveAttribute("open");
     expect(screen.queryByPlaceholderText("Add a note for the L2 (optional)")).toBeNull();
     expect(screen.queryByText("Where this came from")).toBeNull();
     expect(screen.getByRole("button", { name: "Live session" })).toHaveAttribute("aria-pressed", "false");

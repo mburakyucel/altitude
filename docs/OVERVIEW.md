@@ -126,6 +126,7 @@ image still under validation.
   [validation environments](DEVELOPMENT.md#validation-environments),
   [device evidence](DEVELOPMENT.md#device-evidence),
   [coverage and limits](DEVELOPMENT.md#coverage-and-limits),
+  [mutation run](DEVELOPMENT.md#mutation-run),
   [improvement review eval](DEVELOPMENT.md#improvement-review-eval),
   [installation lifecycle acceptance](DEVELOPMENT.md#installation-lifecycle-acceptance),
   [CI and candidate identity](DEVELOPMENT.md#ci-and-candidate-identity),

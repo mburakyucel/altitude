@@ -92,7 +92,6 @@ class TestL2Steering(AltitudeCase):
         self.assertEqual(archived, [True])
         self.assertEqual(settled["state"], "rejected")
         self.assertEqual(settled["files"]["request"].strip(), "Keep the archived conversation readable.")
-        self.assertTrue(any(event.get("reason") == "The operator ended this task." for event in settled["events"]))
 
     def test_action_response_crossing_archive_returns_the_archived_state(self):
         task = T.new(self.project, "Archive while responding", "Report the archived state.")
@@ -181,11 +180,9 @@ class TestL2Steering(AltitudeCase):
                 self.assertEqual(errors, [])
                 self.assertEqual(snapshot["state"], "queued")
                 self.assertEqual(snapshot["files"]["request"].strip(), "Keep this request readable.")
-                self.assertFalse(any(event.get("kind") == "state" for event in snapshot["events"]))
                 settled = self.view(task)
                 self.assertEqual(settled["state"], "rejected")
                 self.assertEqual(settled["files"]["request"].strip(), "Keep this request readable.")
-                self.assertTrue(any(event.get("reason") == "The operator ended this task." for event in settled["events"]))
 
     def test_missing_question_field_is_a_logged_failure_not_a_missing_task(self):
         task = T.new(self.project, "Malformed question", "Keep state errors visible.")

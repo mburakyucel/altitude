@@ -378,7 +378,7 @@
       {
        "id": "F2",
        "severity": "low",
-       "title": "Tool page lists members whose membership has ended"
+       "title": "Tool page lists inductions in import order instead of by date"
       },
       {
        "id": "F3",
@@ -569,7 +569,7 @@
       {
        "id": "F2",
        "severity": "low",
-       "title": "Rental line shows on paused memberships"
+       "title": "Rental line appears twice when a bill is regenerated"
       },
       {
        "id": "F3",
@@ -797,7 +797,7 @@
       {
        "id": "F2",
        "severity": "low",
-       "title": "Export includes paused memberships"
+       "title": "Export file name has no date in it"
       },
       {
        "id": "F3",
@@ -3403,7 +3403,7 @@
       {
        "id": "F1",
        "severity": "low",
-       "title": "Material list is not shared with the shelf shop"
+       "title": "Printed job sheet cuts off its last line"
       }
      ],
      "dispositions": [
@@ -3584,7 +3584,7 @@
       {
        "id": "F8",
        "severity": "low",
-       "title": "Allocations for ended memberships are not freed"
+       "title": "Overdue reminder is sent on the day the bay is returned"
       }
      ],
      "dispositions": [
@@ -4428,7 +4428,7 @@
       {
        "id": "F5",
        "severity": "low",
-       "title": "Paused members are counted as eligible"
+       "title": "Ballot page does not say when voting closes"
       },
       {
        "id": "F6",
@@ -5657,7 +5657,7 @@
       {
        "id": "F5",
        "severity": "low",
-       "title": "Summary is sent to paused members"
+       "title": "Monthly summary has no link to the full reports"
       }
      ],
      "dispositions": [
@@ -5809,7 +5809,7 @@
       {
        "id": "F3",
        "severity": "low",
-       "title": "Ended sponsorships stay listed"
+       "title": "Sponsor order changes on every page load"
       },
       {
        "id": "F4",
@@ -6169,7 +6169,7 @@
       {
        "id": "F6",
        "severity": "medium",
-       "title": "Material names are not shared with the print queue"
+       "title": "Spool list cannot be sorted by remaining weight"
       }
      ],
      "dispositions": [
@@ -6342,7 +6342,7 @@
       {
        "id": "F1",
        "severity": "medium",
-       "title": "Cap check counts paused memberships as free places"
+       "title": "Cap check counts staff accounts as members"
       },
       {
        "id": "F2",
@@ -6650,7 +6650,7 @@
       {
        "id": "F1",
        "severity": "medium",
-       "title": "Ended memberships still listed"
+       "title": "Removing a key holder does not record who removed them"
       },
       {
        "id": "F2",
@@ -6834,7 +6834,7 @@
       {
        "id": "F4",
        "severity": "medium",
-       "title": "Directory includes members whose membership has ended"
+       "title": "Directory search does not match partial names"
       }
      ],
      "dispositions": [

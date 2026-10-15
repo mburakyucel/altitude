@@ -67,8 +67,6 @@ test("conversation-first design: custom answers, staged presets and conversation
   await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
   await page.getByRole("link", { name: "Design example: later L2 decision", exact: true }).click();
   await walk.state("06-owner-decision", { visible: [page.getByText("Decision recorded", { exact: true }), page.getByText("Work resumed", { exact: true }), field], hidden: [recipient] });
-  await page.getByText("Activity & evidence", { exact: true }).click();
-  await expect(page.getByRole("link", { name: "PR #42", exact: true })).toHaveAttribute("target", "_blank");
   await walk.open(route("NeedsYou"));
   await expect(page.getByText("Nothing needs you.", { exact: true })).toBeVisible();
 
