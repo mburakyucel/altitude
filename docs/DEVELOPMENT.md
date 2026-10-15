@@ -1614,8 +1614,9 @@ shell trusts, with `github.com` resolving to the loopback.
   Altitude's profile, so the runner copies this Mac's Codex CLI into the guest with an empty settings
   folder and no sign-in, and the opt-in `ALTITUDE_TEST_CODEX_SANDBOX=1` case runs that sandbox with a
   task's permissions and the job's environment, asking no model; only the scratch folder may be
-  written. The suite's home lies outside the temporary folders that sandbox admits, as in a
-  validation run. A Mac without the Codex CLI stops the phase.
+  written. Under both sandboxes the launcher's job folders, and a job's input saved there, can be
+  neither read nor written. The suite's home lies outside the temporary folders that sandbox admits,
+  as in a validation run. A Mac without the Codex CLI stops the phase.
 
 `PUBLISHED=<baseline>..<candidate>` names two published release tags instead of `SOURCE` and runs only
 the `published` phase. Its isolated environment puts Homebrew OpenSSL first for baselines whose
