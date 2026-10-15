@@ -238,10 +238,11 @@ and every other host resource the launcher did not create. It grants nothing for
 
 ### VM lane runs on this Mac
 
-The operator's project-chat approval of 2026-10-12 06:23 UTC (`8db20389c22e`) stands until the
-operator revokes it: L3 records a VM-lane operator grant on an owner's request without another
-operator question. Its scope is two lanes that run throwaway guests on this Apple silicon Mac through
-Apple's Virtualization framework, with one guest at a time. The macOS VM lane runs
+The operator's project-chat approval, first given on 2026-10-12 and re-confirmed on this installation
+on 2026-10-15 06:06 UTC (`e87e34a448cb`), stands until the operator revokes it: L3 records a VM-lane
+operator grant on an owner's request without another operator question. Its scope is two lanes that
+run throwaway guests on this Apple silicon Mac through Apple's Virtualization framework, with one
+guest at a time. The macOS VM lane runs
 `make installation-macos-vm` or `scripts/installation_macos_vm.py run` on the images already in its
 cache, with the guest's 4 CPUs and 4 GiB of memory, the guest network unplugged before the installer
 runs, and each clone deleted after its phase; building or downloading images is outside this scope.
