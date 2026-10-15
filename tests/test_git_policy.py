@@ -263,6 +263,23 @@ class TestGitPolicy(unittest.TestCase):
         with self.assertRaisesRegex(git_policy.GitPolicyError, "refusing to overwrite"):
             git_policy.install_hooks(self.repo)
 
+    def test_guards_missing_or_not_executable_are_not_ready(self):
+        guards = self.tmp / "guards"
+        shutil.copytree(Path(__file__).resolve().parent.parent / "hooks", guards)
+        with mock.patch.object(git_policy, "_active_hooks", return_value=guards):
+            self.assertEqual(git_policy.inspect_hooks(self.repo)["status"], "missing")
+            for name in ("pre-merge-commit", "pre-push"):
+                (guards / name).chmod(0o644)
+            observed = git_policy.inspect_hooks(self.repo)
+            self.assertEqual(observed["status"], "error")
+            self.assertIn("non-executable hooks: pre-merge-commit, pre-push", observed["detail"])
+            for name in ("pre-merge-commit", "pre-push"):
+                (guards / name).unlink()
+            self.assertIn("is missing: pre-merge-commit, pre-push", git_policy.inspect_hooks(self.repo)["detail"])
+            with self.assertRaisesRegex(git_policy.GitPolicyError, "is missing: pre-merge-commit, pre-push"):
+                git_policy.install_hooks(self.repo)
+        self.assertEqual(self.git("config", "--local", "--get", "core.hooksPath", check=False).stdout, "")
+
     def custom_hooks(self, directory=None):
         directory = directory or self.tmp / "custom-hooks"
         directory.mkdir(exist_ok=True)
