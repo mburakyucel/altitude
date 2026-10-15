@@ -155,11 +155,9 @@ class TestPrompt(ImprovementCase):
         sheet = improve.prompt(project, end=NOW)["text"].split("\n\n## ")[1].split("\n\n# ")[0]
         self.assertLessEqual(len(("## " + sheet).encode()), improve.SHEET_BYTES)
         self.assertGreaterEqual(len(re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheet)), 2)
-        # One line per question, naming every revision; what did not fit is counted.
-        shown = len(re.findall(r"^- Question \[A\d+(?:, A\d+){5}\] revs 1–6 ", sheet, re.M))
-        self.assertEqual(len(re.findall(r"^- Question ", sheet, re.M)), shown)
-        self.assertRegex(sheet.splitlines()[-1],
-                         rf"^- Not shown for room: \d+ operator quotes, {3 - shown} questions, 3 reviews$")
+        # One line per question, naming every revision: they show which revisions followed a reply.
+        self.assertEqual(len(re.findall(r"^- Question \[A\d+(?:, A\d+){5}\] revs 1–6 ", sheet, re.M)), 3)
+        self.assertRegex(sheet.splitlines()[-1], r"^- Not shown for room: \d+ operator quotes, 3 reviews$")
 
     def test_signal_details_share_the_sheet_bound_after_the_operators_words(self):
         """A heavily signalled task's event details once came before any budget, so its sheet could pass the bound
@@ -172,9 +170,12 @@ class TestPrompt(ImprovementCase):
         project, _ = self.load([task("noisy", 2, messages=messages, events=events)])
         sheet = "## " + improve.prompt(project, end=NOW)["text"].split("\n\n## ")[1].split("\n\n# ")[0]
         self.assertLessEqual(len(sheet.encode()), improve.SHEET_BYTES)
-        self.assertEqual(len(re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheet)), improve.PAIRS)
+        # The two most telling quotes come before the details; the others of PAIRS take the room left.
+        quoted = len(re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheet))
+        self.assertIn(quoted, (2, 3))
         self.assertRegex(sheet, r"\n- retries \[A\d+\]: ci-recheck 0: ")
-        self.assertRegex(sheet.splitlines()[-1], r"^- Not shown for room: \d+ signal details$")
+        self.assertRegex(sheet.splitlines()[-1], rf"^- Not shown for room: {improve.PAIRS - quoted} operator quotes, "
+                                                 r"\d+ signal details$")
 
     def test_counted_events_show_what_they_recorded(self):
         project, _ = self.load([task("rewritten", 2, events=[
@@ -200,16 +201,20 @@ class TestPrompt(ImprovementCase):
             questions.append({"id": f"q{i}", "revision": 1, "asked": at(3, 0.1 * i), "text": f"Choice {i}?",
                               "resolution": {"disposition": "answered", "at": at(3, 0.1 * i + 0.05),
                                              "by": "operator", "message": f"a{i}"}})
-            messages.append(message(f"a{i}", 3, 0.1 * i + 0.05, "operator", f"Answer {i}."))
-        messages += [message(f"s{i}", 3, 1 + i, "operator", f"Unasked correction {i}.") for i in range(5)]
-        messages += [message("late", 3, 7, "operator", "After the report: the totals are wrong.")]
+            messages.append(message(f"a{i}", 3, 0.1 * i + 0.05, "operator", f"Answer {i}. " + "why " * 70))
+        for i in range(5):
+            messages += [message(f"s{i}", 3, 1 + i, "operator", f"Unasked correction {i}. " + "why " * 70),
+                         message(f"r{i}", 3, 1.5 + i, "l2", "Done. " + "how " * 70)]
+        messages += [message("late", 3, 7, "operator", "After the report: the totals are wrong. " + "why " * 60)]
         project, _ = self.load([task("steered", 3, messages=messages, questions=questions)])
         sheet = improve.prompt(project, end=NOW)["text"].split("\n\n## ")[1].split("\n\n# ")[0]
-        quoted = re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "([^"]+)"', sheet)
-        self.assertNotIn("Answer 0.", quoted)
-        self.assertEqual(quoted[-1], "After the report: the totals are wrong.")  # an after_report place comes first
-        self.assertIn("Unasked correction 0.", quoted)  # the rest spread over the operator's unasked messages
-        self.assertLessEqual(len(quoted), improve.PAIRS)
+        quoted = [q.split(".")[0] for q in re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "([^"]+)"', sheet)]
+        # Full quotes leave room for two or three: the after_report place, then the operator's unasked messages
+        # spread from the first; no answer the question lines already link. Shown in time order.
+        self.assertGreaterEqual(len(quoted), 2)
+        self.assertEqual(quoted[0], "Unasked correction 0")
+        self.assertEqual(quoted[-1], "After the report: the totals are wrong")
+        self.assertFalse([q for q in quoted if q.startswith("Answer")])
 
     def test_question_lines_tell_follow_ups_from_re_asks(self):
         project, _ = self.load([task("asks", 2, messages=[message("m1", 2, 1.5, "operator", "Weekly.")], questions=[

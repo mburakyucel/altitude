@@ -161,7 +161,7 @@ def finished(project: str, end: datetime, start: datetime) -> tuple[list[dict], 
 
 def _replies(messages: list[dict]) -> list[datetime]:
     """When someone answered the owner: the operator's messages and L3's (L3 answers first and relays decisions)."""
-    return [_date(m["at"]) for m in messages if T.from_operator(m) or m.get("role") == "l3"]
+    return [_date(m["at"]) for m in messages if (T.from_operator(m) or m.get("role") == "l3") and not m.get("removed_at")]
 
 
 def _replied(previous: dict, q: dict, replies: list[datetime]) -> bool:
@@ -268,10 +268,11 @@ def _spread(items: list, count: int) -> list:
     return [items[round(j * (len(items) - 1) / (count - 1))] for j in range(count)]
 
 
-def _pairs(task: dict, messages: list[dict], cited: set[str], place: Places) -> list[str]:
-    """Up to PAIRS operator messages, each with the message it answered and the next reply, in time order. The
-    messages a signal counts come first, then those where the operator stepped in unasked, then answers to the
-    owner's questions, which the question lines already link; each kind spread over the conversation."""
+def _pairs(task: dict, messages: list[dict], cited: set[str], place: Places) -> list[tuple[int, str]]:
+    """Up to PAIRS operator messages, each with the message it answered and the next reply, as (position in the
+    conversation, line), most telling first: the messages a signal counts, then those where the operator stepped in
+    unasked, then answers to the owner's questions, which the question lines already link; each kind spread over
+    the conversation."""
     slug = task["slug"]
     answers = {(q.get("resolution") or {}).get("message_id") for q in task.get("questions", [])}
     own = [i for i, m in enumerate(messages) if T.from_operator(m) and not m.get("removed_at")]
@@ -283,18 +284,18 @@ def _pairs(task: dict, messages: list[dict], cited: set[str], place: Places) -> 
     def part(m):
         return (m["role"], place(f"{slug}/m/{m['id']}"), m["text"]) if m else None
     lines = []
-    for i in sorted(chosen):
+    for i in chosen:
         m = messages[i]
         before = next((p for p in reversed(messages[:i]) if not T.from_operator(p)), None)
         after = next((n for n in messages[i + 1:] if not T.from_operator(n)), None)
-        lines.append(_pair(part(before), part(m), part(after), m["at"]))
+        lines.append((i, _pair(part(before), part(m), part(after), m["at"])))
     return lines
 
 
 def sheet(project: str, item: dict, found: dict[str, list[str]], place: Places) -> str:
-    """One task's sheet: whole lines, at most SHEET_BYTES. The head and its signals come first; the operator's own
-    words, then what the signals' events recorded, then questions, then review findings fill the room left, and a
-    last line says what did not fit."""
+    """One task's sheet: whole lines, at most SHEET_BYTES. The head and its signals come first; the operator's two
+    most telling messages, what the signals' events recorded, questions, the rest of the operator's quotes and then
+    review findings fill the room left in that order, and a last line says what did not fit."""
     task, slug = item["task"], item["task"]["slug"]
     verdict = next((e.get("verdict") for e in reversed(item["events"])
                     if e.get("kind") == "state" and e.get("to") == "reported"), None)
@@ -321,18 +322,20 @@ def sheet(project: str, item: dict, found: dict[str, list[str]], place: Places) 
     waited = hours_waiting(item)
     if waited >= 1:
         lines.append(f"Hours waiting on the operator: {waited:.0f}")
-    groups = {"operator quotes": _pairs(task, item["messages"], {a for anchors in found.values() for a in anchors}, place),
-              "signal details": details, "questions": _questions(task, item["messages"], place),
-              "reviews": _reviews(task, place)}
+    quotes = _pairs(task, item["messages"], {a for anchors in found.values() for a in anchors}, place)
+    groups = {"operator quotes": [line for _, line in quotes], "signal details": details,
+              "questions": _questions(task, item["messages"], place), "reviews": _reviews(task, place)}
     room = SHEET_BYTES - len("\n".join(lines).encode()) - 100  # the closing line's room
-    shown: dict[str, list[str]] = {}
-    for name, group in groups.items():
-        shown[name] = []
+    shown: dict[str, list[str]] = {name: [] for name in groups}
+    for name, group in (("operator quotes", groups["operator quotes"][:2]), ("signal details", details),
+                        ("questions", groups["questions"]), ("operator quotes", groups["operator quotes"][2:]),
+                        ("reviews", groups["reviews"])):
         for line in group:
             if len(line.encode()) + 1 <= room:
                 shown[name].append(line)
                 room -= len(line.encode()) + 1
-    lines += shown["signal details"] + shown["questions"] + shown["reviews"] + shown["operator quotes"]
+    when = {line: i for i, line in quotes}
+    lines += shown["signal details"] + shown["questions"] + shown["reviews"] + sorted(shown["operator quotes"], key=when.get)
     left = [f"{len(group) - len(shown[name])} {name}" for name, group in groups.items() if len(group) > len(shown[name])]
     if left:
         lines.append("- Not shown for room: " + ", ".join(left))

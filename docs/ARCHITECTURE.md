@@ -1990,9 +1990,9 @@ and how it was settled, review findings with their dispositions, and up to four 
 message answered, the operator's words, the reply, 300 characters each). The quotes are the operator
 messages a signal counts, then those where the operator stepped in unasked, then answers to the owner's
 questions, each kind spread over the conversation. Sheets are whole lines, at
-most 3 KiB each and 48 KiB together: after the head and signal counts, the operator's quotes take the room
-first, then what the signals' events recorded, then questions, then findings, and a last line counts what
-did not fit. Tasks that do not fit are listed
+most 3 KiB each and 48 KiB together: after the head and signal counts, the operator's two most telling
+quotes take the room first, then what the signals' events recorded, then questions, then the other quotes,
+then findings, and a last line counts what did not fit. Tasks that do not fit are listed
 by counts. Operator chat turns fill the remaining room as paired quotes, followed by
 current task titles and earlier suggestions with their outcome (their decision, lapse or L3's reason for
 dropping them). The prompt is at most 64 KiB.
