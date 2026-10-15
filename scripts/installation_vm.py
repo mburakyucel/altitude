@@ -117,10 +117,13 @@ class Replay:
             return f"none: {error}"
 
 
-def user_data(public_key: str) -> str:
-    # The harness needs Git, GitHub CLI and OpenSSL; the image already has Python 3.12.
+# The harness needs Git, GitHub CLI and OpenSSL; the image already has Python 3.12.
+PACKAGES = ("git", "gh", "openssl")
+
+
+def user_data(public_key: str, packages=PACKAGES) -> str:
     return "\n".join(["#cloud-config", "ssh_pwauth: false", "ssh_authorized_keys:", f"  - {public_key}",
-                      "package_update: true", "packages: [git, gh, openssl]", ""])
+                      "package_update: true", f"packages: [{', '.join(packages)}]", ""])
 
 
 def network_config() -> str:
@@ -187,11 +190,11 @@ def free_port() -> int:
 
 
 class Machine:
-    def __init__(self, work: Path, image: Path):
+    def __init__(self, work: Path, image: Path, *, packages=PACKAGES):
         self.work, self.port, self.process, self.log = work, free_port(), None, None
         self.key = work / "id_ed25519"
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)], check=True)
-        (work / "user-data").write_text(user_data((work / "id_ed25519.pub").read_text().strip()))
+        (work / "user-data").write_text(user_data((work / "id_ed25519.pub").read_text().strip(), packages))
         (work / "network-config").write_text(network_config())
         subprocess.run(["cloud-localds", "-N", str(work / "network-config"), str(work / "seed.img"),
                         str(work / "user-data")], check=True)

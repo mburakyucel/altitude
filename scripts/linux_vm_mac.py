@@ -38,6 +38,7 @@ KERNEL, INITRD = "noble-server-cloudimg-arm64-vmlinuz-generic", "noble-server-cl
 IMAGE = "linux-arm64"
 TOOLS = ("xcrun", "codesign", "hdiutil", "ssh", "ssh-keygen", "scp", "nc")
 CPUS, MEMORY_GIB, DISK_GIB = 4, 6, 24
+PACKAGES = ("git", "gh", "openssl")
 GIB = 1 << 30
 FLOOR = 10 * GIB
 # The image's fstab names an EFI partition this root filesystem image does not have.
@@ -63,8 +64,7 @@ while True:
 """
 
 
-def user_data(public_key: str) -> str:
-    # The same packages line as installation_vm.user_data, which scripts/container_vm.py extends.
+def user_data(public_key: str, packages=PACKAGES) -> str:
     return "\n".join(["#cloud-config", "ssh_pwauth: false", "ssh_authorized_keys:", f"  - {public_key}",
                       # The guest has no clock it reads at boot and would start at its image's build time,
                       # which fails TLS; it starts from this Mac's time instead and NTP refines it.
@@ -73,7 +73,7 @@ def user_data(public_key: str) -> str:
                       # bootcmd runs before sysinit.target, so the relay must not wait for it.
                       "  - " + json.dumps(["systemd-run", "--no-block", "--property=DefaultDependencies=no",
                                            "--unit=altitude-vsock-ssh", "python3", "-c", RELAY]),
-                      "package_update: true", "packages: [git, gh, openssl]", ""])
+                      "package_update: true", f"packages: [{', '.join(packages)}]", ""])
 
 
 def missing_prerequisites() -> list[str]:
@@ -153,14 +153,15 @@ def _base_image(folder: Path, *, budget=None) -> dict:
 
 
 class Machine:
-    def __init__(self, work: Path, image: Path):
+    def __init__(self, work: Path, image: Path, *, packages=PACKAGES, cpus: int = CPUS):
         self.work, self.image, self.process, self.log, self.reader = work, image, None, None, None
+        self.cpus = cpus
         self.socket = work / "ssh.sock"
         self.key = work / "id_ed25519"
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)], check=True)
         seed = work / "seed"
         seed.mkdir()
-        (seed / "user-data").write_text(user_data((work / "id_ed25519.pub").read_text().strip()))
+        (seed / "user-data").write_text(user_data((work / "id_ed25519.pub").read_text().strip(), packages))
         (seed / "meta-data").write_text(f"instance-id: {work.name}\nlocal-hostname: altitude-guest\n")
         subprocess.run(["hdiutil", "makehybrid", "-quiet", "-iso", "-joliet", "-default-volume-name", "cidata",
                         "-o", str(work / "seed.iso"), str(seed)], check=True, timeout=60)
@@ -181,7 +182,7 @@ class Machine:
         self.process = subprocess.Popen(
             [str(macos.helper(self.image / "bin/macos_vm")), "linux", str(self.image / "vmlinux"),
              str(self.image / "initrd"), COMMAND_LINE, str(self.disk), str(self.work / "seed.iso"),
-             str(self.work / "console.log"), str(self.socket), str(CPUS), str(MEMORY_GIB)],
+             str(self.work / "console.log"), str(self.socket), str(self.cpus), str(MEMORY_GIB)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             pass_fds=(self.lock.fileno(),))
         if on_spawn:
