@@ -999,7 +999,9 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     check("sessionId" in session, f"Safari did not start a WebDriver session: {session}")
     window = "/" + session["sessionId"]
     driven = re.search(r"Pairing code: (\S+)", step("alt-pair-driven", f"{alt} pair").stdout).group(1)
-    check(driver("navigate", "POST", window + "/url", {"url": f"{origin}/projects#pair={driven}"}) is None,
+    # A known page first, so going back from the link's page has somewhere to go.
+    check(driver("start", "POST", window + "/url", {"url": f"{origin}/api/health"}) is None
+          and driver("navigate", "POST", window + "/url", {"url": f"{origin}/projects#pair={driven}"}) is None,
           "Safari did not open the link")
     page = {"script": "const done = arguments[arguments.length - 1]; fetch('/api/access').then((r) => r.json()).then("
                       "(a) => done({href: location.href, entries: history.length, paired: a.paired === true, heading: "
@@ -1012,12 +1014,11 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     shown = driver("shown", "POST", window + "/execute/async", page) or {}
     check(shown.get("paired") and shown.get("heading") == "Welcome to Altitude",
           f"Safari did not pair and show First run: {shown}")
-    driver("back", "POST", window + "/back", {})
-    earlier = driver("earlier", "GET", window + "/url")
-    driver("forward", "POST", window + "/forward", {})
-    later = driver("later", "GET", window + "/url")
-    addresses = [shown.get("href"), earlier, later]
-    check(shown["href"].startswith(f"{origin}/projects") and later == shown["href"]
+    moved = [driver("back", "POST", window + "/back", {}), driver("earlier", "GET", window + "/url"),
+             driver("forward", "POST", window + "/forward", {}), driver("later", "GET", window + "/url")]
+    addresses = [shown.get("href"), moved[1], moved[3]]
+    check(moved[0] is None and moved[2] is None and moved[1] == f"{origin}/api/health"
+          and shown["href"].startswith(f"{origin}/projects") and moved[3] == shown["href"]
           and not any("#pair" in str(address) or driven in str(address) for address in addresses),
           f"the private code stayed in Safari's address or history: {addresses}")
     driver("close", "DELETE", window)

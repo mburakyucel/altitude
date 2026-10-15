@@ -1520,9 +1520,9 @@ shell trusts, with `github.com` resolving to the loopback.
   `open` then hands the printed link to the default browser, Safari, which must pair through it.
   At that origin the page loads for an unpaired client, whose pairing request with a fresh code
   pairs it, while a second use of the printed link and a well-formed unknown code are told the code
-  expired or was already used. Safari under WebDriver opens another private link: it must pair and
-  show First run, and its address and the history entries back and forward from it must not keep
-  the code. macOS privacy protection keeps Safari's saved history file from the lane, which does
+  expired or was already used. Safari under WebDriver opens a known page and then another private
+  link: it must pair and show First run, Back must return to the known page and Forward to the
+  page's address, and none of these addresses may keep the code. macOS privacy protection keeps Safari's saved history file from the lane, which does
   not change it, so that file is not read. Running the
   public command again must print no link and keep the certificate authority, server key and
   certificate and the paired browser. Its LaunchAgent
