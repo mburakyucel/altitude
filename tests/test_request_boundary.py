@@ -4,9 +4,10 @@ import json
 import socket
 import threading
 import time
+from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, server
+from altitude import config, door, server, tasks as T
 
 
 class TestRequestBoundary(AltitudeCase):
@@ -78,6 +79,23 @@ class TestRequestBoundary(AltitudeCase):
             with self.subTest(length=length):
                 status, reply = self.request("POST", "/api/operator-name", headers={"Content-Length": length})
                 self.assertEqual((status, reply), (413, {"error": "Request is too large."}))
+
+    def test_a_workers_own_request_carries_its_shown_files(self):
+        # A worker's `--show` of ten screenshots was cut off at the ordinary bound with a closed connection, which its
+        # `alt` reported as a TLS EOF (I-20261015-172004). Such a body from a worker's job is read and goes on to
+        # admission; from any other client it keeps the ordinary bound, decided before the body is read.
+        T.new(self.project, "Show the captures", "Show the captures.")
+        large = b" " * (server.BODY_LIMIT + 1)
+        for path in ("/api/task/door", "/api/task/review/run"):
+            with self.subTest(path=path):
+                self.assertEqual(self.request("POST", path, large)[0], 403)
+                status, reply = self.request("POST", path, headers={"Content-Length": str(door.MAX_REQUEST + 1)})
+                self.assertEqual((status, reply), (413, {"error": "Request is too large."}))
+                with mock.patch.object(server, "task_owner_connection", return_value=False):
+                    status, reply = self.request("POST", path, headers={"Content-Length": str(len(large))})
+                self.assertEqual((status, reply), (413, {"error": "Request is too large."}))
+        status, reply = self.request("POST", "/api/operator-name", headers={"Content-Length": str(len(large))})
+        self.assertEqual((status, reply), (413, {"error": "Request is too large."}))
 
     def test_a_silent_client_loses_its_connection(self):
         self.patch(server, "REQUEST_READ_SECONDS", new=0.2)
