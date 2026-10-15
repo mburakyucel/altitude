@@ -52,7 +52,7 @@ describe("schemas", () => {
       extra_top_level: true,
     });
     expect(parsed.queue[0]?.kind).toBe("some-future-kind");
-    expect(parsed.queue[0]?.options).toBeNull();
+    expect(parsed.queue[0] && "options" in parsed.queue[0] ? parsed.queue[0].options : undefined).toBeNull();
   });
 
   it("ChatViewSchema parses history and passes unknown keys through", () => {

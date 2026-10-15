@@ -1,10 +1,12 @@
-import { useContext, useEffect, useState } from "react";
+import { Fragment, useContext, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, sendL2Message, useDecide, useProject } from "../data/api";
-import type { DecideInput, Decision, QuestionAnswer, QuestionGroup } from "../data/api";
+import type { DecideInput, Decision, QuestionAnswer, QuestionGroup, Step } from "../data/api";
 import { useToast } from "../data/Toast";
 import { decisionKind, optionsFor, questionPath } from "../data/decisions";
+import { requestCommand } from "../data/terminalCommand";
+import { ProseTerminal } from "./CodeBlock";
 import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
 import { Choice, deliveryChoice } from "./Choice";
@@ -265,6 +267,47 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
   </div>;
 }
 
+/**
+ * An operator step's body (SPEC.md §3.8.4): L3's words with its command, whose Open in terminal types it at the
+ * project terminal. Needs you lists the tasks waiting on it; a waiting task's own page does not.
+ */
+export function StepBody({ step, tasks = true, disabled = false }: { step: Step; tasks?: boolean; disabled?: boolean }) {
+  const navigate = useNavigate();
+  // A saved read may show a step that already ran, so the command waits for a fresh one (review finding).
+  const terminal = useMemo(() => disabled ? { unavailable: "Refresh Needs you before running this." } : { open: (command: string) => {
+    setSelectedProject(step.project);
+    requestCommand(step.project, undefined, command);
+    void navigate(`/projects/${step.project}/terminal`);
+  } }, [step.project, navigate, disabled]);
+  return <div className="question-set" data-step-id={step.id}>
+    <ProseTerminal value={terminal}><QuestionProse className="decision-question" text={step.question} /></ProseTerminal>
+    {tasks && step.tasks.length ? <p className="text-meta">Waiting on this: {step.tasks.map((task, index) => <Fragment key={task.slug}>
+      {index ? " · " : null}<Link className="prose-link" to={`/projects/${step.project}/tasks/${task.slug}`} onClick={() => setSelectedProject(step.project)}>{task.title}</Link>
+    </Fragment>)}</p> : null}
+    <p className="text-meta text-muted">This leaves Needs you once the command finishes in the project terminal.</p>
+    <Link className="text-meta" to={`/projects/${step.project}`} onClick={() => setSelectedProject(step.project)}>Open project chat</Link>
+  </div>;
+}
+
+/** The Needs you card of an operator step: no task, so it opens the project chat where L3 handed it over. */
+export function StepCard({ step, disabled = false }: { step: Step; disabled?: boolean }) {
+  const project = useProject(step.project);
+  const navigate = useNavigate();
+  const to = `/projects/${step.project}`;
+  const open = () => { setSelectedProject(step.project); navigate(to); };
+  return <ProseScope project={step.project} repository={project.data?.repository}>
+    <article className="decision" aria-label={`Command for ${step.project}`} data-step={step.id} onClick={(event) => {
+      if (!(event.target as HTMLElement).closest("a,button,input,textarea,summary")) open();
+    }}>
+      <div className="decision-kind" data-tone={decisionKind(step).tone}>
+        <span className="kind-label">{decisionKind(step).label}</span>
+        <span className="ml-auto text-muted" title={exactTime(step.asked)}>{ageText(step.asked)}</span>
+      </div>
+      <StepBody step={step} disabled={disabled} />
+    </article>
+  </ProseScope>;
+}
+
 export function DecisionCard({ decision, decisions = [decision], selected = false, from = "project", disabled = false }: {
   decision: Decision; decisions?: Decision[]; selected?: boolean;
   from?: "needs" | "project"; disabled?: boolean;
@@ -276,7 +319,13 @@ export function DecisionCard({ decision, decisions = [decision], selected = fals
   const state = { from, tab: from === "needs" ? "needs" : "work" };
   const navigate = useNavigate();
   const open = () => { setSelectedProject(decision.project); navigate(to, { state }); };
-  return <ProseScope project={decision.project} repository={project.data?.repository}>
+  // A question's `run` block opens the task's terminal with its command typed, as in the task's chat (SPEC.md §3.3).
+  const terminal = useMemo(() => ({ open: (command: string) => {
+    setSelectedProject(decision.project);
+    requestCommand(decision.project, decision.slug, command);
+    void navigate(`/projects/${decision.project}/tasks/${decision.slug}/terminal`, { state: { from, tab: from === "needs" ? "needs" : "work" } });
+  } }), [decision.project, decision.slug, navigate, from]);
+  return <ProseScope project={decision.project} repository={project.data?.repository}><ProseTerminal value={terminal}>
     <article className="decision" data-selected={selected || undefined} aria-label={title} onClick={(event) => {
       if (!(event.target as HTMLElement).closest("a,button,input,textarea,summary")) open();
     }}>
@@ -289,5 +338,5 @@ export function DecisionCard({ decision, decisions = [decision], selected = fals
         : <QuestionSet decisions={decisions} disabled={disabled} from={from} />}
       <Link className="text-meta" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>Open L2 chat</Link>
     </article>
-  </ProseScope>;
+  </ProseTerminal></ProseScope>;
 }

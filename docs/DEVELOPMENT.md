@@ -578,7 +578,7 @@ while True:
   away while activation is pending, including a request already waiting for the machine, so the
   quiet point opens after the run in flight. A request waiting for the machine does not hold activation.
   The line lives in altd, which restarts to activate, so `alt task validate` waits through the restart
-  instead: it says Altitude is activating merged changes, asks again every two seconds for up to the
+  instead: it says Altitude restarts soon to apply an update, asks again every two seconds for up to the
   line's own wait, and joins the new line once altd is back. Requests that waited across a restart
   join it in the order they ask again, not their earlier arrival order.
 - **Record.** Each run is recorded on its task like a [machine run](CLI.md#operator-grant), with

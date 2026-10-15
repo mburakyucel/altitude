@@ -177,3 +177,95 @@ class TaskDoor(AltitudeCase):
         with mock.patch.object(door, "run_alt") as run:
             self.assertEqual(self.post(kind="inbox", stop="yes", background="x")[0], 409)
         run.assert_not_called()
+
+    def worker_sends(self, agent_id):
+        sends = engines.common._worker_paths(dispatch.l2_job_root(self.project, self.slug), agent_id)["sends"]
+        sends.mkdir(parents=True)
+        (sends.parent / f"{agent_id}.json").write_text(json.dumps({"id": agent_id, "sends": str(sends)}))
+        return sends
+
+    def test_a_driver_settles_only_the_hand_off_altd_gave_it(self):
+        earlier, current = self.worker_sends("earlier"), self.worker_sends("worker")
+        message = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Use the staging copy.")
+        with S.project_lock(self.project):
+            task = S.load_task(self.project, self.slug)
+            task["agent_id"] = "earlier"
+            T.claim_send_now(self.project, task, [message], earlier)
+            task = S.load_task(self.project, self.slug)
+            task["agent_id"] = "worker"
+            S.save_task(self.project, task)
+        (current / f"{message['id']}.writing").write_text("{}")
+        # The later worker names the earlier worker's hand-off: nothing is settled, in the record or its folder.
+        self.assertEqual(self.post(kind="settle", args=None, message=message["id"], outcome="delivered"), (200, {}))
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["send_now"]["agent_id"], "earlier")
+        self.assertEqual(task.get("message_deliveries") or {}, {})
+        self.assertEqual([row["id"] for row in T.pending(self.project, self.slug)], [message["id"]])
+        self.assertTrue((current / f"{message['id']}.writing").exists())
+        # The record alone decides, under the project lock: a claim another worker holds is not settled for this one.
+        T.settle_send_now(self.project, self.slug, message["id"], "delivered", agent_id="worker")
+        self.assertEqual(S.load_task(self.project, self.slug)["send_now"]["agent_id"], "earlier")
+        # Handed to this worker, the same settlement delivers it.
+        with S.project_lock(self.project):
+            T.claim_send_now(self.project, S.load_task(self.project, self.slug), [message], current)
+        self.assertEqual(self.post(kind="settle", args=None, message=message["id"], outcome="delivered"), (200, {}))
+        task = S.load_task(self.project, self.slug)
+        self.assertNotIn("send_now", task)
+        self.assertEqual(task["message_deliveries"][message["id"]]["agent_id"], "worker")
+        self.assertEqual(T.pending(self.project, self.slug), [])
+        self.assertTrue((current / f"{message['id']}.delivered").exists())
+
+    def test_recovery_settles_an_earlier_workers_hand_off_as_that_worker(self):
+        earlier = self.worker_sends("earlier")
+        message = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Use the staging copy.")
+        with S.project_lock(self.project):
+            task = S.load_task(self.project, self.slug)
+            task["agent_id"] = "earlier"
+            T.claim_send_now(self.project, task, [message], earlier)
+            task = S.load_task(self.project, self.slug)
+            task["agent_id"] = "worker"
+            S.save_task(self.project, task)
+        os.rename(earlier / f"{message['id']}.json", earlier / f"{message['id']}.delivered")
+        T.block(self.project, self.slug, "Which copy?")
+        T.claim_resume(self.project, self.slug)
+        task = S.load_task(self.project, self.slug)
+        self.assertNotIn("send_now", task)
+        self.assertEqual((task["message_deliveries"][message["id"]]["state"],
+                          task["message_deliveries"][message["id"]]["agent_id"]), ("delivered", "earlier"))
+
+    def test_a_failed_request_is_refused_again_without_running_twice(self):
+        calls = []
+
+        def apply():
+            calls.append(1)
+            raise ValueError("Nothing to reply to.")
+
+        for _ in range(2):
+            with self.assertRaisesRegex(ValueError, "^Nothing to reply to.$"):
+                door.once(self.project, self.slug, "b" * 32, apply)
+        self.assertEqual(calls, [1])
+        saved = S.read_json(S.task_dir(self.project, self.slug) / door.LEDGER / f"{'b' * 32}.json")
+        self.assertEqual(saved["error"], "Nothing to reply to.")
+
+    def test_a_verb_request_out_of_shape_runs_nothing(self):
+        good = {"args": ["task", "reply", "x"], "stdin": "", "files": {}, "shown": {}}
+        for change in ({"args": "task reply x"}, {"args": ["x"] * 129}, {"args": [1]}, {"args": ["x" * 16385]},
+                       {"stdin": None}, {"files": []}, {"files": {"a": 1}}, {"shown": {1: "x"}}):
+            with self.subTest(change=change), mock.patch.object(door.subprocess, "run") as run:
+                request = {**good, **change}
+                with self.assertRaisesRegex(ValueError, "invalid alt verb request"):
+                    door.run_alt(self.project, self.slug, 2, request["args"], request["stdin"], request["files"],
+                                 request["shown"])
+                run.assert_not_called()
+        with mock.patch.object(door.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run:
+            door.run_alt(self.project, self.slug, 2, ["x"] * 128, "", {}, {})
+        run.assert_called_once()
+        status, answer = self.post(args=["task", "reply", "x" * 16384])
+        self.assertEqual((status, answer["returncode"]), (200, 0), answer)
+
+    def test_verb_output_is_capped_at_one_mebibyte(self):
+        cap, cut = 1 << 20, "\n[output truncated]\n"
+        self.assertEqual(door._bounded("x" * cap), "x" * cap)
+        self.assertEqual(door._bounded("x" * (cap + 1)), "x" * cap + cut)
+        # A character cut at the cap is dropped, not mangled.
+        self.assertEqual(door._bounded("x" * (cap - 1) + "é"), "x" * (cap - 1) + cut)
