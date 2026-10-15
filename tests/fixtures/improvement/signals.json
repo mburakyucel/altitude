@@ -1,0 +1,953 @@
+{
+ "project": "signalbox",
+ "now": "2026-10-26T08:00:00+00:00",
+ "tasks": [
+  {
+   "slug": "export-csv",
+   "title": "Export the parcel list as CSV",
+   "state": "done",
+   "created": "2026-10-14T08:00:00+00:00",
+   "reported": "2026-10-14T13:00:00+00:00",
+   "finished": "2026-10-14T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-14T08:30:00+00:00",
+     "role": "l2",
+     "text": "Plan: one CSV endpoint reusing the list filters, then a download button."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-14T10:00:00+00:00",
+     "role": "operator",
+     "text": "Use semicolons; the depot spreadsheets expect them."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-14T11:30:00+00:00",
+     "role": "l2",
+     "text": "Semicolons it is; the button now downloads the filtered list."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-14T12:45:00+00:00",
+     "role": "l3",
+     "text": "The depot list is the same for every export; use it."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-10-14T09:00:00+00:00",
+     "text": "Which separator should the CSV use?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-14T09:30:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 2,
+     "asked": "2026-10-14T09:30:00+00:00",
+     "text": "Which separator should the CSV use? Commas or semicolons.",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-14T11:00:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 3,
+     "asked": "2026-10-14T11:00:00+00:00",
+     "text": "Keep semicolons for every export?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-14T11:12:00+00:00",
+      "by": "operator",
+      "message": "m2"
+     }
+    },
+    {
+     "id": "q2",
+     "revision": 1,
+     "asked": "2026-10-14T12:40:00+00:00",
+     "audience": "l3",
+     "text": "Should the export use the depot list from the settings page?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-14T12:50:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q2",
+     "revision": 2,
+     "asked": "2026-10-14T12:50:00+00:00",
+     "audience": "l3",
+     "text": "Then should depots added later appear in old exports too?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-14T12:55:00+00:00",
+      "by": "l3"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-14T12:00:00+00:00",
+     "kind": "delivery",
+     "number": 301
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-14T12:30:00+00:00",
+     "kind": "delivery",
+     "number": 301
+    }
+   ]
+  },
+  {
+   "slug": "ship-billing",
+   "title": "Ship the billing page",
+   "state": "done",
+   "created": "2026-10-15T08:00:00+00:00",
+   "reported": "2026-10-15T13:00:00+00:00",
+   "finished": "2026-10-15T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-15T12:00:00+00:00",
+     "kind": "merge-approval-refused",
+     "reason": "The approval named an earlier PR."
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-15T12:12:00+00:00",
+     "kind": "grant-refused",
+     "reason": "The grant answer was for another revision."
+    },
+    {
+     "id": "e3",
+     "at": "2026-10-15T09:00:00+00:00",
+     "kind": "delivery",
+     "number": null
+    },
+    {
+     "id": "e4",
+     "at": "2026-10-15T09:06:00+00:00",
+     "kind": "delivery",
+     "number": 302
+    },
+    {
+     "id": "e5",
+     "at": "2026-10-15T10:00:00+00:00",
+     "kind": "delivery",
+     "number": 302
+    },
+    {
+     "id": "e6",
+     "at": "2026-10-15T11:00:00+00:00",
+     "kind": "delivery",
+     "number": 302
+    }
+   ]
+  },
+  {
+   "slug": "fix-date-picker",
+   "title": "Fix the date picker on narrow screens",
+   "state": "done",
+   "created": "2026-10-16T08:00:00+00:00",
+   "reported": "2026-10-16T13:00:00+00:00",
+   "finished": "2026-10-16T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-16T09:00:00+00:00",
+     "role": "operator",
+     "text": "It also clips on the delivery form."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-16T12:48:00+00:00",
+     "role": "l2",
+     "text": "Delivered: the picker fits at every width, including the delivery form."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-16T13:30:00+00:00",
+     "role": "operator",
+     "text": "The month names still wrap on the smallest phone."
+    }
+   ]
+  },
+  {
+   "slug": "archive-search",
+   "title": "Search the parcel archive",
+   "state": "done",
+   "created": "2026-10-17T08:00:00+00:00",
+   "reported": "2026-10-17T13:00:00+00:00",
+   "finished": "2026-10-17T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-10-17T10:00:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Archive query ignores the depot filter"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Filter applied."
+      }
+     ]
+    },
+    {
+     "id": "r2",
+     "subject": "proposal",
+     "requested": "2026-10-17T09:00:00+00:00",
+     "findings": []
+    },
+    {
+     "id": "r3",
+     "subject": "changes",
+     "requested": "2026-10-17T10:30:00+00:00",
+     "state": "failed",
+     "findings": []
+    },
+    {
+     "id": "r4",
+     "subject": "changes",
+     "requested": "2026-10-17T11:00:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Empty search shows a spinner forever"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Empty state shown."
+      }
+     ]
+    },
+    {
+     "id": "r5",
+     "subject": "changes",
+     "requested": "2026-10-17T11:30:00+00:00",
+     "additional": true,
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Archive export misses the depot column"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      }
+     ]
+    },
+    {
+     "id": "r6",
+     "subject": "changes",
+     "requested": "2026-10-17T12:00:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Archive pages skip a row at each page boundary"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "report-open",
+   "title": "Add delivery-window reminders",
+   "state": "done",
+   "created": "2026-10-18T08:00:00+00:00",
+   "reported": "2026-10-18T13:00:00+00:00",
+   "finished": "2026-10-18T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "report_review": [
+    {
+     "summary": "Reminder time zone",
+     "severity": "medium",
+     "disposition": "fixed",
+     "reason": "Uses the depot zone."
+    },
+    {
+     "summary": "No test for reminders across a clock change",
+     "severity": "medium",
+     "disposition": "open",
+     "reason": "Needs a clock fixture."
+    },
+    {
+     "summary": "Reminder copy not reviewed",
+     "severity": "low",
+     "disposition": "open",
+     "reason": "Waiting on wording."
+    }
+   ]
+  },
+  {
+   "slug": "flaky-ci",
+   "title": "Speed up the route planner",
+   "state": "done",
+   "created": "2026-10-19T08:00:00+00:00",
+   "reported": "2026-10-19T13:00:00+00:00",
+   "finished": "2026-10-19T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-19T10:00:00+00:00",
+     "kind": "ci-recheck",
+     "reason": "Map tile test timed out."
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-19T11:00:00+00:00",
+     "kind": "ci-recheck",
+     "reason": "Map tile test timed out again."
+    },
+    {
+     "id": "e3",
+     "at": "2026-10-19T09:30:00+00:00",
+     "kind": "delivery",
+     "number": 303
+    },
+    {
+     "id": "e4",
+     "at": "2026-10-19T10:30:00+00:00",
+     "kind": "delivery",
+     "number": 303
+    }
+   ]
+  },
+  {
+   "slug": "worker-crash",
+   "title": "Import depot opening hours",
+   "state": "done",
+   "created": "2026-10-20T08:00:00+00:00",
+   "reported": "2026-10-20T13:00:00+00:00",
+   "finished": "2026-10-20T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-20T09:00:00+00:00",
+     "kind": "resume-failed",
+     "error": "The session could not be resumed."
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-20T09:30:00+00:00",
+     "kind": "dispatch-failed",
+     "error": "The worker did not start."
+    },
+    {
+     "id": "e3",
+     "at": "2026-10-20T10:00:00+00:00",
+     "kind": "fault",
+     "fault": "worker",
+     "reason": "lost its sandbox"
+    },
+    {
+     "id": "e4",
+     "at": "2026-10-20T10:30:00+00:00",
+     "kind": "fyi",
+     "text": "Opening hours now come from the depot sheet."
+    }
+   ]
+  },
+  {
+   "slug": "rewrite-report",
+   "title": "Retire the old label printer driver",
+   "state": "done",
+   "created": "2026-10-21T08:00:00+00:00",
+   "reported": "2026-10-21T13:00:00+00:00",
+   "finished": "2026-10-21T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-21T13:18:00+00:00",
+     "role": "l3",
+     "text": "One more: the warehouse docs still name the old driver."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-21T13:24:00+00:00",
+     "kind": "report-superseded"
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-21T13:48:00+00:00",
+     "kind": "report-superseded",
+     "contradicted": "PR #305 is not merged"
+    }
+   ]
+  },
+  {
+   "slug": "escalate",
+   "title": "Rename depots in the admin view",
+   "state": "done",
+   "created": "2026-10-22T08:00:00+00:00",
+   "reported": "2026-10-22T13:00:00+00:00",
+   "finished": "2026-10-22T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-22T10:00:00+00:00",
+     "kind": "escalated",
+     "reason": "Unsure whether renaming changes depot codes."
+    }
+   ]
+  },
+  {
+   "slug": "courier-board",
+   "title": "Show couriers on a live board",
+   "state": "done",
+   "created": "2026-10-23T08:00:00+00:00",
+   "reported": "2026-10-23T13:00:00+00:00",
+   "finished": "2026-10-23T14:00:00+00:00",
+   "verdict": "delivered",
+   "tokens": 1200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-23T08:00:00+00:00",
+     "role": "l2",
+     "text": "Step 1 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-23T08:06:00+00:00",
+     "role": "operator",
+     "text": "Keep the courier names exactly as the depots write them."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-23T08:12:00+00:00",
+     "role": "l2",
+     "text": "Step 2 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-23T08:18:00+00:00",
+     "role": "operator",
+     "text": "Show the parcel count beside each courier."
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-23T08:24:00+00:00",
+     "role": "l2",
+     "text": "Step 3 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m6",
+     "at": "2026-10-23T08:30:00+00:00",
+     "role": "operator",
+     "text": "No, the count should exclude returns."
+    },
+    {
+     "id": "m7",
+     "at": "2026-10-23T08:36:00+00:00",
+     "role": "l2",
+     "text": "Step 4 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m8",
+     "at": "2026-10-23T08:42:00+00:00",
+     "role": "operator",
+     "text": "Sort by the earliest pickup, not by name."
+    },
+    {
+     "id": "m9",
+     "at": "2026-10-23T08:48:00+00:00",
+     "role": "l2",
+     "text": "Step 5 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m10",
+     "at": "2026-10-23T08:54:00+00:00",
+     "role": "operator",
+     "text": "The phone layout should stack the counts under the name."
+    },
+    {
+     "id": "m11",
+     "at": "2026-10-23T09:00:00+00:00",
+     "role": "l2",
+     "text": "Step 6 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m12",
+     "at": "2026-10-23T09:06:00+00:00",
+     "role": "operator",
+     "text": "Use the same green as the route planner for on-time couriers."
+    },
+    {
+     "id": "m13",
+     "at": "2026-10-23T09:12:00+00:00",
+     "role": "l2",
+     "text": "Step 7 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m14",
+     "at": "2026-10-23T09:18:00+00:00",
+     "role": "operator",
+     "text": "Late couriers should not be red; amber is enough."
+    },
+    {
+     "id": "m15",
+     "at": "2026-10-23T09:24:00+00:00",
+     "role": "l2",
+     "text": "Step 8 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m16",
+     "at": "2026-10-23T09:30:00+00:00",
+     "role": "operator",
+     "text": "Drop the export button from this view."
+    },
+    {
+     "id": "m17",
+     "at": "2026-10-23T09:36:00+00:00",
+     "role": "l2",
+     "text": "Step 9 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m18",
+     "at": "2026-10-23T09:42:00+00:00",
+     "role": "operator",
+     "text": "Make the header sticky on desktop only."
+    },
+    {
+     "id": "m19",
+     "at": "2026-10-23T09:48:00+00:00",
+     "role": "l2",
+     "text": "Step 10 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m20",
+     "at": "2026-10-23T09:54:00+00:00",
+     "role": "operator",
+     "text": "The empty state should say no couriers are out yet."
+    },
+    {
+     "id": "m21",
+     "at": "2026-10-23T10:00:00+00:00",
+     "role": "l2",
+     "text": "Step 11 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m22",
+     "at": "2026-10-23T10:06:00+00:00",
+     "role": "operator",
+     "text": "Ship it once the tests pass."
+    },
+    {
+     "id": "m23",
+     "at": "2026-10-23T10:12:00+00:00",
+     "role": "l2",
+     "text": "Step 12 of the courier board: proposal with two options and the trade-offs for each, as the screenshots show; tell me which one to build next."
+    },
+    {
+     "id": "m24",
+     "at": "2026-10-23T10:18:00+00:00",
+     "role": "operator",
+     "text": "Please also update the help page screenshot."
+    },
+    {
+     "id": "m25",
+     "at": "2026-10-23T10:24:00+00:00",
+     "role": "l2",
+     "text": "Print view: two options, one column per depot or one row per courier; which one?"
+    },
+    {
+     "id": "m26",
+     "at": "2026-10-23T10:30:00+00:00",
+     "role": "operator",
+     "text": "One row per courier, like the phone."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-10-23T08:09:00+00:00",
+     "text": "Which courier board layout should ship for the phone view, option 1?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-23T08:18:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 2,
+     "asked": "2026-10-23T08:21:00+00:00",
+     "text": "Which courier board layout should ship for the phone view, option 2?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-23T08:30:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 3,
+     "asked": "2026-10-23T08:33:00+00:00",
+     "text": "Which courier board layout should ship for the phone view, option 3?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-23T08:42:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 4,
+     "asked": "2026-10-23T08:45:00+00:00",
+     "text": "Which courier board layout should ship for the phone view, option 4?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-23T08:54:00+00:00",
+      "by": "operator",
+      "message": "m10"
+     }
+    },
+    {
+     "id": "q2",
+     "revision": 1,
+     "asked": "2026-10-23T08:57:00+00:00",
+     "text": "Which courier board layout should ship for the desktop view, option 1?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-23T09:06:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q2",
+     "revision": 2,
+     "asked": "2026-10-23T09:09:00+00:00",
+     "text": "Which courier board layout should ship for the desktop view, option 2?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-23T09:18:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q2",
+     "revision": 3,
+     "asked": "2026-10-23T09:21:00+00:00",
+     "text": "Which courier board layout should ship for the desktop view, option 3?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-23T09:30:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q2",
+     "revision": 4,
+     "asked": "2026-10-23T09:33:00+00:00",
+     "text": "Which courier board layout should ship for the desktop view, option 4?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-23T09:42:00+00:00",
+      "by": "operator",
+      "message": "m18"
+     }
+    },
+    {
+     "id": "q3",
+     "revision": 1,
+     "asked": "2026-10-23T09:45:00+00:00",
+     "text": "Which courier board layout should ship for the print view, option 1?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-23T09:54:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q3",
+     "revision": 2,
+     "asked": "2026-10-23T09:57:00+00:00",
+     "text": "Which courier board layout should ship for the print view, option 2?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-23T10:06:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q3",
+     "revision": 3,
+     "asked": "2026-10-23T10:09:00+00:00",
+     "text": "Which courier board layout should ship for the print view, option 3?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-23T10:18:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q3",
+     "revision": 4,
+     "asked": "2026-10-23T10:21:00+00:00",
+     "text": "Which courier board layout should ship for the print view, option 4?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-23T10:30:00+00:00",
+      "by": "operator",
+      "message": "m26"
+     }
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "proposal",
+     "requested": "2026-10-23T10:06:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Courier board finding 1: spacing, labels and focus order on the phone layout"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Courier board finding 2: spacing, labels and focus order on the phone layout"
+      },
+      {
+       "id": "F3",
+       "severity": "low",
+       "title": "Courier board finding 3: spacing, labels and focus order on the phone layout"
+      },
+      {
+       "id": "F4",
+       "severity": "low",
+       "title": "Courier board finding 4: spacing, labels and focus order on the phone layout"
+      },
+      {
+       "id": "F5",
+       "severity": "low",
+       "title": "Courier board finding 5: spacing, labels and focus order on the phone layout"
+      },
+      {
+       "id": "F6",
+       "severity": "low",
+       "title": "Courier board finding 6: spacing, labels and focus order on the phone layout"
+      },
+      {
+       "id": "F7",
+       "severity": "low",
+       "title": "Courier board finding 7: spacing, labels and focus order on the phone layout"
+      },
+      {
+       "id": "F8",
+       "severity": "low",
+       "title": "Courier board finding 8: spacing, labels and focus order on the phone layout"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F3",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F4",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F5",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F6",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F7",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F8",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      }
+     ]
+    },
+    {
+     "id": "r2",
+     "subject": "changes",
+     "requested": "2026-10-23T10:12:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Courier board finding 1: spacing, labels and focus order on the desktop layout"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Courier board finding 2: spacing, labels and focus order on the desktop layout"
+      },
+      {
+       "id": "F3",
+       "severity": "low",
+       "title": "Courier board finding 3: spacing, labels and focus order on the desktop layout"
+      },
+      {
+       "id": "F4",
+       "severity": "low",
+       "title": "Courier board finding 4: spacing, labels and focus order on the desktop layout"
+      },
+      {
+       "id": "F5",
+       "severity": "low",
+       "title": "Courier board finding 5: spacing, labels and focus order on the desktop layout"
+      },
+      {
+       "id": "F6",
+       "severity": "low",
+       "title": "Courier board finding 6: spacing, labels and focus order on the desktop layout"
+      },
+      {
+       "id": "F7",
+       "severity": "low",
+       "title": "Courier board finding 7: spacing, labels and focus order on the desktop layout"
+      },
+      {
+       "id": "F8",
+       "severity": "low",
+       "title": "Courier board finding 8: spacing, labels and focus order on the desktop layout"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F3",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F4",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F5",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F6",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F7",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      },
+      {
+       "finding_id": "F8",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      }
+     ]
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-23T12:00:00+00:00",
+     "kind": "delivery",
+     "number": 306
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-23T12:12:00+00:00",
+     "kind": "delivery",
+     "number": 306
+    },
+    {
+     "id": "e3",
+     "at": "2026-10-23T12:24:00+00:00",
+     "kind": "delivery",
+     "number": 306
+    }
+   ]
+  }
+ ]
+}

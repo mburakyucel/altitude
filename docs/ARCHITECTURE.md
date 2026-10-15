@@ -1484,7 +1484,7 @@ The CLI, broker and read shims authorize their operations without a duplicate na
 Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
 re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command.
-The socket and every per-turn runtime directory live in the installation's coordinator folder (`platform.coordinator_directory`: the per-user runtime folder on Linux, Altitude's private configuration on macOS), mode 0700 and outside every root a task worker may write. Each coordinator turn runs as a job of its own, whose unit altd records before launch; altd serves a connection only when the process at its other end is in that project's running turn's job (`platform.peer_groups`), so a task worker, another project's coordinator or the operator's shell is refused before its request is read.
+The socket and every per-turn runtime directory live in the installation's coordinator folder (`platform.coordinator_directory`: `altitude-<installation id>` in the per-user runtime folder on Linux, `~/.config/altitude/<installation id>` on macOS), mode 0700 and outside every root a task worker may write; each project's socket is named by an 8-character id, so on macOS its path stays within the 103-byte socket limit under any home of up to 64 bytes. Each coordinator turn runs as a job of its own, whose unit altd records before launch; altd serves a connection only when the process at its other end is in that project's running turn's job (`platform.peer_groups`), so a task worker, another project's coordinator or the operator's shell is refused before its request is read.
 Its [GitHub reads](CLI.md#coordinator-github-reads) admit any read-only `gh` command, including GET-only
 `gh api`, against any repository altd's login can see, and refuse writes and browser launches. Content
 read this way is untrusted evidence; retaining another private repository's content in this project's
@@ -1973,17 +1973,27 @@ project's settings, or when they ask L3 in chat; each needs their agreement to t
 sheet shows.
 
 `improve.py` builds the evidence in code. Signals are exact, versioned predicates over existing task
-records (`SIGNALS_VERSION`): question revisions with no operator message since the previous one,
-refused merge approvals and grants, operator messages after a report, review requests beyond the
-first per subject, findings the final report leaves open, CI rechecks and repeated deliveries for one
-PR, resume and dispatch failures and system faults, superseded reports and escalations. The window is
+records (`SIGNALS_VERSION`): question revisions with no operator or L3 message since the previous
+one, refused merge approvals and grants, operator messages after a report, the third and later
+completed review of a subject, findings the final report leaves open, CI rechecks, resume and
+dispatch failures and system faults, reports superseded after verification contradicted them, and
+escalations. A delivery is recorded for every pushed head and a message continuing a reported task
+supersedes its report, so neither counts on its own; a question revised after a reply follows it up,
+and a review re-run after a failed one, a review of new material (`additional`) and one review of the
+fixes are the designed review path. The window is
 tasks finished in the last 14 days, never before 2026-09-22 07:00 UTC and never older than 30 days.
 Task sheets, ranked by signals and operator messages, carry title, outcome, durations and tokens,
-signals with the places that produced them and what each event recorded (its reason or error, or
-the unmerged PRs a replaced report named), questions with how they were settled, review findings
-with their dispositions, and up to four paired quotes (the message answered, the operator's words,
-the reply, 300 characters each). Sheets are at most 3 KiB each and 48 KiB together; tasks that do not
-fit are listed by counts. Operator chat turns fill the remaining room as paired quotes, followed by
+signals with the places that produced them and what each event recorded (its reason or error, the
+question an escalation handed on with the answer it got, or what verification found in a replaced
+report), each question on one line with every revision's place, how many revisions followed a reply
+and how it was settled, review findings with their dispositions, and up to four paired quotes (the
+message answered, the operator's words, the reply, 300 characters each). The quotes are the operator
+messages a signal counts, then those where the operator stepped in unasked, then answers to the owner's
+questions, each kind spread over the conversation. Sheets are whole lines, at
+most 3 KiB each and 48 KiB together: after the head and signal counts, the operator's two most telling
+quotes take the room first, then what the signals' events recorded, then questions, then the other quotes,
+then findings, and a last line counts what did not fit. Tasks that do not fit are listed
+by counts. Operator chat turns fill the remaining room as paired quotes, followed by
 current task titles and earlier suggestions with their outcome (their decision, lapse or L3's reason for
 dropping them). The prompt is at most 64 KiB.
 
@@ -2093,9 +2103,11 @@ since is refused. `weekly` and `run` presses on `POST /api/improve` come only fr
 cookie, never a client holding only the machine key. Projects other than Altitude have no section.
 
 `improve_eval.py` loads fictional scenarios from `tests/fixtures/improvement/` as ordinary task
-folders and project chat, runs the same prompt builder and reviewer, matches suggestions to planted
-patterns by shared places and writes a blind grading sheet; [the eval](DEVELOPMENT.md#improvement-review-eval)
-describes the hand run.
+folders and project chat and runs the same prompt builder and reviewer. Its offline part, in `make
+check`, checks without a model that each signal fires on exactly its planted places and nothing
+ordinary and that what fired reaches the prompt; its live part matches suggestions to planted patterns
+by shared places and writes a blind grading sheet. [The eval](DEVELOPMENT.md#improvement-review-eval)
+describes both.
 
 ### Image input
 
@@ -2961,8 +2973,8 @@ closed without merging asks for no review (#575): an L2 `block` reads the held P
 unreadable state leaves the recorded review shown and says so on stderr. Any operator message or
 quick answer hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
 marks still-open questions `asked_again`. `tasks.block_status` gives the CLI list/status, queue and
-restart notice one wait label (`<operator>'s turn · …`, `L2 replying to <operator>`,
-`paused · fault …`, `stopped by <operator>` or `stopped by L3`, `waiting on L3`, `paused`). Question
+restart notice one wait label (`<operator>'s turn · …`, naming a waiting task's lone freeform question by its
+first line and counting others, `L2 replying to <operator>`, `paused · fault …`, `stopped by <operator>` or `stopped by L3`, `waiting on L3`, `paused`). Question
 state is independent of worker state: a discussion wake, capacity wait or ordinary resume never
 records a decision. On receiving guidance, the owner assesses each question before lengthy work.
 Unaffected choices remain answerable; doubtful ones are withdrawn with a reason in chat and re-asked

@@ -5,10 +5,18 @@ review before it reads any real conversation ([design](../../../design/wireframe
 Everything here is fiction and public: invented project names, people-free roles, no real paths,
 hosts, accounts or quotes.
 
-`develop/` holds the scenarios used while writing the reviewer's prompt; `heldback/` holds the ones
-run once for the reported numbers. Each half has one clean project, one decoys-only project and three
-planted ones. Each scenario is a pair: `<name>.json` (the records) and `<name>.key.json` (the answer
-key, never shown to the reviewer).
+`develop/` holds the scenarios used while writing the reviewer's prompt, including every set that has
+already been run live and so shaped it; `heldback/` holds the ones run once for the reported numbers
+(one clean project, one decoys-only project and planted ones), and `scale/` held-back projects at a
+real project's volume: ordinary pushes, continued reports, second reviews, follow-up questions and
+long conversations at the rates real tasks show, so prompts overflow; one is planted and one is a
+control. Each scenario is a pair: `<name>.json` (the records) and `<name>.key.json` (the answer key,
+never shown to the reviewer).
+
+`signals.json` is the offline eval's project: one task per signal kind beside ordinary activity that
+must not count, and one long task whose sheet must still quote the operator. Its key lists, per
+signal, the places that must fire (`fire`), the places that must fire nothing (`quiet`) and the tasks
+whose sheet must quote the operator (`quoted`).
 
 ## Scenario file
 
@@ -32,7 +40,6 @@ key, never shown to the reviewer).
       ],
       "questions": [
         {"id": "q1", "revision": 1, "asked": "...", "audience": "operator", "text": "...",
-         "asked_again": false,
          "resolution": {"disposition": "answered", "at": "...", "by": "operator", "message": "m2"}}
       ],
       "events": [{"id": "e1", "at": "...", "kind": "ci-recheck", "reason": "..."}],
@@ -54,14 +61,17 @@ key, never shown to the reviewer).
   `finished` time inside the 14 days before `now`; `reported` is optional (when the owner reported).
 - Message `role`: `operator`, `l2` (the task's owner), `l3` (the coordinator) or `system`. Chat `role`:
   `operator` or `l3`; an operator message and L3's reply share a `turn`.
-- Question `revision` starts at 1; a re-asked question is a second entry with the same `id` and
-  `revision` 2, and the earlier revision's `resolution` is `superseded`. `asked_again: true` marks a
-  question re-parked after an operator reply without a new revision. `audience` is `operator` or `l3`;
+- Question `revision` starts at 1; a revised question is a second entry with the same `id` and
+  `revision` 2, and the earlier revision's `resolution` is `superseded`. `audience` is `operator` or `l3`;
   resolution `by` is `operator`, `l2` or `l3`, and `message` names the message that answered it.
+- A review's `state` is `completed` unless given (`failed` or `withdrawn` for a review that produced
+  nothing); `additional: true` marks a review of new material under the same subject.
 - Event `kind` is one Altitude records: `merge-approval-refused`, `grant-refused`, `ci-recheck`,
   `delivery` (with `number`, one per pushed PR head), `resume-failed`, `dispatch-failed`,
-  `report-superseded` (with `unmerged`, the PR numbers the replaced report named unmerged; Altitude
-  records the replaced report, not a reason), `escalated`, `fault` (with `fault`, the fault's kind) or `fyi` (with `text`).
+  `report-superseded` (a message continued a reported task; optional `contradicted`, the problem
+  verification found in the replaced report; Altitude records no reason), `escalated` (with `by: l3`
+  and `question`, the owner's question the coordinator handed to the operator), `fault` (with
+  `fault`, the fault's kind) or `fyi` (with `text`).
   The loader adds the task's own `new`, `state` and `review-requested` events.
 - `current` tasks are open work the review must not repeat; `earlier` lists suggestions from earlier
   reviews with their outcome (`accepted` or `dismissed`).
@@ -72,7 +82,7 @@ key, never shown to the reviewer).
 {
   "expect": "suggestions",
   "patterns": [
-    {"id": "P1", "kind": "words", "target": "agents",
+    {"id": "P1", "kind": "words", "target": "agents", "signal": null,
      "anchors": ["fix-safari-voice:m2", "export-work-list:m4", "chat:c7"],
      "problem": "The operator keeps asking owners to put the outcome first in replies.",
      "fix": "The owner instructions ask for the outcome in the first sentence of every reply."}
@@ -87,10 +97,12 @@ key, never shown to the reviewer).
 - `expect` is `suggestions` or `nothing` (clean and decoys-only projects).
 - Pattern `kind`: `counted` (a signal fires on it), `words` (only the conversation shows it) or
   `shared` (different symptoms with one cause; add `wrong_explanation`, the plausible cause the
-  evidence rules out). `target`: `project` or `agents` (how agents work).
+  evidence rules out). `target`: `project` or `agents` (how agents work). `signal`: the signal key at
+  least two of its places fire, or `null` when none does; results are reported per signal.
 - Anchors name planted places: `<slug>:<message id>`, `<slug>:<question id>@<revision>`,
-  `<slug>:<event id>`, `<slug>:<review id>/<finding id>` or `chat:<chat id>`. Every pattern has at
+  `<slug>:<event id>`, `<slug>:<review id>` (the review's request), `<slug>:<review id>/<finding id>`,
+  `<slug>:report/<index>` (a final report finding) or `chat:<chat id>`. Every pattern has at
   least three.
-- Decoy `type`: `one-off`, `answered` (re-asked after an operator answer in between), `handled` (a
+- Decoy `type`: `one-off`, `answered` (revised after an operator or coordinator reply in between), `handled` (a
   current task covers it), `dismissed` (an earlier suggestion was dismissed) or `justified` (friction
   the operator asked for).

@@ -949,13 +949,13 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself, on Ubuntu 24.04 x86_64 | Desktop login/logout, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop ends every descendant and whose time limits hold; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
 | Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` or `--browser` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, interrupted-build and supervisor cleanup, private backup/restore and failure cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Physical-device routing/trust, real authentication/provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 launcher/backup lanes pass; actual-daemon phone/desktop onboarding and task lane passes; [coverage and limits](CONTAINERS.md#evidence) |
 | macOS installation lane | `make installation-mac RESULTS=dir` ([macOS installation lane](#macos-installation-lane), in a task through `alt task run` under an operator grant) | A built release's `install.sh` (prerequisites, download through a local release server, checksum, tampered-download refusal), its LaunchAgent and HTTPS health, `alt doctor`, update detection by the installed daemon (app notice, `alt` notice, doctor), `alt update`, the app's Update button as a detached launchd job, failed-update rollback and uninstall retention, on this Mac under a throwaway home | A fresh Mac or another account, login/logout, reboot, browser/device CA trust, the download from GitHub itself, the 12-hour schedule and once-a-day notice timing, provider compatibility | In use on macOS Apple silicon |
-| Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement and Safari | Other macOS versions or architectures | Not established; no automated lane runs native jobs or browsers on the Mac |
+| Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement and Safari | Other macOS versions or architectures | Not established; the [macOS VM run](#macos-vm-run)'s `jobs` phase runs native launchd jobs in a guest, and no automated lane runs browsers on the Mac |
 | Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; iOS Simulator on a Mac through `make ui-simulator`; physical checks by arrangement |
 
 The container gate removes its verified private containers, volumes and images before asking Podman
@@ -1084,7 +1084,7 @@ The periodic [mutation run](#mutation-run) shows where the core modules' tests w
 | Operator image input | `test_images.py`, `test_image_chat.py`, `test_image_delivery.py`: real raster conversion/storage/HTTP, admission retry, caption ordering, checkpoint/resume restoration, handoff and archive/isolation. `image-input.pw.ts` walks selection/removal, voice/paste, loading, refusals, uncertain retry, sent viewer and missing/denied content on phone/desktop. | Native payloads and readable canonical bytes use engine fixtures; physical phone picker, clipboard permissions and live account/model image compatibility are unverified. |
 | CI recovery | `test_ci_recheck.py`, `test_ci_recheck_delivery.py`: due probes, question-blocked observation-only waits, single rerun intent, uncertain writes, fresh artifacts, finite reads/delivery, queue/turn crashes, stale lifecycle and preserved controls on both engine seams. | GitHub responses and engine calls are fixtures; real quota recovery needs fresh uploaded artifact evidence. |
 | Adversarial review | `test_review_engines.py`, `test_reviews.py`, `test_review_interfaces.py`: the captured-input adapter over real stdio (list/read/search, long-line continuation, refused private paths, read marker), the first JSON object accepted from a prose-wrapped answer and no object refused, both engines' confinement flags, unit lifecycle without a duration cutoff, cancellation, unknown termination, and a reviewer that read nothing failing instead of completing with no coverage. Startup/nonzero/capture-overflow fixtures retain bounded sanitized stderr and exit status. Structured stdout-only failures with empty stderr retain fixed error categories in owner-readable receipts across explicit retries for both engines; an unrecognized Claude result retains its allowlisted failure facts there. Unknown, malformed, incomplete and truncated output stays explicit; private prose/source and unknown values are omitted. Fixtures preserve original task ownership through cancellation/retry and keep successful reviews intact. | Fixture processes stand in for the CLIs; whether the installed Codex exposes MCP tools through its code-mode host, and whether the installed Claude connects the adapter without safe mode while loading no hooks, plugins or instructions, is established by recorded reviewer runs, not by the suite. Failure diagnostics do not establish provider compatibility, historical crash cause or recovery; live-provider testing remains deferred. |
-| Improvement review | `test_improvement_review.py`: every signal predicate on fictional records, the window and its limits, the 64 KiB prompt with 3 KiB sheets and counted overflow, operator-only chat pairs, citations limited to places in the prompt, untrusted answers (unknown places, bad targets and signals, paths and credentials, too many suggestions), the reviewer's flags and token limit, isolation failing closed, refusals before launch, timeouts, usage limits and unusable answers; every eval scenario loads with a consistent key; one-to-one matching. `test_improvement_runs.py`: the run lifecycle and its lines, stop, post receipts, typed answers, the card's view and presses through the HTTP server (replayed and refused requests, the task turn, opening and Try again, lapse), the overview's suggestions and Past suggestions. `Improvement.test.tsx` and `improvement-suggestions.pw.ts` walk the card, endings, running line, Details, Make a task, Dismiss and Undo, failed presses, Try again, Stop and Needs you's Suggestions, and `improvement-suggestions.pw.ts` Past suggestions with Latest, on phone and desktop. `test_improvement_settings.py`: the agreement and its terms version, Weekly, the Monday claim, a week caught up or skipped and why, a change of terms turning Weekly off, the settings lines, and switch and run presses admitted only from a paired device. `ImprovementSettings.test.tsx` and `improvement-settings.pw.ts` walk the section, the sheet with Cancel, Escape and Turn on, saving, running with Stop, a refusal, a skipped week, the unavailable reason and the change-of-terms line on phone and desktop, and `ImprovementSettings.test.tsx` the Past suggestions line. | The reviewer CLI is scripted; whether a model finds planted friction is the [eval](#improvement-review-eval), run by hand on the plan. |
+| Improvement review | `test_improvement_review.py`: every signal predicate on fictional records, the window and its limits, the 64 KiB prompt with 3 KiB sheets and counted overflow, operator-only chat pairs, citations limited to places in the prompt, untrusted answers (unknown places, bad targets and signals, paths and credentials, too many suggestions), the reviewer's flags and token limit, isolation failing closed, refusals before launch, timeouts, usage limits and unusable answers; the offline eval (every signal on exactly its planted places and nothing ordinary, reaching its task's sheet beside the operator's quotes; every scenario consistent, bounded and reached by its patterns); a full sheet keeping the operator's words in whole lines; one-to-one matching. `test_improvement_runs.py`: the run lifecycle and its lines, stop, post receipts, typed answers, the card's view and presses through the HTTP server (replayed and refused requests, the task turn, opening and Try again, lapse), the overview's suggestions and Past suggestions. `Improvement.test.tsx` and `improvement-suggestions.pw.ts` walk the card, endings, running line, Details, Make a task, Dismiss and Undo, failed presses, Try again, Stop and Needs you's Suggestions, and `improvement-suggestions.pw.ts` Past suggestions with Latest, on phone and desktop. `test_improvement_settings.py`: the agreement and its terms version, Weekly, the Monday claim, a week caught up or skipped and why, a change of terms turning Weekly off, the settings lines, and switch and run presses admitted only from a paired device. `ImprovementSettings.test.tsx` and `improvement-settings.pw.ts` walk the section, the sheet with Cancel, Escape and Turn on, saving, running with Stop, a refusal, a skipped week, the unavailable reason and the change-of-terms line on phone and desktop, and `ImprovementSettings.test.tsx` the Past suggestions line. | The reviewer CLI is scripted; whether a model finds planted friction is the [eval](#improvement-review-eval), run by hand on the plan. |
 | Routing/failures | `test_route.py`, `test_direct_dispatch.py`, `test_temporary_capacity.py`, composed journeys: pins, availability, fallback, backoff and failure without duplicate completion. | Deterministic availability/quota input does not prove real authentication, entitlement or current provider compatibility. |
 | Landing | `test_land.py`, `test_land_contention.py`, `test_git_policy_integration.py`: real Git/bare origins, concurrent owner processes (merge-line order, at most two checks per candidate, held waiters, stale heads, takeover fencing, timeouts, terminated holders), ordinary and assigned histories without trailer repair, selected index content, unrelated working edits, task/PR ownership, adopted ancestry, holds, failed/skipped/absent checks, changing base/head, candidate validation and cleanup. | Fake GitHub cannot establish remote API/permission/check-association compatibility. Owners review outgoing history and diffs for scope and privacy; tests do not establish semantic content screening. |
 | Merge approval | `test_recorded_merge_approval.py`, `test_merge_approval_journey.py`: original task/project/UI authority, intervening discussion, Git integration and scoped follow-up delivery; invalid sources, renewed holds and wrong PR identity refuse. | Scope, revocation and conditions are explicit coordinator judgments in fixtures; these tests do not establish live model interpretation. |
@@ -1116,8 +1116,8 @@ not claim those fixtures prove live provider compatibility. Record any additiona
 behavior in the task report. The native sandbox probe in `test_l3_privilege.py` is an existing
 explicit host-capability check with no model request; it is outside default test applicability.
 
-The operator approved the [improvement review eval](#improvement-review-eval) on 2026-10-12 as a
-by-hand run on the plan within a stated usage ceiling; it is not part of CI.
+The operator approved the live part of the [improvement review eval](#improvement-review-eval) on
+2026-10-12 as a by-hand run on the plan within a stated usage ceiling; it is not part of CI.
 
 The operator separately authorizes one [live Linux container run](CONTAINERS.md#live-linux-run)
 on 2026-10-06. Its real sign-in, onboarding and single-task evidence do not change the fixture-based
@@ -1183,40 +1183,57 @@ A survivor count is not a target; the worst real gaps become ordinary test work 
 
 ## Improvement review eval
 
-The eval measures whether a model finds recurring friction before any real conversation is read
+The eval measures whether the improvement review finds recurring friction, on fictional projects
+before any real conversation is read
 ([design](../design/wireframes/improvement-review/PROPOSAL.md#proving-it-works)). Scenarios are
-fictional projects in `tests/fixtures/improvement/` ([format](../tests/fixtures/improvement/README.md)):
-`develop/` for writing the reviewer's instructions, `heldback/` for the reported numbers. Each half
-has a clean project, a decoys-only project and three with planted patterns: counted, words-only and
-shared-cause. Each command loads the scenarios into its own throwaway Altitude home and refuses the
-real one:
+fictional projects in `tests/fixtures/improvement/` ([format](../tests/fixtures/improvement/README.md)),
+in three sets: `develop/` for writing the reviewer's instructions, including every set already run live,
+`heldback/` for the reported numbers, and `scale/` for held-back projects at a real project's volume (one
+planted, one control). Each command
+loads the scenarios into its own throwaway Altitude home and refuses the real one.
+
+The offline part runs without a model and is part of `make check`
+(`test_improvement_review.py`):
+
+```sh
+ALTITUDE_HOME="$(mktemp -d)" python3 -m altitude.improve_eval offline
+```
+
+It prints one line per signal: places planted in `signals.json`, how many fired, how many reached
+their own task's sheet under their alias, ordinary places that fired, and planted scenario patterns
+whose places reach their prompt. It fails when a signal misses a planted place or fires on ordinary
+work (repeated pushes, a report continued by a message, a question revised after an operator or L3
+reply, a second review, a review re-run after a failed one or of new material), when a prompt or sheet is over its bound, when a long conversation's sheet
+quotes no operator message, or when a scenario's key does not fit its records.
+
+The live part calls the reviewer on the plan and runs by hand:
 
 ```sh
 export ALTITUDE_HOME="$(mktemp -d)"
-python3 -m altitude.improve_eval check heldback
 python3 -m altitude.improve_eval show <develop-scenario>        # the prompt a develop scenario builds
-python3 -m altitude.improve_eval run heldback --ceiling <yardstick> --out <private-dir>
+python3 -m altitude.improve_eval run heldback,scale --models sonnet --ceiling <yardstick> --out <private-dir>
 ```
 
-`run` calls the reviewer for every scenario, model (`--models`, default all offered) and repeat
-(`--repeats`, default 3) and stops before the next call's maximum could pass the ceiling, in the
-engine's reported-cost yardstick; an incomplete run never passes. It writes `calls.jsonl`, `run.json`
-and `grading.json`: every kept suggestion, shuffled and without its model, beside its scenario's key
-and the text of its cited places. A blind grader, given only `grading.json`, writes `grades.json` by
-its rubric. Then a fresh `ALTITUDE_HOME`:
+`run` calls the reviewer for every scenario of the named sets (`--only` limits it), model
+(`--models`, default all offered) and repeat (`--repeats`, default 3) and stops before the next call's
+maximum could pass the ceiling, in the engine's reported-cost yardstick; an incomplete run never
+passes. It writes `calls.jsonl`, `run.json` and `grading.json`: every kept suggestion, shuffled and
+without its model, beside its scenario's key and the text of its cited places. A blind grader, given
+only `grading.json`, writes `grades.json` by its rubric. Then a fresh `ALTITUDE_HOME`:
 
 ```sh
-python3 -m altitude.improve_eval score heldback --out <private-dir>
+python3 -m altitude.improve_eval score --out <private-dir>
 ```
 
 `score` writes `score.json`: per model, each run's share of counted and shared-cause patterns caught
 and of words-only patterns caught (counting only patterns whose places reached the prompt), wrong
-suggestions on the controls and elsewhere, invalid answers, tokens, the counts-alone column and the
-recommendation, the least plan use that clears the bar. Only a complete held-back run of every
-scenario, at least three repeats each, can pass a model; anything less reports `full_matrix` false
-and no recommendation. A pattern is caught when the matcher pairs a
-suggestion with it by at least two shared planted places and the grader marks it caught. The output
-directory is private evidence; the PR carries the table.
+suggestions on the controls and elsewhere, invalid answers, tokens, per signal the planted patterns
+caught and the suggestions naming it graded wrong, the counts-alone column and the recommendation,
+the least plan use that clears the bar. Only a complete run of the held-back set, with the scale set at
+most beside it, every scenario of the sets named and at least three repeats each, can pass a model; anything less reports `full_matrix`
+false and no recommendation. A pattern is caught when the matcher pairs a suggestion with it by at
+least two shared planted places and the grader marks it caught. The output directory is private
+evidence; the PR carries the table.
 
 ## Installation lifecycle acceptance
 
@@ -1455,9 +1472,13 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   byte is refused with nothing installed, and the unaltered one installs the LaunchAgent and a
   service whose HTTPS health on the generated CA reports the release's version and commit, with
   `alt doctor` passing apart from its expected findings;
+- pairs a fixture device, then gives the stopped service a leaf certificate one day from expiry,
+  issued by the release under the retained CA and server key; with stock LibreSSL still first on the
+  saved service PATH, the service's own startup renews it with the OpenSSL 3 it discovers, keeping
+  the CA, key and pairing;
 - binds a finite throwaway coordinator socket before address transactions; the disposable Mac VM
   home stays in the launcher's guest-owned shared tree so macOS's Unix socket pathname limit is met;
-- pairs a fixture device and records one fictional project without task dispatch; previews and
+- records one fictional project without task dispatch; previews and
   applies IPv4/IPv6 loopback changes while running and stopped, verifies actual HTTPS/native PID,
   later-start loading and preserved CA/keys/pairing/registration; process loss after the durable
   settings write leaves a receipt that `alt recover` restores;
@@ -1538,20 +1559,34 @@ shell trusts, with `github.com` resolving to the loopback.
   [macOS installation lane](#macos-installation-lane)'s `mac` phase under a throwaway HOME, as
   `installation_mac.py` does: install, the daemon's automatic installation of a newer release with
   no browser terminal open and the overview reporting it, update detection and notice with automatic
-  updates off and the release waiting for confirmation, `alt update`, the Update button, recovery from
+  updates off and the release waiting for confirmation, `alt update`, the Update button, the service's
+  renewal of a near-expiry certificate with the OpenSSL it discovers, recovery from
   an automatic update whose startup exits and uninstall. When it fails, launchd's record of the job, the guest's
   busiest processes, a sample of the service's process and its open files are kept.
-- `login`: the account installs through the public command into its own home. Its LaunchAgent
+- `login`: the account installs through the public command into its own home. The printed private
+  link must name the printed address; at that origin, on the generated authority, its page loads
+  and the page's own pairing request with the link's code pairs the browser once, while a second
+  use and a well-formed unknown code are told the code expired or was already used. A real browser
+  is not driven: it opens Altitude only once the authority is trusted, and macOS asks a person to
+  confirm every trust change, even one made as root. Running the
+  public command again must print no link and keep the certificate authority, server key and
+  certificate and the paired browser. Its LaunchAgent
   `dev.altitude.altd` must run from `~/Library/LaunchAgents`, answer HTTPS health with the release's
   version and commit on the generated authority and pass `alt doctor`. After the guest restarts with
-  its card still unplugged, the automatic login must start the service again with a new process;
-  uninstall must then remove the LaunchAgent and stop the service.
+  its card still unplugged, the automatic login must start the service again with a new process and
+  the browser stays paired; uninstall must then remove the LaunchAgent and stop the service.
 - `privacy`: the account, logged in and outside any sandbox, runs the revision's own
   `scripts/platform_probe.py --only confinement validation-confinement` with Homebrew's Python 3.12,
   which nothing in the guest has ever asked for access to a private place. Both rows must pass, their
   details stating that the Desktop and mounted volumes are refused with no consent request in the
   privacy log. A Mac whose Python already holds an answer cannot show that the profile, not the
   stored answer, refused.
+- `jobs`: the account, logged in and outside any sandbox, runs the revision's own probe job rows
+  (`job-pipe`, `job-file-output`, `exit-cleanup`, `stop-descendants`, `time-limit`,
+  `limit-after-owner-exit`, `logged-job` and `detached-job`) as real launchd jobs in its own domain,
+  which launchd refuses a worker sandbox. Every row must pass: Stop ends each descendant, including
+  one that leaves by `setsid`, double fork or a cleared environment or keeps forking, before the job
+  reads inactive, and the time limit holds also after its owner exits.
 
 `PUBLISHED=<baseline>..<candidate>` names two published release tags instead of `SOURCE` and runs only
 the `published` phase. Its isolated environment puts Homebrew OpenSSL first for baselines whose
@@ -1575,7 +1610,7 @@ saved name, and keep configuration, TLS identity and data unchanged before unins
 `RESULTS/macos-vm.json` records the source and harness commits, this Mac's macOS version, free disk
 and load average before and after, the guest's sizing, each image's restore image, macOS build,
 prerequisites and disk footprint, and per phase the probe outcomes, every attempt's and step's exit
-and result, the guest's load average, the disk the clone took and the run time; `privacy` adds the probe's rows and
+and result, the guest's load average, the disk the clone took and the run time; `privacy` and `jobs` add the probe's rows and
 the guest's Python, and a `PUBLISHED` run each release's tag, commit and checksums. Each step's full output, the
 listing each refusal is compared against, the lifecycle's own results and the guest helper's log stay beside it. Everything the runner writes
 lives in `~/.cache/altitude-installation-vm/macos`: the helper, the release build and its temporary files, the images (about 26 GiB for macOS

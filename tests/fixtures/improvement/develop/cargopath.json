@@ -80,7 +80,6 @@
      "asked": "2026-10-21T08:31:00+00:00",
      "audience": "operator",
      "text": "How far should the estimate move before the customer is notified rather than just the page updating?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-21T18:00:00+00:00",
@@ -419,7 +418,6 @@
      "asked": "2026-10-24T09:31:00+00:00",
      "audience": "operator",
      "text": "Should new contacts get email alerts by default, text alerts, or none until they choose?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-24T10:41:00+00:00",
@@ -432,7 +430,6 @@
      "asked": "2026-10-24T10:41:00+00:00",
      "audience": "operator",
      "text": "Imported contacts have no stored preference: should they default like new contacts, or get no alerts until they choose?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-24T12:00:00+00:00",
@@ -660,7 +657,6 @@
      "asked": "2026-10-27T09:31:00+00:00",
      "audience": "operator",
      "text": "When a truck misses its dock slot, should the slot be released, kept, or rebooked automatically?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-27T20:00:00+00:00",
@@ -1376,7 +1372,6 @@
      "asked": "2026-11-01T13:31:00+00:00",
      "audience": "operator",
      "text": "Should a bulk status change send each customer the usual notification per shipment, one combined message, or none?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-02T00:40:00+00:00",

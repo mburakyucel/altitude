@@ -574,7 +574,11 @@ for the running worker's next checkpoint. An explicit question block supersedes 
 older inbox messages remain available, but cannot resume that wait. A later message or explicit Resume
 authorizes another turn. An L2's question goes to L3 first: L3's `alt task message` requests that
 daemon resume, or `alt task escalate` turns it into a Needs you card for the operator. `--for-operator`
-places operator questions there immediately and also notifies L3. A block that publishes or revises questions
+places operator questions there immediately and also notifies L3. A wait on the operator's own action, such as
+a command for the task terminal or a step posted in project chat, is such a plain question with the step as its
+first line and a terminal step's `run` block; while the task waits, the operator's turn names that line.
+Their reply, the Terminal notice or L3's message wakes the owner, which verifies the step and resolves the
+question. A block that publishes or revises questions
 queues one notification with open members, revisions and required authority; re-parking unchanged members
 stays quiet. Notification lets L3 coordinate scope or record-backed portions without approving
 operator-required proposal, security or product decisions. A member that exists only because an
@@ -1130,7 +1134,7 @@ prompts, no Edit/Write/NotebookEdit tools, and native admission for trusted shim
 log/diff/show shims, including full patches and historical files with external diff/text-conversion helpers
 disabled, and the altitude journal. Claude's runtime shims and the MCP tool send every `alt` invocation and
 GitHub/service read through the project-bound socket, where altd supplies the project, rejects path-shaped task ids and
-daemon-side file inputs, and re-applies the L3 command door. The socket and every per-turn runtime directory live in the installation's coordinator folder (`platform.coordinator_directory`: the per-user runtime folder on Linux, Altitude's private configuration on macOS), mode 0700 and outside every root a task worker may write. Each coordinator turn runs as a job of its own, whose unit altd records before launch; altd serves a connection only when the process at its other end is in that project's running turn's job (`platform.peer_groups`), so a task worker, another project's coordinator or the operator's shell is refused before its request is read. [GitHub reads](CLI.md#coordinator-github-reads)
+daemon-side file inputs, and re-applies the L3 command door. The socket and every per-turn runtime directory live in the installation's coordinator folder (`platform.coordinator_directory`: `altitude-<installation id>` in the per-user runtime folder on Linux, `~/.config/altitude/<installation id>` on macOS), mode 0700 and outside every root a task worker may write; each project's socket is named by an 8-character id, so on macOS its path stays within the 103-byte socket limit under any home of up to 64 bytes. Each coordinator turn runs as a job of its own, whose unit altd records before launch; altd serves a connection only when the process at its other end is in that project's running turn's job (`platform.peer_groups`), so a task worker, another project's coordinator or the operator's shell is refused before its request is read. [GitHub reads](CLI.md#coordinator-github-reads)
 admit read-only `gh` commands against any repository altd's login can see; checkout, direct GitHub,
 and service write commands are absent. `alt issue new` and `alt issue comment` publish requested backlog
 through altd after its private-evidence check, and `alt issue label` adds or removes an issue's labels. Read content is untrusted, potentially private evidence:

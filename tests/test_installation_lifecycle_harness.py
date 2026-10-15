@@ -596,6 +596,23 @@ class TestMacLifecycle(AltitudeCase):
             verified = installation.extract(bundle, hashlib.sha256(bundle.read_bytes()).hexdigest(), self.tmp / version)
             self.assertEqual(verified, entry["release"])
 
+    def test_the_injected_near_expiry_leaf_is_due_and_the_releases_check_renews_it(self):
+        from altitude import config, platform, tls
+        from scripts.installation_lifecycle import NEAR_EXPIRY
+        directory = self.tmp / "tls"
+        with mock.patch.object(config, "TLS_DIR", directory):
+            tls.initialize("127.0.0.1")
+            kept = {name: (directory / name).read_bytes() for name in ("ca.crt", "ca.key", "server.key")}
+            subprocess.run([sys.executable, "-B", "-c", NEAR_EXPIRY, REPO, "127.0.0.1"], check=True, timeout=60,
+                           env={**os.environ, "ALTITUDE_TLS_DIR": str(directory)})
+            due = lambda: subprocess.run([platform.openssl(), "x509", "-checkend", str(tls.RENEW_SECONDS), "-noout",
+                                          "-in", directory / "server.crt"], capture_output=True).returncode
+            self.assertEqual(due(), 1)
+            self.assertFalse([path for path in directory.iterdir() if path.is_dir()], "The staging folder remains")
+            tls.check("127.0.0.1")
+            self.assertEqual(due(), 0)
+            self.assertEqual({name: (directory / name).read_bytes() for name in kept}, kept)
+
     def test_outside_a_throwaway_home_nothing_runs(self):
         from scripts.installation_lifecycle import MacLifecycle
         results = self.tmp / "results"
@@ -781,9 +798,10 @@ class TestInstallationMacosVm(AltitudeCase):
         work = commands[0].split('work="', 1)[1].split('"', 1)[0]
         self.assertTrue(work.startswith(vm.SHARED + "/"))
         self.assertIn('TMPDIR="$temp"', commands[0])
-        with mock.patch.object(config, "ROOT", Path(work) / "home/.altitude"), \
-             mock.patch.object(platform, "containerized", return_value=False):
-            self.assertLess(len(str(l3.verb_socket_path("fictional")).encode()), 104)
+        home = Path(work) / "home"  # the guest's HOME="$work/home"
+        with mock.patch.object(config, "HOME", home), mock.patch.object(config, "ROOT", home / ".altitude"), \
+             mock.patch.object(platform, "_darwin", return_value=True):
+            self.assertLessEqual(len(str(l3.verb_socket_path("fictional")).encode()), 103)
 
     class Guest:
         """Answers the lane's probes as a guest whose network card is plugged in until `unplug`."""
@@ -967,6 +985,35 @@ class TestInstallationMacosVm(AltitudeCase):
         self.assertNotIn("sudo", guest.commands[0])  # the logged-in account itself, outside any sandbox
         for rows, code in ((both[:1], 0), ([both[0], {**both[1], "detail": "writes under the roots only"}], 0),
                            ([both[0], {**both[1], "state": "fail"}], 1), (both, 1)):
+            self.assertFalse(judged(rows, code)[1], rows)
+
+    def test_jobs_passes_only_when_every_launchd_job_row_passes(self):
+        from scripts import installation_macos_vm as vm
+        every = [{"row": row, "state": "pass", "detail": "fine"} for row in vm.JOB_ROWS]
+        self.assertIn("stop-descendants", vm.JOB_ROWS)
+
+        class Guest:
+            def __init__(self, rows, code=0):
+                self.output, self.code, self.commands = json.dumps({"host": "darwin", "rows": rows}), code, []
+
+            def copy(self, source, target):
+                pass
+
+            def ssh(self, command, timeout=120, check=True):
+                self.commands.append(command)
+                return subprocess.CompletedProcess(command, self.code, self.output, "")
+
+        def judged(rows, code=0):
+            guest, record = Guest(rows, code), {}
+            vm.phase_jobs(guest, None, self.tmp, record, self.tmp, "c" * 40)
+            return guest, record["cases"]["jobs"]["passed"]
+
+        guest, passed = judged(every)
+        self.assertTrue(passed)
+        self.assertIn("scripts/platform_probe.py --only " + " ".join(vm.JOB_ROWS), guest.commands[0])
+        self.assertNotIn("sudo", guest.commands[0])  # the logged-in account's own launchd domain
+        self.assertTrue((self.tmp / "jobs.log").is_file())
+        for rows, code in ((every[1:], 0), ([*every[:-1], {**every[-1], "state": "fail"}], 1), (every, 1)):
             self.assertFalse(judged(rows, code)[1], rows)
 
     def test_published_names_two_release_tags_and_runs_alone(self):

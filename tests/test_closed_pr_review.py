@@ -66,7 +66,7 @@ class TestClosedPrReview(AltitudeCase):
         self.pr(42, "CLOSED")
         self.owner_block("--reason", "Which region should the installer default to?", "--for-operator")
         self.assertEqual(self.kinds(), ["asks"], "the independent question stays; the closed PR asks nothing")
-        self.assertEqual(self.label(), f"{self.name}'s turn · 1 question")
+        self.assertEqual(self.label(), f"{self.name}'s turn · Which region should the installer default to?")
         with mock.patch.object(server.monitor, "sessions", return_value=[]):
             self.assertEqual([row["kind"] for row in server.project_view(self.project)["decisions"]], ["asks"])
         task = S.load_task(self.project, self.slug)

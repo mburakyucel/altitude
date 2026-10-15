@@ -42,7 +42,7 @@ class TestAgreement(RunCase):
             self.assertNotEqual(improve.terms(self.project)["version"], version)
         with mock.patch.object(improve, "QUOTE", 600):
             self.assertNotEqual(improve.terms(self.project)["version"], version)
-        for name, value in (("SIGNALS_VERSION", 2), ("OLDEST", timedelta(days=60)), ("FIRST_WINDOW", timedelta(days=28))):
+        for name, value in (("SIGNALS_VERSION", improve.SIGNALS_VERSION + 1), ("OLDEST", timedelta(days=60)), ("FIRST_WINDOW", timedelta(days=28))):
             with mock.patch.object(improve, name, value):
                 self.assertNotEqual(improve.terms(self.project)["version"], version, name)
         self.assertEqual(improve.terms(self.project)["version"], version)

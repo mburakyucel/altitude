@@ -1,0 +1,877 @@
+{
+ "project": "kilnmark",
+ "now": "2026-11-13T08:00:00+00:00",
+ "tasks": [
+  {
+   "slug": "class-waitlist",
+   "title": "Waitlist for full wheel-throwing classes",
+   "state": "done",
+   "created": "2026-10-30T09:00:00+00:00",
+   "reported": "2026-10-30T14:35:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-30T14:55:00+00:00",
+   "tokens": 1300000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-30T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: the Thursday wheel classes fill up within a day. When a class is full, let people join a waitlist, and offer the place to the first person on it when someone cancels."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-30T09:30:00+00:00",
+     "role": "l2",
+     "text": "Plan: a waitlist per class session, ordered by join time. A cancellation offers the seat to the first person, who has 24 hours to accept before it moves to the next. Studio staff see the list on the session page. Tests cover the offer moving on after 24 hours and a person who is on two waitlists."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-30T10:25:00+00:00",
+     "role": "operator",
+     "text": "Charge at once, same as booking online. People who pay at the studio are walk-ins and never on a waitlist."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-30T10:35:00+00:00",
+     "role": "l2",
+     "text": "Thanks, accepting an offer goes through the normal online payment."
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-30T14:35:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #212 merged. Full classes take a waitlist; a cancellation offers the seat for 24 hours, then moves on. Paid online on acceptance."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-10-30T09:45:00+00:00",
+     "audience": "operator",
+     "text": "Should a waitlisted person who accepts be charged at once, or at the studio like a normal booking?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-30T10:25:00+00:00",
+      "by": "operator",
+      "message": "m3"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-30T12:35:00+00:00",
+     "kind": "delivery",
+     "number": 212
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-30T13:35:00+00:00",
+     "kind": "delivery",
+     "number": 212
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-10-30T12:45:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Two cancellations at the same moment can offer the same seat twice"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Expired offers stay visible on the person's account page"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Offers are now made inside the seat lock; added a test."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Hidden once expired."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "glaze-inventory",
+   "title": "Track glaze stock by the bucket",
+   "state": "done",
+   "created": "2026-10-31T10:00:00+00:00",
+   "reported": "2026-10-31T14:30:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-31T14:55:00+00:00",
+   "tokens": 1100000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-31T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: the studio runs out of popular glazes without noticing. Track each glaze bucket's level and warn the studio manager when one gets low."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-31T10:25:00+00:00",
+     "role": "l2",
+     "text": "Plan: a glaze list with a level per bucket (full, half, low, empty) that staff update from the glaze room tablet, and a daily summary to the manager listing low and empty buckets. No automatic ordering. Tests for the summary."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-31T14:30:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #215 merged. Staff set bucket levels from the tablet; the manager gets a morning summary only when something is low or empty."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-31T12:45:00+00:00",
+     "kind": "delivery",
+     "number": 215
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-31T13:40:00+00:00",
+     "kind": "delivery",
+     "number": 215
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-10-31T13:00:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Summary is sent even when nothing is low"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Level change has no record of who changed it"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Skipped when there is nothing to report."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Each change records the staff member."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "kiln-firing-log",
+   "title": "Log each kiln firing with its cone and load",
+   "state": "done",
+   "created": "2026-11-02T09:00:00+00:00",
+   "reported": "2026-11-02T16:05:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-02T16:25:00+00:00",
+   "tokens": 1600000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-02T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: the studio wants a record of each kiln firing: which kiln, the cone, start and end, and whose pieces were in it, so they can trace a bad firing back to the pieces."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-02T09:35:00+00:00",
+     "role": "l2",
+     "text": "Plan: a firing record per kiln run with kiln, cone, start, end and notes; pieces are added by their shelf tag. A piece's page shows its firings. Staff can mark a firing as faulty, which flags every piece in it. Tests for the trace from a piece to its firings and for the faulty flag."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-02T10:40:00+00:00",
+     "role": "operator",
+     "text": "One list with a type. The techs think of it as one kiln log."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-02T16:05:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #218 merged. Each firing is logged with kiln, type, cone, times and its pieces; a faulty firing flags its pieces, and a piece shows its firings."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-11-02T09:50:00+00:00",
+     "audience": "operator",
+     "text": "Bisque and glaze firings use the same kiln. Should they be one list with a type, or two lists?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-11-02T10:40:00+00:00",
+      "by": "operator",
+      "message": "m3"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-02T13:20:00+00:00",
+     "kind": "delivery",
+     "number": 218
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-02T14:20:00+00:00",
+     "kind": "delivery",
+     "number": 218
+    },
+    {
+     "id": "e3",
+     "at": "2026-11-02T15:25:00+00:00",
+     "kind": "delivery",
+     "number": 218
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-02T13:35:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Marking a firing faulty twice duplicates the flag on each piece"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Cone field accepts any text"
+      },
+      {
+       "id": "F3",
+       "severity": "low",
+       "title": "Firing end can be before its start"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "The flag is now set once; test added."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Cone is chosen from the studio's list."
+      },
+      {
+       "finding_id": "F3",
+       "disposition": "fixed",
+       "reason": "Rejected with a clear message."
+      }
+     ]
+    },
+    {
+     "id": "r2",
+     "subject": "changes",
+     "requested": "2026-11-02T15:00:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Piece page lists firings oldest last"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Newest first now."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "member-shelf-space",
+   "title": "Assign shelf space to members",
+   "state": "done",
+   "created": "2026-11-03T13:00:00+00:00",
+   "reported": "2026-11-03T16:35:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-03T16:50:00+00:00",
+   "tokens": 900000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-03T13:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: members keep work-in-progress on the shared shelves, and nobody knows whose is whose. Give each member a numbered shelf slot and show it on their account."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-03T13:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: a shelf map with numbered slots, one per member, assigned by staff. The member's account shows their slot; the staff view shows free slots. Tests for assignment and freeing a slot when a membership ends."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-03T16:35:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #221 merged. Members see their shelf slot; staff assign and free slots from the shelf map."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-03T15:10:00+00:00",
+     "kind": "delivery",
+     "number": 221
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-03T15:55:00+00:00",
+     "kind": "delivery",
+     "number": 221
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-03T15:25:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "A slot can be assigned to two members"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Unique per slot now."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "gift-vouchers",
+   "title": "Sell class gift vouchers online",
+   "state": "done",
+   "created": "2026-11-04T09:00:00+00:00",
+   "reported": "2026-11-04T14:50:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-04T15:10:00+00:00",
+   "tokens": 1700000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-04T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: people keep asking for gift vouchers for a taster class. Sell vouchers online that can be redeemed when booking any taster session."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-04T09:30:00+00:00",
+     "role": "l2",
+     "text": "Plan: a voucher product with a code, valid for one taster booking within twelve months. Booking a taster with a code skips payment. The voucher arrives as a printable page. Tests for redemption, expiry and a code used twice."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-04T10:20:00+00:00",
+     "role": "operator",
+     "text": "Twelve months is right."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-04T14:50:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #224 merged. Taster vouchers sell online with a printable page and are redeemed at booking; a cancelled booking returns the voucher."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-11-04T09:45:00+00:00",
+     "audience": "operator",
+     "text": "Twelve months is my guess for validity. Is that what the studio wants?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-11-04T10:20:00+00:00",
+      "by": "operator",
+      "message": "m3"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-04T12:50:00+00:00",
+     "kind": "delivery",
+     "number": 224
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-04T14:05:00+00:00",
+     "kind": "delivery",
+     "number": 224
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-04T13:05:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "high",
+       "title": "Voucher codes are short enough to guess"
+      },
+      {
+       "id": "F2",
+       "severity": "medium",
+       "title": "Cancelling a voucher booking does not return the voucher"
+      },
+      {
+       "id": "F3",
+       "severity": "low",
+       "title": "Printable page shows the buyer's email"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Codes are now twelve random characters."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "The voucher becomes usable again; test added."
+      },
+      {
+       "finding_id": "F3",
+       "disposition": "fixed",
+       "reason": "Removed from the printable page."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "open-studio-hours",
+   "title": "Show open studio hours on the home page",
+   "state": "done",
+   "created": "2026-11-05T10:00:00+00:00",
+   "reported": "2026-11-05T12:10:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-05T12:20:00+00:00",
+   "tokens": 600000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-05T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: show this week's open studio hours on the home page, taken from the studio calendar."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-05T10:15:00+00:00",
+     "role": "l2",
+     "text": "Plan: read the open studio sessions for the current week from the calendar and list them on the home page under the class list. Test for an empty week."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-05T12:10:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #226 merged. The home page lists this week's open studio hours, or says there are none."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-05T11:25:00+00:00",
+     "kind": "delivery",
+     "number": 226
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-05T11:40:00+00:00",
+     "findings": [],
+     "dispositions": []
+    }
+   ]
+  },
+  {
+   "slug": "clay-orders",
+   "title": "Let members order clay through the studio",
+   "state": "done",
+   "created": "2026-11-06T09:00:00+00:00",
+   "reported": "2026-11-06T14:50:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-06T15:10:00+00:00",
+   "tokens": 1400000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-06T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: members buy clay through the studio at cost. Replace the paper sign-up sheet: members order bags online, staff mark them collected."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-06T09:25:00+00:00",
+     "role": "l2",
+     "text": "Plan: a clay list with the studio's prices, an order form for members, and a staff list of orders to collect. Payment online. Tests for ordering, collecting and a member without an active membership."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-06T10:40:00+00:00",
+     "role": "operator",
+     "text": "Yes, staff should be able to, and it should say who placed it."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-06T10:55:00+00:00",
+     "role": "l2",
+     "text": "Added: staff can place an order for a member, marked as placed by staff."
+    },
+    {
+     "id": "m5",
+     "at": "2026-11-06T14:50:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #229 merged. Members order clay online at the studio's prices; staff can order for a member and mark orders collected."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-11-06T09:40:00+00:00",
+     "audience": "operator",
+     "text": "Should staff be able to order on a member's behalf, for people who come in and ask at the desk?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-11-06T10:40:00+00:00",
+      "by": "operator",
+      "message": "m3"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-06T13:05:00+00:00",
+     "kind": "delivery",
+     "number": 229
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-06T14:10:00+00:00",
+     "kind": "delivery",
+     "number": 229
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-06T13:20:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Order total uses the price at collection, not at ordering"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Collected orders cannot be found once the day is over"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Price is stored on the order line."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Added a collected filter."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "instructor-rota",
+   "title": "Instructor rota for the term",
+   "state": "done",
+   "created": "2026-11-09T09:00:00+00:00",
+   "reported": "2026-11-09T13:25:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-09T13:45:00+00:00",
+   "tokens": 1200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-09T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: the term's instructor rota lives in a spreadsheet. Bring it into the app so each class session shows its instructor and instructors see their own sessions."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-09T09:30:00+00:00",
+     "role": "l2",
+     "text": "Plan: assign an instructor to each class session from the session page or in bulk for a term; instructors get a My sessions page. A swap between two instructors is one action. Tests for bulk assignment and swaps."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-09T13:25:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #232 merged. Sessions show their instructor; staff assign in bulk or swap; instructors see their own sessions."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-09T11:50:00+00:00",
+     "kind": "delivery",
+     "number": 232
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-09T12:45:00+00:00",
+     "kind": "delivery",
+     "number": 232
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-09T12:05:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Bulk assignment overwrites sessions that already have an instructor"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "My sessions shows cancelled sessions"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Only empty sessions are filled unless staff tick replace."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Cancelled sessions are hidden."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "pieces-ready-notice",
+   "title": "Tell members when fired pieces are ready",
+   "state": "done",
+   "created": "2026-11-10T10:00:00+00:00",
+   "reported": "2026-11-10T13:10:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-10T13:25:00+00:00",
+   "tokens": 800000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-10T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: when a glaze firing is unloaded, members whose pieces were in it should get a message that their work is ready to collect."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-10T10:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: unloading a glaze firing in the kiln log sends each member with pieces in it a ready-to-collect message, once per firing. Faulty firings send a different message asking them to see staff. Tests for both."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-10T13:10:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #235 merged. Unloading a glaze firing tells each member once that their pieces are ready, or to see staff if the firing was faulty."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-10T12:00:00+00:00",
+     "kind": "delivery",
+     "number": 235
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-10T12:40:00+00:00",
+     "kind": "delivery",
+     "number": 235
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-10T12:15:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "A member with three pieces gets three messages"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "One message per member per firing."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "remove-old-forum",
+   "title": "Remove the unused members forum",
+   "state": "done",
+   "created": "2026-11-11T09:00:00+00:00",
+   "reported": "2026-11-11T11:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-11T11:30:00+00:00",
+   "tokens": 500000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-11T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: nobody has posted on the members forum for a year. Remove it and its links."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-11T09:15:00+00:00",
+     "role": "l2",
+     "text": "Plan: delete the forum pages, its tables after an export of the old posts for the studio's records, and the menu link. Tests updated."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-11T11:20:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #237 merged. The forum, its link and tables are gone; old posts were exported to the studio's records folder; old links go to the home page."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-11T10:15:00+00:00",
+     "kind": "delivery",
+     "number": 237
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-11T10:50:00+00:00",
+     "kind": "delivery",
+     "number": 237
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-11T10:30:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Old forum links return an error page"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "They redirect to the home page."
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "current": [
+  {
+   "slug": "term-pricing",
+   "title": "Set prices per term for class blocks",
+   "state": "running"
+  }
+ ],
+ "chat": [
+  {
+   "id": "c1",
+   "at": "2026-11-04T08:30:00+00:00",
+   "role": "operator",
+   "text": "Can we sell gift vouchers for the taster class? Christmas is coming.",
+   "turn": "t1"
+  },
+  {
+   "id": "c2",
+   "at": "2026-11-04T08:32:00+00:00",
+   "role": "l3",
+   "text": "Dispatched a task for taster gift vouchers.",
+   "turn": "t1"
+  },
+  {
+   "id": "c3",
+   "at": "2026-11-09T08:15:00+00:00",
+   "role": "operator",
+   "text": "The instructor rota spreadsheet is a mess. Can it live in the app?",
+   "turn": "t2"
+  },
+  {
+   "id": "c4",
+   "at": "2026-11-09T08:17:00+00:00",
+   "role": "l3",
+   "text": "Dispatched the instructor rota task.",
+   "turn": "t2"
+  }
+ ],
+ "earlier": []
+}

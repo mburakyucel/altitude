@@ -230,7 +230,6 @@
      "asked": "2026-10-14T09:31:00+00:00",
      "audience": "operator",
      "text": "When a passenger closes the app mid-checkout, should the held seat be released immediately or stay held for the full ten minutes?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-14T13:40:00+00:00",
@@ -243,7 +242,6 @@
      "asked": "2026-10-14T13:40:00+00:00",
      "audience": "operator",
      "text": "Asking again since this is still open: release a held seat as soon as the app closes, or keep it for the ten minutes?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-14T15:40:00+00:00",
@@ -303,7 +301,6 @@
      "asked": "2026-10-15T09:31:00+00:00",
      "audience": "operator",
      "text": "If a sailing is cancelled, can the vehicle surcharge be refunded as voucher credit, or must it go back to the card like the ticket?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-15T10:40:00+00:00",
@@ -400,7 +397,6 @@
      "asked": "2026-10-15T13:26:00+00:00",
      "audience": "operator",
      "text": "Should the manifest include passengers' dates of birth, or only names and seats?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-15T16:30:00+00:00",
@@ -413,7 +409,6 @@
      "asked": "2026-10-15T16:30:00+00:00",
      "audience": "operator",
      "text": "Re-asking: dates of birth on the manifest, or only names and seats? The print layout is ready apart from this.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-15T18:30:00+00:00",
@@ -523,7 +518,6 @@
      "asked": "2026-10-19T09:21:00+00:00",
      "audience": "operator",
      "text": "Should existing bookings be given a new short reference too, or keep their old one?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-19T11:30:00+00:00",
@@ -536,7 +530,6 @@
      "asked": "2026-10-19T11:30:00+00:00",
      "audience": "operator",
      "text": "Still need this to finish: give existing bookings a short reference, or leave them as they are?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-19T13:50:00+00:00",
@@ -549,7 +542,6 @@
      "asked": "2026-10-19T13:50:00+00:00",
      "audience": "operator",
      "text": "Asking once more: new short references for existing bookings, or keep the old ones?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-19T16:00:00+00:00",
