@@ -961,16 +961,17 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     check(link is not None and link.group(1) == origin, "the installer printed no private pairing link for its address")
     code = link.group(2)
     running()
-    # macOS trusts the generated authority for SSL. Changing the account's own trust settings waits for a confirmation
-    # in the desktop session, so the guest trusts it in the System keychain's admin settings instead, with the rule that
-    # asks an administrator to confirm set to allow, standing in for the person confirming.
+    # macOS trusts the generated authority for SSL. `security add-trusted-cert` changes a trust domain only after a person
+    # confirms, which macOS asks for even as root, so the guest writes the same trust record to a file, installs it as the
+    # System's admin trust settings beside the authority in the System keychain, and restarts trustd to read them.
     chain = f"security verify-cert -L -p ssl -n {urlsplit(origin).hostname} -c ~/.config/altitude/tls/server.crt " \
             "-c ~/.config/altitude/tls/ca.crt"
     check(step("untrusted", chain).returncode != 0, "macOS trusted the certificate before the authority was trusted")
-    check(step("trust-rule", "sudo -n security authorizationdb write com.apple.trust-settings.admin allow",
-               timeout=60).returncode == 0, "the trust-settings rule could not be set")
-    trusted = step("trust", "sudo -n security add-trusted-cert -d -r trustRoot -p ssl -k /Library/Keychains/System.keychain "
-                   "~/.config/altitude/tls/ca.crt", timeout=60)
+    admin = "/Library/Security/Trust Settings/Admin.plist"
+    trusted = step("trust", f"test ! -e {quote(admin)} && security add-trusted-cert -r trustRoot -p ssl -o {SHARED}/trust.plist "
+                            "~/.config/altitude/tls/ca.crt && sudo -n security add-certificates -k /Library/Keychains/System.keychain "
+                            f"~/.config/altitude/tls/ca.crt && sudo -n mkdir -p {quote(admin.rsplit('/', 1)[0])} && sudo -n install -m 644 -o root "
+                            f"-g wheel {SHARED}/trust.plist {quote(admin)} && sudo -n killall trustd && sleep 3", timeout=60)
     check(trusted.returncode == 0 and step("trusted", chain).returncode == 0, "macOS does not trust the certificate")
     safari = step("safari", "defaults read /Applications/Safari.app/Contents/Info CFBundleShortVersionString").stdout.strip()
     # macOS opens the printed link in the default browser, which pairs itself with the link's code: only a browser

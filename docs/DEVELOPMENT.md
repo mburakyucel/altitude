@@ -1515,9 +1515,10 @@ shell trusts, with `github.com` resolving to the loopback.
   busiest processes, a sample of the service's process and its open files are kept.
 - `login`: the account installs through the public command into its own home. The printed private
   link must name the printed address. macOS must refuse the server certificate until the generated
-  authority is trusted for SSL. [Setup](SETUP.md#trust-https-on-each-device) trusts it in the login
-  keychain, which waits for a confirmation in the desktop session, so the guest trusts it in the
-  System keychain's admin settings, with the confirming rule set to allow.
+  authority is trusted for SSL. [Setup](SETUP.md#trust-https-on-each-device) trusts it in Keychain
+  Access, and macOS asks a person to confirm any trust change, so the guest writes the same trust
+  record with `security add-trusted-cert -o`, installs it as the System's admin trust settings and
+  restarts `trustd`.
   `open` then hands the printed link to the default browser, Safari, which must pair through it.
   At that origin the page loads for an unpaired client, whose pairing request with a fresh code
   pairs it, while a second use of the printed link and a well-formed unknown code are told the code
