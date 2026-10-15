@@ -597,6 +597,23 @@ class TestMacLifecycle(AltitudeCase):
             verified = installation.extract(bundle, hashlib.sha256(bundle.read_bytes()).hexdigest(), self.tmp / version)
             self.assertEqual(verified, entry["release"])
 
+    def test_the_injected_near_expiry_leaf_is_due_and_the_releases_check_renews_it(self):
+        from altitude import config, platform, tls
+        from scripts.installation_lifecycle import NEAR_EXPIRY
+        directory = self.tmp / "tls"
+        with mock.patch.object(config, "TLS_DIR", directory):
+            tls.initialize("127.0.0.1")
+            kept = {name: (directory / name).read_bytes() for name in ("ca.crt", "ca.key", "server.key")}
+            subprocess.run([sys.executable, "-B", "-c", NEAR_EXPIRY, REPO, "127.0.0.1"], check=True, timeout=60,
+                           env={**os.environ, "ALTITUDE_TLS_DIR": str(directory)})
+            due = lambda: subprocess.run([platform.openssl(), "x509", "-checkend", str(tls.RENEW_SECONDS), "-noout",
+                                          "-in", directory / "server.crt"], capture_output=True).returncode
+            self.assertEqual(due(), 1)
+            self.assertFalse([path for path in directory.iterdir() if path.is_dir()], "The staging folder remains")
+            tls.check("127.0.0.1")
+            self.assertEqual(due(), 0)
+            self.assertEqual({name: (directory / name).read_bytes() for name in kept}, kept)
+
     def test_outside_a_throwaway_home_nothing_runs(self):
         from scripts.installation_lifecycle import MacLifecycle
         results = self.tmp / "results"

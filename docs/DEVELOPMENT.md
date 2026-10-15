@@ -1430,9 +1430,13 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   byte is refused with nothing installed, and the unaltered one installs the LaunchAgent and a
   service whose HTTPS health on the generated CA reports the release's version and commit, with
   `alt doctor` passing apart from its expected findings;
+- pairs a fixture device, then gives the stopped service a leaf certificate one day from expiry,
+  issued by the release under the retained CA and server key; with stock LibreSSL still first on the
+  saved service PATH, the service's own startup renews it with the OpenSSL 3 it discovers, keeping
+  the CA, key and pairing;
 - binds a finite throwaway coordinator socket before address transactions; the disposable Mac VM
   home stays in the launcher's guest-owned shared tree so macOS's Unix socket pathname limit is met;
-- pairs a fixture device and records one fictional project without task dispatch; previews and
+- records one fictional project without task dispatch; previews and
   applies IPv4/IPv6 loopback changes while running and stopped, verifies actual HTTPS/native PID,
   later-start loading and preserved CA/keys/pairing/registration; process loss after the durable
   settings write leaves a receipt that `alt recover` restores;
@@ -1513,7 +1517,8 @@ shell trusts, with `github.com` resolving to the loopback.
   [macOS installation lane](#macos-installation-lane)'s `mac` phase under a throwaway HOME, as
   `installation_mac.py` does: install, the daemon's automatic installation of a newer release with
   no browser terminal open and the overview reporting it, update detection and notice with automatic
-  updates off and the release waiting for confirmation, `alt update`, the Update button, recovery from
+  updates off and the release waiting for confirmation, `alt update`, the Update button, the service's
+  renewal of a near-expiry certificate with the OpenSSL it discovers, recovery from
   an automatic update whose startup exits and uninstall. When it fails, launchd's record of the job, the guest's
   busiest processes, a sample of the service's process and its open files are kept.
 - `login`: the account installs through the public command into its own home. The printed private
