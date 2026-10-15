@@ -1646,6 +1646,15 @@ a required check absent from the head is waited for within the bound rather than
 landing names it and the checks that have registered. A required check that never registers within
 the bound ends the wait as `missing` and does not merge.
 
+A Git command that reaches origin (reading or writing the line, refreshing main or the branch, pushing)
+and fails on the network, such as a connection that times out or a GitHub server error, is tried again
+after 15 seconds, doubling to once a minute, so a flaky connection neither ends the landing nor costs its
+place. Its tries stop five minutes after its first failure, as long as the line keeps a silent head's
+turn; no try runs past that. Landing then ends naming the operation and the network failure, and the
+candidate stays published and unmerged. It leaves the line, retrying the same way for at most five more
+minutes; an entry it cannot remove is dropped once it heads the line without a heartbeat for five
+minutes. Refusals (authentication, a missing branch, a rejected or stale push) are not retried.
+
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
 Run one landing command per task worktree; collect or cancel an existing command before retrying.
 Conflicts abort integration and retain local work for the owner; dirty edits are not stashed. Adopted

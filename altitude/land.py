@@ -57,6 +57,17 @@ LINE_REF = "refs/altitude/merge-line"
 LINE_BEAT_SECONDS = 60
 LINE_STALE_SECONDS = 300
 LINE_WRITE_ATTEMPTS = 20
+#: Git commands that reach origin. One that fails on the network is tried again for up to NETWORK_RETRY_SECONDS,
+#: as long as the line keeps a silent head's turn, so a flaky connection does not end a landing or lose its place.
+REMOTE_GIT = ("fetch", "ls-remote", "push")
+NETWORK_RETRY_SECONDS = LINE_STALE_SECONDS
+#: Git's and curl's words for a connection that failed, broke or stalled, and GitHub's server errors. A refusal
+#: (authentication, a missing ref, a rejected or stale push) says none of these and returns at once.
+_NETWORK_FAILURE = re.compile(
+    r"Could not resolve host|Failed to connect to|Couldn't connect to server|Connection timed out|Operation timed out"
+    r"|timed out after|Connection reset|Connection refused|Network is unreachable|Empty reply from server"
+    r"|Recv failure|Send failure|transfer closed|HTTP/2 stream|SSL_ERROR_SYSCALL|SSL_connect|gnutls_handshake"
+    r"|TLS connect error|early EOF|Connection closed by|returned error: 50[0234]|HTTP 50[0234]")
 
 
 class LandError(RuntimeError):
@@ -88,8 +99,9 @@ def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.Completed
 def _execute(args: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
     try:
         env = config.subprocess_env()
+        if args[0] == "git" and args[1] in REMOTE_GIT:
+            env["LC_ALL"] = "C"  # The collision and network classifiers read Git's diagnostic.
         if args[:2] == ["git", "fetch"]:
-            env["LC_ALL"] = "C"  # The shared, narrow collision classifier reads Git's diagnostic.
             args = [*args[:2], "--no-tags", *args[2:]]
         if args[0] == "gh":
             # #252: neither GH_REPO nor gh's preferred upstream may select a different adoption target.
@@ -106,7 +118,36 @@ def _execute(args: list[str], cwd: Path, timeout: int) -> subprocess.CompletedPr
 
 
 def _git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
-    result = _run(["git", *args], root, timeout=timeout)
+    """Run git. A command that reaches origin and fails on the network is tried again, pausing like the check wait,
+    within NETWORK_RETRY_SECONDS of its first failure, which also cuts each try's timeout; its last failure then
+    returns to the caller, which names the operation. Repeating is safe: reads change nothing, and each push either
+    fast-forwards or compares against a recorded tip, so one that landed unseen is refused as stale or is already up
+    to date."""
+    first, pause, limit = None, CHECK_POLL_SECONDS, timeout
+    while True:
+        result = _git_once(root, *args, timeout=limit)
+        output = (result.stderr or "") + (result.stdout or "")
+        if not (args[0] in REMOTE_GIT and result.returncode and _NETWORK_FAILURE.search(output)):
+            return result
+        now = time.monotonic()
+        first = now if first is None else first
+        left = first + NETWORK_RETRY_SECONDS - now - pause
+        if left <= 0:
+            result.stderr = (f"{output.strip()} (a network failure: git {args[0]} kept failing for "
+                             f"{round(now - first)}s; check this machine's connection to origin, then re-run alt land)")
+            return result
+        _note(f"git {args[0]} failed on the network; trying again in {pause}s: {output.strip().splitlines()[-1]}")
+        time.sleep(pause)
+        limit, pause = min(timeout, max(1, int(left))), min(pause * 2, CHECK_POLL_SECONDS * CHECK_POLL_BACKOFF)
+
+
+def _git_once(root: Path, *args: str, timeout: int) -> subprocess.CompletedProcess:
+    try:
+        result = _run(["git", *args], root, timeout=timeout)
+    except LandError as exc:  # a stalled transfer: the network did not answer within the command's timeout
+        if args[0] in REMOTE_GIT and isinstance(exc.__cause__, subprocess.TimeoutExpired):
+            return subprocess.CompletedProcess(["git", *args], 124, "", f"git {args[0]} timed out after {timeout}s")
+        raise
     if args[0] == "fetch":
         ref = args[-1].split(":")[-1].removeprefix("refs/remotes/origin/")
         if git_policy.fetch_ref_collision(result, ref):
@@ -1275,8 +1316,8 @@ class _Line:
         return next((i for i, e in enumerate(entries) if e["token"] == self.token), None)
 
     def join(self) -> None:
-        now = time.time()
         def change(entries):
+            now = time.time()  # taken as the change applies, after any retried read
             for entry in entries:
                 if entry["pr"] == self.number:  # one landing per PR: a re-run takes over its place
                     entry.update(token=self.token, beat=now)
@@ -1286,9 +1327,8 @@ class _Line:
 
     def position(self) -> int:
         """This landing's place in line, after removing a head that has stopped heartbeating."""
-        now = time.time()
         def change(entries):
-            index = self._index(entries)
+            now, index = time.time(), self._index(entries)
             if index is None:
                 raise TurnLost(f"PR #{self.number} is no longer in the merge line; another landing of it took over")
             if index and now - entries[0]["beat"] > LINE_STALE_SECONDS:
@@ -1302,30 +1342,29 @@ class _Line:
 
     def beat(self, push: tuple[str, ...] = ()) -> None:
         """Renew the turn; `push` updates branches with it, so a landing that lost its turn cannot publish."""
-        now = time.time()
         def change(entries):
             if not entries or entries[0]["token"] != self.token:
                 raise TurnLost(f"PR #{self.number} lost its merge turn (another landing of it took over, or the line "
                                f"dropped it after {LINE_STALE_SECONDS}s without a heartbeat); the candidate remains "
                                "published and unmerged — re-run alt land")
-            entries[0]["beat"] = now
+            entries[0]["beat"] = time.time()
             return entries
         self._write(change, push=push)
 
     def leave(self) -> None:
-        now = time.time()
         def change(entries):
             index = self._index(entries)
             if index is None:
                 return None
             del entries[index]
             if index == 0 and entries:
-                entries[0]["beat"] = now  # the next landing's turn starts now
+                entries[0]["beat"] = time.time()  # the next landing's turn starts now
             return entries
         try:
             self._write(change)
         except LandError as exc:  # its turn ends anyway once its heartbeat stops
-            _note(f"could not leave the merge line ({exc}); it drops this entry after {LINE_STALE_SECONDS}s")
+            _note(f"could not leave the merge line ({exc}); the line drops this entry once it heads the line "
+                  f"without a heartbeat for {LINE_STALE_SECONDS}s")
 
     def require_turn(self) -> None:
         if self.lost:

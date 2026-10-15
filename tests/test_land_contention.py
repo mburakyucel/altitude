@@ -7,6 +7,7 @@ import contextlib
 import json
 import multiprocessing
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -982,6 +983,128 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertNotEqual(subprocess.run(['git', 'merge-base', '--is-ancestor', 'main', 'worktree-first'],
                                            cwd=self.remote).returncode, 0)
         self.assertEqual(self.line(), [])
+
+    @contextlib.contextmanager
+    def network(self, slug, *, flaky=False):
+        """Git commands that reach origin from `slug`'s landings fail as a connection timing out does on a flaky
+        network: the first of every two of each kind (`flaky`), and every one while the fixture's `offline` file
+        exists. A forked landing keeps the failures; each is logged by kind."""
+        fixture, real, seen = self.owners[slug][1], land._execute, {}
+
+        def execute(args, cwd, timeout):
+            if args[0] == 'git' and args[1] in land.REMOTE_GIT:
+                kind = f"{args[1]} {re.sub('^[0-9a-f]{40}$', '<line commit>', args[-1].split(':')[-1])}"
+                seen[kind] = seen.get(kind, 0) + 1
+                if (fixture / 'offline').exists() or flaky and seen[kind] % 2:
+                    with (fixture / 'network-failures').open('a') as log:
+                        log.write(kind + '\n')
+                    return subprocess.CompletedProcess(args, 128, '', (
+                        "fatal: unable to access 'https://github.com/team/demo.git/': Failed to connect to "
+                        "github.com port 443 after 75002 ms: Couldn't connect to server\n"))
+            return real(args, cwd, timeout)
+
+        with mock.patch.object(land, '_execute', execute):
+            yield
+
+    def network_failures(self, slug):
+        failures = self.owners[slug][1] / 'network-failures'
+        return failures.read_text().splitlines() if failures.exists() else []
+
+    def test_flaky_network_keeps_the_waiting_candidates_place_and_merges(self):
+        # A network failure of one git command dropped a waiting candidate from the line and ended its landing.
+        self.ship_check_workflow()
+        self.release('first')
+        self.foreign_head()
+        with self.network('first', flaky=True):
+            first = self.ready_in_line('first', 101, 1)
+        self.await_condition(lambda: self.network_failures('first').count(f'ls-remote {land.LINE_REF}') >= 3,
+                             'failed line reads while waiting')
+        self.assertTrue(first[0].is_alive())
+        self.assertEqual(self.line(), [900, 101])
+        self.outside_merge()  # the turn refreshes main, integrates it and pushes with its heartbeat
+        self.write_line(self.line(entries=True)[1:])
+        self.merged('first', self.finish(first))
+        failed = set(self.network_failures('first'))
+        for step in (f'ls-remote {land.LINE_REF}', 'fetch <line commit>', 'fetch refs/remotes/origin/main',
+                     'fetch refs/remotes/origin/worktree-first', f'push {land.LINE_REF}', 'push refs/heads/worktree-first'):
+            self.assertIn(step, failed)
+        self.assertIn('failed on the network; trying again', self.notes(first))
+        self.assertEqual(self.notes(first).count('pushed head'), 2)
+        self.assertEqual(self.line(), [])
+
+    def test_lasting_network_failure_ends_the_landing_within_its_bound(self):
+        self.ship_check_workflow()
+        self.release('first')
+        self.foreign_head()
+        fixture = self.owners['first'][1]
+        with self.network('first'):
+            first = self.ready_in_line('first', 101, 1)
+        (fixture / 'offline').touch()
+        self.await_condition(lambda: 'failed on the network' in self.notes(first), 'a failed line read')
+        # Each step gives up once the bound has passed since its first failure: the read, then leaving the line.
+        self.await_condition(lambda: self.advance('first', land.NETWORK_RETRY_SECONDS) or not first[0].is_alive(),
+                             'the landing to end')
+        payload = self.finish(first)
+        self.assertRegex(payload['error'], r"read the merge line: .*Couldn't connect to server \(a network failure: git "
+                                           r"ls-remote kept failing for \d+s; check this machine's connection")
+        self.assertIn('could not leave the merge line', self.notes(first))
+        # The entry it could not remove is dropped once it heads the line without a heartbeat.
+        self.assertEqual(self.line(), [900, 101])
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+
+    def test_a_timed_out_line_read_is_tried_again_and_refusals_are_not(self):
+        worktree, real, notes = self.owners['first'][0], land._execute, []
+
+        def stalls_once(args, cwd, timeout):
+            if args[1] == 'ls-remote' and not notes:
+                raise land.LandError('git ls-remote origin: no answer') from subprocess.TimeoutExpired(args, timeout)
+            return real(args, cwd, timeout)
+
+        with mock.patch.object(land, '_execute', stalls_once), mock.patch.object(land, 'CHECK_POLL_SECONDS', .01), \
+                mock.patch.object(land, '_note', notes.append):
+            land._Line(worktree, 101).join()
+            self.assertEqual(len(notes), 1)
+            self.assertIn('git ls-remote failed on the network', notes[0])
+            self.assertEqual(self.line(), [101])
+            # Refusals return at once: a branch origin lacks, and a push origin rejects.
+            self.assertIsNone(land._fetch_remote_tip(worktree, 'no-such-branch'))
+            refused = land._git(worktree, 'push', 'origin', 'HEAD~1:refs/heads/main')
+            self.assertIn('[rejected]', refused.stderr)
+            self.assertEqual(len(notes), 1)
+        for refusal in ("fatal: unable to access 'https://github.com/team/demo.git/': The requested URL returned "
+                        "error: 403", "remote: Repository not found.", "fatal: Authentication failed for "
+                        "'https://github.com/team/demo.git/'", "error: failed to push some refs (stale info)"):
+            self.assertIsNone(land._NETWORK_FAILURE.search(refusal))
+        for refusal in ("git@github.com: Permission denied (publickey).\nfatal: Could not read from remote "
+                        "repository.", "fatal: couldn't find remote ref refs/heads/no-such-branch"):
+            self.assertIsNone(land._NETWORK_FAILURE.search(refusal))
+        for failure in ("fatal: unable to access 'https://github.com/team/demo.git/': Could not resolve host: github.com",
+                        "error: RPC failed; curl 56 Recv failure: Connection reset by peer",
+                        "fatal: unable to access 'https://github.com/team/demo.git/': The requested URL returned "
+                        "error: 502", "ssh: Could not resolve hostname github.com: Temporary failure in name resolution",
+                        "ssh: connect to host github.com port 22: Operation timed out",
+                        "kex_exchange_identification: Connection closed by remote host"):
+            self.assertIsNotNone(land._NETWORK_FAILURE.search(failure))
+
+    def test_a_line_write_whose_reply_was_lost_is_read_again(self):
+        # The push lands at origin but its reply never arrives: the repeated push is stale, so the line is read again.
+        worktree, real, lost = self.owners['first'][0], land._execute, []
+
+        def reply_lost_once(args, cwd, timeout):
+            result = real(args, cwd, timeout)
+            if args[1] == 'push' and not lost:
+                lost.append(result.returncode)
+                return subprocess.CompletedProcess(args, 128, '', 'error: RPC failed; curl 56 Recv failure: '
+                                                                  'Connection reset by peer')
+            return result
+
+        with mock.patch.object(land, '_execute', reply_lost_once), mock.patch.object(land, 'CHECK_POLL_SECONDS', .01), \
+                mock.patch.object(land, '_note'):
+            line = land._Line(worktree, 101)
+            line.join()
+        self.assertEqual(lost, [0])
+        self.assertEqual(self.line(entries=True)[0]['token'], line.token)
+        self.assertEqual(self.line(), [101])
 
     def test_line_write_retries_a_compare_and_swap_lost_at_the_remote(self):
         worktree, real_git, refused = self.owners['first'][0], land._git, []
