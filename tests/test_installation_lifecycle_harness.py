@@ -1244,6 +1244,7 @@ class TestInstallationMacosVm(AltitudeCase):
         server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         server.load_cert_chain(self.tmp / "server.pem", self.tmp / "server.key")
         client = ssl.create_default_context(cafile=str(self.tmp / "ca.pem"))
+        server.minimum_version = client.minimum_version = ssl.TLSVersion.TLSv1_2
         for name in ("github.com", "api.github.com"):
             with socket.create_server(("127.0.0.1", 0)) as listener:
                 def accept():
