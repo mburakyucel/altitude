@@ -191,7 +191,6 @@ class TestInstalledVersion(IncidentIssueCase):
         self.patch(config, "RELEASE", {"version": version, "commit": "884b6464abcdef0123456789abcdef0123456789",
                                        "repository": "https://github.com/product-fixture/altitude"})
         self.patch(config, "INSTALL_PREFIX", self.tmp / "install")
-        self.addCleanup((config.ROOT / "update.json").unlink, missing_ok=True)   # the runtime home outlives a case
         S.write_json(config.ROOT / "update.json", {"latest": {"version": latest, "notes": f"{TARGET}/releases/tag/{latest}"},
                                                    "checked": 1760000000, "next": 1760043200})
 
