@@ -1234,6 +1234,101 @@ class TestInstallationMacosVm(AltitudeCase):
         self.assertIn("still serves the web app built before the newer main", error)
         self.assertNotIn("cases", record)
 
+    def test_served_certificate_is_trusted_by_pythons_ssl_for_both_github_names(self):
+        from scripts import installation_macos_vm as vm
+        import ssl
+        import threading
+        if not Path("/usr/bin/openssl").exists():
+            self.skipTest("the lane builds its authority with macOS's own openssl")
+        vm.certificates(self.tmp)
+        server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server.load_cert_chain(self.tmp / "server.pem", self.tmp / "server.key")
+        client = ssl.create_default_context(cafile=str(self.tmp / "ca.pem"))
+        for name in ("github.com", "api.github.com"):
+            with socket.create_server(("127.0.0.1", 0)) as listener:
+                def accept():
+                    connection, _ = listener.accept()
+                    with server.wrap_socket(connection, server_side=True):
+                        pass
+                thread = threading.Thread(target=accept)
+                thread.start()
+                with socket.create_connection(listener.getsockname()) as raw, \
+                        client.wrap_socket(raw, server_hostname=name) as tls:
+                    self.assertEqual(dict(item[0] for item in tls.getpeercert()["subject"])["commonName"], "github.com")
+                thread.join(10)
+
+    def test_runtime_rows_pass_only_as_their_guest_reports_after_the_fixture_install(self):
+        from scripts import installation_macos_vm as vm
+        (self.tmp / "release").mkdir()
+        (self.tmp / "release/install.sh").write_text("VERSION='v0.0.1'\n")
+
+        class Guest:
+            def __init__(self, rows, installed="Altitude v0.0.1 is installed\n"):
+                self.rows, self.installed, self.commands = rows, installed, []
+
+            def copy(self, source, target):
+                pass
+
+            def ssh(self, command, timeout=120, check=True):
+                self.commands.append(command)
+                output = {"setup": '{"project": "fictional"}', "install.sh": self.installed}
+                found = next((text for key, text in output.items() if key in command), "")
+                return subprocess.CompletedProcess(command, 0, found, "")
+
+            def fetch(self, source, target):
+                target.mkdir(parents=True)
+                (target / "rows.jsonl").write_text("".join(json.dumps(row) + "\n" for row in self.rows))
+
+        def judged(rows, **kwargs):
+            guest, record = Guest(rows, **kwargs), {}
+            shutil.rmtree(self.tmp / "evidence", ignore_errors=True)
+            with mock.patch.object(vm, "prerequisites", return_value={}), mock.patch.object(vm.time, "sleep"):
+                vm.phase_workers(guest, "fictional-owner/fictional-altitude", self.tmp, record, self.tmp, "c" * 40)
+            return guest, record["cases"]
+
+        every = [{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["workers"]]
+        guest, cases = judged(every)
+        self.assertTrue(all(case["passed"] for case in cases.values()))
+        install = next(command for command in guest.commands if "install.sh" in command)
+        self.assertIn(f"CODEX_BIN={vm.SHARED}/fixture/codex", install)  # the fictional engine, never a provider
+        self.assertIn(f"PATH={vm.SHARED}/fixture/bin:", install)  # the fake GitHub CLI first
+        self.assertIn("rows coordinator-stop failed-turn status-unknown validation-restart", "".join(guest.commands))
+        _, cases = judged([*every[:-1], {"row": "validation-restart", "passed": False, "error": "kept nothing"}])
+        self.assertEqual(cases["validation-restart"], {"passed": False, "error": "kept nothing"})
+        _, cases = judged(every[:1])
+        self.assertEqual(cases["failed-turn"], {"passed": False, "error": "the row did not finish"})
+        _, cases = judged([*every[:-1], {"row": "validation-restart", "passed": False, "unavailable": "no restart"}])
+        self.assertEqual(cases["validation-restart"], {"passed": False, "unavailable": "no restart"})
+        with self.assertRaisesRegex(vm.Stop, "install failed"):
+            judged(every, installed="")
+
+    def test_guest_engine_runs_its_prompts_commands_and_ends_the_turn_as_told(self):
+        engine, log = REPO / "tests/macos_guest_engine.py", self.tmp / "log.jsonl"
+        environment = {**os.environ, "FIXTURE_LOG": str(log), "ALTITUDE_TASK": "fictional-task"}
+
+        def worker(prompt):
+            requests = [{"id": 1, "method": "initialize", "params": {}}, {"method": "initialized"},
+                        {"id": 2, "method": "account/rateLimits/read"}, {"id": 3, "method": "thread/start"},
+                        {"id": 4, "method": "turn/start", "params": {"input": [{"type": "text", "text": prompt}]}}]
+            result = subprocess.run([sys.executable, str(engine), "app-server"], text=True, capture_output=True,
+                                    env=environment, input="".join(json.dumps(request) + "\n" for request in requests),
+                                    timeout=30)
+            return [json.loads(line) for line in result.stdout.splitlines()]
+
+        answers = worker("FIXTURE-RUN: echo ran-in-turn\n")
+        self.assertEqual(answers[1]["result"]["rateLimits"]["primary"]["usedPercent"], 1)
+        self.assertEqual(answers[-1]["params"]["turn"]["status"], "completed")
+        self.assertEqual([entry.get("stdout") for entry in map(json.loads, log.read_text().splitlines())][-1],
+                         "ran-in-turn\n")
+        failed = worker("FIXTURE-END: failed\n")[-1]["params"]["turn"]
+        self.assertEqual((failed["status"], failed["error"]["message"]), ("failed", "Fictional turn failed."))
+        held = worker("FIXTURE-END: exit 3\n")
+        self.assertNotIn("turn/completed", [answer.get("method") for answer in held])
+        coordinator = subprocess.run([sys.executable, str(engine), "exec", "resume", "fictional-session", "-"],
+                                     text=True, capture_output=True, env=environment, input="", timeout=30)
+        self.assertEqual(json.loads(coordinator.stdout.splitlines()[0])["thread_id"], "fictional-session")
+        self.assertEqual(json.loads(coordinator.stdout.splitlines()[-1])["type"], "turn.completed")
+
     def test_published_names_two_release_tags_and_runs_alone(self):
         from scripts import installation_macos_vm as vm
         for argv, error in ((["--published", "v0.3.0"], "is not a release version"),
