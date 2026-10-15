@@ -677,3 +677,49 @@ def local_terminal_stop(unit: str) -> None:
             members = terminal_session(term.proc.pid)
     if members:
         raise RuntimeError("Fixture terminal session is still running after SIGKILL")
+
+
+def in_terminal(child, typed: bytes = b"", answers: dict[bytes, bytes] | None = None,
+                limit: float = 60) -> tuple[int, str]:
+    """CHILD(), which execs, as the session leader of a pseudo-terminal of its own, as a person runs a command: TYPED
+    arrives at once and each answer once its question shows. Reads the terminal until the child exits and its output
+    ends, since a macOS session leader's exit waits until its output is read; fails with that output once LIMIT
+    seconds pass, and kills the child then. Returns the exit code and the output."""
+    import pty
+    import select
+    import signal
+    import time
+    pid, primary = pty.fork()
+    if pid == 0:
+        try:
+            child()
+        finally:
+            os._exit(127)  # never back into the test runner
+    answers, shown, ended, status = dict(answers or {}), b"", False, None
+    deadline = time.monotonic() + limit
+    try:
+        os.write(primary, typed)
+        while not ended or status is None:
+            if time.monotonic() > deadline:
+                raise AssertionError(f"Still running after {limit} s; the terminal shows:\n"
+                                     f"{shown.decode(errors='replace')}")
+            if not ended and select.select([primary], [], [], 0.05)[0]:
+                try:
+                    chunk = os.read(primary, 4096)
+                except OSError:  # Linux ends with EIO, macOS with an empty read
+                    chunk = b""
+                shown += chunk
+                ended = not chunk
+                for question in [question for question in answers if question in shown and not ended]:
+                    os.write(primary, answers.pop(question))
+            elif ended:
+                time.sleep(0.05)
+            if status is None:
+                done, code = os.waitpid(pid, os.WNOHANG)
+                status = os.waitstatus_to_exitcode(code) if done else None
+    finally:
+        os.close(primary)
+        if status is None:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+    return status, shown.decode(errors="replace").replace("\r\n", "\n")

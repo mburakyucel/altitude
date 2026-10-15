@@ -10,7 +10,7 @@ import tempfile
 import textwrap
 import unittest
 
-from tests.support import REPO, git, make_repo
+from tests.support import REPO, git, in_terminal, make_repo
 from scripts import build_release
 
 REPOSITORY = "https://github.com/example/altitude"
@@ -82,23 +82,12 @@ class InstallScript(unittest.TestCase):
     def run_in_terminal(self, **env) -> tuple[int, str]:
         """`curl … | sh` typed in a terminal: the script arrives on standard input while the terminal stays the
         session's own."""
-        import pty
-        pid, terminal = pty.fork()
-        if pid == 0:
+        def child():
             script = os.open(self.script, os.O_RDONLY)
             os.dup2(script, 0)
             os.execve("/bin/sh", ["sh"], {**self.env, **env})
-        output = b""
-        while True:
-            try:
-                chunk = os.read(terminal, 4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            output += chunk
-        os.close(terminal)
-        return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]), output.decode().replace("\r\n", "\n")
+
+        return in_terminal(child)
 
     def alt_calls(self):
         path = self.tmp / "alt-calls"
