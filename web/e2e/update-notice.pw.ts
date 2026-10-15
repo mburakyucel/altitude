@@ -10,7 +10,7 @@ type Json = Record<string, unknown>;
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "wait" }); });
 
 const NOTES = "https://github.com/example/altitude/releases/tag/v0.2.0";
-const installed = { current: "v0.1.0", available: null, check: true, automatic: false, automatic_pending: false, installed: null, command: "alt update", checked: "2026-10-01T08:00:00Z", attempt: null };
+const installed = { current: "v0.1.0", available: null, check: true, automatic: false, automatic_pending: false, installed: null, command: "alt update", checked: "2026-10-01T08:00:00Z", attempt: null, waiting_for: [] };
 const available = { ...installed, available: { version: "v0.2.0", notes: NOTES } };
 
 /** Every overview read carries `state.update`, which a test changes as the daemon would. */
@@ -151,10 +151,11 @@ test("Settings shows the version, the command that installs a newer one and the 
   await walk.state("12-settings-up-to-date", { visible: [version.getByText("v0.1.0", { exact: true }), toggle], hidden: [version.getByRole("button", { name: "Copy" })] });
   await expect(toggle).toBeChecked();
 
-  state.update = { ...available, automatic, automatic_pending: automatic };
+  const waiting = "the validation run of atlas/check-the-lane";
+  state.update = { ...available, automatic, automatic_pending: automatic, waiting_for: [waiting, "an open browser terminal"] };
   await page.reload();
   await walk.state("13-settings-available", {
-    visible: [version.getByText(/v0.1.0 · v0.2.0 is available/), version.getByRole("link", { name: "What’s new" }), version.getByText("alt update", { exact: true }),
+    visible: [version.getByText(`v0.1.0 · Altitude v0.2.0 installs automatically once current work finishes. Waiting for ${waiting}, an open browser terminal. ·`), version.getByRole("link", { name: "What’s new" }), version.getByText("alt update", { exact: true }),
       version.getByRole("button", { name: "Copy" }), page.getByRole("status", { name: "New version" })],
     hidden: [],
   });
@@ -163,7 +164,7 @@ test("Settings shows the version, the command that installs a newer one and the 
   const notice = page.getByRole("status", { name: "New version" });
   await walk.state("13a-automatic-pending", {
     action: () => autoToggle.scrollIntoViewIfNeeded(),
-    visible: [notice.getByText(/will install automatically at the next quiet point, when no browser terminal is open/), autoToggle],
+    visible: [notice.getByText(`Altitude v0.2.0 installs automatically once current work finishes. Waiting for ${waiting}, an open browser terminal.`), autoToggle],
     hidden: [notice.getByRole("button", { name: "Update", exact: true })],
   });
   await expect(autoToggle).toBeChecked();
@@ -216,7 +217,7 @@ test("Settings shows the version, the command that installs a newer one and the 
   await page.reload();
   await walk.state("15-automatic-failure", {
     visible: [notice.getByText(/The update to v0.2.0 did not finish/), notice.getByRole("button", { name: "Try again" })],
-    hidden: [notice.getByText(/will install automatically/)],
+    hidden: [notice.getByText(/installs automatically/)],
   });
   await notice.getByRole("button", { name: "Dismiss new version notice" }).click();
   const about = page.getByRole("region", { name: "About" });

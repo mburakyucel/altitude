@@ -229,7 +229,7 @@ class TestReviews(AltitudeCase):
         for fail in (False, True):
             with self.subTest(fail=fail):
                 def during_run(prompt, **kwargs):
-                    self.assertIn(f"adversarial review for {self.project}/{self.slug}",
+                    self.assertIn(f"the adversarial review of {self.project}/{self.slug}",
                                   server.restart_waiting_for(check_activity=False))
                     with mock.patch.object(server, "_request_restart_unit") as restart:
                         with self.assertRaises(server.RestartBusy):
@@ -265,7 +265,7 @@ class TestReviews(AltitudeCase):
         for exclusive in (False, True):
             with self.subTest(exclusive=exclusive):
                 with config.restart_lock(exclusive=exclusive), mock.patch.object(config, "activation_pending", return_value=not exclusive):
-                    with self.assertRaisesRegex(T.TransitionError, "activating an update"):
+                    with self.assertRaisesRegex(T.TransitionError, "restarts soon to apply an update"):
                         self.run_review(requested)
                 self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
         self.engine.assert_not_called()
@@ -275,12 +275,30 @@ class TestReviews(AltitudeCase):
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         requested = self.request()
         S.write_json(flag, {"since": S.now(), "head": "merged", "files": ["altitude/reviews.py"]})
-        with self.assertRaisesRegex(T.TransitionError, "activating an update"):
+        with self.assertRaisesRegex(T.TransitionError, "restarts soon to apply an update"):
             self.run_review(requested)
         self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
         self.engine.assert_not_called()
         S.write_json(flag, {**S.read_json(flag), "failed": S.now()})
         self.assertEqual(self.run_review(requested)["state"], "completed", "a failed activation lifts the hold")
+
+    def test_an_offered_automatic_update_holds_new_review_runs_until_its_attempt(self):
+        """#1003: on a packaged install the offered release fences new runs as merged changes do on a source one."""
+        prefix = self.tmp / "installed"
+        prefix.mkdir()
+        requested = self.request()
+        with mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"}), \
+                mock.patch.object(config, "INSTALL_PREFIX", prefix):
+            record = {"latest": {"version": "v0.2.0", "notes": "https://example.test/notes"}}
+            S.write_json(config.ROOT / "update.json", record)
+            with self.assertRaisesRegex(T.TransitionError, "restarts soon to apply an update"):
+                self.run_review(requested)
+            self.engine.assert_not_called()
+            S.write_json(config.ROOT / "update.json", {**record, "automatic_attempts": ["v0.2.0"],
+                                                       "attempt": {"version": "v0.2.0", "state": "failed"}})
+            self.assertFalse(config.activation_pending(), "a failed attempt lifts the hold")
+        self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
+        self.assertEqual(self.run_review(requested)["state"], "completed")
 
     def test_owner_attempt_and_original_source_are_required(self):
         with self.assertRaises(T.TransitionError):

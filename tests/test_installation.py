@@ -1355,14 +1355,17 @@ class AutomaticUpdates(NoticeCase):
                 self.assertIsNone(installation.update_status()["installed"])
 
     def test_work_an_open_terminal_the_switch_or_a_container_defers_it(self):
-        self.busy.return_value = ["atlas L3"]
+        self.busy.return_value = ["the atlas L3 turn"]
         self.server.auto_update()
+        self.assertEqual(installation.update_status()["waiting_for"], ["the atlas L3 turn"])
         self.busy.return_value = []
         self.terminal_open.return_value = True
         self.server.auto_update()
+        self.assertEqual(installation.update_status()["waiting_for"], ["an open browser terminal"])
         self.terminal_open.return_value = False
         with config.restart_lock():   # a dispatch, review or validation holding the gate
             self.server.auto_update()
+        self.assertEqual(installation.update_status()["waiting_for"], [self.server.ACTIVITY_IN_FLIGHT])
         S.write_json(config.ROOT / "settings.json", {"update_automatic": False})
         self.assertFalse(installation.update_status()["automatic"])
         self.server.auto_update()
@@ -1375,6 +1378,22 @@ class AutomaticUpdates(NoticeCase):
         self.assertEqual(self.detached, [])
         self.server.auto_update()
         self.assertEqual(len(self.detached), 1)
+
+    def test_an_offered_update_holds_new_long_runs_until_its_attempt(self):
+        """#1003: validation, review and improvement runs wait while the release waits, so it gets its quiet point."""
+        self.assertTrue(config.activation_pending())
+        self.terminal_open.return_value = True
+        self.assertFalse(config.activation_pending(), "an open terminal defers the update, so work keeps going")
+        self.terminal_open.return_value = False
+        S.write_json(config.ROOT / "settings.json", {"update_automatic": False})
+        self.assertFalse(config.activation_pending(), "turning automatic updates off lifts it")
+        (config.ROOT / "settings.json").unlink()
+        self.server.auto_update()
+        self.assertEqual(installation.update_status()["waiting_for"], [], "a started update waits for nothing")
+        self.assertTrue(config.activation_pending(), "the request keeps the fence")
+        with self.assertRaises(OSError):
+            self.run_detached()
+        self.assertFalse(config.activation_pending(), "a failed attempt lifts it; the version is not tried again")
 
     def test_an_update_or_recovery_already_running_is_never_joined(self):
         (self.prefix / "pending.json").write_text("{}")

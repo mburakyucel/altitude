@@ -221,7 +221,7 @@ def update_status() -> dict | None:
     if platform.containerized():
         return {"current": (config.RELEASE or {}).get("version"), "available": None, "check": False,
                 "automatic": False, "automatic_pending": False, "command": None, "checked": None, "attempt": None, "installed": None,
-                "managed": "image", "reason": platform.IMAGE_MANAGED}
+                "waiting_for": [], "managed": "image", "reason": platform.IMAGE_MANAGED}
     if config.RELEASE is None:
         return None
     current = config.RELEASE["version"]
@@ -235,11 +235,14 @@ def update_status() -> dict | None:
     attempt = last if last.get("state") in ("running", "failed") and last.get("version") != current else None
     installed = ({"version": current, "notes": f"{config.RELEASE['repository']}/releases/tag/{current}"}
                  if last.get("automatic") and last.get("version") == current and last.get("state") == "succeeded" else None)
+    pending = bool(automatic and newer and last.get("state") != "running"
+                   and latest["version"] not in record.get("automatic_attempts", []))
+    wait = record.get("waiting") or {}
     return {"current": current, "available": latest if newer else None, "check": check,
-            "automatic": automatic, "automatic_pending": bool(automatic and newer and last.get("state") != "running"
-                and latest["version"] not in record.get("automatic_attempts", [])), "command": "alt update",
+            "automatic": automatic, "automatic_pending": pending, "command": "alt update",
             "checked": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record["checked"])) if record.get("checked") else None,
-            "attempt": attempt, "installed": installed}
+            "attempt": attempt, "installed": installed,
+            "waiting_for": wait.get("for", []) if pending and wait.get("version") == latest["version"] else []}
 
 
 def update_running() -> bool:
@@ -301,10 +304,19 @@ def _require_no_update(prefix: Path) -> None:
 def automatic_update() -> str | None:
     """The offered release the daemon installs at its next quiet point; each version is tried once."""
     reconcile_update()
+    return automatic_update_offered()
+
+
+def automatic_update_offered() -> str | None:
+    """The release waiting for its automatic attempt, without reconciling: the admission fence reads it."""
     status = update_status()
-    if not status or not status["automatic_pending"]:
-        return None
-    return status["available"]["version"]
+    return status["available"]["version"] if status and status["automatic_pending"] else None
+
+
+def record_update_wait(version: str, waiting: list[str]) -> None:
+    """What the daemon's last quiet-point check found the offered release waiting for, for the page and `alt doctor`."""
+    with _changing_update_record() as record:
+        record["waiting"] = {"version": version, "for": waiting}
 
 
 def update_notice() -> str | None:
@@ -699,8 +711,19 @@ def _next(hosting: dict, pairing: dict, needs: list[dict]) -> list[str]:
     return ["Next: nothing is left to set up; open Altitude in your browser."]
 
 
+def describe_update(update: dict | None) -> list[str]:
+    """`alt doctor`'s line about a newer release, naming what an automatic update waits for."""
+    if not update or not update.get("available"):
+        return []
+    version, waiting = update["available"]["version"], update["waiting_for"]
+    if not update["automatic_pending"]:
+        return [f"Update: Altitude {version} is available; alt update installs it."]
+    return [f"Update: Altitude {version} installs automatically once current work finishes"
+            + (f"; waiting for {', '.join(waiting)}." if waiting else ".")]
+
+
 def describe_doctor(report: dict) -> str:
-    lines = [describe_hosting(report["hosting"]), *report["next"], "", "Readiness:"]
+    lines = [describe_hosting(report["hosting"]), *report["next"], *describe_update(report["update"]), "", "Readiness:"]
     lines += [f"  {item['name']}: {item['state']}" for item in report["checks"]]
     lines += ["  " + item["detail"] for item in report["checks"]
               if item["state"] in ("unavailable", "unknown") and isinstance(item.get("detail"), str)]

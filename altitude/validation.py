@@ -57,8 +57,8 @@ USER = "1000:1000"               # the image's `ubuntu` user, mapped to the oper
 IMAGE_CACHE = "/home/ubuntu/.cache/altitude-installation-vm"
 
 OFF = "alt task validate: the operator has turned validation runs off in Settings"
-RESTARTING = ("alt task validate: Altitude is activating merged changes; new runs start once it has restarted "
-              "(`alt repo` shows the pending activation)")
+RESTARTING = ("alt task validate: Altitude restarts soon to apply an update; new runs start once it has restarted "
+              "(`alt repo` shows a pending activation, `alt doctor` what an update waits for)")
 
 UNIT_PREFIX = "altitude-validation-"   # every unit the runner starts; its rows are recorded by reconcile()
 

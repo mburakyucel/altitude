@@ -591,7 +591,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
     key = (project, slug, review_id)
     with config.restart_lock() as quiet, dispatch.launch_lock(), S.project_lock(project):
         if not quiet or config.activation_pending():  # in-flight reviews finish; new ones wait for the restart
-            raise T.TransitionError("Altitude is activating an update. Run the accepted review after activation.")
+            raise T.TransitionError("Altitude restarts soon to apply an update. Run the accepted review after it restarts.")
         task = _load(project, slug)
         _owner(task, actor, expected_attempt, required=True)
         review = _find(task, review_id)

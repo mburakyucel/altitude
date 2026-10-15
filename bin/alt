@@ -683,10 +683,10 @@ def main(argv=None) -> None:
             nonlocal activating_until
             if activating_until is None:
                 activating_until = time.monotonic() + validation.WAIT
-                print("[altitude] Altitude is activating merged changes; this request asks again once it has "
+                print("[altitude] Altitude restarts soon to apply an update; this request asks again once it has "
                       "restarted", file=sys.stderr, flush=True)
             if time.monotonic() >= activating_until:
-                sys.exit(f"alt task validate: Altitude did not finish activating merged changes within "
+                sys.exit(f"alt task validate: Altitude did not restart for its update within "
                          f"{validation.WAIT // 60} minutes; try again")
             time.sleep(validation.WATCH_SECONDS)
         while True:

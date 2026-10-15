@@ -5,7 +5,7 @@ import { renderApp } from "../test/render";
 
 const notes = "https://github.com/example/altitude/releases/tag/v0.2.0";
 const available: Update = { current: "v0.1.0", check: true, automatic: true, automatic_pending: true, installed: null,
-  command: "alt update", available: { version: "v0.2.0", notes } };
+  command: "alt update", available: { version: "v0.2.0", notes }, waiting_for: ["the validation run of atlas/check-the-lane"] };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 
 function fixture(initial: Update | null = available) {
@@ -42,12 +42,13 @@ describe("Installed release updates", () => {
       attempt: { version: "v0.3.0", state: "failed", error: "Run alt update in a terminal to see why." } });
     renderApp({ route: "/" });
     expect(await screen.findByRole("button", { name: "Update" })).toBeVisible();
-    expect(screen.queryByText(/will install automatically/)).toBeNull();
+    expect(screen.queryByText(/installs automatically/)).toBeNull();
   });
   it("waits automatically, switches to a prompt, and preserves the preference with checking off", async () => {
     const state = fixture();
     const { user } = renderApp({ route: "/settings" });
-    expect(await screen.findByText(/will install automatically at the next quiet point, when no browser terminal is open/)).toBeVisible();
+    const pending = "Altitude v0.2.0 installs automatically once current work finishes. Waiting for the validation run of atlas/check-the-lane.";
+    expect(await screen.findByText(pending)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
     const automatic = screen.getByRole("switch", { name: /Automatic updates/ });
     expect(automatic).toBeChecked();
@@ -122,7 +123,7 @@ describe("Installed release updates", () => {
     await user.click(screen.getByRole("button", { name: "Dismiss new version notice" }));
     expect(localStorage.getItem("altitude.update.dismissed")).toBe("v0.2.0:installed");
     set({ ...available, available: { version: "v0.3.0", notes } });
-    expect(await screen.findByText(/Altitude v0.3.0 will install automatically/)).toBeVisible();
+    expect(await screen.findByText(/Altitude v0.3.0 installs automatically/)).toBeVisible();
   });
 
   it.each([null, { ...available, available: null, automatic: false, managed: "image" as const, reason: "Managed by its container image." }])(

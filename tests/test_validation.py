@@ -642,10 +642,10 @@ class TestValidationRunner(ClientStop, RunnerCase):
 
     def test_restart_request_fences_validation_admission_without_leaving_a_run(self):
         with config.restart_lock(exclusive=True):
-            self.assertIn("activating merged changes", self.validate(["true"], status=400)["error"])
+            self.assertIn("restarts soon to apply an update", self.validate(["true"], status=400)["error"])
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         S.write_json(flag, {"requested_at": S.now(), "unit": "restart"})
-        self.assertIn("activating merged changes", self.validate(["true"], status=400)["error"])
+        self.assertIn("restarts soon to apply an update", self.validate(["true"], status=400)["error"])
         self.assertFalse(self.runner.exists())
         S.write_json(flag, {"requested_at": S.now(), "unit": "restart", "failed": S.now()})
         self.assertEqual(self.validate(["true"])["exit"], 0, "a failed activation lifts the fence")
@@ -663,7 +663,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         wait_for(lambda: validation.LINE._queue, "the next run to wait its turn")
         S.write_json(flag, {"since": S.now(), "head": "merged", "files": ["altitude/dispatch.py"]})
         with mock.patch.object(server, "_request_restart_unit", return_value={"ok": True, "unit": "restart"}) as restart:
-            self.assertEqual(server.restart_status()["waiting_for"], [f"validation run for {self.project}/{self.slug}"])
+            self.assertEqual(server.restart_status()["waiting_for"], [f"the validation run of {self.project}/{self.slug}"])
             server.auto_restart()
             restart.assert_not_called()
             release.touch()
@@ -671,11 +671,48 @@ class TestValidationRunner(ClientStop, RunnerCase):
             self.assertEqual(answers[0]["exit"], 0)
             response = queued.getresponse()
             self.assertEqual(response.status, 400)
-            self.assertIn("activating merged changes", json.loads(response.read())["error"])
+            self.assertIn("restarts soon to apply an update", json.loads(response.read())["error"])
             self.assertEqual((len(self.rows()), self.ledger(other).exists()), (1, False), "the waiting request never ran")
             self.assertEqual(server.restart_status()["waiting_for"], [])
             server.auto_restart()
             restart.assert_called_once()
+
+    def test_back_to_back_runs_and_reviews_cannot_starve_an_offered_automatic_update(self):
+        """#1003: an offered release installs only at a quiet point, and on a packaged install nothing fenced new runs
+        until the update was requested, which needed that quiet point: the next validation run or review always took
+        it first. While a release waits for its automatic attempt, new long runs now wait; work in flight finishes and
+        the next tick installs it, and the page and `alt doctor` name what it waits for."""
+        from altitude import installation, reviews
+        prefix = self.tmp / "installed"
+        prefix.mkdir()
+        self.patch(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"})
+        self.patch(config, "INSTALL_PREFIX", prefix)
+        self.patch(installation, "_prefix", return_value=prefix)
+        release, holder, answers = self.holding()
+        other = self.task("Check another lane", agent="other")
+        queued = self.send(["true"], lines=False, slug=other)
+        wait_for(lambda: validation.LINE._queue, "the next run to wait its turn")
+        self.assertFalse(config.activation_pending())
+        S.write_json(config.ROOT / "update.json", {"latest": {"version": "v0.2.0", "notes": "https://example.test/notes"}})
+        review = f"{self.project}/{other}"
+        with mock.patch.object(installation, "request_update") as install:
+            with mock.patch.object(reviews, "running", return_value=[review]):
+                server.auto_update()
+                waiting = [f"the adversarial review of {review}", f"the validation run of {self.project}/{self.slug}"]
+                self.assertEqual(installation.update_status()["waiting_for"], waiting)
+                self.assertIn("Update: Altitude v0.2.0 installs automatically once current work finishes; waiting for "
+                              + ", ".join(waiting) + ".", installation.describe_update(installation.update_status()))
+            install.assert_not_called()
+            release.touch()
+            holder.join()
+            self.assertEqual(answers[0]["exit"], 0)
+            response = queued.getresponse()
+            self.assertEqual(response.status, 400)
+            self.assertEqual(json.loads(response.read())["error"], validation.RESTARTING)
+            self.assertEqual((len(self.rows()), self.ledger(other).exists()), (1, False), "the waiting run never ran")
+            self.assertEqual(self.validate(["true"], status=400)["error"], validation.RESTARTING, "nor does a new one")
+            server.auto_update()
+            install.assert_called_once_with("v0.2.0", automatic=True)
 
     def test_only_the_tasks_own_worker_may_run_its_validation(self):
         self.owner.return_value = False
@@ -812,7 +849,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         client.join(60)
         [result] = done
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("activating merged changes; this request asks again once it has restarted", result.stderr)
+        self.assertIn("restarts soon to apply an update; this request asks again once it has restarted", result.stderr)
         self.assertIn("after\n", result.stdout)
         self.assertEqual(answers[0]["exit"], 0)
         self.assertEqual([row["exit"] for row in self.rows()], [0, 0], "the turned-away request ran once")
