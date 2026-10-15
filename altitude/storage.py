@@ -119,7 +119,7 @@ def open_runtime(path: Path, flags: int) -> int:
     *parents, name = _runtime_parts(path)
     _component(name)
     with runtime_directory(parents, create=bool(flags & os.O_CREAT), search=True) as directory:
-        fd = os.open(name, flags & ~os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
+        fd = _open_at(name, flags & ~os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK, directory)
     try:
         _regular(fd)
         if flags & os.O_TRUNC:
@@ -155,7 +155,18 @@ def _lock_open(name: str, directory: int) -> int:
     try:
         return os.open(name, flags, dir_fd=directory)
     except FileNotFoundError:
-        return os.open(name, flags | os.O_CREAT, 0o600, dir_fd=directory)
+        return _open_at(name, flags | os.O_CREAT, directory)
+
+
+def _open_at(name: str, flags: int, directory: int) -> int:
+    """Open `name` in `directory`. macOS can refuse a create with "no such file" while another thread creates the
+    same name in the same folder; the name exists by then, so a create that loses that race is repeated once."""
+    try:
+        return os.open(name, flags, 0o600, dir_fd=directory)
+    except FileNotFoundError:
+        if not flags & os.O_CREAT:
+            raise
+        return os.open(name, flags, 0o600, dir_fd=directory)
 
 
 def append(path: Path, text: str, *, sync: bool = False) -> None:

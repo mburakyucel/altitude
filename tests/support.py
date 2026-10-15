@@ -203,7 +203,7 @@ def require_read_only_home(case: unittest.TestCase) -> None:
                           capture_output=True, text=True, timeout=60)
     if done.returncode == 125:
         case.skipTest("this kernel offers no Landlock")
-    if NATIVE_PLATFORM == "darwin" and "sandbox_apply: Operation not permitted" in done.stderr:
+    if NATIVE_PLATFORM == "darwin" and done.returncode == 71 and "sandbox_apply: Operation not permitted" in done.stderr:
         case.skipTest("this process is already confined, and macOS applies no second Seatbelt profile")
     case.assertFalse(probe.exists(), "the confined process wrote Altitude's home")
     case.assertIn("PermissionError", done.stderr)

@@ -760,8 +760,8 @@ class TestInstallationVmCapture(AltitudeCase):
 class TestInstallationMacosVm(AltitudeCase):
     """The macOS VM lane's offline guest setup, isolation and judging; no guest, helper or restore image."""
 
-    # Known defect: the macOS coordinator sockets take 68 bytes beneath HOME, so the guest's 56-byte lifecycle home
-    # makes a 124-byte path. The fix that shortens the path removes this marker.
+    # Known defect #973: the macOS coordinator sockets take 68 bytes beneath HOME, so the guest's 56-byte lifecycle
+    # home makes a 124-byte path. The fix that shortens the path removes this marker.
     @unittest.expectedFailure
     def test_registered_project_broker_fits_the_actual_guest_lifecycle_home(self):
         from scripts import installation_macos_vm as vm
