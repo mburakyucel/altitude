@@ -577,7 +577,7 @@ class Lifecycle:
         """One visit in the guest's Playwright browser (installation_browsers.mjs), with HOME as the account's."""
         env = {**self.env, "HOME": str(home or self.home), "PLAYWRIGHT_BROWSERS_PATH": str(BROWSERS)}
         command = ["/usr/local/bin/node", self.home / "installation_browsers.mjs", PLAYWRIGHT_CORE / "index.mjs", browser,
-                   profile, address, self.results / f"{label}.png"]
+                   profile, address]
         visit = subprocess.run(list(map(str, command)), cwd=self.home, env=env, text=True, capture_output=True, timeout=180)
         self.sequence += 1
         (self.results / f"{self.sequence:02d}-{label}.log").write_text(f"exit: {visit.returncode}\n{visit.stdout}{visit.stderr}")
