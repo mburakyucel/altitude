@@ -22,7 +22,10 @@ Each refused attempt must leave the account's files and launchd jobs as they wer
 platform_probe.py confinement rows as the logged-in account in a guest whose Python was never asked for access to a
 private place; `jobs` runs its launchd job rows, Stop of every descendant and the time limits among them, which no
 worker sandbox can; `read-only-home` runs the revision's suite cases that confine a child with Seatbelt or, with
-this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or worker can start. `--published` downloads two published releases on this Mac, checked against their
+this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or worker can start. `source` installs
+from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
+repository and run from it, and a newer main pushed to the origin must deploy through that copy. `--published`
+downloads two published releases on this Mac, checked against their
 SHA256SUMS and tags, and runs only `published`: the baseline's own daemon must install the candidate and keep the
 state made through the app. The clone is deleted afterwards, also after a failure or a stop. RESULTS_DIR/macos-vm.json
 records the outcome.
@@ -1114,9 +1117,201 @@ def phase_read_only_home(guest: Guest, repository: str, results: Path, record: d
                                           and bool(found) and all(outcome == "ok" for outcome in found.values())}}
 
 
+HOMEBREW = Path("/opt/homebrew")
+CHECKOUT = f"/Users/{ACCOUNT}/Projects/altitude"
+SOURCE_COPY = f"/Users/{ACCOUNT}/.altitude-repository"   # config.SOURCE_COPY beside the default ALTITUDE_HOME
+# A file under scripts/, which activation covers, so the newer main makes the service rebuild and restart, and a mark
+# in the web app's page, which only a rebuilt bundle serves.
+DEPLOYED = "scripts/vm-lane-deploy.txt"
+PAGE_MARK = '<meta name="altitude-vm-lane" content="newer-main">'
+
+
+def homebrew_kegs(binary: Path) -> list[Path]:
+    """The Homebrew kegs `binary` and every library it loads come from, its own first."""
+    kegs: list[Path] = []
+    pending = [binary.resolve()]
+    while pending:
+        path = pending.pop(0)
+        try:
+            relative = path.relative_to(HOMEBREW / "Cellar")
+        except ValueError:
+            continue
+        keg = HOMEBREW / "Cellar" / relative.parts[0] / relative.parts[1]
+        if keg in kegs:
+            continue
+        kegs.append(keg)
+        files = [item for folder in ("bin", "lib") if (keg / folder).is_dir() for item in (keg / folder).iterdir()
+                 if item.is_file() and not item.is_symlink() and (folder == "bin" or item.suffix == ".dylib")]
+        for item in files:
+            listed = subprocess.run(["otool", "-L", str(item)], capture_output=True, text=True, timeout=30).stdout
+            pending += [Path(line.split()[0]).resolve() for line in listed.splitlines()[1:]
+                        if line.strip().startswith(f"{HOMEBREW}/")]
+    return kegs
+
+
+def source_inputs(commit: str, work: Path) -> None:
+    """What the offline guest needs for a source install: the commit's history as the bundle its origin is cloned
+    from, and this Mac's Node with the kegs it links, the pnpm version web/package.json pins from Corepack's cache and
+    the pnpm store holding the web packages, which `make web` and activation install from. No registry setting or
+    credential goes with them."""
+    node = shutil.which("node")
+    kegs = homebrew_kegs(Path(node)) if node else []
+    if not kegs:
+        raise Stop(f"the source phase copies Homebrew's Node with the kegs it links into the guest; node is {node}")
+    manager = json.loads((SCRIPTS.parent / "web/package.json").read_text())["packageManager"]
+    version = manager.split("@", 1)[1].split("+", 1)[0]
+    corepack = Path(os.environ.get("COREPACK_HOME") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+                    / "node/corepack") / "v1/pnpm" / version
+    if not corepack.is_dir():
+        raise Stop(f"pnpm {version} is not in Corepack's cache on this Mac ({corepack}); the guest downloads nothing")
+    store = Path(run("pnpm", "store", "path", cwd=SCRIPTS.parent / "web").stdout.strip())
+    if not store.is_dir():
+        raise Stop(f"this Mac's pnpm store ({store}) is missing; install the web packages once")
+    run("tar", "-cf", work / "kegs.tar", "-C", HOMEBREW, *(keg.relative_to(HOMEBREW) for keg in kegs), timeout=300)
+    (work / "kegs.txt").write_text("".join(f"{keg.relative_to(HOMEBREW)}\n" for keg in kegs))
+    run("tar", "-cf", work / "pnpm.tar", "--exclude", ".npmrc", "-C", corepack.parent, version, timeout=120)
+    (work / "pnpm-version").write_text(version)
+    run("tar", "-cf", work / "store.tar", "--exclude", ".npmrc", "-C", store, ".", timeout=300)
+    with tempfile.TemporaryDirectory(dir=work) as staging:
+        run("git", "init", "-q", "--bare", staging)
+        run("git", "-C", staging, "fetch", "-q", "--no-tags", SCRIPTS.parent, f"{commit}:refs/heads/main", timeout=300)
+        run("git", "-C", staging, "bundle", "create", "-q", work / "source.bundle", "main", timeout=300)
+
+
+def phase_source(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """A source install as OPERATIONS.md's "Run from a source checkout" describes, from an origin in the guest: the
+    first start creates Altitude's own copy of its repository and runs that commit, exported from the copy; with the
+    checkout registered as the project `altitude`, a newer main pushed to the origin is fast-forwarded through the
+    copy, built, and the service restarts into it."""
+    add_github_cli(guest, record)
+    record["prerequisites"] = prerequisites(guest)
+    steps = record["steps"] = []
+    for name in ("source.bundle", "kegs.tar", "pnpm.tar", "store.tar"):
+        guest.copy(inputs / name, f"{SHARED}/{name}")
+    node = next(line for line in (inputs / "kegs.txt").read_text().splitlines()).split("/")[1]
+    path = (f"/opt/homebrew/opt/python@3.12/libexec/bin:/opt/homebrew/opt/{node}/bin:/opt/homebrew/bin:"
+            "/usr/bin:/bin:/usr/sbin:/sbin")
+    origin = "curl -fsS --max-time 10 --cacert ~/.config/altitude/tls/ca.crt https://127.0.0.1:8890"
+    health = f"{origin}/api/health"
+
+    def step(name: str, command: str, timeout: int = 120) -> subprocess.CompletedProcess:
+        result = guest.ssh(f"zsh -lc {quote(f'export PATH={path}; {command}')}", timeout=timeout, check=False)
+        (results / f"{len(steps) + 1:02d}-{name}.log").write_text(f"$ {command}\n# exit {result.returncode}\n"
+                                                                    f"{result.stdout}{result.stderr}")
+        steps.append({"step": name, "exit": result.returncode})
+        return result
+
+    def check(condition: bool, what: str) -> None:
+        steps[-1]["passed"] = bool(condition)
+        if not condition:
+            raise Stop(f"{steps[-1]['step']}: {what}")
+
+    def running(name: str) -> int:
+        """The LaunchAgent's process, which answers HTTPS health on the generated authority."""
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline and guest.ssh(
+                f"launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} | grep -q 'state = running' && {health} >/dev/null",
+                check=False).returncode:
+            time.sleep(5)
+        answer = step(name, f"launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} && {health}")
+        lines = answer.stdout.strip().splitlines()
+        served = json.loads(lines[-1]) if answer.returncode == 0 and lines else {}
+        # A source install has no release, so health names no version or commit.
+        check(f"path = /Users/{ACCOUNT}/Library/LaunchAgents/{SERVICE_LABEL}.plist" in answer.stdout
+              and served.get("version", "") is None and served.get("commit", "") is None
+              and f"pid = {served.get('pid')}" in answer.stdout,
+              "the LaunchAgent is not running from the account's LaunchAgents or does not answer health as a source "
+              "install")
+        return served["pid"]
+
+    def page(name: str) -> bool:
+        """Whether the page the service serves carries the newer main's mark."""
+        served = step(name, f"{origin}/")
+        check(served.returncode == 0 and "<html" in served.stdout, "the service does not serve the web app's page")
+        return PAGE_MARK in served.stdout
+
+    def runs(name: str, expected: str) -> None:
+        """The checkout, Altitude's copy and the export the service starts from all name `expected`."""
+        found = step(name, f"git -C {CHECKOUT} rev-parse HEAD; git -C {CHECKOUT} status --porcelain; "
+                           f"git -C {SOURCE_COPY} rev-parse --is-bare-repository main; "
+                           f"git -C {SOURCE_COPY} remote get-url origin; readlink {CHECKOUT}/.altitude-source/current; "
+                           f"test -d {CHECKOUT}/.altitude-source/{expected}/altitude")
+        check(found.returncode == 0 and found.stdout.split() == [expected, "true", expected, f"{SHARED}/origin.git",
+                                                                 expected],
+              f"the checkout, Altitude's copy of its repository and the running export do not all hold {expected[:12]}")
+
+    try:
+        # This Mac's Node, its kegs the guest lacks, the pinned pnpm in Corepack's cache and the web packages.
+        tools = step("toolchain", f"""set -e
+cd /opt/homebrew
+while read -r keg; do
+  name=${{keg#Cellar/}}; name=${{name%/*}}
+  if [ -e opt/$name ]; then echo "present $name"; else tar -xf {SHARED}/kegs.tar "$keg"; ln -s ../$keg opt/$name; echo "added $name"; fi
+done <<'KEGS'
+{(inputs / "kegs.txt").read_text()}KEGS
+mkdir -p ~/.cache/node/corepack/v1/pnpm && tar -xf {SHARED}/pnpm.tar -C ~/.cache/node/corepack/v1/pnpm
+corepack enable pnpm
+node --version""")
+        check(tools.returncode == 0, "Node does not run in the guest")
+        record["toolchain"] = tools.stdout.strip().splitlines()
+        # Corepack runs the pnpm web/package.json pins; outside web it would look for another version online.
+        cloned = step("clone", f"git clone -q --bare {SHARED}/source.bundle {SHARED}/origin.git && "
+                               f"mkdir -p ~/Projects && git clone -q {SHARED}/origin.git {CHECKOUT} && "
+                               f"git -C {CHECKOUT} rev-parse HEAD && cd {CHECKOUT}/web && pnpm --version && "
+                               "pnpm store path", timeout=300)
+        found = cloned.stdout.split()
+        check(cloned.returncode == 0 and found[:2] == [commit, (inputs / "pnpm-version").read_text()],
+              "the clone is not the source commit or the pinned pnpm does not run")
+        store = found[2]
+        check(step("store", f"mkdir -p {store} && tar -xf {SHARED}/store.tar -C {store} && rm {SHARED}/store.tar",
+                   timeout=300).returncode == 0, "the pnpm store did not unpack")
+        check(step("make-web", f"cd {CHECKOUT} && make web", timeout=420).returncode == 0, "make web failed")
+        check(step("tls-init", f"cd {CHECKOUT} && bin/alt tls-init").returncode == 0, "alt tls-init failed")
+        check(step("no-copy-yet", f"test ! -e {SOURCE_COPY}").returncode == 0,
+              "Altitude's copy of its repository exists before the first start")
+        installed = step("install-service", f"cd {CHECKOUT} && make install-service", timeout=180)
+        check(installed.returncode == 0 and f"{SERVICE_LABEL} on main: active" in installed.stdout,
+              "make install-service did not start the service")
+        first = running("first-start")
+        runs("first-start-source", commit)
+        check(not page("first-start-page"), "the first start already serves the newer main's page")
+        check(step("register", f"cd {CHECKOUT} && bin/alt project add altitude --path {CHECKOUT}").returncode == 0,
+              "the checkout did not register as the project altitude")
+        pushed = step("newer-main", f"""set -e
+git clone -q {SHARED}/origin.git {SHARED}/newer && cd {SHARED}/newer
+echo 'A newer main the macOS VM lane deploys.' > {DEPLOYED}
+sed -i '' 's#</head>#{PAGE_MARK}</head>#' web/index.html
+grep -qF '{PAGE_MARK}' web/index.html
+git add {DEPLOYED} web/index.html
+git -c user.name='macOS VM lane' -c user.email=vm-lane@example.invalid commit -qm 'A newer main for the VM lane'
+git push -q origin main && git rev-parse HEAD""")
+        check(pushed.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", pushed.stdout.strip() or "") is not None,
+              "the newer main was not pushed to the origin")
+        newer = pushed.stdout.strip()
+        record["commits"] = {"first": commit, "newer": newer}
+        # The tick fetches within thirty seconds; activation builds the web app and restarts at the quiet point.
+        deadline = time.monotonic() + 420
+        while time.monotonic() < deadline and guest.ssh(
+                f"test \"$(readlink {CHECKOUT}/.altitude-source/current)\" = {newer} && "
+                f"test ! -e ~/.altitude/monitor/restart-pending.json && {health} >/dev/null", check=False).returncode:
+            time.sleep(10)
+        second = running("deployed")
+        check(second != first, "the service did not restart into the newer main")
+        runs("deployed-source", newer)
+        check(page("deployed-page"), "the service still serves the web app built before the newer main")
+        record["cases"] = {"source": {"passed": True, "commits": [commit, newer], "pids": [first, second]}}
+    finally:
+        guest.ssh(f"cp -R ~/Library/Logs/altitude {SHARED}/logs", check=False)
+        try:
+            guest.fetch(f"{SHARED}/logs", results / "logs")
+        except subprocess.SubprocessError:
+            pass
+
+
 # `fresh` starts from the fresh image, every other phase from prerequisites; `published` runs only with --published.
 PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login,
-          "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home, "published": phase_published}
+          "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home, "source": phase_source,
+          "published": phase_published}
 BUILT = ("fresh", "prerequisites", "lifecycle", "login")  # the phases that install the release built from the source
 
 
@@ -1212,6 +1407,9 @@ def lane(results: Path, commit: str | None, phases: list[str], releases: tuple[s
             build(commit, work, results / "build.log")
         if set(phases) & {"privacy", "jobs", "read-only-home"}:
             run("git", "archive", "-o", work / "source.tar", commit, cwd=SCRIPTS.parent)
+        if "source" in phases:
+            note("bundling the source commit and this Mac's Node, pnpm and web packages for the source phase")
+            source_inputs(commit, work)
         for name in phases:
             run_phase(name, work, results, record, commits)
         record["passed"] = all(record["phases"][name]["passed"] for name in phases)
