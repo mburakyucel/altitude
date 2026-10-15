@@ -541,8 +541,9 @@ while True:
 - **Waiting and stopping.** A request that finds the machine busy waits for it, admitted in arrival
   order, for up to 70 minutes (one run's hour and its cleanup, the client's budget); after that it is
   refused with what still holds the machine. While it waits, `alt task validate` prints the task whose
-  run holds the machine, when that run's limit ends and how many requests are ahead. Every check is
-  repeated at admission. altd checks each request's connection every two seconds: a client that stops,
+  run holds the machine, when that run's limit ends and how many requests are ahead, and once it is
+  admitted it says so with its own run's limit, so its last line never reads as waiting while the run
+  goes on. Every check is repeated at admission. altd checks each request's connection every two seconds: a client that stops,
   is interrupted or loses its connection leaves the line, or, once admitted, has its run stopped and
   recorded as `stopped`. Stopping ends the run's processes (on Linux, SIGTERM and SIGKILL five seconds
   later), and cleanup follows, so the machine is usually free for the next request within a few seconds. The
@@ -555,7 +556,7 @@ while True:
   apart from this slot: at most a quarter of the computer's cores run at once (at least one; two on
   an 8-core Mac), and `alt machine show` reports the number as `machine_runs`. A command beyond
   that waits in arrival order for up to 30 minutes, printing the commands that hold the places,
-  when their limits end and how many requests are ahead. A client that stops or loses its connection
+  when their limits end and how many requests are ahead, then that it was admitted. A client that stops or loses its connection
   leaves the line, or has its command stopped with that reason recorded, which frees its place.
   A command still running when altd restarts keeps a place until it ends. A task still runs one
   command at a time.
