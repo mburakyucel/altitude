@@ -1045,6 +1045,19 @@ class TestLand(AltitudeCase):
         self.assertEqual(merge[:5], ["pr", "merge", "101", "--squash", "--delete-branch"])
         self.assertEqual(merge[merge.index("--match-head-commit") + 1], self.git("rev-parse", "HEAD").strip())
 
+    def test_a_draft_or_unreviewed_pr_is_not_merged(self):
+        self.staged_change()
+        land.land("fix: under review", cwd=self.repo, wait=0)
+        pull = json.loads((self.ghdir / "pr.json").read_text())
+        for change in ({"isDraft": True}, {"reviewDecision": "CHANGES_REQUESTED"}, {"reviewDecision": "REVIEW_REQUIRED"}):
+            with self.subTest(change=change):
+                S.write_json(self.ghdir / "pr.json", {**pull, **change})
+                with self.assertRaisesRegex(land.LandError, "not review-ready"):
+                    land.land("fix: under review", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+        S.write_json(self.ghdir / "pr.json", {**pull, "reviewDecision": "APPROVED"})
+        self.assertTrue(land.land("fix: under review", cwd=self.repo, wait=0, merge=True)["merged"])
+
     def test_merge_receipt_names_no_main_run_while_the_previous_run_is_still_the_latest(self):
         """Issue #476: right after the merge, GitHub's latest main run still belongs to the preceding merge
         commit; the receipt names no run at all, and `alt task status` resolves the merged commit's own run."""
