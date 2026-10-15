@@ -134,34 +134,19 @@ class TestCoordinatorFolder(AltitudeCase):
         self.assertFalse(folder.resolve().is_relative_to(config.ROOT.resolve()))
         self.assertEqual(platform.coordinator_directory(), folder, "one folder per installation")
 
-    def test_on_a_mac_no_worker_may_write_the_folder_or_any_folder_above_it(self):
-        """A worker that could write any folder on the way could plant, replace or redirect a socket or a turn's
-        commands. Measured under a fixed fictional home, against the write grants Altitude's Seatbelt profile gives a
-        job and Codex's workspace roots."""
+    def test_on_a_mac_the_job_profile_grants_no_write_to_the_folder_or_any_folder_above_it(self):
+        """Besides a job's own roots (tests/test_worker_roots.py), Altitude's Seatbelt profile lets every job write the
+        per-user temporary folders, /private/tmp and devices; under a fixed fictional home none of them reaches the
+        coordinators' folder, so no job can plant, replace or redirect a socket or a turn's commands."""
         home = Path("/Users/" + "a" * 57)
-        worktree = self.tmp / "worktree"
-        worktree.mkdir()
-        environment = {key: value for key, value in os.environ.items() if key != "CLAUDE_CONFIG_DIR"}
         with mock.patch.object(platform, "_darwin", return_value=True), mock.patch.object(config, "HOME", home), \
-                mock.patch.dict(os.environ, {**environment, "HOME": str(home)}, clear=True), \
                 mock.patch.object(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/"):
             folder = os.path.realpath(platform.coordinator_directory())
-            self.assertEqual(folder, f"{home}/.config/altitude/{Path(folder).name}")
-            subpaths, prefixes = [], []
-            for engine in config.ENGINES:
-                writable = engines.common.implementation(engine).review_writable(worktree)
-                if writable is not None:
-                    profile = platform.seatbelt_profile([str(root) for root in writable])
-                    subpaths += [rule.replace('\\"', '"') for rule in
-                                 re.findall(r'\(allow file-write\* \(subpath "((?:[^"\\]|\\.)*)"\)\)', profile)]
-                    prefixes += [re.sub(r"\\(.)", r"\1", rule) for rule in
-                                 re.findall(r'\(allow file-write\* \(regex #"\^((?:[^"\\]|\\.)*)"\)\)', profile)]
-            settings = engines.codex_sandbox(worktree)
-            subpaths += json.loads(next(s for s in settings if ".workspace_roots=" in s).split("=", 1)[1]
-                                   .replace("=true", ":true"))
-        self.assertTrue(subpaths and prefixes, "the grants were read")
-        self.assertFalse([root for root in subpaths if Path(folder).is_relative_to(root)])
-        self.assertFalse([prefix for prefix in prefixes if folder.startswith(prefix)])
+            profile = platform.seatbelt_profile([])
+        self.assertEqual(folder, f"{home}/.config/altitude/{Path(folder).name}")
+        grants = re.findall(r'\(allow file-write\* \(subpath "([^"]*)"\)\)', profile)
+        self.assertIn("/private/var/folders/ab/cd", grants)
+        self.assertFalse([root for root in grants if Path(folder).is_relative_to(root)])
 
     def test_a_project_socket_fits_macos_under_a_64_byte_home(self):
         """#973: macOS refuses a socket path over 103 bytes. A fixed fictional home, never the suite's own, measures
