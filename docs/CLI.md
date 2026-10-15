@@ -2201,9 +2201,11 @@ from L3's message using the ordinary question flow.
 
 The grant reads only `refs/heads/main:AGENTS.md` in the registered project checkout, pinned to a
 commit. The heading must be unique and contain exactly one paragraph citing the backtick-quoted
-approval ID. That ID must name an original operator message in the same project's chat. The current
-open question must be owner-authored, directed to L3 and match the paragraph's raw Markdown apart
-from whitespace. Missing or ambiguous policy, another project's approval, a stale attempt/revision,
+approval ID. That ID must name an original operator message in the same project's chat, so a
+standing approval works on an installation only while its project chat holds the cited message; after
+project records are recreated, the operator confirms the unchanged paragraph once in the new chat and
+the citation moves to that message. The current open question must be owner-authored, directed to
+L3 and match the paragraph's raw Markdown apart from whitespace. Missing or ambiguous policy, another project's approval, a stale attempt/revision,
 and a wider or paraphrased purpose refuse. The record and event retain the policy file, heading,
 commit and full text alongside the original operator approval, exact question and L3 rationale.
 This checks the recorded purpose; it does not classify shell commands or infer consent from prose.
