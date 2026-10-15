@@ -171,6 +171,13 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
             try: forwarding.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 forwarding.kill(); forwarding.wait(timeout=5)
+        if machine and not record['passed']:
+            # A failed user service's own log is only in the guest's journal, which goes with the guest.
+            try:
+                journal = machine.ssh('sudo -n journalctl --no-pager -b -n 6000', timeout=60, check=False)
+                (results / 'guest-journal.log').write_text(journal.stdout + journal.stderr)
+            except Exception as error:
+                record['journal_error'] = repr(error)
         if machine:
             try:
                 machine.stop()

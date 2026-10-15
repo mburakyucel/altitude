@@ -265,7 +265,7 @@ class TestReviews(AltitudeCase):
         for exclusive in (False, True):
             with self.subTest(exclusive=exclusive):
                 with config.restart_lock(exclusive=exclusive), mock.patch.object(config, "activation_pending", return_value=not exclusive):
-                    with self.assertRaisesRegex(T.TransitionError, "activating an update"):
+                    with self.assertRaisesRegex(T.TransitionError, "restarts soon to apply an update"):
                         self.run_review(requested)
                 self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
         self.engine.assert_not_called()
@@ -275,12 +275,49 @@ class TestReviews(AltitudeCase):
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         requested = self.request()
         S.write_json(flag, {"since": S.now(), "head": "merged", "files": ["altitude/reviews.py"]})
-        with self.assertRaisesRegex(T.TransitionError, "activating an update"):
+        with self.assertRaisesRegex(T.TransitionError, "restarts soon to apply an update"):
             self.run_review(requested)
         self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
         self.engine.assert_not_called()
         S.write_json(flag, {**S.read_json(flag), "failed": S.now()})
         self.assertEqual(self.run_review(requested)["state"], "completed", "a failed activation lifts the hold")
+
+    def test_an_offered_automatic_update_holds_new_review_runs_until_its_attempt(self):
+        """#1003: on a packaged install the offered release fences new runs as merged changes do on a source one."""
+        prefix = self.tmp / "installed"
+        prefix.mkdir()
+        requested = self.request()
+        with mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"}), \
+                mock.patch.object(config, "INSTALL_PREFIX", prefix):
+            record = {"latest": {"version": "v0.2.0", "notes": "https://example.test/notes"}}
+            S.write_json(config.ROOT / "update.json", record)
+            with self.assertRaisesRegex(T.TransitionError, "restarts soon to apply an update"):
+                self.run_review(requested)
+            self.engine.assert_not_called()
+            S.write_json(config.ROOT / "update.json", {**record, "automatic_attempts": ["v0.2.0"],
+                                                       "attempt": {"version": "v0.2.0", "state": "failed"}})
+            self.assertFalse(config.activation_pending(), "a failed attempt lifts the hold")
+        self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
+        self.assertEqual(self.run_review(requested)["state"], "completed")
+
+    def test_an_update_offered_during_admission_waits_for_the_admitted_review(self):
+        from altitude import installation
+        prefix = self.tmp / "installed"
+        prefix.mkdir()
+        requested, requests, capacity = self.request(), [], reviews._capacity
+
+        def offered_mid_admission(task):
+            with mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"}), \
+                    mock.patch.object(config, "INSTALL_PREFIX", prefix), \
+                    mock.patch.object(installation, "request_update", side_effect=lambda *a, **k: requests.append(a)):
+                S.write_json(config.ROOT / "update.json", {"latest": {"version": "v0.2.0", "notes": "https://example.test/n"}})
+                server.auto_update()
+                self.assertEqual((requests, installation.update_status()["waiting_for"]),
+                                 ([], [f"the adversarial review of {self.project}/{self.slug}"]))
+            return capacity(task)
+        with mock.patch.object(reviews, "_capacity", side_effect=offered_mid_admission):
+            self.assertEqual(self.run_review(requested)["state"], "completed")
+        self.assertEqual(reviews.running(), [])
 
     def test_owner_attempt_and_original_source_are_required(self):
         with self.assertRaises(T.TransitionError):

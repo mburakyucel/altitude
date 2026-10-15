@@ -10,8 +10,8 @@ and fails on unexpected management requests, including cleanup. See [evidence](#
 reproducible commands and their limits.
 
 Daemon-driven onboarding and task continuation pass at phone and desktop viewports with fictional
-engines. On an Apple silicon Mac, the launcher lane passes inside a throwaway Ubuntu 24.04 arm64
-guest: Linux arm64 evidence on Mac hardware, with no Mac-side controller. Real provider sessions,
+engines. On an Apple silicon Mac, the launcher, logout and image lanes pass inside a throwaway Ubuntu
+24.04 arm64 guest: Linux arm64 evidence on Mac hardware, with no Mac-side controller. Real provider sessions,
 physical-device routing/trust, Mac logout/restart and sleep/wake, Docker, other runtime versions,
 host project binds and emulation are unverified.
 The tested payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
@@ -417,12 +417,15 @@ lanes in a throwaway Ubuntu 24.04 arm64 guest under Apple's Virtualization frame
 6 GiB of memory and a 24 GiB sparse disk. It boots Ubuntu's published root filesystem, kernel and
 initial ramdisk, checked against Ubuntu's SHA256SUMS over HTTPS (the signature is not verified on a
 Mac), and builds the image for linux/arm64 inside the guest. Each run's disk is a copy-on-write clone
-deleted with the run. It shares the macOS installation lane's lock, so one virtual machine of either
+deleted with the run; the host caches its writes and synchronizes them with fsync, because the
+framework's automatic caching mode let the guest read corrupt files. A failed run keeps the guest's
+journal in its results. It shares the macOS installation lane's lock, so one virtual machine of either
 lane runs at a time, and the guest stops when less than 10 GiB of disk would stay free. A virtual machine cannot start inside a worker sandbox, so an owner runs the target
 through `alt task run` under an operator grant, which L3 records from the
-[standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac) on request. The launcher lane passes on candidate `bb7e0d1` and
-the `--logout` lane on `2f9db4d` (Ubuntu 24.04 arm64, kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1,
-macOS 26.6.2 on Apple M3). This is Linux guest behavior: the Mac side owns only the guest process,
+[standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac) on request. The launcher,
+`--logout` and `--image-workflow` lanes pass, the last also with `--native-sandbox-binary` and diagnostic CLI
+0.162.1 for Linux arm64 (Ubuntu 24.04 arm64, kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1, macOS
+26.6.2 on Apple M3). This is Linux guest behavior: the Mac side owns only the guest process,
 and a Mac-side controller and Mac logout/restart and sleep/wake stay open in
 [#643](https://github.com/mburakyucel/altitude/issues/643).
 

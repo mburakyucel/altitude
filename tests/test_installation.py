@@ -1,4 +1,5 @@
 """Real private archives and lifecycle state; native service effects stay in fixtures."""
+import contextlib
 import hashlib
 import http.client
 import http.server
@@ -1161,8 +1162,8 @@ class NewVersionNotice(NoticeCase):
         self.listed("v0.2.0")
         installation.check_for_update()
         self.requests.clear()
-        self.assertEqual(installation.update_notice(), "Altitude v0.2.0 is available: installs when Altitude is next "
-                         "idle; alt update installs it now (notes: https://github.com/example/altitude/releases/tag/v0.2.0)")
+        self.assertEqual(installation.update_notice(), "Altitude v0.2.0 is available: installs at the next quiet "
+                         "moment; alt update installs it now (notes: https://github.com/example/altitude/releases/tag/v0.2.0)")
         self.assertIsNone(installation.update_notice())
         day_ago = (config.ROOT / "update-notice").stat().st_mtime - 86400
         os.utime(config.ROOT / "update-notice", (day_ago, day_ago))
@@ -1258,8 +1259,14 @@ class AutomaticUpdates(NoticeCase):
         super().setUp()
         from altitude import server, terminal
         self.server = server
-        self.terminal_open = mock.patch.object(terminal, "any_open", return_value=False).start()
-        self.busy = mock.patch.object(server, "restart_waiting_for", return_value=[]).start()
+        self.terminals = []   # where the fixture's browser terminals are open
+
+        @contextlib.contextmanager
+        def held_open():
+            yield list(self.terminals)
+        mock.patch.object(terminal, "any_open", side_effect=lambda: bool(self.terminals)).start()
+        mock.patch.object(terminal, "held_open", held_open).start()
+        self.reviewing = mock.patch.object(server.reviews, "running", return_value=[]).start()
         self.addCleanup(mock.patch.stopall)
         self.listed("v0.2.0")
         installation.check_for_update()
@@ -1354,15 +1361,16 @@ class AutomaticUpdates(NoticeCase):
                 self.assertEqual(installation._update_record()[1]["attempt"]["state"], expected)
                 self.assertIsNone(installation.update_status()["installed"])
 
-    def test_work_an_open_terminal_the_switch_or_a_container_defers_it(self):
-        self.busy.return_value = ["atlas L3"]
+    def test_long_runs_an_open_terminal_the_switch_or_a_container_defers_it(self):
+        self.reviewing.return_value = ["atlas/check-the-lane"]
+        self.terminals.append("atlas")
         self.server.auto_update()
-        self.busy.return_value = []
-        self.terminal_open.return_value = True
+        self.assertEqual(installation.update_status()["waiting_for"],
+                         ["the browser terminal open in atlas", "the adversarial review of atlas/check-the-lane"])
+        self.reviewing.return_value = []
         self.server.auto_update()
-        self.terminal_open.return_value = False
-        with config.restart_lock():   # a dispatch, review or validation holding the gate
-            self.server.auto_update()
+        self.assertEqual(installation.update_status()["waiting_for"], ["the browser terminal open in atlas"])
+        self.terminals.clear()
         S.write_json(config.ROOT / "settings.json", {"update_automatic": False})
         self.assertFalse(installation.update_status()["automatic"])
         self.server.auto_update()
@@ -1375,6 +1383,45 @@ class AutomaticUpdates(NoticeCase):
         self.assertEqual(self.detached, [])
         self.server.auto_update()
         self.assertEqual(len(self.detached), 1)
+
+    def test_an_offered_update_holds_new_long_runs_until_its_attempt(self):
+        """#1003: validation, review and improvement runs wait while the release waits, so it gets its quiet point."""
+        self.assertTrue(config.activation_pending())
+        self.terminals.append("atlas/check-the-lane")
+        self.assertFalse(config.activation_pending(), "an open terminal defers the update, so work keeps going")
+        self.terminals.clear()
+        S.write_json(config.ROOT / "settings.json", {"update_automatic": False})
+        self.assertFalse(config.activation_pending(), "turning automatic updates off lifts it")
+        (config.ROOT / "settings.json").unlink()
+        self.server.auto_update()
+        self.assertEqual(installation.update_status()["waiting_for"], [], "a started update waits for nothing")
+        self.assertTrue(config.activation_pending(), "the request keeps the fence")
+        with self.assertRaises(OSError):
+            self.run_detached()
+        self.assertFalse(config.activation_pending(), "a failed attempt lifts it; the version is not tried again")
+
+    def test_back_to_back_short_work_cannot_starve_the_update(self):
+        """#1003: the update no longer needs an instant with no dispatch, L3 turn or report check holding the gate.
+        Its request fences new ones, and the detached update activates once those in flight end."""
+        self.publish("v0.2.0")
+        holding, released = threading.Event(), threading.Event()
+
+        def l3_turn():
+            with config.restart_lock() as ready:   # an L3 turn or dispatch claim in flight at every tick
+                holding.set()
+                released.wait(10 if ready else 0)
+        turn = threading.Thread(target=l3_turn)
+        turn.start()
+        self.addCleanup(turn.join)
+        self.addCleanup(released.set)
+        self.assertTrue(holding.wait(5))
+        self.server.auto_update()
+        self.assertEqual(len(self.detached), 1, "requested while the turn holds the gate")
+        self.assertTrue(config.restart_in_progress(), "new dispatch, resume, L3 and report work waits from here")
+        threading.Timer(.5, released.set).start()
+        self.run_detached()   # waits for the turn, then activates
+        self.assertEqual(os.readlink(self.prefix / "current"), "versions/v0.2.0")
+        self.assertEqual(installation._update_record()[1]["attempt"]["state"], "succeeded")
 
     def test_an_update_or_recovery_already_running_is_never_joined(self):
         (self.prefix / "pending.json").write_text("{}")
