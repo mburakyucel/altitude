@@ -250,14 +250,18 @@ class MachineTransferTests(MachineCase):
         container.recover_transfer(operation["id"])
         cleanup.assert_called_once_with(record)
 
-    def test_failed_transfer_cleans_its_exact_operation_in_the_foreground(self):
+    def test_finished_or_failed_transfer_cleans_its_exact_operation_in_the_foreground(self):
         self.patch(platform, "container_runtime", return_value={"identity": "podman-machine:altitude:t", "transfers": []})
-        self.patch(container, "transfer_worker", side_effect=RuntimeError("fixture stream truncated"))
+        worker = self.patch(container, "transfer_worker", return_value={"complete": True})
         cleanup = self.patch(container, "cleanup_transfer")
         operation = {"action": "backup", "directory": str(self.tmp), "identity": {"lineage": "1" * 32, "home": "h", "projects": "p"}}
+        self.assertEqual(container.transfer_job(dict(operation)), {"complete": True})
+        cleanup.assert_called_once_with(worker.call_args.args[0])
+        cleanup.reset_mock()
+        worker.side_effect = RuntimeError("fixture stream truncated")
         with self.assertRaisesRegex(RuntimeError, "truncated"):
-            container.transfer_job(operation)
-        cleanup.assert_called_once()
+            container.transfer_job(dict(operation))
+        cleanup.assert_called_once_with(worker.call_args.args[0])
 
     def test_records_from_an_earlier_machine_are_reported_and_never_listed_for_recovery(self):
         root = platform.container_transfer_root(create=True) / ("d" * 32)

@@ -471,13 +471,15 @@ def transfer_job(operation: dict) -> dict:
         finally: os.close(fd)
     if platform.container_machine():
         try:
-            return transfer_worker(record)
+            result = transfer_worker(record)
         except Exception as original:
             try:
                 cleanup_transfer(record)
             except Exception as cleanup:
                 raise RuntimeError(f'Transfer failed ({original}); cleanup also failed ({cleanup}). Retained operation {operation["id"]}; inspect transfers before recovery.') from original
             raise
+        cleanup_transfer(record)  # the finished helper and record, as the Linux unit's stop does; a complete backup stays
+        return result
     command=[sys.executable,'-c','import sys,json;from pathlib import Path;from scripts.container import transfer_worker;'
              'print(json.dumps(transfer_worker(Path(sys.argv[1]))))',str(record)]
     cleanup=[sys.executable,'-c','import sys;from pathlib import Path;from scripts.container import cleanup_transfer;'

@@ -153,6 +153,10 @@ the container's graceful stop, so stop the container first. Nothing starts at lo
 or restart, run `podman machine start altitude`, then `python3.12 scripts/container.py restart --name
 altitude`, which keeps the instance and its admission. While the machine is stopped, commands report
 that container state and cleanup are unconfirmed. During sleep the machine pauses with the Mac.
+The machine's helper processes stay in the process group of the `podman machine start` that started
+them, so whatever ends that group, such as a job runner stopping all of a command's processes, ends
+the machine abruptly. After an abrupt end, `podman machine start altitude` can fail on a leftover
+network socket; `podman machine stop altitude` clears it, and the next start works.
 There is no Mac counterpart to the Linux service-manager monitor; fixture tests check that the Mac
 route calls neither systemd nor launchd. [Mac evidence](#mac-podman-machine-run) records what a real
 run on this route establishes.
@@ -453,6 +457,37 @@ public evidence. Chromium keeps its sandbox; a temporary harness forwards exact 
 responses to the browser without substituting application, tool or provider responses. This is
 viewport evidence, not direct runner networking or physical-phone certificate trust. Backup restore,
 large-volume throughput and provider-session confinement parity across engines remain unverified.
+
+### Mac Podman machine run
+
+The operator-authorized run on 2026-10-15 uses an Apple silicon Mac with macOS 26, Homebrew's Podman
+6.1.4 with its default Apple Hypervisor (vfkit) provider, and a fresh `altitude` machine of 4 CPUs,
+6 GiB and a 40 GiB disk running Fedora CoreOS 44 with SELinux enforcing. Port 19443 keeps clear of
+the native installation. The run ends with the machine removed, Podman uninstalled and Podman's
+folders deleted. It establishes:
+
+- `preflight` refuses the stopped machine with its start command and, once it runs, proves a rootless
+  arm64 machine with cgroup v2, seccomp and pasta through the matched connection.
+- A build in the machine produces a linux/arm64 image with the release labels in under a minute and
+  leaves no Buildah working container.
+- `start` is ready within seconds. HTTPS answers on `127.0.0.1:19443` on the Mac, also verified
+  against the exported instance CA, and nothing else listens on that port. The container's scope in
+  the machine holds `memory.max` 4 GiB, `pids.max` 1024 and a `cpu.max` of two CPUs.
+- Pause, Continue with the inspected instance, Stop, restart and recreate pass; recreate refuses a
+  running container. Replacing the container on a new image keeps both volumes and their data.
+- Backup refuses a running container. A backup completes, leaving no transfer record or helper. A
+  restore of a truncated backup refuses. Killing the backup or restore client leaves its record;
+  recovery refuses while the backup client lives, then removes only the partial files or new
+  volumes. A restore starts paused, serves HTTPS and returns both volumes' files with the machine's
+  own SELinux label, and the original copy of that lineage refuses to start beside it. The machine's
+  system and user journals contain no backed-up content.
+- With the container running, killing the machine abruptly makes every command refuse as
+  unconfirmed. After `podman machine stop` and start, restart brings the container back with its
+  data.
+
+Logging out, restarting the Mac, sleep, closing a real terminal window, Podman's own installer
+package and its libkrun provider, private LAN/VPN publication and real-device trust remain
+unverified on the Mac, along with provider sessions inside the container.
 
 ### Reusable fixture lanes
 
