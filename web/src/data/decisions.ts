@@ -1,4 +1,7 @@
-import type { Decision, Overview, TaskMessage } from "./api";
+import type { Attention, Decision, Overview, Step, TaskMessage } from "./api";
+
+/** An operator step belongs to the project, not a task (SPEC.md §3.8.4). */
+export const isStep = (row: Attention): row is Step => row.slug === null;
 
 /** Unknown attention never looks like a known empty inbox. */
 export function attentionCount(overview: Overview | undefined, failed: boolean) {
@@ -8,12 +11,13 @@ export function attentionCount(overview: Overview | undefined, failed: boolean) 
 }
 
 /** The badge counts questions individually and operational attention items separately. */
-export function attentionSummary(rows: Decision[]): string {
-  const questions = rows.filter((row) => row.id || !["fault", "stopped", "review"].includes(row.kind ?? "")).length;
+export function attentionSummary(rows: Attention[]): string {
+  const steps = rows.filter(isStep).length;
+  const questions = rows.filter((row) => !isStep(row) && (row.id || !["fault", "stopped", "review"].includes(row.kind ?? ""))).length;
   const stopped = rows.filter((row) => !row.id && row.kind === "stopped").length;
   const reviews = rows.filter((row) => !row.id && row.kind === "review").length;
-  const faults = rows.length - questions - stopped - reviews;
-  return [[questions, "question"], [reviews, "review"], [stopped, "stopped task"], [faults, "fault"]]
+  const faults = rows.length - steps - questions - stopped - reviews;
+  return [[questions, "question"], [steps, "step"], [reviews, "review"], [stopped, "stopped task"], [faults, "fault"]]
     .filter(([count]) => count).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ");
 }
 
@@ -25,22 +29,25 @@ export function headline(text: string | null | undefined): string {
 }
 
 /** One task's turn, as Work rows, the task header and its chat say it (SPEC.md §3.5). A waiting task's row is `named`:
- * a lone freeform question shows its first line, so a wait on the operator's step says the step. The task page,
- * which shows the question itself, and a question with choices keep the count. */
-export function turnLabel(rows: Decision[], named = false): string | null {
-  const questions = rows.filter((row) => row.id);
-  const review = rows.find((row) => row.kind === "review");
+ * a lone freeform question shows its first line, so a wait on the operator's step says the step, and so does each
+ * operator step naming the task. The task page, which shows the question or step itself, and a question with
+ * choices keep the count. */
+export function turnLabel(rows: Attention[], named = false): string | null {
+  const questions = rows.filter((row): row is Decision => !isStep(row) && Boolean(row.id));
+  const steps = rows.filter(isStep);
+  const review = rows.find((row) => row.kind === "review") as Decision | undefined;
   const lone = named && questions.length === 1 && !optionsFor(questions[0]!).length ? headline(questions[0]!.question) : "";
   const count = questions.length ? `${questions.length} question${questions.length === 1 ? "" : "s"}` : "";
-  const parts = [lone || count, review ? `review PR #${review.pr}` : ""];
+  const stepped = named ? steps.map((step) => headline(step.question)) : steps.length ? [`${steps.length} step${steps.length === 1 ? "" : "s"}`] : [];
+  const parts = [lone || count, ...stepped, review ? `review PR #${review.pr}` : ""];
   return parts.some(Boolean) ? `Your turn · ${parts.filter(Boolean).join(" · ")}` : null;
 }
 
 /** Independent questions from one ask share a compact task card and a single batch submission. */
-export function decisionGroups(rows: Decision[]): Decision[][] {
-  const groups = new Map<string, Decision[]>();
+export function decisionGroups<Row extends Attention>(rows: Row[]): Row[][] {
+  const groups = new Map<string, Row[]>();
   for (const row of rows) {
-    const key = `${row.project}:${row.slug}:${row.group_id || row.id || "operational"}`;
+    const key = `${row.project}:${row.slug}:${isStep(row) ? row.id : row.group_id || row.id || "operational"}`;
     const group = groups.get(key) ?? [];
     group.push(row);
     groups.set(key, group);
@@ -48,7 +55,13 @@ export function decisionGroups(rows: Decision[]): Decision[][] {
   return [...groups.values()];
 }
 
-/** A Needs you item and every historical revision open the same owning L2 conversation. */
+/** Where an alert opens: a question's owning L2 conversation, for every historical revision; an operator step,
+ * which only Needs you shows, opens Needs you. */
+export function attentionPath(row: Attention): string {
+  return isStep(row) ? "/" : questionPath(row);
+}
+
+/** A task question and every historical revision open the same owning L2 conversation. */
 export function questionPath(decision: Pick<Decision, "project" | "slug" | "id" | "revision">): string {
   const query = new URLSearchParams();
   if (decision.id) query.set("question", decision.id);

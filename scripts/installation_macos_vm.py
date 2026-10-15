@@ -1047,9 +1047,10 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
 # The confinement rows that must refuse private places without macOS asking, and how their details say so.
 PRIVACY_ROWS, REFUSED = ("confinement", "validation-confinement"), \
     "the Desktop and mounted volumes are refused with no consent request in the privacy log"
-# The rows that run fixture commands as launchd jobs: output, Stop of every descendant, cleanup and time limits.
+# The rows that run fixture commands as launchd jobs: output, Stop of every descendant, cleanup, time limits and a
+# confined job's launch input.
 JOB_ROWS = ("job-pipe", "job-file-output", "exit-cleanup", "stop-descendants", "time-limit", "limit-after-owner-exit",
-            "logged-job", "detached-job")
+            "logged-job", "detached-job", "launch-input")
 # The suite's read-only-home cases, which confine a child with a second Seatbelt profile or Codex's own sandbox and so
 # skip in a validation run or a confined worker (docs/DEVELOPMENT.md#macos-validation-runs).
 READ_ONLY_HOME = ("tests.test_worker_writes", "tests.test_worker_roots",

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router";
-import type { Decision, Overview } from "./api";
-import { questionPath } from "./decisions";
+import type { Attention, Overview } from "./api";
+import { attentionPath, isStep } from "./decisions";
 
 /**
  * Decision alerts (issue #221): one notification per newly escalated operator question, carrying the
@@ -245,7 +245,7 @@ async function rememberInWorker(keys: string[]): Promise<void> {
  * Turning alerts on records what is already waiting, for the page and for the worker, so neither the switch
  * nor the first wake announces the backlog.
  */
-export async function enableAlerts(pending: Decision[]): Promise<AlertState> {
+export async function enableAlerts(pending: Attention[]): Promise<AlertState> {
   if (!supported()) return "unsupported";
   const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
   if (permission !== "granted") {
@@ -284,20 +284,25 @@ export function useAlertState(): AlertState {
   return useSyncExternalStore(watch, readAlertState, () => "unsupported");
 }
 
-type Ask = Decision & { alert_key: string };
+type Ask = Attention & { alert_key: string };
 
 /**
  * A published operator question, which altd keys for alerting (`alert_key`): one key per question group,
  * renewed only when the decision is asked again after the operator replied, so a rewording or an escalation
  * of a waiting decision never alerts twice.
  */
-function alerting(decision: Decision): decision is Ask {
+function alerting(decision: Attention): decision is Ask {
   return Boolean(decision.alert_key);
 }
 
+/** What a banner may name: the task, or for an operator step only that it is one, never its text. */
+const alertName = (decision: Attention) => isStep(decision) ? "A command to run" : decision.title || decision.slug;
+
 /** Needs you shows every decision; a task or decision page shows its own. */
-export function showsDecision(pathname: string, decision: Decision): boolean {
+export function showsDecision(pathname: string, decision: Attention): boolean {
   if (pathname === "/") return true;
+  // Project chat shows only a count, so a step shows only in Needs you.
+  if (isStep(decision)) return false;
   const owner = `/projects/${decision.project}/tasks/${decision.slug}`;
   return pathname === owner || pathname.startsWith(`${owner}/`)
     || pathname === `/projects/${decision.project}/decisions/${decision.slug}`;
@@ -309,15 +314,15 @@ export function showsDecision(pathname: string, decision: Decision): boolean {
  */
 function banner(decision: Ask, reveal: Reveal): [string, NotificationOptions] {
   return [reveal === "none" ? "A decision needs you" : `${decision.project} needs a decision`, {
-    body: reveal === "task" ? decision.title || decision.slug : undefined,
+    body: reveal === "task" ? alertName(decision) : undefined,
     tag: decision.alert_key,
-    data: { url: questionPath(decision) },
+    data: { url: attentionPath(decision) },
   }];
 }
 
 /** Decisions that arrived while this device waited out its pace, in one banner opening Needs you. */
 function together(decisions: Ask[], reveal: Reveal): [string, NotificationOptions] {
-  const lines = reveal === "task" ? decisions.map((decision) => `${decision.project} · ${decision.title || decision.slug}`)
+  const lines = reveal === "task" ? decisions.map((decision) => `${decision.project} · ${alertName(decision)}`)
     : reveal === "project" ? [...new Set(decisions.map((decision) => decision.project))] : [];
   return [`${decisions.length} decisions need you`, {
     body: lines.length ? lines.join("\n") : undefined, tag: decisions[0]!.alert_key, data: { url: "/" },
@@ -489,7 +494,7 @@ export function useAlertNote(state: AlertState): string {
 }
 
 /** The switch on Needs you (SPEC.md §3.8.1), set on each device that should alert. */
-export function DecisionAlertToggle({ pending }: { pending: Decision[] }) {
+export function DecisionAlertToggle({ pending }: { pending: Attention[] }) {
   const state = useAlertState();
   const note = useAlertNote(state);
   const [asking, setAsking] = useState(false);

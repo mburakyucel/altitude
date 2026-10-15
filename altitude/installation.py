@@ -568,7 +568,8 @@ _GH_TOO_OLD = "Agents land pull requests with GitHub CLI 2.72 or newer; this one
 
 def prerequisites() -> list[dict]:
     """What agents need before the first task, in the order First run shows it: each item is met, unmet or optional,
-    with the step that meets it and the command the operator runs in their own terminal. Nothing here takes a password or token."""
+    with the step that meets it and the command the operator runs in their own terminal, or the engine whose sign-in the
+    page performs itself. Nothing here takes a password or token."""
     from . import config, engines, platform
     gh = shutil.which("gh")
     lacks = _gh_lacks() if gh else []
@@ -604,14 +605,15 @@ def prerequisites() -> list[dict]:
         signed = engines.sign_in(engine)
         if signed["signed_in"]:
             ready.append(engine)
-        agents.append({"key": engine, "label": f"{label} signed in" if signed["signed_in"] else f"{label} installed",
+        # `sign_in`: the page signs Altitude in itself (engines.token_setup); the command is for a terminal.
+        agents.append({"key": engine, "label": f"{label} {'signed in' if signed['signed_in'] else 'not signed in'}",
                        "step": f"Sign in to {label}", "state": "met" if signed["signed_in"] else "unmet",
-                       "detail": None if signed["signed_in"] else f"{label} is installed but not signed in.",
-                       "command": None if signed["signed_in"] else signed["command"]})
+                       "detail": None, "command": None if signed["signed_in"] else signed["command"],
+                       "sign_in": {"engine": engine, "label": label} if engine in engines.TOKEN_SETUP else None})
     if any(agent["state"] == "met" for agent in agents):
         for agent in agents:
             if agent["state"] == "unmet":
-                agent.update(state="optional", detail=f"Altitude works with any one coding agent. {agent['detail']}")
+                agent.update(state="optional", detail="Altitude works with any one coding agent.")
     items += agents
     sandbox = platform.sandbox_tool()
     if sandbox:
@@ -699,13 +701,19 @@ def describe_hosting(hosting: dict) -> str:
     return "\n".join(lines)
 
 
-def _next(hosting: dict, pairing: dict, needs: list[dict]) -> list[str]:
+def _next(hosting: dict, pairing: dict, needs: list[dict], trust: dict) -> list[str]:
     """The one next step from current state: a working service, then the first browser, then the first missing tool."""
     if not hosting["verified"]:
         return []  # describe_hosting already names the service step.
     if pairing["paired"] == 0:
+        from . import state as S
+        stores = [row for row in (trust.get("this_computer") or {}).get("stores", []) if not row.get("manual")]
+        # Over SSH the browser is on another computer, as the installer's offer assumes too.
+        if any(row["trusted"] is not True for row in stores) and not os.environ.get("SSH_CONNECTION"):
+            return ["Next: trust Altitude's certificate on this computer: alt trust, then "
+                    + (f"open the private link the installer printed (it works once, until {S.local(pairing['code_expires'])})."
+                       if pairing.get("code_expires") else "run alt pair.")]
         if pairing.get("code_expires"):
-            from . import state as S
             return [f"Next: open the private link the installer printed. It works once, until {S.local(pairing['code_expires'])}."]
         return ["Next: compare the certificate below with what your browser shows, trust it, then run alt pair."]
     if needs:
@@ -734,6 +742,13 @@ def describe_doctor(report: dict) -> str:
     lines += ["  " + item["detail"] for item in report["checks"]
               if item["state"] in ("unavailable", "unknown") and isinstance(item.get("detail"), str)]
     paired = report["pairing"]["paired"]
+    computer = report["certificate_trust"].get("this_computer")
+    if computer:
+        rows = computer["stores"]
+        lines.append("Certificate trust on this computer: " + (computer["detail"] if computer.get("detail") else "; ".join(
+            f"{state} {', '.join(row['label'] for row in rows if row['trusted'] is value)}"
+            for state, value in (("trusted in", True), ("not in", False), ("import by hand in", None))
+            if any(row["trusted"] is value for row in rows))))
     lines += [*(["Browser certificate trust: unverified until a browser opens Altitude without a warning."] if not paired else []),
               f"Browser pairing: unknown; {report['pairing']['detail']}" if paired is None else
               "Browser pairing: no browser is paired yet." if not paired else
@@ -794,6 +809,8 @@ def doctor() -> dict:
         trust = {"state": "unknown", "url": hosting.get("url"),
                  **{key: identity[key] for key in ("ca_cert", "ca_name", "ca_sha256", "ca_expires", "ca_scope",
                                                     "trust_steps")}}
+        if identity["managed"] and not platform.containerized():
+            trust["this_computer"] = tls.this_computer(Path(hosting["tls_dir"]))
     except (tls.TLSFailure, OSError) as exc:
         trust = {"state": "unavailable", "detail": str(exc)}
     try:
@@ -807,7 +824,7 @@ def doctor() -> dict:
                    "detail": (agents["label"] + "; " + "; ".join(f"{o['label']}: {o['command']}" for o in agents["options"]))
                    if agents else ", ".join(seat["name"] for seat in seats if seat["available"] is not False)})
     return {"version": (config.RELEASE or {}).get("version"), "update": update_status(), "checks": checks, "engines": seats,
-            "hosting": hosting, "pairing": pairing, "next": _next(hosting, pairing, needs),
+            "hosting": hosting, "pairing": pairing, "next": _next(hosting, pairing, needs, trust),
             "engine_access": "unknown; no provider requests are made", "certificate_trust": trust,
             "optional": "Voice, GPU and telemetry do not gate typing or task delivery."}
 

@@ -224,7 +224,7 @@ class TestAccess(AltitudeCase):
                 status, reply, _ = self.request(method, path, {} if method == "POST" else None)
                 self.assertEqual((status, reply), (401, {"error": "Pair this device to use Altitude.", "pair": True}))
         # On the computer itself, over plain HTTP, pairing needs no certificate check.
-        trust = {"local": True, "https": False, "check": False,
+        trust = {"local": True, "https": False, "check": False, "command": False,
                  "certificate": None, "guide": tls.setup_guide()}
         self.assertEqual(self.request("GET", "/api/access")[:2], (200, {"paired": False, "device": None, "trust": trust}))
         self.assertEqual(self.request("GET", "/api/health")[0], 200)
@@ -245,7 +245,7 @@ class TestAccess(AltitudeCase):
         self.assertEqual(self.request("GET", "/api/access", device=key)[:2],
                          (200, {"paired": True, "device": "Home Screen app on iPhone", "trust": {
                              "local": True, "https": False,
-                             "check": False, "certificate": None, "guide": tls.setup_guide()}}))
+                             "check": False, "command": False, "certificate": None, "guide": tls.setup_guide()}}))
         status, reply, _ = self.pair(code)
         self.assertEqual((status, reply["error"]), (410, "This code has expired or was already used. Make a new one."))
 

@@ -335,8 +335,10 @@ installation with manual recovery through `~/.local/bin/alt pair`. The successfu
 and terminal output carry the link; configuration, activation/update receipts and diagnostics do
 not retain its raw code. The shell's private result file is removed by its existing exit cleanup.
 Trust guidance and the link lead the output; PATH setup and `alt doctor` are optional follow-up.
-The installer launches no browser and changes no trust store. Terminal/OS link handlers open a
-browser on the viewing device, so an SSH link using loopback refers to that device.
+The installer launches no browser. In a terminal on the hosting computer, not over SSH, and for
+Altitude's own CA, it runs `alt trust` before printing the link, which changes trust only after a yes
+typed in that terminal. Terminal/OS link handlers open a browser on the viewing device, so an SSH link
+using loopback refers to that device.
 
 `platform.py` is the platform seam: it owns the generated per-user daemon service, the jobs that run
 workers, reviews, machine commands, updates and restarts, their status and stop, resource limits, and the
@@ -439,7 +441,7 @@ Invalid TLS refuses startup or reports renewal failure without switching to HTTP
 completes its handshake on its own request thread within ten seconds, so a stalled client drops
 only itself and never delays other requests. External
 certificates are validated without replacement. Browser/device trust stays explicitly unknown
-until the user imports the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
+until the user trusts the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
 report the CA's name, SHA-256 fingerprint, expiry and scope, read from the certificate's own name
 constraints ("No limits" when it has none), with the URL and per-platform trust steps. A desktop or phone gets
 the public CA through a share window (`tls.Share`): for ten minutes it answers plain HTTP on the
@@ -463,11 +465,26 @@ window is still opening. The page keeps the window only in component state, neve
 query cache. **Open setup page** opens that same share URL in a new tab without opener access,
 retaining the original Settings page, certificate facts and sharing timer. The link is available
 only while sharing is open and disappears during closing or after expiry. `alt pair` takes its address
-from the same discovery. Sharing refuses loopback-only addresses; a browser on the hosting computer
-imports the public `ca.crt` reported by `alt doctor` directly. Trust installation stays a deliberate
-operator action in the browser or OS. Remote binding and trust remain explicit;
-HTTPS identifies Altitude, and pairing (below) decides who may use it. See
-[setup](SETUP.md#trust-https-on-each-device).
+from the same discovery. Sharing refuses loopback-only addresses; the hosting computer uses `alt trust`.
+Remote binding and trust remain explicit; HTTPS identifies Altitude, and pairing (below) decides who
+may use it. See [setup](SETUP.md#trust-https-on-each-device).
+
+`alt trust` (`tls.trust`, operator only) is the one place Altitude changes trust, for the hosting
+computer's own account. It takes the service from its record, requires a generated (managed) CA and the
+same HTTPS proof as `alt tls-share`, and works on a temporary copy of the proven bytes. The platform seam
+lists the account's browser stores and checks and changes them without administrator rights: on macOS
+the login keychain through `security` (`add-trusted-cert -r trustRoot -p ssl`, checked with
+`verify-cert` against the server certificate, which macOS confirms in its own password window), on Linux
+each NSS database (`~/.pki/nssdb`, snap Chromium's and every Firefox profile with a `cert9.db`, in the
+classic, XDG, snap or Flatpak profile folder) through
+`certutil -t C,,` (creating the one an installed Chromium-family browser reads but never creates), found by content because NSS keeps an earlier import's nickname; a Flatpak Chrome is
+named for its own import. The CA is added as "<name> · <first eight fingerprint digits>", and each
+change is checked afterwards rather than trusted from the tool's exit status. The question and answer
+use the controlling terminal (`/dev/tty`, with earlier keystrokes discarded), so standard input, which a
+piped installer fills with itself, never answers. It prints one undo command per store. `alt doctor` runs the same checks read-only for
+`certificate_trust.this_computer` and its next step. The access view's `trust.command` tells the pairing
+screen that a browser is on the hosting computer, outside a container, with a CA `alt trust` accepts, so
+it leads with that command; the page itself never changes the computer.
 
 The pairing screen checks that a device on the network trusts the installation's CA, not just the one
 certificate a warning bypass let through (`tls.TrustCheck`). At startup and after each daily
@@ -747,10 +764,11 @@ engine that turn then attempts, and each explicit task resume request withdraws 
 engine. A credential still invalid records it again on that attempt, within the same lapse, and
 automatic turns and resumes keep waiting. On an engine whose runs share the CLI's sign-in (Codex), the
 quota refresh records a lapse when its read is refused for sign-in and its successful read ends it;
-Claude's runs use Altitude's own sign-in, so saving it with `alt sign-in claude` ends theirs. A
+Claude's runs use Altitude's own sign-in, so saving a new one ends theirs. A
 successful coordinator turn ends a lapse on either engine. Each project's
 conversation gets one heads-up line per lapse naming the engine, what the turn did (answered on
-another engine, waits, or stopped) and the engine's sign-in command; failed turns show the
+another engine, waits, or stopped) and how to sign in again: Settings › Prerequisites for an engine
+Altitude signs in itself, else the engine's sign-in command; failed turns show the
 rejection's plain reason, never provider text. A current model-specific weekly reading at 100% also
 excludes only that model. The router never derives model allowances from an
 account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
@@ -1473,13 +1491,28 @@ and output styles into it, read-only to the job; the folder's own state file sta
 A session resumed for the first time in its folder is first copied there from the operator's folder,
 where Claude kept every session before jobs had folders of their own. Workers read the project's notes
 from the operator's folder (`autoMemoryDirectory`) without being able to change them. Every Claude job
-signs in with Altitude's own subscription token (`alt sign-in claude`, kept in the private access
+signs in with Altitude's own subscription token (made by the sign-in below and kept in the private access
 store), handed over in its launch input like the GitHub token below and exported by the driver as
 `CLAUDE_CODE_OAUTH_TOKEN`, so a job never reads or refreshes the operator's sign-in; a review, which
 runs without the driver, reads the same environment from the first line of its input. Without that
 token Claude reports itself signed out, which is an ordinary [sign-in lapse](#engine-integration-boundary);
 two weeks before its year ends, counted from when it was saved, each project's conversation gets one
 heads-up line to renew it.
+Altitude makes that sign-in itself (`engines/token_setup.py`) for an engine whose runs take a token from the
+operator (`TOKEN_SETUP`), through `GET` and `POST /api/sign-in/<engine>` from a paired browser or with the
+machine key (`alt sign-in`); workers cannot read the key. Starting runs the engine's setup command
+(`claude setup-token`) as the session leader of a pseudo-terminal of altd's own, 4000 columns wide so nothing
+wraps, in a fresh settings folder inside the private access store that is removed afterwards, with no sign-in
+of its own in its environment and a browser command that does nothing. altd reads that screen through a small
+terminal model and returns only the sign-in link it shows; finishing types the code the operator pasted
+(printable characters only) and waits for the outcome. A token is accepted only when the command exits 0
+after the code and exactly one distinct token of the engine's shape stood alone on a line; it goes straight
+to `access.save_engine_token` and ends the sign-in lapse. Anything else fails with one of four fixed sentences
+(code not accepted, expired after ten minutes, interrupted, not followed) and saves nothing, so an earlier
+sign-in keeps working. One sign-in per engine is open at a time, held in altd's memory: starting another
+replaces it; cancelling, failing or the ten minutes ending kill the command's whole process group, and altd's
+exit hangs up its terminal. Nothing read from the screen is logged, recorded or returned except the link,
+and a failed request answers with fixed text and logs only the exception's type.
 Altitude reads a task's transcript, context and token usage in its job's folder, without following a
 link the job planted there, and in the operator's folder for a session recorded before. Altitude's usage
 readings and improvement reviews still run outside any job on the operator's sign-in.
@@ -1709,7 +1742,8 @@ on its own thread so the reader keeps draining output while it waits for the pro
 does and wakes a blocked owner unless it is stopped or faulted; a task no longer running or blocked, or on a later
 attempt than the one current when the page named the command, gets none. It is no conversation entry and grants
 nothing. For a project terminal, `l3.queue_message` queues it for the coordinator as a `terminal` system turn,
-which the conversation shows as a system line; a project no longer managed gets none. When naming the command
+which the conversation shows as a system line; a project no longer managed gets none. When a command that looks
+finished is an open [operator step](#operator-steps)'s, the same notice clears that step (`tasks.step_ran`) and says so. When naming the command
 fails, the page still types it and asks the operator to reply in chat instead. altd does not see the command's exit status, so the notice sends the
 reader to `alt task terminal` or `alt project terminal` to verify; a shell builtin that waits for input without a child looks finished.
 A command the operator types without a `run` block sends no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
@@ -2408,7 +2442,8 @@ without a repository, sign-in or network request, then sign-in), each engine's l
 engine seam (`engines.sign_in`), on Linux the agent sandbox (`platform.sandbox_tool`, optional when a signed-in agent
 brings its own sandbox) and Git, as met, unmet with the terminal command to run (the install command from
 `platform.install_command` or `engines.install_command` for a missing tool or a GitHub CLI too old to land, else
-its sign-in command), or optional once one engine is signed in. With no engine installed, one row asks for at least
+its sign-in command, or, for an engine Altitude signs in itself, `sign_in`, which shows **Sign in** in its row
+instead), or optional once one engine is signed in. With no engine installed, one row asks for at least
 one coding agent and lists each engine's install command as an option. The projects step lists the folders under the projects folder
 (`config.project_roots()`: the machine setting `projects_folder`, else `ALTITUDE_ROOTS`), changes
 that folder in place and starts L3 for one or all of them through `POST /api/project/add`, in order,
@@ -2960,6 +2995,28 @@ refresh.
 Unknown overview reads never imply zero attention. Failed refreshes identify saved counts and
 status as stale; Work links stay available, while Needs you disables answers until a fresh read.
 App Back and browser history preserve the originating Work or Needs you view.
+
+### Operator steps
+
+A command only the operator can run for a project's own recovery, with no owning task to ask it, is an
+operator step: the project's `steps.json` under `ALTITUDE_HOME`, written by `tasks.publish_step`. The
+coordinator publishes one with `alt project step -`, which altd answers only on that project's coordinator
+socket, as it does `alt project message`. Stdin is the plain question: its first line names the step and it
+holds exactly one `run` block of one command line, split at fences as the page splits them
+(`tasks.run_commands`); `--task <slug>` names each unfinished task waiting on it. Publishing the same command
+again revises that step in place and adds the tasks it names. The step is a row in the overview queue and the project's decisions with no
+`slug`, `kind` `step`, its `id` and the tasks it names, so Needs you shows it as a card in the project's section
+with **Open in terminal** opening the project terminal (spec §3.8.4), and the badge, alerts and digest count
+it. A task it names that is blocked or reported, without a fault, Stop or pending resume, reads the operator's
+turn with the step's first line
+(`tasks.block_status`), on its Work row and task page, instead of waiting on the coordinator; the task page
+keeps the owner's open note to L3 out of sight meanwhile. The project terminal's notice that exactly that command
+looks finished clears the step (`tasks.step_ran`) and asks the coordinator to verify the output and tell the
+tasks it named; a terminal that ended first leaves the step open; `alt project step --withdraw <id> --reason '…'` clears one settled
+another way, and removing the project withdraws its steps. The notice is queued before the step clears, so a
+notice that fails leaves the step in Needs you. A stale Needs you read offers the command with Copy only. The
+project's `events.log` records `step` rows for `asked`, `revised`, `ran` and `withdrawn`.
+A step for an owner's own work stays on that task as its question, with its task terminal.
 
 ### From model judgment to a task question
 

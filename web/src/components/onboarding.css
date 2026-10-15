@@ -31,6 +31,21 @@
 .onboarding-option .onboarding-command { margin-top: 4px; }
 .onboarding-command code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .onboarding-command .btn { min-height: 36px; font-family: var(--font-ui, inherit); }
+/* Altitude's own sign-in in an engine's row (SignIn.tsx): stacked under the status line; full-width buttons on phone. */
+.sign-in { display: flex; flex-direction: column; gap: 12px; max-width: 32rem; margin-top: 10px; }
+.sign-in ol { display: flex; flex-direction: column; gap: 12px; margin: 0; padding-left: 1.25rem; list-style: decimal; }
+.sign-in p { margin: 0; }
+.sign-in .btn { min-height: 44px; }
+.sign-in-link { margin-top: 6px; }
+.sign-in input { width: 100%; }
+.sign-in-link .btn[aria-disabled] { opacity: .6; cursor: default; }
+.sign-in-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.sign-in-busy { display: inline-flex; align-items: center; gap: 8px; }
+.sign-in-done { margin-top: 4px; }
+@media (max-width: 639px) {
+  .sign-in .btn { width: 100%; }
+  .sign-in-actions { flex-direction: column-reverse; }
+}
 .onboarding-note { padding: 10px 12px; border-radius: var(--radius-card); background: var(--bubble); color: var(--text-secondary); font-size: var(--text-meta); line-height: 1.5; }
 .onboarding-projects { display: flex; flex-direction: column; gap: 14px; }
 .onboarding-folder { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; }

@@ -1,9 +1,9 @@
 import { Link, useLocation } from "react-router";
 import { useOverview } from "../data/api";
-import type { Decision, Overview, TaskRow } from "../data/api";
+import type { Attention, Decision, Overview, TaskRow } from "../data/api";
 import { agoText, clockText } from "../data/observed";
 import type { DotState } from "../shell/projects";
-import { questionPath, turnLabel } from "../data/decisions";
+import { isStep, questionPath, turnLabel } from "../data/decisions";
 import { setSelectedProject } from "../shell/scope";
 import { statusExcerpt, stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 
@@ -49,7 +49,7 @@ export interface TaskCardFacts {
 }
 
 /** Everything the card shows besides the title, from the task row and the overview. */
-export function taskCardFacts(task: TaskRow, overview: Overview | undefined, project: string, decision?: Decision): TaskCardFacts {
+export function taskCardFacts(task: TaskRow, overview: Overview | undefined, project: string, decision?: Attention): TaskCardFacts {
   const state = task.state ?? "";
   const held = state === "blocked" && Boolean(task.resume_after);
   const fault = str(task["fault"]);
@@ -99,12 +99,14 @@ export function TaskCard({
   // The same cache entry every page reads: no request of the card's own.
   const overview = useOverview();
   const location = useLocation();
-  const decisions = task.state === "done" || task.state === "rejected" ? [] : (overview.data?.queue ?? [])
-    .filter((d) => d.project === project && d.slug === task.slug && d.status !== "resolved" && d.audience !== "l3");
-  const questions = decisions.filter((d) => d.id);
-  const facts = taskCardFacts(task, overview.data, project, decisions[0]);
   // Only a waiting task names its step: once a resume is due, the operator has nothing left to do (§3.5).
   const waiting = (task.state === "blocked" || task.state === "reported") && !task.resume_after && !task["stop_id"] && !task["fault"];
+  // The task's own decisions, and while it waits each operator step L3 named it on (§3.8.4).
+  const decisions = task.state === "done" || task.state === "rejected" ? [] : (overview.data?.queue ?? [])
+    .filter((d) => d.project === project && (isStep(d) ? waiting && d.tasks.some((t) => t.slug === task.slug)
+      : d.slug === task.slug && d.status !== "resolved" && d.audience !== "l3"));
+  const questions = decisions.filter((d): d is Decision => !isStep(d) && Boolean(d.id));
+  const facts = taskCardFacts(task, overview.data, project, decisions[0]);
   const turn = turnLabel(decisions, waiting);
   const attention = turn ? `${turn}${overview.isError ? " · saved" : ""}` : null;
   const tab = variant === "row" || new URLSearchParams(location.search).get("tab") === "work" ? "work" : "chat";
