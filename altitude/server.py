@@ -1704,15 +1704,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _body(self, *, max_bytes: int | None = None, owned: bool = False) -> dict:
-        """The request's JSON body. An `owned` request, a task's own, carries the files it shows when it comes from this
-        computer, where the worker runs: a connection between two of its addresses. One from elsewhere is never
-        admitted, so it keeps the ordinary bound."""
-        limit = (door.MAX_REQUEST if owned and self.client_address[0] == self.connection.getsockname()[0]
-                 else BODY_LIMIT)
+        """The request's JSON body. An `owned` request, a task's own, may carry the files it shows when a process in a
+        task's worker job holds its connection; every other client keeps the ordinary bound."""
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             raise images.ImageError("Invalid message size.", 400)
+        limit = (door.MAX_REQUEST if owned and BODY_LIMIT < n <= door.MAX_REQUEST
+                 and worker_connection(self.client_address, self.connection.getsockname()) else BODY_LIMIT)
         if n < 0 or n > (max_bytes or limit):
             self.close_connection = True
             raise images.ImageError("Message is too large. Use up to 4 images, 10 MB each and 20 MB total."
@@ -3526,6 +3525,19 @@ def _settle_interrupted(project: str, slug: str, row: dict, held: ExitStack) -> 
     """Settle a command that runs on from before a restart, then free the machine-run place it `held`."""
     with held:
         settle_machine_command(project, slug, row, watched=False)
+
+
+def worker_connection(peer: tuple, local: tuple) -> bool:
+    """Whether a process in the current worker job of some open task holds this connection: decided before its body
+    names a task, so only a worker's request is read past the ordinary bound."""
+    for project in config.load_projects():
+        for task in S.list_tasks(project):
+            try:
+                if task["state"] in S.OPEN_STATES and task_owner_connection(project, task["slug"], task, peer, local):
+                    return True
+            except (KeyError, TypeError, ValueError, OSError, RuntimeError):  # RuntimeError: no worker record
+                continue
+    return False
 
 
 def task_owner_connection(project: str, slug: str, task: dict, peer: tuple, local: tuple) -> bool:

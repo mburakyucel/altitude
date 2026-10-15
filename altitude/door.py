@@ -26,8 +26,8 @@ ENDPOINT = "task/door"
 WAIT = 600
 #: One request's own bound: the longest record change is an `alt` verb that reads GitHub, as `task done` does.
 TIMEOUT = 150
-#: A request's bound, read only from this computer: the largest files a worker shows (`tasks.SHOWN_TOTAL_LIMIT` of
-#: images and one document) in base64, with room for the verb's own text and input files.
+#: A worker's request bound: the largest files it shows (`tasks.SHOWN_TOTAL_LIMIT` of images and one document) in
+#: base64, with room for the verb's own text and input files.
 MAX_REQUEST = 48 << 20
 MAX_OUTPUT = 1 << 20
 #: Where altd keeps each request's outcome: in the task's folder, which archiving moves with the task.

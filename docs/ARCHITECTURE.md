@@ -502,7 +502,7 @@ at the certificate. Every POST must come from Altitude's own page or from a clie
 request's `Host`. The `alt` CLI sends neither header; another site open in the operator's browser
 cannot make it send an action. The Vite dev proxy gives the dev page's own requests altd's origin and
 leaves any other page's origin in place. A JSON body is at most 1 MiB; image messages, voice
-recordings and a task's own requests from this computer ([task door](#task-door)) have their own limits.
+recordings and a task worker's own requests ([task door](#task-door)) have their own limits.
 A client that sends no complete request line and headers within thirty seconds loses its connection. An internal error's text reaches only the CLI and paired
 devices; any other client gets a fixed message, and altd's log keeps the details. The web app's pages refuse to be framed by any page
 (`frame-ancestors 'none'`).
@@ -1605,12 +1605,14 @@ source deployment's export or an installed version), run that version's same fil
 (`door.follow_activation`). Each command a worker starts therefore sends its door requests, and its requests to
 the owner's other routes, in the form the running altd reads; altd keeps no earlier forms. The worker's
 environment, persona, brief and engine driver stay as launched. The driver and any command already running when
-altd restarts, such as a landing waiting for its checks, keep the code they started with.
+altd restarts, such as a landing waiting for its checks, keep the code they started with. An installed update
+moves `current` just before it restarts the service, so a command started in that moment can meet the previous
+altd once and be refused.
 
-A task's own request from this computer, a connection between two of its addresses, is read up to 48 MiB: the
-largest files a worker shows, sent as base64, with the verb's own text. From anywhere else it keeps the ordinary
-1 MiB. The worker's `alt` refuses a larger request before sending it and names its size, so it never meets a
-closed connection.
+A request to the owner's routes is read up to 48 MiB, the largest files a worker shows sent as base64 with the
+verb's own text, when a process in an open task's worker job holds its connection; altd decides that from the
+connection before reading the body, and every other client keeps the ordinary 1 MiB. The worker's `alt` refuses a
+larger request before sending it and names its size, so it never meets a closed connection.
 
 Each request carries an identity. altd keeps its outcome in the task's `door/` folder for as long as its client may
 ask again, so a repeat after a dropped answer or a restart gets the first answer rather than a second change; a
