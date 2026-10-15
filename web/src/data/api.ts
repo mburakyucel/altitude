@@ -308,6 +308,8 @@ export const DecisionSchema = z
       message_id: z.string().nullish(), source: z.string().nullish(),
     }).passthrough().nullish(),
     response: z.object({ text: z.string(), at: z.string(), message_id: z.string() }).nullish(),
+    /** The task terminal's notice for this question's `run` command: it looks finished, or the terminal ended first. */
+    ran: z.object({ at: z.string(), command: z.string(), finished: z.boolean() }).nullish(),
     asked_again: z.boolean().nullish(),
     alert_held: z.boolean().nullish(),
     /** The identity every alert uses: the question group since the operator's latest reply (altitude/digest.py). */

@@ -12,7 +12,7 @@ import { setSelectedProject } from "../shell/scope";
 import { Choice, deliveryChoice } from "./Choice";
 import type { ChoiceState } from "./Choice";
 import { InlineProse, Prose, ProseRepository, ProseScope, QuestionProse } from "./Prose";
-import { ReviewStatus, reviewLine } from "./TaskReview";
+import { ReviewStatus, StateIcon, reviewLine } from "./TaskReview";
 import { ShownFiles } from "./Shown";
 import { keepForVisit, useVisitMemory } from "./visitMemory";
 
@@ -61,6 +61,17 @@ function Receipt({ response, picked, delivery }: { response: NonNullable<Decisio
   </div>;
 }
 
+/** The task terminal's notice for the question's `run` command (SPEC.md §3.8.5); the question stays open meanwhile. */
+function Ran({ ran }: { ran: NonNullable<Decision["ran"]> }) {
+  return <div className="decision-receipt question-ran" role="status">
+    <StateIcon tone={ran.finished ? "wait" : "warn"} />
+    <div>
+      <b>{ran.finished ? "Ran in the terminal" : "The terminal closed before this command finished"}</b>
+      <p className="text-meta text-muted" title={exactTime(ran.at)}>{ran.finished ? "Waiting for the L2 to check it · " : ""}{ageText(ran.at)}</p>
+    </div>
+  </div>;
+}
+
 /** Preset and custom answers share one conversational handoff in Needs you and chat. */
 export function QuestionSet({ decisions, group, target, disabled = false, onDenied, onRefresh, refreshKey, chat = false, from = "project", deliveries }: QuestionProps & {
   decisions: Decision[]; group?: QuestionGroup | null; target?: Decision;
@@ -83,6 +94,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
   const navigate = useNavigate();
   const location = useLocation();
   const repository = useContext(ProseRepository);
+  const terminal = useContext(ProseTerminal);
   // Unsent answers return with Back/Forward to this history entry; the signature below drops any whose revision closed.
   const kept: Record<string, Draft> = useVisitMemory<Draft>(decisions.map((q) => `answer:${draftKey(q)}`), (item): Draft | undefined => {
     const draft: Draft | undefined = drafts[item.slice("answer:".length)];
@@ -161,13 +173,15 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       {question.recommendation?.text ? <p className="decision-approach"><b>Recommended:</b> <InlineProse text={question.recommendation.text} /></p> : null}
       {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
     </>;
+    const prose = <QuestionProse className="decision-question" text={question.question || question.title || question.slug} />;
     const content = <>
-      <QuestionProse className="decision-question" text={question.question || question.title || question.slug} />
+      {question.ran?.finished && terminal && "open" in terminal ? <ProseTerminal value={{ ...terminal, ran: question.ran.command }}>{prose}</ProseTerminal> : prose}
       {!resolved && !question.response && question.audience === "l3" ? <p className="text-meta text-muted">L3 is handling this</p> : null}
       {resolved ? <div className="decision-receipt" role="status">
         {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}
         {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{closedBy(question.resolution.by)} · {ageText(question.resolution.at)}</span></> : null}
       </div> : null}
+      {!resolved && !question.response && question.ran ? <Ran ran={question.ran} /> : null}
       {!resolved && question.response ? <Receipt response={question.response} picked={options.find((option) => option.text === question.response!.text)?.label}
         delivery={deliveries?.[question.response.message_id]} /> : null}
       {question.shown ? <ShownFiles shown={question.shown} state={from ? { from, tab: from === "needs" ? "needs" : "work" } : undefined} onOpen={(event) => {

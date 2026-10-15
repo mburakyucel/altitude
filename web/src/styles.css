@@ -1284,6 +1284,9 @@
 .question-set[data-grouped] .question-body { gap: 8px; }
 .question-set[data-grouped] > .question-body + .question-body { padding-top: 12px; }
 .decision-receipt { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+.question-ran { flex-direction: row; gap: 10px; }
+.question-ran b { overflow-wrap: anywhere; }
+.question-ran p { margin: 2px 0 0; }
 .conversation-notice { margin: 0; padding: 10px 16px; background: var(--accent-tint); font-size: var(--text-meta); }
 .conversation-turn { color: var(--accent-text); font-size: var(--text-meta); font-weight: 600; }
 .conversation-jumps { position: absolute; bottom: 12px; right: 16px; display: flex; gap: 8px; max-width: calc(100% - 32px); font-size: var(--text-meta); }

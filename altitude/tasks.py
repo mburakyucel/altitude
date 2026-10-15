@@ -942,22 +942,38 @@ def save_owner_file(project: str, slug: str, kind: str, text: str, *, expected_a
     return {"saved": kind, "path": str(S.task_dir(project, slug) / name)}
 
 
-def notify(project: str, slug: str, text: str, *, by: str, attempt: int) -> dict | None:
+def notify(project: str, slug: str, text: str, *, by: str, attempt: int,
+           ran: str | None = None, finished: bool = False, entered: bool = True) -> dict | None:
     """Leave an automatic notice for the owner's next checkpoint, without a conversation entry, and wake an owner
     that is blocked. Stop and a fault still hold it: the notice waits for the next resume. A task with no owner
-    session, or one on a later attempt than the notice's, gets none."""
+    session, or one on a later attempt than the notice's, gets none. The task terminal's notice names the command
+    it `ran`: each open question carrying that command in a `run` block records whether it looks `finished` or the
+    terminal ended first, so the operator's card shows it while the owner checks; the question stays open. A
+    terminal closed before Enter on the command (reopened only to look) leaves that command's finished mark."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if task.get("state") not in ("running", "blocked") or task.get("attempt") != attempt:
             return None
         row = {"id": uuid.uuid4().hex, "at": S.now(), "text": text, "by": by}
         _append_jsonl(S.task_dir(project, slug) / "inbox.jsonl", row)
-        if task["state"] == "blocked" and not task.get("stop_id") and not task.get("fault"):
+        marked = [q for q in task.get("questions", [])
+                  if ran is not None and q["status"] == "open" and ran in run_commands(q["detail"])
+                  and (entered or not (q.get("ran") or {}).get("finished") or q["ran"]["command"] != ran)]
+        for question in marked:
+            question["ran"] = {"at": row["at"], "command": ran, "finished": finished}
+        wake = task["state"] == "blocked" and not task.get("stop_id") and not task.get("fault")
+        if wake:
             task["resume_request"] = row["id"]
             task["resume_after"] = task.get("resume_after") or S.now()
             task.pop("resume_failed", None)
+        if marked or wake:
             S.save_task(project, task)
+        for question in marked:
+            S.append_event(project, slug, "question-ran", by=by, question_id=question["id"],
+                           revision=question["revision"], finished=finished)
+        if wake:
             S.append_event(project, slug, "resume-requested", by=by, reason="notice", message_id=row["id"])
+        if marked or wake:
             S.regen_state_md(project)
     return row
 
@@ -2408,7 +2424,7 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, audie
         why = ((previous.get("recommendation") or {}).get("why", "")
                if keep_options and not item["why_supplied"] else item["why"])
         _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
-                          force_revision=bool(previous and previous.get("response")),
+                          force_revision=bool(previous and (previous.get("response") or previous.get("ran"))),
                           options=options, recommended_key=recommended, why=why,
                           shown=_UNSET if shown is None else shown if item["question"] == showing else None,
                           review=item["review"],

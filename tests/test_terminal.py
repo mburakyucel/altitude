@@ -497,6 +497,95 @@ class TestHandedCommand(TerminalCase):
                     task.pop(key)
                 S.save_task(self.project, task)
 
+    def settled(self):
+        """Wait out the notice's change: its inbox row is written before the question's mark, under one lock."""
+        with S.project_lock(self.project):
+            pass
+
+    def ask(self, *questions):
+        """Park the owner on operator questions; returns them by text."""
+        T.block(self.project, self.slug, questions[0], actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+                questions={"questions": [{"question": text} for text in questions]})
+        return {q["detail"]: q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"}
+
+    def test_the_question_that_handed_the_command_shows_it_ran_and_stays_open(self):
+        step = "Sign in from the task terminal.\n\n```run\necho signed-$((5+5))\n```"
+        asked = self.ask(step, "Which region should the installer use?")
+        self.hand("echo signed-$((5+5))")
+        self.type("\r", self.slug)
+        self.notice()
+        self.settled()
+        task = S.load_task(self.project, self.slug)
+        ran = {q["detail"]: q for q in task["questions"] if q["status"] == "open"}
+        self.assertEqual((ran[step]["id"], ran[step]["revision"]), (asked[step]["id"], asked[step]["revision"]))
+        self.assertEqual(ran[step]["ran"], {"at": T.pending(self.project, self.slug)[-1]["at"],
+                                            "command": "echo signed-$((5+5))", "finished": True})
+        self.assertNotIn("ran", ran["Which region should the installer use?"])
+        # The card shows it wherever the question is read, and it stays the operator's question until the owner acts.
+        [card] = [q for q in T.decisions(self.project) if q.get("id") == asked[step]["id"]]
+        self.assertEqual(card["ran"]["finished"], True)
+        self.assertEqual([(row["question_id"], row["finished"]) for row in S.read_events(self.project, self.slug)
+                          if row["kind"] == "question-ran"], [(asked[step]["id"], True)])
+        # Asking again publishes a new revision, which replaces the note with the ask.
+        task = S.load_task(self.project, self.slug)
+        task["state"] = "running"  # the woken owner, back in its session
+        S.save_task(self.project, task)
+        T.block(self.project, self.slug, step, actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+                questions={"questions": [{"id": asked[step]["id"], "question": step}]})
+        again = next(q for q in S.load_task(self.project, self.slug)["questions"]
+                     if q["id"] == asked[step]["id"] and q["status"] == "open")
+        self.assertEqual(again["revision"], asked[step]["revision"] + 1)
+        self.assertNotIn("ran", again)
+
+    def test_a_terminal_that_ended_first_marks_the_question_for_running_again(self):
+        step = "Sign in from the task terminal.\n\n```run\nsleep 30\n```"
+        self.ask(step)
+        self.hand("sleep 30")
+        self.type("\r", self.slug)
+        self.wait(lambda: terminal.status(self.project, self.slug)["busy"] == "sleep")
+        term = self.current(self.slug)
+        terminal.close(self.project, self.slug)
+        self.gone(term)
+        self.notice()
+        self.settled()
+        [question] = [q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"]
+        self.assertFalse(question["ran"]["finished"])
+
+    def test_reopening_the_terminal_only_to_look_keeps_the_finished_mark(self):
+        # Review finding: closing a terminal reopened from the card, without Enter, turned "ran" into "closed first".
+        self.ask("Sign in from the task terminal.\n\n```run\necho once\n```")
+        self.hand("echo once")
+        self.type("\r", self.slug)
+        self.wait(lambda: len(self.notices()) == 1)
+        term = self.current(self.slug)
+        terminal.close(self.project, self.slug)
+        self.gone(term)
+        terminal.hand(self.project, self.slug, self.open(self.slug), "echo once")
+        term = self.current(self.slug)
+        terminal.close(self.project, self.slug)
+        self.gone(term)
+        self.wait(lambda: len(self.notices()) == 2)
+        self.settled()
+        self.assertIn("before the operator ran the command", self.notices()[-1])
+        [question] = S.load_task(self.project, self.slug)["questions"]
+        self.assertTrue(question["ran"]["finished"])
+
+    def test_commands_the_question_did_not_hand_leave_it_unmarked(self):
+        self.ask("Sign in from the task terminal.\n\n```run\necho handed\n```")
+        self.type("echo handed\r", self.slug)  # typed by the operator, not handed from the card
+        self.hand("echo other")  # handed from another `run` block
+        self.type("\r", self.slug)
+        self.notice()
+        self.settled()
+        self.hand("echo handed")  # dropped by Ctrl+C before Enter
+        self.type("\x03", self.slug)
+        time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)
+        task = S.load_task(self.project, self.slug)
+        # A later attempt than the one that handed it hears nothing and marks nothing.
+        self.assertIsNone(T.notify(self.project, self.slug, "Terminal: notice", by="terminal",
+                                   attempt=task["attempt"] - 1, ran="echo handed", finished=True))
+        self.assertEqual([q.get("ran") for q in S.load_task(self.project, self.slug)["questions"]], [None])
+
     def test_a_finished_task_gets_no_notice(self):
         task = S.load_task(self.project, self.slug)
         task["state"] = "done"
@@ -542,7 +631,7 @@ class TestCoordinatorCommand(TerminalCase):
         self.type("echo restored-$((2+2))\r")
         text = self.notice()
         self.assertIn(f"It cleared that operator step from Needs you; once verified, tell the tasks it named ({self.slug})", text)
-        self.assertEqual(T.operator_steps(self.project), [])
+        self.wait(lambda: T.operator_steps(self.project) == [])  # cleared just after the notice is queued
         self.assertEqual([(row["action"], row["id"]) for row in S.read_project_log(self.project) if row["kind"] == "step"],
                          [("asked", step["id"]), ("ran", step["id"])])
 

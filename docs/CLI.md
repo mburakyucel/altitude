@@ -2364,7 +2364,9 @@ output with `alt task terminal` and verifies that the command ended and how. Ctr
 notice is not a chat message and grants no approval, access or authority; a stopped or faulted task keeps
 it for its next resume. The owner hands the command in an operator question that carries its `run` block
 (`alt task block --for-operator`, [above](#conversational-decisions)), so the task shows the step as the operator's turn,
-and resolves that question once it has verified the outcome.
+and resolves that question once it has verified the outcome. The same notice marks each open question carrying
+that command, so the operator's card says it ran and waits for the owner to check it, or that the terminal closed first; the
+question keeps its id and revision, and asking it again publishes a new revision without the mark.
 
 ### Reading the project terminal
 

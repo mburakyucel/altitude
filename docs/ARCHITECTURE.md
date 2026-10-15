@@ -1753,7 +1753,12 @@ on its own thread so the reader keeps draining output while it waits for the pro
 `tasks.notify` leaves it in the task inbox: it reaches the owner at its next checkpoint as any queued message
 does and wakes a blocked owner unless it is stopped or faulted; a task no longer running or blocked, or on a later
 attempt than the one current when the page named the command, gets none. It is no conversation entry and grants
-nothing. For a project terminal, `l3.queue_message` queues it for the coordinator as a `terminal` system turn,
+nothing. In the same change it marks each open question of the task whose `run` blocks (`tasks.run_commands`) hold
+exactly that command with `ran` (`at`, the `command`, and `finished` or the terminal ended first; a terminal closed
+before Enter on it keeps an earlier finished mark for it) and a `question-ran` event without the command, so
+the question's card in Needs you and the conversation says the command ran and waits for the owner to check it, or
+that the terminal closed first (spec §3.8.5). The question stays open with its id and revision; a later notice replaces the
+mark, and asking it again publishes a new revision without it. For a project terminal, `l3.queue_message` queues it for the coordinator as a `terminal` system turn,
 which the conversation shows as a system line; a project no longer managed gets none. When a command that looks
 finished is an open [operator step](#operator-steps)'s, the same notice clears that step (`tasks.step_ran`) and says so. When naming the command
 fails, the page still types it and asks the operator to reply in chat instead. altd does not see the command's exit status, so the notice sends the
