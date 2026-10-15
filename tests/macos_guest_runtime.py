@@ -271,11 +271,15 @@ def row_coordinator_stop() -> dict:
 def row_failed_turn() -> dict:
     """#782: an engine that stays alive after a failed turn, with a command it started still running, is ended at
     that turn: its whole launchd job stops, rather than the worker reading as working until a later timeout."""
-    slug = new_task("Failed turn", "Fictional task whose turn fails.\n"
-                    "FIXTURE-RUN: nohup /bin/sleep 901 >/dev/null 2>&1 &\nFIXTURE-END: failed-linger 500\n")
+    go = TEMP / f"fail-{os.getpid()}"  # the turn fails only once the row has seen its job and command running
+    slug = new_task("Failed turn", "Fictional task whose turn fails.\nFIXTURE-RUN: nohup /bin/sleep 901 >/dev/null 2>&1 &\n"
+                    f"FIXTURE-WAIT: {go}\nFIXTURE-END: failed-linger 500\n")
     unit = worker_unit(slug)
+    wait("the background command", lambda: ran(slug, "sleep 901") and processes("sleep 901"), timeout=60)
+    if not job_running(unit):
+        raise Failed("the worker's job was not running before its turn failed")
+    go.touch()
     failed = wait("the failed turn", lambda: next((entry for entry in turns(slug) if entry.get("failed")), None), timeout=60)
-    assert job_running(unit) and processes("sleep 901"), "the job did not outlive its failed turn"
     wait("the task to leave running", lambda: task(slug).get("state") != "running", timeout=150)
     ended = time.time()
     wait("the job to end", lambda: not job_running(unit), timeout=60)
@@ -433,8 +437,10 @@ def row_contention() -> dict:
              "holder": {key: held.get(key) for key in ("started", "finished", "exit")},
              "waiter": {key: waiter.get(key) for key in ("started", "finished", "exit")},
              "waiter_said": entry.get("stderr", "")[-600:], "holder_job": holder["unit"]}
+    # Only a command that waited is told what holds the place; this one must name the first task's command.
     facts["passed"] = (facts["machine_runs"] == 1 and held.get("exit") == 0 and waiter.get("exit") == 0
-                       and waiter["started"] >= held["finished"] and entry.get("exit") == 0 and bool(entry.get("stderr")))
+                       and waiter["started"] >= held["finished"] and entry.get("exit") == 0
+                       and f"waiting for a machine-run place: the command of {PROJECT}/{first} " in entry.get("stderr", ""))
     for slug in (first, second):
         if task(slug).get("grant"):
             alt("task", "grant", slug, "--revoke", "--reason", "Fixture row complete", check=False)

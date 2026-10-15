@@ -1658,8 +1658,10 @@ The runtime phases `workers`, `grants`, `incident` and `session` install the rel
 the public command, with `tests/macos_guest_engine.py`, a scripted fictional Codex CLI, as its only engine and the
 tests' fake GitHub CLI first on its saved PATH, and register a fictional project. `tests/macos_guest_runtime.py` then
 drives each row as the account against the installed service: the operator acts through `alt`, the coordinator
-through `alt chat`, and a worker through the `FIXTURE-RUN:` lines of its brief or message, which the fictional
-engine runs inside the worker's own job and sandbox. No provider is reached.
+through a turn the service runs for the operator's chat message, sent to `/api/chat` with the CLI's machine key as
+the page sends it (`alt chat` runs its turn outside the service, whose coordinator socket serves only its own turn),
+and a worker through the `FIXTURE-RUN:` lines of its brief or message, which the fictional engine runs inside the
+worker's own job and sandbox. No provider is reached.
 
 - `workers`: the coordinator stops a running task, which leaves it with the coordinator and no operator question
   (`coordinator-stop`, #779); a worker whose turn failed while a background command lingers is ended with its job

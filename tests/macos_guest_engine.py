@@ -5,6 +5,7 @@ rate-limit read, the coordinator's `exec` turns and the workers' app-server turn
 lines of its own, so the host's harness acts as L2 or L3 by writing them into a brief or a message:
 
     FIXTURE-RUN: <shell command>     run in the turn's folder; its exit and output go to FIXTURE_LOG
+    FIXTURE-WAIT: <path>             after the commands, end the turn only once PATH exists (at most 120 s)
     FIXTURE-END: completed           the default: an answer, then a completed turn
     FIXTURE-END: failed              a failed turn, after which the server stays open until its input closes
     FIXTURE-END: failed-linger <s>   a failed turn, after which the server stays alive, ignoring its input, as an
@@ -34,20 +35,23 @@ def record(entry: dict) -> None:
         log.write(json.dumps({"at": time.time(), "task": os.environ.get("ALTITUDE_TASK"), **entry}) + "\n")
 
 
-def directives(prompt: str) -> tuple[list[str], list[str]]:
-    """The prompt's commands in order, and its ending (default: completed)."""
-    runs = [line.split(":", 1)[1].strip() for line in prompt.splitlines() if line.startswith("FIXTURE-RUN:")]
-    ends = [line.split(":", 1)[1].split() for line in prompt.splitlines() if line.startswith("FIXTURE-END:")]
-    return runs, ends[-1] if ends else ["completed"]
+def directives(prompt: str, name: str) -> list[str]:
+    return [line.split(":", 1)[1].strip() for line in prompt.splitlines() if line.startswith(f"FIXTURE-{name}:")]
 
 
 def turn(role: str, session: str, prompt: str) -> list[str]:
-    runs, end = directives(prompt)
+    """Runs the prompt's commands in order, waits for its paths, and returns its ending (default: completed)."""
+    runs, waits = directives(prompt, "RUN"), directives(prompt, "WAIT")
+    ends = directives(prompt, "END")
+    end = ends[-1].split() if ends else ["completed"]
     record({"role": role, "session": session, "end": end, "commands": len(runs)})
     for command in runs:
         result = subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True, timeout=300)
         record({"role": role, "session": session, "command": command, "exit": result.returncode,
                 "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]})
+    deadline = time.monotonic() + 120
+    while not all(Path(path).exists() for path in waits) and time.monotonic() < deadline:
+        time.sleep(0.5)
     return end
 
 
