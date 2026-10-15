@@ -21,8 +21,8 @@ OpenSSL installed, installation and service startup must succeed while stock Lib
 Each refused attempt must leave the account's files and launchd jobs as they were. `privacy` runs the revision's own
 platform_probe.py confinement rows as the logged-in account in a guest whose Python was never asked for access to a
 private place; `jobs` runs its launchd job rows, Stop of every descendant and the time limits among them, which no
-worker sandbox can; `read-only-home` runs the revision's suite cases that confine a child with Seatbelt, which no
-validation run or worker can start. `--published` downloads two published releases on this Mac, checked against their
+worker sandbox can; `read-only-home` runs the revision's suite cases that confine a child with Seatbelt or, with
+this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or worker can start. `--published` downloads two published releases on this Mac, checked against their
 SHA256SUMS and tags, and runs only `published`: the baseline's own daemon must install the candidate and keep the
 state made through the app. The clone is deleted afterwards, also after a failure or a stop. RESULTS_DIR/macos-vm.json
 records the outcome.
@@ -998,8 +998,8 @@ PRIVACY_ROWS, REFUSED = ("confinement", "validation-confinement"), \
 # The rows that run fixture commands as launchd jobs: output, Stop of every descendant, cleanup and time limits.
 JOB_ROWS = ("job-pipe", "job-file-output", "exit-cleanup", "stop-descendants", "time-limit", "limit-after-owner-exit",
             "logged-job", "detached-job")
-# The suite's read-only-home cases, which confine a child with a second Seatbelt profile and so skip in a validation
-# run or a confined worker (docs/DEVELOPMENT.md#macos-validation-runs).
+# The suite's read-only-home cases, which confine a child with a second Seatbelt profile or Codex's own sandbox and so
+# skip in a validation run or a confined worker (docs/DEVELOPMENT.md#macos-validation-runs).
 READ_ONLY_HOME = ("tests.test_worker_writes", "tests.test_worker_roots",
                   "tests.test_land.TestLand.test_the_owner_lands_with_altitudes_home_read_only")
 
@@ -1044,8 +1044,18 @@ def phase_jobs(guest: Guest, repository: str, results: Path, record: dict, input
 
 def phase_read_only_home(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """The suite's read-only-home cases, which no validation run or worker can start: each must run and pass, none
-    skipped, its child confined by a Seatbelt profile that keeps Altitude's home read-only."""
-    command = f"/opt/homebrew/bin/python3.12 -B -m unittest -v {' '.join(READ_ONLY_HOME)}"
+    skipped, its child confined by a Seatbelt profile that keeps Altitude's home read-only, or by Codex's own sandbox
+    with a task's permissions. This Mac's Codex CLI is copied in, with an empty settings folder and no sign-in; it
+    asks no model. The suite's home lies outside the temporary folders Codex's sandbox admits, as in a validation run."""
+    codex = shutil.which(os.environ.get("CODEX_BIN", "codex"))
+    if not codex:
+        raise Stop("the read-only-home phase needs the Codex CLI on this Mac, whose own sandbox it runs in the guest")
+    guest.copy(Path(codex).resolve(), f"{SHARED}/codex", timeout=900)
+    environment = (f"ALTITUDE_VALIDATION=1 TMPDIR={SHARED}/tmp CODEX_HOME={SHARED}/codex-home CODEX_BIN={SHARED}/codex "
+                   "ALTITUDE_TEST_CODEX_SANDBOX=1")
+    record["codex"] = guest.ssh(f"mkdir {SHARED}/tmp {SHARED}/codex-home && env {environment} {SHARED}/codex --version",
+                                check=False).stdout.strip()
+    command = f"env {environment} /opt/homebrew/bin/python3.12 -B -m unittest -v {' '.join(READ_ONLY_HOME)}"
     result = in_source(guest, inputs, command, 900)
     (results / "read-only-home.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
     # unittest's verbose lines: `name (id) ... outcome`, with a docstring's first line before the dots when there is one.

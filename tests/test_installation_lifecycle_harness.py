@@ -1025,10 +1025,10 @@ class TestInstallationMacosVm(AltitudeCase):
 
         class Guest:
             def __init__(self, outcomes, code=0):
-                self.output, self.code, self.commands = ran.format(*outcomes), code, []
+                self.output, self.code, self.commands, self.copied = ran.format(*outcomes), code, [], []
 
-            def copy(self, source, target):
-                pass
+            def copy(self, source, target, timeout=300):
+                self.copied.append((Path(source).name, target))
 
             def ssh(self, command, timeout=120, check=True):
                 self.commands.append(command)
@@ -1039,15 +1039,27 @@ class TestInstallationMacosVm(AltitudeCase):
             vm.phase_read_only_home(guest, None, self.tmp, record, self.tmp, "c" * 40)
             return guest, record["cases"]["read-only-home"]
 
-        guest, case = judged(("ok", "ok"))
-        self.assertTrue(case["passed"])
-        self.assertEqual(case["tests"]["tests.test_land.TestLand.test_the_owner_lands_with_altitudes_home_read_only"], "ok")
-        self.assertIn("-m unittest -v " + " ".join(vm.READ_ONLY_HOME), guest.commands[0])
-        self.assertNotIn("sudo", guest.commands[0])  # the logged-in account itself, outside any sandbox
-        self.assertTrue((self.tmp / "read-only-home.log").is_file())
-        skipped = "skipped 'this process is already confined, and macOS applies no second Seatbelt profile'"
-        for outcomes, code in ((("ok", skipped), 0), (("ok", "FAIL"), 1), (("ok", "ok"), 1)):
-            self.assertFalse(judged(outcomes, code)[1]["passed"], outcomes)
+        codex = self.tmp / "codex"
+        codex.write_text("fixture")
+        codex.chmod(0o755)
+        with mock.patch.dict(vm.os.environ, {"CODEX_BIN": str(codex)}):
+            guest, case = judged(("ok", "ok"))
+            self.assertTrue(case["passed"])
+            self.assertEqual(case["tests"]["tests.test_land.TestLand.test_the_owner_lands_with_altitudes_home_read_only"],
+                             "ok")
+            self.assertEqual(guest.copied[0], ("codex", f"{vm.SHARED}/codex"))  # this Mac's CLI, its sandbox only
+            unittest_run = next(command for command in guest.commands if "-m unittest" in command)
+            self.assertIn("-m unittest -v " + " ".join(vm.READ_ONLY_HOME), unittest_run)
+            self.assertIn("ALTITUDE_TEST_CODEX_SANDBOX=1", unittest_run)
+            self.assertIn(f"CODEX_HOME={vm.SHARED}/codex-home", unittest_run)  # empty: no settings, no sign-in
+            self.assertNotIn("sudo", unittest_run)  # the logged-in account itself, outside any sandbox
+            self.assertTrue((self.tmp / "read-only-home.log").is_file())
+            skipped = "skipped 'this process is already confined, and macOS applies no second Seatbelt profile'"
+            for outcomes, code in ((("ok", skipped), 0), (("ok", "FAIL"), 1), (("ok", "ok"), 1)):
+                self.assertFalse(judged(outcomes, code)[1]["passed"], outcomes)
+        with mock.patch.dict(vm.os.environ, {"CODEX_BIN": str(self.tmp / "absent")}), \
+                self.assertRaisesRegex(vm.Stop, "needs the Codex CLI"):
+            judged(("ok", "ok"))
 
     def test_published_names_two_release_tags_and_runs_alone(self):
         from scripts import installation_macos_vm as vm

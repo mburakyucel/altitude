@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tomllib
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -29,6 +30,11 @@ for name, (kind, path) in json.loads(sys.argv[1]).items():
         out[name] = False
 print(json.dumps(out))
 '''
+
+
+def settings(cmd: list[str]) -> list[str]:
+    """The `-c` settings of a Codex launch."""
+    return [cmd[n + 1] for n, part in enumerate(cmd[:-1]) if part == "-c"]
 
 
 class WorkerRoots(AltitudeCase):
@@ -65,14 +71,15 @@ class WorkerRoots(AltitudeCase):
             "fixture", "brief", cwd=self.worktree, scratch=self.scratch, persona=None, model=None,
             settings=self.tmp / "settings.json", effort=None, resume=None, images=())
         if writable is None:  # Codex names its roots in its own sandbox settings
-            settings = [cmd[n + 1] for n, part in enumerate(cmd[:-1]) if part == "-c"]
-            policy = tomllib.loads("\n".join(s for s in settings if s.startswith("permissions.")))
+            policy = tomllib.loads("\n".join(s for s in settings(cmd) if s.startswith("permissions.")))
             writable = list(policy["permissions"]["altitude-task"]["workspace_roots"])
         return [Path(root) for root in writable], read_only
 
+    def spec(self) -> str:
+        return json.dumps({name: (kind, str(path)) for name, (kind, path) in self.targets.items()})
+
     def written(self, command: list[str]) -> dict:
-        spec = json.dumps({name: (kind, str(path)) for name, (kind, path) in self.targets.items()})
-        run = subprocess.run([*command, sys.executable, "-I", "-c", CHILD, spec], capture_output=True, text=True,
+        run = subprocess.run([*command, sys.executable, "-I", "-c", CHILD, self.spec()], capture_output=True, text=True,
                              cwd=self.worktree, timeout=60)
         self.assertEqual(run.returncode, 0, run.stderr)
         return json.loads(run.stdout)
@@ -107,3 +114,20 @@ class WorkerRoots(AltitudeCase):
                 # Landlock names folders that exist; Claude's account file family is a name pattern, not a folder.
                 folders = tuple(root for root in writable if not str(root).endswith("*") and root.is_dir())
                 self.assert_only_scratch(self.written(read_only_home([], folders)))
+
+    @unittest.skipUnless(os.environ.get("ALTITUDE_TEST_CODEX_SANDBOX") == "1",
+                         "opt in on a host with the real Codex sandbox and Altitude's home outside temporary folders")
+    def test_codexs_own_sandbox_admits_the_scratch_folder_and_no_record_in_the_home(self):
+        """A Codex worker runs under Codex's own sandbox rather than Altitude's profile: given the task's permissions,
+        it too admits the scratch folder and no record in the home. No model is asked; Codex needs no sign-in."""
+        from tests.support import run_native_sandbox_probe
+        cmd, *_ = engines.common.implementation("codex").prepare_worker(
+            "fixture", "brief", cwd=self.worktree, scratch=self.scratch, persona=None, model=None,
+            settings=self.tmp / "settings.json", effort=None, resume=None, images=())
+        task = settings(cmd)
+        profile = next(s for s in task if s.startswith("default_permissions=")).split("=", 1)[1].strip('"')
+        # The environment a worker's job gets, with its temporary folder.
+        result = run_native_sandbox_probe(self.worktree, task, CHILD, [self.spec()], profile=profile,
+                                          env=platform.job_env(engines.launch_env()))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_only_scratch(json.loads(result.stdout))
