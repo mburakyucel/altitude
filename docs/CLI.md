@@ -830,8 +830,8 @@ its records), which altd admits from that owner's worker job instead. No Altitud
 
 `alt sign-in claude` (operator only) gives Altitude's Claude runs a sign-in of their own. It runs
 `claude setup-token`, which signs in to the operator's subscription in a browser and prints a token valid
-for a year, then reads that token at a hidden prompt and keeps it in the private access store as
-`claude.token`. Workers, reviewers and coordinator turns receive it in their launch input, never on a
+for a year, then reads that token at a hidden prompt, joining the lines a copy wrapped onto up to an empty
+line, and keeps it in the private access store as `claude.token`. Workers, reviewers and coordinator turns receive it in their launch input, never on a
 command line or in a log, and the operator's own Claude sign-in stays untouched. Saving it ends the
 engine's [sign-in lapse](OPERATIONS.md#engine-sign-in-recovery), and each project's chat reminds the
 operator to run it again two weeks before the year ends, counted from when it was saved. Usage

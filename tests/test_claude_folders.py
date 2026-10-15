@@ -256,7 +256,7 @@ class TestClaudeFolders(AltitudeCase):
         route.note_rejection({"engine": "claude"}, {"scope": "engine", "sign_in": True, "why": "signed out"})
         self.addCleanup(route.signed_in, "claude")
         ran = self.patch(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0))
-        with mock.patch("getpass.getpass", return_value=f"  {TOKEN}\n"):
+        with mock.patch.object(engines.common, "read_hidden", return_value=TOKEN):
             engines.save_sign_in("claude")
         self.assertEqual(ran.call_args.args[0], [config.CLAUDE_BIN, "setup-token"])
         self.assertEqual(access.engine_token("claude"), TOKEN)
@@ -264,10 +264,32 @@ class TestClaudeFolders(AltitudeCase):
         self.assertFalse(route.signed_out("claude"))
         for answer, failed in (("two words", 0), (TOKEN + "-new", 1)):
             ran.return_value = subprocess.CompletedProcess([], failed)
-            with self.subTest(answer=answer), mock.patch("getpass.getpass", return_value=answer), \
+            with self.subTest(answer=answer), mock.patch.object(engines.common, "read_hidden", return_value=answer), \
                     self.assertRaises((ValueError, RuntimeError)):
                 engines.save_sign_in("claude")
             self.assertEqual(access.engine_token("claude"), TOKEN, "nothing replaces the saved token")
+
+    def test_the_hidden_prompt_joins_a_token_pasted_across_lines_and_shows_none_of_it(self):
+        import pty
+        import select
+        import threading
+        main, terminal = pty.openpty()
+        self.addCleanup(os.close, main)
+        self.addCleanup(os.close, terminal)
+        read = {}
+        reader = threading.Thread(target=lambda: read.update(text=engines.common.read_hidden("Paste: ", os.ttyname(terminal))))
+        reader.start()
+        shown = b""
+        while b"Paste: " not in shown and select.select([main], [], [], 5)[0]:
+            shown += os.read(main, 1024)
+        os.write(main, b"fixture-claude-\r  token  \r\r")  # a copy that wrapped, then Enter on an empty line
+        reader.join(5)
+        while select.select([main], [], [], 0.2)[0]:
+            shown += os.read(main, 1024)
+        self.assertEqual(read.get("text"), TOKEN)
+        self.assertNotIn(b"fixture", shown)
+        import termios
+        self.assertTrue(termios.tcgetattr(terminal)[3] & termios.ECHO, "the terminal shows typing again")
 
     def test_a_review_reads_its_sign_in_from_its_input_not_its_command(self):
         self.save_token()
