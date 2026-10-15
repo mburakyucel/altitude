@@ -92,8 +92,12 @@ def call(kind: str, fields: dict, *, wait: float = WAIT, timeout: float = TIMEOU
             url = f"https://localhost:{found['port']}" if platform.containerized() else found["url"]
             request = urllib.request.Request(f"{url}/api/{ENDPOINT}", data=data,
                                              headers={"Content-Type": "application/json"})
-            context = ssl.create_default_context(cadata=found["ca"]) if found["tls"] else None
-            with urllib.request.urlopen(request, context=context, timeout=timeout) as response:
+            # altd is on this machine, so the door bypasses every proxy. Skipping the lookup also keeps macOS's
+            # system proxy reader out of a forked process, where it aborts.
+            handlers = [urllib.request.ProxyHandler({})]
+            if found["tls"]:
+                handlers.append(urllib.request.HTTPSHandler(context=ssl.create_default_context(cadata=found["ca"])))
+            with urllib.request.build_opener(*handlers).open(request, timeout=timeout) as response:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             try:
