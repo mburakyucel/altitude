@@ -1170,8 +1170,8 @@ class TestLinuxVmMac(AltitudeCase):
         bootcmd = [json.loads(line[4:]) for line in data.splitlines() if line.startswith("  - [")]
         self.assertEqual(bootcmd[0], ["date", "-u", "-s", "@1791000000"])
         self.assertEqual(bootcmd[2][:3], ["systemd-run", "--no-block", "--property=DefaultDependencies=no"])
-        # The line scripts/container_vm.py extends with the container packages.
         self.assertIn("\npackages: [git, gh, openssl]\n", data)
+        self.assertIn("\npackages: [git, podman]\n", vm.user_data("ssh-ed25519 FIXTURE", ("git", "podman")))
 
     def image(self, files: dict, published: dict | None = None):
         """A fixture of Ubuntu's published folder; returns the fetched URLs."""

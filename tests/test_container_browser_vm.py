@@ -8,6 +8,11 @@ from scripts import container_browser_vm as controller
 from scripts import container_vm
 
 
+def changed(module, before):
+    """Names a run left different in a module other tests share."""
+    return sorted(name for name in before.keys() | vars(module).keys() if before.get(name) is not vars(module).get(name))
+
+
 class ContainerBrowserControllerTests(AltitudeCase):
     def test_mac_refuses_outer_linux_browser_route_before_guest_or_tools(self):
         results = self.tmp / 'results'
@@ -20,10 +25,8 @@ class ContainerBrowserControllerTests(AltitudeCase):
 
     def test_failed_lane_keeps_guest_journal_before_guest_goes(self):
         results = self.tmp / 'results'
-        # The lane replaces the guest's package list for its one process; restored here, so a later test in the
-        # same worker reads the installation VM's own list (it failed test_installation_lifecycle_harness).
+        before = dict(vars(container_vm.vm))
         with mock.patch.object(container_vm.host, 'validation_in_container', return_value=False), \
-                mock.patch.object(container_vm.vm, 'user_data', container_vm.vm.user_data), \
                 mock.patch.object(container_vm.vm, 'missing_prerequisites', return_value=[]), \
                 mock.patch.object(container_vm.vm, 'base_image', return_value={}), \
                 mock.patch.object(container_vm.subprocess, 'run'), \
@@ -34,8 +37,34 @@ class ContainerBrowserControllerTests(AltitudeCase):
             self.assertEqual(container_vm.run(results, self.tmp / 'cache'), 1)
         self.assertEqual((results / 'guest-journal.log').read_text(), 'fictional journal\n')
         self.assertIn('journalctl', machine.ssh.call_args.args[0])
+        # The guest's settings travel with this run; a later test sees the shared module unchanged.
+        self.assertEqual(changed(container_vm.vm, before), [])
         machine.stop.assert_called_once_with()
         self.assertFalse(json.loads((results / 'result.json').read_text())['passed'])
+        self.assertEqual(guest.call_args.kwargs['packages'][:3], container_vm.vm.PACKAGES)
+        self.assertIn('podman', guest.call_args.kwargs['packages'])
+
+    def test_failed_browser_lane_gives_its_guest_packages_and_cpus_and_leaves_shared_module(self):
+        before = dict(vars(controller.vm))
+        area = self.tmp / 'area'
+        args = SimpleNamespace(area=area, cache=self.tmp / 'cache', run_id='fictional-run', commit='c' * 40,
+                               tree='t' * 40, timeout=3300, port=8890)
+        with mock.patch.object(controller, 'identity', return_value=(area / 'work', 'c' * 40, 't' * 40)), \
+                mock.patch.object(controller, 'repository', return_value='https://example.invalid/fictional.git'), \
+                mock.patch.object(controller, 'seed', return_value=False), \
+                mock.patch.object(controller, 'cleanup', return_value={}), \
+                mock.patch.object(controller.vm, 'base_image', return_value={}), \
+                mock.patch.object(controller.platform, 'validation_guest_cpus', return_value=3), \
+                mock.patch.object(controller.vm, 'Machine') as guest:
+            guest.return_value.start.side_effect = RuntimeError('fictional guest did not start')
+            self.assertEqual(controller.run(args), 1)
+        self.assertEqual(changed(controller.vm, before), [])
+        self.assertEqual(guest.call_args.kwargs['cpus'], 3)
+        self.assertEqual(guest.call_args.kwargs['packages'][:3], controller.vm.PACKAGES)
+        self.assertIn('slirp4netns', guest.call_args.kwargs['packages'])
+        record = json.loads((area / 'results/container-browser-vm.json').read_text())
+        self.assertEqual(record['limits']['cpus'], 3)
+        self.assertIn('fictional guest did not start', record['error'])
 
     def test_combined_downloads_stop_before_limit_and_counter_reset_refuses(self):
         budget = controller.Budget(self.tmp)
@@ -102,6 +131,7 @@ class ContainerBrowserControllerTests(AltitudeCase):
         machine.work = machine.image = self.tmp
         machine.disk = self.tmp / 'disk.img'
         machine.socket = self.tmp / 'ssh.sock'
+        machine.cpus = 3
         machine.lock = mock.Mock()
         machine.lock.fileno.return_value = 20
         process = mock.Mock(pid=1234)
@@ -109,12 +139,13 @@ class ContainerBrowserControllerTests(AltitudeCase):
         def capture(pid):
             seen.append(pid)
             raise RuntimeError('receipt captured before event wait')
-        with mock.patch.object(controller.vm.subprocess, 'Popen', return_value=process), \
+        with mock.patch.object(controller.vm.subprocess, 'Popen', return_value=process) as popen, \
                 mock.patch.object(controller.vm.macos, 'helper', return_value=self.tmp / 'helper'):
             with self.assertRaisesRegex(RuntimeError, 'receipt captured'):
                 machine.start(on_spawn=capture)
         machine.log.close()
         self.assertEqual(seen, [1234])
+        self.assertEqual(popen.call_args.args[0][-2:], ['3', str(controller.vm.MEMORY_GIB)])
 
     def test_host_rejects_weakened_or_missing_renderer_evidence(self):
         identity = {'run_id': 'fictional-run', 'browser_image': 'fictional-image'}
