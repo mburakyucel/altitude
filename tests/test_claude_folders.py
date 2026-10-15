@@ -296,22 +296,38 @@ class TestClaudeFolders(AltitudeCase):
     def test_ctrl_c_at_the_hidden_prompt_shows_typing_again(self):
         import pty
         import select
-        child, main = pty.fork()
-        if child == 0:  # the prompt's own terminal is this one, whose Ctrl+C interrupts it
-            import termios
-            try:
-                engines.common.read_hidden("Paste: ")
-            except KeyboardInterrupt:
-                os._exit(3 if termios.tcgetattr(0)[3] & termios.ECHO else 4)
-            finally:
-                os._exit(5)
+        main, terminal = pty.openpty()
+        # The prompt runs in an interpreter of its own whose controlling terminal is this one, so Ctrl+C interrupts
+        # it as in a shell; forking the test process instead could leave a copy of the test run waiting forever.
+        prompt = subprocess.Popen([sys.executable, "-c", (
+            "import fcntl, signal, sys, termios\n"
+            "fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
+            "signal.signal(signal.SIGINT, signal.default_int_handler)\n"
+            "from altitude import engines\n"
+            "try:\n"
+            "    engines.common.read_hidden('Paste: ')\n"
+            "except KeyboardInterrupt:\n"
+            "    sys.exit(3 if termios.tcgetattr(0)[3] & termios.ECHO else 4)\n"
+            "sys.exit(5)\n")], cwd=Path(__file__).resolve().parents[1], start_new_session=True,
+            stdin=terminal, stdout=terminal, stderr=terminal)
+        self.addCleanup(prompt.wait, 5)
+        self.addCleanup(os.close, terminal)
         self.addCleanup(os.close, main)
-        shown = b""
-        while b"Paste: " not in shown and select.select([main], [], [], 5)[0]:
-            shown += os.read(main, 1024)
-        os.write(main, b"fixture-partial\x03")
-        _, status = os.waitpid(child, 0)
-        self.assertEqual(os.waitstatus_to_exitcode(status), 3, "interrupted, with typing shown again")
+        self.addCleanup(prompt.kill)
+        shown = bytearray()
+
+        def read(until, waiting_for):  # as a terminal does, so the prompt's output never holds up its exit
+            deadline = time.monotonic() + 20
+            while not until():
+                if time.monotonic() > deadline:
+                    self.fail(f"still waiting for {waiting_for} after 20 seconds: {bytes(shown)!r}")
+                if select.select([main], [], [], 0.1)[0]:
+                    shown.extend(os.read(main, 1024))
+        read(lambda: b"Paste: " in shown or prompt.poll() is not None, "the prompt")
+        self.assertIsNone(prompt.returncode, f"the prompt ended before it was shown: {bytes(shown)!r}")
+        os.write(main, b"fixture-partial\x03")  # only once the prompt hides typing and reads
+        read(lambda: prompt.poll() is not None, "the prompt to end after Ctrl+C")
+        self.assertEqual(prompt.returncode, 3, "interrupted, with typing shown again")
 
     def test_a_review_reads_its_sign_in_from_its_input_not_its_command(self):
         self.save_token()
