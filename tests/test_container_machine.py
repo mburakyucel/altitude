@@ -22,6 +22,9 @@ class MachineCase(AltitudeCase):
         self.patch(platform, "require_supported")
         self.patch(platform.host_platform, "machine", return_value="arm64")
         self.patch(platform, "_machine_verified", None)
+        # A fictional Mac process table, so the tests also run on Linux: only this test process lives.
+        self.patch(platform, "process_start", side_effect=self.fake_start)
+        self.patch(platform, "process_running", side_effect=lambda pid, start: self.fake_start(pid) == start)
         self.enterContext(mock.patch.dict(os.environ, {"XDG_DATA_HOME": str(self.tmp / "data")}))
         for key in ("CONTAINER_HOST", "CONTAINER_CONNECTION"):
             self.enterContext(mock.patch.dict(os.environ)).pop(key, None)
@@ -46,6 +49,12 @@ class MachineCase(AltitudeCase):
                     f"cat {SCOPE}/cgroup.events": "populated 0\nfrozen 0\n"}
         self.calls = []
         self.patch(platform.subprocess, "run", side_effect=self.fake_run)
+
+    @staticmethod
+    def fake_start(pid):
+        if pid != os.getpid():
+            raise FileNotFoundError(pid)
+        return "1760518800000000"
 
     def fake_run(self, argv, **kwargs):
         self.calls.append(list(argv))
