@@ -11,9 +11,9 @@ Feature release of the early preview.
 
 - A first-timer reaches a working first conversation without a failure. A project added before any
   coding tool is ready waits, says what to install or sign in to (on Linux, also the agent sandbox)
-  and then continues by itself. Coding tools gives each agent's install command in one row, a
-  repository that is not on GitHub gets the command that publishes it, `alt doctor` names the one
-  next step, and `alt --version` prints the version.
+  and then continues by itself. First run's Coding tools step gives each agent's install command in
+  one row, a repository that is not on GitHub gets the command that publishes it, `alt doctor`
+  names the one next step, and `alt --version` prints the version.
 - A task waiting for you to do something, such as run a command in its terminal, shows as your
   turn, and its task card names the step.
 - Task agents change Altitude's records only by asking Altitude, for their own task, and write only their
@@ -22,9 +22,11 @@ Feature release of the early preview.
 - The cache repair for an installation on v0.5.0 or older is one line that repairs and updates
   back to back, because a review starting in between brings the cache files back. The repair's own
   output and the release check's error say the same.
-- Improvement suggestions draw on real friction instead of ordinary pushes and continued reports,
-  so agree to what is sent once more before the next review.
-- A source checkout whose self-update is refused stays clean and tries again on its next check.
+- Improvement suggestions draw on real friction instead of routine work. Because what is sent
+  changed, Weekly turns off until you turn it on again in the Altitude project's settings and agree
+  to the new terms.
+- Altitude running from a source checkout stays clean when an update to it is refused, and tries
+  again at its next check.
 
 Known limits: per-job Claude folders and `alt sign-in claude` (#959) come in a later release;
 recovery from a failed automatic update on v0.7.0 (#912) and first-browser pairing on a Mac (#926)
