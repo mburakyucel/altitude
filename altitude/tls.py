@@ -11,6 +11,7 @@ import shutil
 import ssl
 import subprocess
 import tempfile
+import termios
 
 from . import config, platform, state as S
 
@@ -24,8 +25,9 @@ _PRIVATE = ("DNS:localhost", "DNS:local", "DNS:internal", "DNS:home.arpa",
             "IP:192.168.0.0/255.255.0.0", "IP:100.64.0.0/255.192.0.0",
             "IP:::1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "IP:fc00::/fe00::")
 TRUST_STEPS = (
-    "On the computer running Altitude, use the public ca_cert file reported here, including for localhost. "
-    "Any channel may carry ca.crt. Settings > Devices > Set up a device or `alt tls-share` offers it to a "
+    "On the computer running Altitude, alt trust shows ca_name, ca_sha256 and ca_scope and, after a yes typed in "
+    "its terminal, trusts the CA in this account's browser stores; by hand, use the public ca_cert file reported "
+    "here. Any channel may carry ca.crt. Settings > Devices > Set up a device or `alt tls-share` offers it to a "
     "desktop or phone on the configured private network for ten minutes through a setup link and QR code. "
     "Before installing, check that the file holds only this certificate (ca_name) and that its SHA-256 matches "
     "ca_sha256; otherwise delete it. Never transfer ca.key or server.key.",
@@ -38,7 +40,8 @@ TRUST_STEPS = (
     "Firefox: Settings > Privacy & Security > View Certificates > Authorities > Import, trust for websites.",
     "macOS Safari/Chrome: in Keychain Access, select the login keychain and import ca.crt. Open the "
     "certificate, expand Trust and set Secure Sockets Layer (SSL) to Always Trust; close and authenticate "
-    "if asked. Firefox can use its separate Authorities import. Restart the browser before verifying.",
+    "if asked. Firefox reads this trust by default, or use its separate Authorities import. Restart the "
+    "browser before verifying.",
     "iPhone/iPad: open the share link in Safari, tap Download the profile and Allow. Then open Settings > "
     "Profile Downloaded; this entry appears after download, and an uninstalled profile expires after eight minutes. "
     "Also check General > VPN & Device Management for profiles. Check that it contains only a Certificate "
@@ -702,7 +705,7 @@ On Linux or macOS, you can read its name and fingerprint in a terminal in the do
 inspect it, stop before trusting it. Never transfer <strong>ca.key</strong> or <strong>server.key</strong>.</p>
 <h2 id="linux">Linux</h2>
 <ol>
-<li><a href="#desktop">Download and check the certificate</a>, including on the computer hosting Altitude.</li>
+<li><a href="#desktop">Download and check the certificate</a>. On the computer hosting Altitude, run <strong>alt trust</strong> instead.</li>
 <li><strong>Chrome or Chromium:</strong> open <strong>chrome://certificate-manager</strong> and choose
 <strong>Local certificates › Custom › Installed by you › Trusted Certificates › Import</strong>. Select <strong>ca.crt</strong>.
 Older versions use <strong>chrome://settings/certificates › Authorities › Import</strong>; enable trust for websites.</li>
@@ -713,12 +716,13 @@ Firefox on Linux may need its own import even if another browser already trusts 
 </ol>
 <h2 id="macos">macOS</h2>
 <ol>
-<li><a href="#desktop">Download and check ca.crt</a>. Use the certificate file, not the iPhone profile.</li>
-<li>For <strong>Safari or Chrome</strong>, open <strong>Keychain Access</strong> (search for it with Spotlight),
+<li><a href="#desktop">Download and check ca.crt</a>. Use the certificate file, not the iPhone profile.
+On the Mac hosting Altitude, run <strong>alt trust</strong> instead.</li>
+<li>Open <strong>Keychain Access</strong> (search for it with Spotlight),
 select the <strong>login</strong> keychain and drag the certificate file into it.</li>
 <li>Open the imported certificate, expand <strong>Trust</strong> and set <strong>Secure Sockets Layer (SSL)</strong>
 to <strong>Always Trust</strong>. Leave other uses at their defaults. Close the window and authenticate if macOS asks.</li>
-<li>For <strong>Firefox</strong>, use the Authorities import described under Linux if it does not use your macOS trust.</li>
+<li>Safari, Chrome and Edge use this trust, and so does <strong>Firefox</strong> by default; if Firefox still warns, use the Authorities import described under Linux.</li>
 <li>Restart the browser, then <a href="#verify">verify HTTPS before pairing</a>.</li>
 </ol>
 <h2 id="ios">iPhone or iPad</h2>
@@ -888,3 +892,130 @@ def share(minutes: float = SHARE_MINUTES, out=print) -> None:
     finally:
         window.close()
     out("The link is closed.")
+
+
+EXTERNAL_TRUST = ("Altitude did not create this certificate, so it trusts only its own; trust it by hand as "
+                  "SETUP.md describes.")
+NO_STORE = ("No Chrome or Firefox certificate database was found in your home folder. Open your browser once, then "
+            "run ~/.local/bin/alt trust again.")
+
+
+def _authority(directory: Path, ca: Path) -> dict:
+    """The CA as the trust stores take it: its identity, its file, the server certificate a check verifies, and the
+    name it is added under, which starts with its fingerprint so an older installation's CA is never mistaken for it."""
+    found = identity(ca)
+    return {**found, "ca": ca, "server": directory / "server.crt",
+            "nickname": f"{found['name']} · {found['sha256'].replace(':', '')[:8]}"}
+
+
+def this_computer(directory: Path) -> dict:
+    """Which of this account's browser stores trust the CA in `directory`, read without changing or asking anything.
+    `stores` lists each with `trusted`, None where only the browser's own import reaches it; `detail` says why
+    nothing could be checked."""
+    stores = platform.trust_stores(config.HOME)
+    rows = [{"label": store["label"], "path": str(store["path"]), "trusted": None, **({"manual": store["manual"]}
+            if store.get("manual") else {})} for store in stores]
+    if not any(not store.get("manual") for store in stores):
+        return {"stores": rows, "detail": NO_STORE}
+    try:
+        authority = _authority(directory, directory / "ca.crt")
+        for row, store in zip(rows, stores):
+            if not store.get("manual"):
+                row["trusted"] = platform.store_trusts(store, authority)
+    except (RuntimeError, TLSFailure, OSError, ValueError) as exc:
+        return {"stores": rows, "detail": str(exc)}
+    return {"stores": rows}
+
+
+def _terminal_answer(question: str) -> str | None:
+    """The answer typed in this process's terminal, never its standard input, which `curl … | sh` fills with the
+    installer itself; None when there is no terminal to ask in."""
+    try:
+        # Unbuffered: a buffered reader and writer needs a file it can seek, which a terminal is not.
+        with open("/dev/tty", "rb+", buffering=0) as terminal:
+            # Keys typed earlier, during a long install, never answer a question they were not typed for.
+            termios.tcflush(terminal.fileno(), termios.TCIFLUSH)
+            terminal.write(question.encode())
+            return terminal.readline().decode(errors="replace").strip().lower()
+    except (OSError, termios.error):
+        return None
+
+
+def _home(path: Path) -> str:
+    return f"~/{path.relative_to(config.HOME)}" if path.is_relative_to(config.HOME) else str(path)
+
+
+def trust(out=print, ask=_terminal_answer) -> bool:
+    """`alt trust`: trust the running service's own generated CA, as it proves it serves, in this account's browser
+    stores, to identify websites only, once the terminal answers yes to its name, full SHA-256 and scope. Returns
+    whether every store it can change now trusts it."""
+    if platform.containerized():
+        raise TLSFailure("This container cannot change the host's browsers. Export the public CA with the host "
+                         "container command's certificate action and trust it there by hand.")
+    found = service()
+    if not found["tls"]:
+        raise TLSFailure("The Altitude service serves plain HTTP, so it has no certificate to trust.")
+    directory = found["tls_dir"]
+    if not (directory / "ca.crt").exists() or not _managed(directory):
+        raise TLSFailure(EXTERNAL_TRUST)
+    body = _proven(found)
+    stores = platform.trust_stores(config.HOME)
+    manual = [store for store in stores if store.get("manual")]
+    stores = [store for store in stores if not store.get("manual")]
+
+    def by_hand() -> None:
+        for store in manual:
+            out(f"Not changed in {store['label']}: {store['manual']}.")
+
+    if not stores:
+        out(NO_STORE)
+        by_hand()
+        return False
+    with tempfile.TemporaryDirectory() as folder:
+        ca = Path(folder) / "ca.crt"
+        ca.write_bytes(body)
+        try:
+            authority = _authority(directory, ca)
+            missing = [store for store in stores if not platform.store_trusts(store, authority)]
+        except RuntimeError as exc:
+            out(str(exc))
+            return False
+        labels = lambda chosen: " and ".join(store["label"] for store in chosen)
+        if not missing:
+            out(f"Already trusted on this computer in: {labels(stores)}.")
+            by_hand()
+            return True
+        width = max(len(store["label"]) for store in missing)
+        # The question carries what it asks about, so a redirected standard output never hides it.
+        question = "\n".join(["Trust Altitude's certificate on this computer?",
+                        f"  Name:    {authority['name']}",
+                        f"  SHA-256: {authority['sha256']}",
+                        f"  Scope:   {describe_scope(authority['scope'])}",
+                        "It will identify websites only, in:",
+                        *(f"  {store['label']:<{width}}  {_home(store['path'])}" for store in missing),
+                        *(f"Already trusted in {store['label']}." for store in stores if store not in missing),
+                        *dict.fromkeys(store["asks"] for store in missing if store.get("asks")),
+                        *(["This is an SSH session: it changes this computer's browsers, not the one you type on. For "
+                           "a browser there, follow the pair page's Trust it by hand instead."]
+                          if os.environ.get("SSH_CONNECTION") else [])])
+        answer = ask(question + "\nTrust it? [y/N] ")
+        if answer is None:
+            out(question)
+            out("There is no terminal to ask in, so nothing changed. Run ~/.local/bin/alt trust in a terminal.")
+            return False
+        if answer not in ("y", "yes"):
+            out("Nothing changed.")
+            return False
+        added, failed = [], []
+        for store in missing:
+            try:
+                platform.add_trust(store, authority)
+                added.append(store)
+            except RuntimeError as exc:
+                failed.append(store)
+                out(f"Not changed in {store['label']}: {exc}")
+        if added:
+            out(f"Trusted in {labels(added)}. Restart your browser before opening Altitude.\nTo undo:"
+                + "".join(f"\n  {platform.undo_trust(store, authority, config.HOME)}" for store in added))
+        by_hand()
+        return not failed

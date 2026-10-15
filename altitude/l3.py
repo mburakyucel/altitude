@@ -270,6 +270,32 @@ def offer_parser():
     return parser
 
 
+def step_parser():
+    """`alt project step`: hand the operator one command (its text on stdin), or withdraw one by id."""
+    parser = _MessageParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("text", nargs="?", help="'-': the step on stdin, its first line naming it, with one run block")
+    parser.add_argument("--task", action="append", default=[], help="a task waiting on this step (repeat)")
+    parser.add_argument("--withdraw", metavar="ID", help="clear a step verified another way or no longer needed")
+    parser.add_argument("--reason")
+    return parser
+
+
+def step_verb(project: str, args: list[str], stdin: str) -> dict:
+    """Run `alt project step` for the project's coordinator."""
+    from . import tasks as T
+    options = step_parser().parse_args(args)
+    try:
+        if options.withdraw:
+            if options.text or options.task:
+                raise ValueError("--withdraw takes only --reason")
+            return T.withdraw_step(project, options.withdraw, options.reason or "")
+        if options.text != "-" or options.reason:
+            raise ValueError("pass the step on stdin with '-'; --reason applies to --withdraw")
+        return T.publish_step(project, stdin, options.task)
+    except (T.TransitionError, S.TaskNotFound) as exc:
+        raise ValueError(str(exc)) from exc
+
+
 OFFER_TITLE_LIMIT = 100
 OFFER_PREFIX = "Create task: "
 OFFER_MOVED_ON = "The conversation has moved on, so this was not sent."
@@ -1758,15 +1784,16 @@ def _sign_in_notice(engine: str, outcome: str) -> str:
     said = {"waits": f"{lapse} and no other engine can answer, so your message waits and sends once you are "
                      "signed in again.",
             "stopped": f"{lapse}, so this turn stopped; Retry it once you are signed in again."}
-    step = f"To sign in, run `{engines.SIGN_IN[engine][1]}` on the computer running Altitude."
+    step = ("Sign in again from Settings › Prerequisites." if engine in engines.TOKEN_SETUP
+            else f"To sign in, run `{engines.SIGN_IN[engine][1]}` on the computer running Altitude.")
     return f"{said.get(outcome) or f'{lapse}, so {config.ENGINE_LABELS[outcome]} is answering for now.'} {step}"
 
 
 def _renewal_notice(engine: str, days: int) -> str:
     """That Altitude's own sign-in on an engine ends soon, and how to renew it."""
     when = "today" if days == 0 else "tomorrow" if days == 1 else f"in {days} days"
-    return (f"Altitude's {config.ENGINE_LABELS[engine]} sign-in ends {when}. To renew it, run "
-            f"`{engines.SIGN_IN[engine][1]}` on the computer running Altitude.")
+    return (f"Altitude's {config.ENGINE_LABELS[engine]} sign-in ends {when}. To renew it, sign in again from "
+            "Settings › Prerequisites.")
 
 
 def _limit_notice(project: str, choice: dict) -> str | None:

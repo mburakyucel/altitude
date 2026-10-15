@@ -121,7 +121,8 @@ Add `--name` for a different container. Compare the certificate fingerprint and 
 [device trust guide](SETUP.md#trust-https-on-each-device); never copy private keys. Export refuses an
 existing output. Container `alt tls-share` explains this path instead of opening another HTTP port.
 
-Run sign-in, engine installation and Git commands **inside the container shell**. First run and
+Run sign-in, engine installation and Git commands **inside the container shell**; Claude's **Sign in**
+on First run and Settings › Prerequisites signs Altitude in inside the container from any paired browser. First run and
 Settings show inside-container checks and the host shell command. Missing engine tools install in
 the persistent home. The operator shell explicitly includes `~/.local/bin` and skips login/startup
 profiles, so a fresh volume needs no shell-profile edit. That user PATH is not given to container root.
@@ -135,7 +136,7 @@ checksums verified before installation. Its JSON PR fields satisfy Altitude's la
 the distribution's older CLI can authenticate but lacks a required field. The image gate checks
 that capability without credentials or a GitHub request.
 
-For phone-only sign-in, use the installed engine's device-code flow when it offers one, and
+For phone-only sign-in, Claude's **Sign in** needs no terminal; otherwise use the installed engine's device-code flow when it offers one, and
 enable device-code login in the account's security settings if required. Complete the displayed
 URL and short-lived code in the phone browser; the waiting CLI stays inside the container.
 GitHub CLI supports this flow with `gh auth login --hostname github.com --git-protocol https --web`.
