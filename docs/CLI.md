@@ -794,8 +794,13 @@ including any merge hold.
 `alt doctor` leads with the owned service's hosting computer, verified URL and listener exposure,
 then one next step from current state (the installer's private link while it works, trusting the
 certificate and `alt pair` until a browser is paired, then the first missing tool with its command),
-then tool readiness including a coding agent, the paired-browser count, the browser-trust state until a
-browser is paired, and the unknown provider state.
+then a newer release when one is offered (with what an automatic update waits for, such as the
+validation run of a named task or an open browser terminal), then tool readiness including a coding
+agent, the paired-browser count, the browser-trust state until a browser is paired, and the unknown
+provider state. `alt update` installs the newest release now instead of waiting for the automatic attempt:
+from its start new work waits, and it waits up to a minute for work in flight before stopping with
+"Update staged … Retry this version", which leaves that version eligible for its automatic attempt.
+The automatic attempt and the app's Update button run detached and wait up to twenty-five minutes.
 `alt doctor --json` retains
 structured diagnostics. `alt service status` uses the same hosting reading;
 `alt service status --json` includes service-manager details and hosting facts. Conflicting shell
