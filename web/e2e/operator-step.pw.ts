@@ -53,8 +53,8 @@ test("a wait on the operator's step names the step until the owner is woken, and
     visible: [
       card.getByText("Run the sign-in command in the task terminal.", { exact: true }),
       card.getByRole("status").getByText("Ran in the terminal", { exact: true }),
-      card.getByRole("status").getByText("The L2 is checking the result.", { exact: true }),
-      card.getByRole("button", { name: "Open in terminal", exact: true }),
+      card.getByRole("status").getByText(/^Waiting for the L2 to check it · /),
+      card.locator(".btn-ghost").getByText("Open in terminal", { exact: true }),
       card.getByRole("textbox", { name: /^Your answer to:/ }),
     ],
     hidden: [card.getByText("The terminal closed before this command finished", { exact: true })],
@@ -63,8 +63,8 @@ test("a wait on the operator's step names the step until the owner is woken, and
   await walk.state("05-task-conversation-says-the-command-ran", {
     visible: [
       conversation.getByRole("status").getByText("Ran in the terminal", { exact: true }),
-      conversation.getByText("The L2 is checking the result.", { exact: true }),
-      command.getByRole("button", { name: "Open in terminal", exact: true }),
+      conversation.getByRole("status").getByText(/^Waiting for the L2 to check it · /),
+      command.locator(".btn-ghost").getByText("Open in terminal", { exact: true }),
     ],
     hidden: [conversation.getByText("The terminal closed before this command finished", { exact: true })],
   });
@@ -74,9 +74,8 @@ test("a wait on the operator's step names the step until the owner is woken, and
   await walk.state("06-needs-you-card-says-the-terminal-closed-first", {
     visible: [
       card.getByRole("status").getByText("The terminal closed before this command finished", { exact: true }),
-      card.getByText("Open in terminal to run it again.", { exact: true }),
-      card.getByRole("button", { name: "Open in terminal", exact: true }),
+      card.locator(".btn-primary").getByText("Open in terminal", { exact: true }),
     ],
-    hidden: [card.getByText("Ran in the terminal", { exact: true })],
+    hidden: [card.getByText("Ran in the terminal", { exact: true }), card.getByText(/Waiting for the L2/)],
   });
 });

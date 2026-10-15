@@ -80,9 +80,9 @@ A task's owner can read its task terminal's output, and the project's coordinato
 each terminal says who. When you press Enter on a step the owner or coordinator handed you, Altitude tells
 it once the command looks finished (or the terminal ended first), and it reads the result to check that it
 did and continues; no reply is needed unless the terminal says Altitude couldn't tell it. Meanwhile the owner's
-question card, in Needs you and the task conversation, says **Ran in the terminal** and that the owner is checking,
-or that the terminal closed before the command finished, so you can open it again; the question stays open
-until the owner settles it. It reads what the
+question card, in Needs you and the task conversation, says **Ran in the terminal** and that it waits for the
+owner to check it, or that the terminal closed before the command finished, so you can open it again; the question
+stays open until the owner settles it. It reads what the
 terminal printed, never what you typed at a hidden password prompt, and cannot type into or close the
 terminal. Output stays readable until a new terminal opens there, its task finishes or Altitude restarts;
 if a restart lost it, tell the owner or coordinator what the command printed. Use a desktop or SSH terminal

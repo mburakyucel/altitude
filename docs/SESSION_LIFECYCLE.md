@@ -580,8 +580,8 @@ places operator questions there immediately and also notifies L3. A wait on the 
 a command for the task terminal, is such a plain question with the step as its
 first line and a terminal step's `run` block; while the task waits, the operator's turn names that line.
 Their reply, the Terminal notice or L3's message wakes the owner, which verifies the step and resolves the
-question. Until then the question's card says the command ran and the owner is checking, or that the terminal
-closed first. A wait on L3's project recovery step stays a plain block; the
+question. Until then the question's card says the command ran and waits for the owner to check it, or that the
+terminal closed first. A wait on L3's project recovery step stays a plain block; the
 [operator step](ARCHITECTURE.md#operator-steps) names the task, so it reads the operator's turn until the
 project terminal's notice clears the step and L3 messages the owner. A block that publishes or revises questions
 queues one notification with open members, revisions and required authority; re-parking unchanged members

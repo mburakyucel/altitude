@@ -1747,8 +1747,8 @@ does and wakes a blocked owner unless it is stopped or faulted; a task no longer
 attempt than the one current when the page named the command, gets none. It is no conversation entry and grants
 nothing. In the same change it marks each open question of the task whose `run` blocks (`tasks.run_commands`) hold
 exactly that command with `ran` (`at`, and `finished` or the terminal ended first) and a `question-ran` event, so
-the question's card in Needs you and the conversation says the command ran and the owner is checking, or that the
-terminal closed first (spec §3.8.5). The question stays open with its id and revision; a later notice replaces the
+the question's card in Needs you and the conversation says the command ran and waits for the owner to check it, or
+that the terminal closed first (spec §3.8.5). The question stays open with its id and revision; a later notice replaces the
 mark, and asking it again publishes a new revision without it. For a project terminal, `l3.queue_message` queues it for the coordinator as a `terminal` system turn,
 which the conversation shows as a system line; a project no longer managed gets none. When a command that looks
 finished is an open [operator step](#operator-steps)'s, the same notice clears that step (`tasks.step_ran`) and says so. When naming the command

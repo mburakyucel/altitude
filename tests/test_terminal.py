@@ -603,7 +603,7 @@ class TestCoordinatorCommand(TerminalCase):
         self.type("echo restored-$((2+2))\r")
         text = self.notice()
         self.assertIn(f"It cleared that operator step from Needs you; once verified, tell the tasks it named ({self.slug})", text)
-        self.assertEqual(T.operator_steps(self.project), [])
+        self.wait(lambda: T.operator_steps(self.project) == [])  # cleared just after the notice is queued
         self.assertEqual([(row["action"], row["id"]) for row in S.read_project_log(self.project) if row["kind"] == "step"],
                          [("asked", step["id"]), ("ran", step["id"])])
 

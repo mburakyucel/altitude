@@ -1070,15 +1070,18 @@ the row after the notice at both widths.
 An owner hands the operator a command as a plain question with a `run` block (§3.8). Its task terminal's
 Terminal notice for exactly that command (§3.10 Terminal) also marks the question, so its card, in Needs you and
 the task conversation, shows how it went within a second or two, while the owner checks the output. Under the
-question, in the receipt's place and form (a hairline above, `role=status`), one of:
+question, in the receipt's place (a hairline above, `role=status`), one row: the review box's 22px state icon
+(§3.8.3), then a bold line over a 13px muted line with the age (exact time on hover):
 
-| The notice | Bold line | Then |
-| --- | --- | --- |
-| The command looks finished | **Ran in the terminal** | "The L2 is checking the result." and the age (muted, exact time on hover) |
-| The terminal ended before the command finished, or before it ran | **The terminal closed before this command finished** | "Open in terminal to run it again." and the age |
+| The notice | Icon | Bold line | Muted line | Open in terminal |
+| --- | --- | --- | --- | --- |
+| The command looks finished | grey clock | **Ran in the terminal** | "Waiting for the L2 to check it · <age>" | secondary, like Copy |
+| The terminal ended before the command finished, or before it ran | amber ! | **The terminal closed before this command finished** | "<age>" | primary, as before |
 
-The question stays open with its id, revision, command block and answer field, so the operator can still reply,
-for example with what the command printed; it leaves Needs you only as any question does. A later notice for the
+"Waiting for the L2" stays true whether the owner wakes at once or is stopped, faulted or held; the turn line says
+which. The question stays open with its id, revision, command block and answer field, so the operator can still
+reply, for example with what the command printed, or run it again; it stays in Needs you and its count, and alerts
+nothing new (§3.8.1), until the owner settles it, as any question does. A later notice for the
 same command replaces the note. Resolving the question closes it as usual; asking it again publishes a new revision
 without the note. A command the operator types without the `run` block, a Ctrl+C before Enter, another `run` block's
 command and a later attempt than the one that asked leave the card as it was. A saved answer's receipt (§3.8.2)
