@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 
 from . import config, state as S
 
@@ -25,7 +26,9 @@ ENDPOINT = "task/door"
 WAIT = 600
 #: One request's own bound: the longest record change is an `alt` verb that reads GitHub, as `task done` does.
 TIMEOUT = 150
-MAX_REQUEST = 32 << 20
+#: A request's bound, read only from this computer: the largest files a worker shows (`tasks.SHOWN_TOTAL_LIMIT` of
+#: images and one document) in base64, with room for the verb's own text and input files.
+MAX_REQUEST = 48 << 20
 MAX_OUTPUT = 1 << 20
 #: Where altd keeps each request's outcome: in the task's folder, which archiving moves with the task.
 LEDGER = "door"
@@ -39,6 +42,34 @@ class DoorError(RuntimeError):
 
 # --- The worker's end ----------------------------------------------------------------------------------------------
 
+def follow_activation(script: str) -> None:
+    """Run the activated version of `script`, a worker's `alt` or checkpoint hook, in place of this process once
+    Altitude has activated another version than the worker launched with. A worker outlives activation, so each
+    command it starts afterwards sends its requests in the form the running altd reads."""
+    if os.environ.get("ALTITUDE_ACTOR") != "l2" or os.environ.get("ALTITUDE_DOOR") == "1":
+        return
+    path = Path(script).resolve()
+    version = path.parent.parent
+    if version.parent.name == ".altitude-source":
+        current = version.parent / "current"         # a source deployment's export
+    elif (version / "release.json").is_file():
+        current = version.parent.parent / "current"  # an installed version
+    else:
+        return                                        # a development checkout
+    target = current / path.relative_to(version)
+    if current.resolve() != version and target.is_file():
+        os.execv(sys.executable, [sys.executable, "-B", str(target), *sys.argv[1:]])
+
+
+def request_body(request: dict) -> bytes:
+    """A request to altd as sent, refused here when it is larger than altd reads."""
+    data = json.dumps(request).encode()
+    if len(data) > MAX_REQUEST:
+        raise DoorError(f"this request is {len(data) / (1 << 20):.0f} MiB, more than the {MAX_REQUEST >> 20} MiB altd "
+                        "takes from a task; send fewer or smaller files")
+    return data
+
+
 def call(kind: str, fields: dict, *, wait: float = WAIT, timeout: float = TIMEOUT) -> dict:
     """Ask altd to make one record change for this worker's own task and return its answer. A request altd never
     received, or whose answer a restart cut off, is asked again with the same identity until `wait` runs out."""
@@ -49,9 +80,9 @@ def call(kind: str, fields: dict, *, wait: float = WAIT, timeout: float = TIMEOU
 
     from . import platform, tls
     try:
-        body = json.dumps({"project": os.environ["ALTITUDE_PROJECT"], "slug": os.environ["ALTITUDE_TASK"],
-                           "attempt": os.environ["ALTITUDE_ATTEMPT"], "kind": kind, "request": uuid.uuid4().hex,
-                           **fields}).encode()
+        data = request_body({"project": os.environ["ALTITUDE_PROJECT"], "slug": os.environ["ALTITUDE_TASK"],
+                             "attempt": os.environ["ALTITUDE_ATTEMPT"], "kind": kind, "request": uuid.uuid4().hex,
+                             **fields})
     except KeyError as exc:
         raise DoorError(f"the task door serves a task's own L2: {exc.args[0]} is not set") from None
     deadline = time.monotonic() + wait
@@ -59,7 +90,7 @@ def call(kind: str, fields: dict, *, wait: float = WAIT, timeout: float = TIMEOU
         try:
             found = tls.service()
             url = f"https://localhost:{found['port']}" if platform.containerized() else found["url"]
-            request = urllib.request.Request(f"{url}/api/{ENDPOINT}", data=body,
+            request = urllib.request.Request(f"{url}/api/{ENDPOINT}", data=data,
                                              headers={"Content-Type": "application/json"})
             context = ssl.create_default_context(cadata=found["ca"]) if found["tls"] else None
             with urllib.request.urlopen(request, context=context, timeout=timeout) as response:

@@ -159,7 +159,7 @@ def _accepts_gzip(header: str | None) -> bool:
 
 # Host voice streams samples to `altitude/speech.py`, which transcribes them on this computer; browser
 # recognition never uploads.
-BODY_LIMIT = 1 << 20  # every other JSON request; image messages and host voice audio have their own limits
+BODY_LIMIT = 1 << 20  # every other JSON request; image messages, voice audio and task door requests have their own
 
 
 class VoiceInputError(RuntimeError):
@@ -1703,12 +1703,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _body(self, *, max_bytes: int | None = None) -> dict:
+    def _body(self, *, max_bytes: int | None = None, owned: bool = False) -> dict:
+        """The request's JSON body. An `owned` request, a task's own, carries the files it shows when it comes from this
+        computer, where the worker runs: a connection between two of its addresses. One from elsewhere is never
+        admitted, so it keeps the ordinary bound."""
+        limit = (door.MAX_REQUEST if owned and self.client_address[0] == self.connection.getsockname()[0]
+                 else BODY_LIMIT)
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             raise images.ImageError("Invalid message size.", 400)
-        if n < 0 or n > (max_bytes or BODY_LIMIT):
+        if n < 0 or n > (max_bytes or limit):
             self.close_connection = True
             raise images.ImageError("Message is too large. Use up to 4 images, 10 MB each and 20 MB total."
                                     if max_bytes is not None else "Request is too large.", 413)
@@ -2522,7 +2527,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._service_voice()
             if api == "voice" and len(parts) > 2:
                 return self._host_voice(parts, parse_qs(u.query))
-            o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
+            o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None, owned=owned)
             if owned and not self._task_owner(o, running=parts != ["api", "task", "door"]):
                 return self._json({"error": TASK_DOOR_REFUSED}, 403)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))

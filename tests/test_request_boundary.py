@@ -6,7 +6,7 @@ import threading
 import time
 
 from tests.support import AltitudeCase
-from altitude import config, server
+from altitude import config, door, server
 
 
 class TestRequestBoundary(AltitudeCase):
@@ -25,11 +25,12 @@ class TestRequestBoundary(AltitudeCase):
         self.addCleanup(self.httpd.shutdown)
         self.host = "%s:%d" % self.httpd.server_address
 
-    def request(self, method, path, body=b"", headers=None):
-        """One raw request, so the test controls every header, including a false Content-Length."""
+    def request(self, method, path, body=b"", headers=None, source=None):
+        """One raw request, so the test controls every header, including a false Content-Length, and the address
+        it comes from."""
         sent = {"Host": self.host, "Content-Length": str(len(body)), **(headers or {})}
         head = "".join(f"{name}: {value}\r\n" for name, value in sent.items())
-        with socket.create_connection(self.httpd.server_address, timeout=10) as sock:
+        with socket.create_connection(self.httpd.server_address, timeout=10, source_address=source) as sock:
             sock.sendall(f"{method} {path} HTTP/1.0\r\n{head}\r\n".encode() + body)
             chunks = []
             while chunk := sock.recv(65536):
@@ -78,6 +79,22 @@ class TestRequestBoundary(AltitudeCase):
             with self.subTest(length=length):
                 status, reply = self.request("POST", "/api/operator-name", headers={"Content-Length": length})
                 self.assertEqual((status, reply), (413, {"error": "Request is too large."}))
+
+    def test_a_tasks_own_request_from_this_computer_carries_its_shown_files(self):
+        # A worker's `--show` of ten screenshots was cut off at the ordinary bound with a closed connection, which its
+        # `alt` reported as a TLS EOF (I-20261015-172004). Such a body is read and goes on to admission.
+        large = b" " * (server.BODY_LIMIT + 1)
+        for path in ("/api/task/door", "/api/task/review/run"):
+            with self.subTest(path=path):
+                self.assertEqual(self.request("POST", path, large)[0], 403)
+                status, reply = self.request("POST", path, headers={"Content-Length": str(door.MAX_REQUEST + 1)})
+                self.assertEqual((status, reply), (413, {"error": "Request is too large."}))
+        try:  # a client at another address keeps the ordinary bound: it is never a task's worker
+            status, reply = self.request("POST", "/api/task/door", headers={"Content-Length": str(len(large))},
+                                         source=("127.0.0.2", 0))
+        except OSError:
+            self.skipTest("this computer has no second loopback address")
+        self.assertEqual((status, reply), (413, {"error": "Request is too large."}))
 
     def test_a_silent_client_loses_its_connection(self):
         self.patch(server, "REQUEST_READ_SECONDS", new=0.2)
