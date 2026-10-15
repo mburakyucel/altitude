@@ -9,7 +9,7 @@ import tomllib
 from pathlib import Path
 from unittest import mock
 
-from tests.support import AltitudeCase, add_worktree, make_repo, read_only_home
+from tests.support import AltitudeCase, add_worktree, make_repo, read_only_home, require_read_only_home
 from altitude import config, dispatch, engines, l3, platform, state as S, tasks as T
 
 CHILD = r'''
@@ -97,6 +97,7 @@ class WorkerRoots(AltitudeCase):
                                       and folder.is_relative_to(root.resolve())], writable)
 
     def test_each_engines_roots_admit_the_scratch_folder_and_no_record_in_the_home(self):
+        require_read_only_home(self)
         for engine in ("claude", "codex"):
             with self.subTest(engine=engine):
                 writable, _ = self.roots(engine)

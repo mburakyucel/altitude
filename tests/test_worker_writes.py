@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from tests.support import ALT, REPO, AltitudeCase, add_worktree, make_repo, read_only_home
+from tests.support import ALT, REPO, AltitudeCase, add_worktree, make_repo, read_only_home, require_read_only_home
 from altitude import config, dispatch, engines, state as S, tasks as T
 
 FAKE = REPO / "tests" / "fake_engine.py"
@@ -153,15 +153,3 @@ class ReadOnlyHome(AltitudeCase):
         self.assertIn({"type": "altitude.send", "message_id": message["id"], "outcome": "delivered"},
                       [json.loads(line) for line in stdout.decode().splitlines()])
         self.assertEqual(T.pending(self.project, self.slug), [])
-
-
-def require_read_only_home(case: AltitudeCase) -> None:
-    """Skip on a Linux kernel without Landlock; fail when the confinement leaves Altitude's home writable, so a case
-    never passes without it."""
-    probe = config.ROOT / f"probe-{case.tmp.name}"
-    done = subprocess.run(read_only_home([sys.executable, "-c", f"open({str(probe)!r}, 'w')"], (case.tmp,)),
-                          capture_output=True, text=True, timeout=60)
-    if done.returncode == 125:
-        case.skipTest("this kernel offers no Landlock")
-    case.assertFalse(probe.exists(), "the confined process wrote Altitude's home")
-    case.assertIn("PermissionError", done.stderr)

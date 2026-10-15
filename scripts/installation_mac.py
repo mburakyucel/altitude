@@ -112,7 +112,7 @@ def stop_group(process: subprocess.Popen) -> bool:
         pass
     try:
         os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):  # macOS refuses a group whose last members exited unreaped
         pass
     process.wait()
     return True

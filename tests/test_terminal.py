@@ -696,7 +696,6 @@ class TestCoordinatorReader(TerminalCase):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.connect(str(l3.verb_socket_path(project)))
             client.sendall((json.dumps({"kind": "alt", "args": ["project", "terminal", *args], "stdin": ""}) + "\n").encode())
-            client.shutdown(socket.SHUT_WR)
             return json.loads(b"".join(iter(lambda: client.recv(65536), b"")))
 
     def test_the_coordinator_reads_its_project_terminal_as_text_until_altitude_restarts(self):

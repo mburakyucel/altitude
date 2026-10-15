@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.support import ALT, AltitudeCase, add_worktree, git, make_repo, read_only_home
+from tests.support import ALT, AltitudeCase, add_worktree, git, make_repo, read_only_home, require_read_only_home
 from altitude import land, state as S
 
 
@@ -1161,7 +1161,6 @@ class TestLand(AltitudeCase):
         """A held landing merges under the operator's approval, changing the task's records only through altd's task
         door (docs/ARCHITECTURE.md#task-door)."""
         from altitude import dispatch, tasks as T
-        from tests.test_worker_writes import require_read_only_home
         require_read_only_home(self)
         self.set_current_l2()
         task = S.load_task("demo", "fix-x")
