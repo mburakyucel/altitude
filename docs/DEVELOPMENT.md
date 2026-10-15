@@ -1632,8 +1632,9 @@ shell trusts, with `github.com` resolving to the loopback.
   Altitude's profile, so the runner copies this Mac's Codex CLI into the guest with an empty settings
   folder and no sign-in, and the opt-in `ALTITUDE_TEST_CODEX_SANDBOX=1` case runs that sandbox with a
   task's permissions and the job's environment, asking no model; only the scratch folder may be
-  written. The suite's home lies outside the temporary folders that sandbox admits, as in a
-  validation run. A Mac without the Codex CLI stops the phase.
+  written. Under both sandboxes the launcher's job folders, and a job's input saved there, can be
+  neither read nor written. The suite's home lies outside the temporary folders that sandbox admits,
+  as in a validation run. A Mac without the Codex CLI stops the phase.
 - `source`: the account sets up a [source checkout](OPERATIONS.md#run-from-a-source-checkout) as
   documented, with this Mac's Node and pnpm in place: it clones the revision from an origin in the
   guest, made from a bundle of its history, runs `make web` and `alt tls-init`, and `make
