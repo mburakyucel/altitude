@@ -40,7 +40,6 @@ class TestCoordinatorSocket(AltitudeCase):
             client.settimeout(10)
             client.connect(str(l3.verb_socket_path(self.project)))
             client.sendall(b'{"kind": "alt", "args": ["state"]}\n')
-            client.shutdown(socket.SHUT_WR)
             return json.loads(b"".join(iter(lambda: client.recv(65536), b"")))
 
     def test_the_running_turns_job_is_served_and_every_other_caller_is_refused_unread(self):
@@ -231,7 +230,7 @@ class TestBubblewrapProfile(AltitudeCase):
                     ("--bind", account, account),
                     ("--bind", str(work), str(work)),
                     ("--ro-bind-try", str(work / "settings"), str(work / "settings")),
-                    ("--bind", "/tmp", "/tmp"), ("--bind", "/var/tmp", "/var/tmp")]
+                    *(("--bind", shared, shared) for shared in map(os.path.realpath, ("/tmp", "/var/tmp")))]
         for mount in expected:
             self.assertIn(mount, mounts)
         for first, later in ((1, 3), (4, 5)):
@@ -299,11 +298,11 @@ class TestServiceRecord(AltitudeCase):
         tls_dir = self.tmp / "tls"
         tls_dir.mkdir()
         (tls_dir / "ca.crt").write_text("-----BEGIN CERTIFICATE-----\nfictional\n-----END CERTIFICATE-----\n")
-        (tls_dir / "ca.key").write_text("private")
+        (tls_dir / "ca.key").write_text("fictional CA signing key")
         self.addCleanup(tls.record().unlink, missing_ok=True)
         tls.publish({"host": "127.0.0.1", "port": 8443, "tls": True, "tls_dir": tls_dir})
         self.assertEqual(tls.service()["ca"], (tls_dir / "ca.crt").read_text())
-        self.assertNotIn("private", tls.record().read_text())
+        self.assertNotIn("fictional CA signing key", tls.record().read_text())
         (tls_dir / "ca.crt").unlink()  # an external certificate has no CA here
         tls.publish({"host": "127.0.0.1", "port": 8443, "tls": True, "tls_dir": tls_dir})
         self.assertIsNone(tls.service()["ca"])

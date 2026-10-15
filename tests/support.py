@@ -179,6 +179,21 @@ def read_only_home(command: list[str], writable: tuple[Path, ...]) -> list[str]:
     return [sys.executable, "-c", LANDLOCK_LAUNCHER, json.dumps([str(path) for path in (*writable, "/dev")]), *command]
 
 
+def require_read_only_home(case: unittest.TestCase) -> None:
+    """Skip where the stand-in cannot start: a Linux kernel without Landlock, or a macOS process already under a
+    Seatbelt profile (a validation run or a confined worker), where macOS refuses to apply a second one. Fail when the
+    confinement leaves Altitude's home writable, so a case never passes without it."""
+    probe = config.ROOT / f"probe-{case.tmp.name}"
+    done = subprocess.run(read_only_home([sys.executable, "-c", f"open({str(probe)!r}, 'w')"], (case.tmp,)),
+                          capture_output=True, text=True, timeout=60)
+    if done.returncode == 125:
+        case.skipTest("this kernel offers no Landlock")
+    if NATIVE_PLATFORM == "darwin" and done.returncode == 71 and "sandbox_apply: Operation not permitted" in done.stderr:
+        case.skipTest("this process is already confined, and macOS applies no second Seatbelt profile")
+    case.assertFalse(probe.exists(), "the confined process wrote Altitude's home")
+    case.assertIn("PermissionError", done.stderr)
+
+
 #: Fake gh: every call is logged; the answers come from files the test writes into $FAKE_GH_DIR.
 GH = r'''#!/usr/bin/env python3
 import json, os, re, subprocess, sys

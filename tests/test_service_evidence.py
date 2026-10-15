@@ -250,7 +250,6 @@ class TestServiceEvidence(AltitudeCase):
                 client.settimeout(5)
                 client.connect(str(broker.server_address))
                 client.sendall((json.dumps(payload) + "\n").encode())
-                client.shutdown(socket.SHUT_WR)
                 return json.loads(client.makefile().read())
 
         with mock.patch.object(engines.common.subprocess, "run", return_value=result) as run:
