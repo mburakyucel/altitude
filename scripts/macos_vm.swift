@@ -48,8 +48,12 @@ func linuxConfiguration(kernel: URL, initrd: URL, commandLine: String, disk: URL
     config.bootLoader = boot
     config.cpuCount = cpus
     config.memorySize = memoryGiB << 30
+    // Host-cached, fsync-synchronized writes: with the automatic caching mode, a Linux guest read garbage from files it
+    // never wrote ("bad marshal data" from a system Python module), the corruption Lima and vfkit also fix this way.
+    let root = try VZDiskImageStorageDeviceAttachment(url: disk, readOnly: false, cachingMode: .cached,
+                                                      synchronizationMode: .fsync)
     config.storageDevices = [
-        VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: disk, readOnly: false)),
+        VZVirtioBlockDeviceConfiguration(attachment: root),
         VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: seed, readOnly: true)),
     ]
     let serial = VZVirtioConsoleDeviceSerialPortConfiguration()
