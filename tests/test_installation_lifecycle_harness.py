@@ -798,9 +798,10 @@ class TestInstallationMacosVm(AltitudeCase):
         work = commands[0].split('work="', 1)[1].split('"', 1)[0]
         self.assertTrue(work.startswith(vm.SHARED + "/"))
         self.assertIn('TMPDIR="$temp"', commands[0])
-        with mock.patch.object(config, "ROOT", Path(work) / "home/.altitude"), \
-             mock.patch.object(platform, "containerized", return_value=False):
-            self.assertLess(len(str(l3.verb_socket_path("fictional")).encode()), 104)
+        home = Path(work) / "home"  # the guest's HOME="$work/home"
+        with mock.patch.object(config, "HOME", home), mock.patch.object(config, "ROOT", home / ".altitude"), \
+             mock.patch.object(platform, "_darwin", return_value=True):
+            self.assertLessEqual(len(str(l3.verb_socket_path("fictional")).encode()), 103)
 
     class Guest:
         """Answers the lane's probes as a guest whose network card is plugged in until `unplug`."""

@@ -3,9 +3,12 @@ the running coordinator turn's job, the task door admits only the task's own wor
 read the CLI's key, the pairing record, the push signing key or the HTTPS keys."""
 import json
 import os
+import re
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -130,6 +133,38 @@ class TestCoordinatorFolder(AltitudeCase):
         self.assertFalse([root for root in roots if folder.resolve().is_relative_to(root)])
         self.assertFalse(folder.resolve().is_relative_to(config.ROOT.resolve()))
         self.assertEqual(platform.coordinator_directory(), folder, "one folder per installation")
+
+    def test_on_a_mac_the_job_profile_grants_no_write_to_the_folder_or_any_folder_above_it(self):
+        """Besides a job's own roots (tests/test_worker_roots.py), Altitude's Seatbelt profile lets every job write the
+        per-user temporary folders, /private/tmp and devices; under a fixed fictional home none of them reaches the
+        coordinators' folder, so no job can plant, replace or redirect a socket or a turn's commands."""
+        home = Path("/Users/" + "a" * 57)
+        with mock.patch.object(platform, "_darwin", return_value=True), mock.patch.object(config, "HOME", home), \
+                mock.patch.object(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/"):
+            folder = os.path.realpath(platform.coordinator_directory())
+            profile = platform.seatbelt_profile([])
+        self.assertEqual(folder, f"{home}/.config/altitude/{Path(folder).name}")
+        grants = re.findall(r'\(allow file-write\* \(subpath "([^"]*)"\)\)', profile)
+        self.assertIn("/private/var/folders/ab/cd", grants)
+        self.assertFalse([root for root in grants if Path(folder).is_relative_to(root)])
+
+    def test_a_project_socket_fits_macos_under_a_64_byte_home(self):
+        """#973: macOS refuses a socket path over 103 bytes. A fixed fictional home, never the suite's own, measures
+        it; then a broker binds and answers there."""
+        with mock.patch.object(platform, "_darwin", return_value=True), \
+                mock.patch.object(config, "HOME", Path("/Users/" + "a" * 57)):
+            self.assertEqual(len(str(l3.verb_socket_path("a-fictional-project-name")).encode()), 103)
+        base = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, True)
+        if len(base) > 60:
+            self.skipTest("this temporary folder leaves no room for a 64-byte home")
+        home = Path(base) / ("h" * (63 - len(base)))
+        with mock.patch.object(platform, "_darwin", return_value=True), mock.patch.object(config, "HOME", home):
+            broker = server.start_l3_verb_broker(self.project)
+            self.addCleanup(server.stop_l3_verb_broker, broker)
+            self.assertEqual(len(str(broker.socket_path).encode()), 103)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(str(broker.socket_path))
 
 
 class TestCredentialsHidden(AltitudeCase):

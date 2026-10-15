@@ -1276,7 +1276,7 @@ class TestValidationProfile(TestCase):
         the coordinator's verb broker binds under the suite's own home (#695)."""
         with tempfile.TemporaryDirectory() as folder, socket.socket(socket.AF_UNIX) as server_socket, \
                 socket.socket(socket.AF_UNIX) as client:
-            path = Path(folder) / "at-x" / "case-y" / "home" / ".config" / "altitude" / "coordinator-0123456789ab" / "a.sock"
+            path = Path(folder) / "at-x" / "case-y" / "home" / ".config" / "altitude" / "0123456789ab" / "01234567"
             path.parent.mkdir(parents=True)
             server_socket.bind(str(path))
             server_socket.listen()
