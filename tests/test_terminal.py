@@ -497,6 +497,11 @@ class TestHandedCommand(TerminalCase):
                     task.pop(key)
                 S.save_task(self.project, task)
 
+    def settled(self):
+        """Wait out the notice's change: its inbox row is written before the question's mark, under one lock."""
+        with S.project_lock(self.project):
+            pass
+
     def ask(self, *questions):
         """Park the owner on operator questions; returns them by text."""
         T.block(self.project, self.slug, questions[0], actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
@@ -509,6 +514,7 @@ class TestHandedCommand(TerminalCase):
         self.hand("echo signed-$((5+5))")
         self.type("\r", self.slug)
         self.notice()
+        self.settled()
         task = S.load_task(self.project, self.slug)
         ran = {q["detail"]: q for q in task["questions"] if q["status"] == "open"}
         self.assertEqual((ran[step]["id"], ran[step]["revision"]), (asked[step]["id"], asked[step]["revision"]))
@@ -541,6 +547,7 @@ class TestHandedCommand(TerminalCase):
         terminal.close(self.project, self.slug)
         self.gone(term)
         self.notice()
+        self.settled()
         [question] = [q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"]
         self.assertFalse(question["ran"]["finished"])
 
@@ -558,6 +565,7 @@ class TestHandedCommand(TerminalCase):
         terminal.close(self.project, self.slug)
         self.gone(term)
         self.wait(lambda: len(self.notices()) == 2)
+        self.settled()
         self.assertIn("before the operator ran the command", self.notices()[-1])
         [question] = S.load_task(self.project, self.slug)["questions"]
         self.assertTrue(question["ran"]["finished"])
@@ -568,6 +576,7 @@ class TestHandedCommand(TerminalCase):
         self.hand("echo other")  # handed from another `run` block
         self.type("\r", self.slug)
         self.notice()
+        self.settled()
         self.hand("echo handed")  # dropped by Ctrl+C before Enter
         self.type("\x03", self.slug)
         time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)
