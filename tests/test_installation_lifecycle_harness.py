@@ -969,6 +969,35 @@ class TestInstallationMacosVm(AltitudeCase):
                            ([both[0], {**both[1], "state": "fail"}], 1), (both, 1)):
             self.assertFalse(judged(rows, code)[1], rows)
 
+    def test_jobs_passes_only_when_every_launchd_job_row_passes(self):
+        from scripts import installation_macos_vm as vm
+        every = [{"row": row, "state": "pass", "detail": "fine"} for row in vm.JOB_ROWS]
+        self.assertIn("stop-descendants", vm.JOB_ROWS)
+
+        class Guest:
+            def __init__(self, rows, code=0):
+                self.output, self.code, self.commands = json.dumps({"host": "darwin", "rows": rows}), code, []
+
+            def copy(self, source, target):
+                pass
+
+            def ssh(self, command, timeout=120, check=True):
+                self.commands.append(command)
+                return subprocess.CompletedProcess(command, self.code, self.output, "")
+
+        def judged(rows, code=0):
+            guest, record = Guest(rows, code), {}
+            vm.phase_jobs(guest, None, self.tmp, record, self.tmp, "c" * 40)
+            return guest, record["cases"]["jobs"]["passed"]
+
+        guest, passed = judged(every)
+        self.assertTrue(passed)
+        self.assertIn("scripts/platform_probe.py --only " + " ".join(vm.JOB_ROWS), guest.commands[0])
+        self.assertNotIn("sudo", guest.commands[0])  # the logged-in account's own launchd domain
+        self.assertTrue((self.tmp / "jobs.log").is_file())
+        for rows, code in ((every[1:], 0), ([*every[:-1], {**every[-1], "state": "fail"}], 1), (every, 1)):
+            self.assertFalse(judged(rows, code)[1], rows)
+
     def test_published_names_two_release_tags_and_runs_alone(self):
         from scripts import installation_macos_vm as vm
         for argv, error in ((["--published", "v0.3.0"], "is not a release version"),
