@@ -77,6 +77,8 @@ class BoundedInfo(tarfile.TarInfo):
 def _attributes(path: Path) -> dict[str, str]:
     result = {}
     for key in os.listxattr(path, follow_symlinks=False):
+        if key == 'security.selinux':
+            continue  # the runtime's label, not data: restored files take the new volume's label (#643)
         value=os.getxattr(path,key,follow_symlinks=False)
         _attribute(key,value)
         result[key] = base64.b64encode(value).decode()
