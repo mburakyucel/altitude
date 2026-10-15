@@ -28,8 +28,8 @@
 .pair-card .btn { min-height: 48px; }
 @media (max-width: 480px) { .pair-card { padding: 20px 16px; } }
 /* Desktop trust steps: which system and browser they are for, and the hosting computer's own manual path. */
-.pair-choose { align-self: stretch; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--text-meta); font-weight: 500; color: var(--text-secondary); }
-.pair-choose select { flex: 1; min-width: 12rem; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); font-size: var(--text-body); }
+.pair-choose { align-self: stretch; display: flex; flex-direction: column; gap: 6px; font-size: var(--text-meta); font-weight: 500; color: var(--text-secondary); }
+.pair-choose select { min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); font-size: var(--text-body); }
 .pair-manual { align-self: stretch; }
 .pair-manual > :not(summary) { margin-top: 12px; }
 .pair-instructions .onboarding-command { margin-top: 6px; }

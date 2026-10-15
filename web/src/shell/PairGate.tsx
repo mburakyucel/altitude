@@ -24,11 +24,10 @@ function deviceKind(): Kind {
   return /Android/.test(agent) ? "android" : "desktop";
 }
 
-/** Where a desktop browser keeps the authorities it trusts: macOS's keychain (Safari, Chrome, Edge), Firefox's own
- * store, or Chrome's on Linux. The visitor can pick another when the browser's own report is wrong. */
+/** Where a desktop browser keeps the authorities it trusts: macOS's keychain, which Safari, Chrome, Edge and Firefox
+ * read, or on Linux Chrome's or Firefox's own store. The visitor can pick another when the browser's report is wrong. */
 const desktops = {
-  "mac": "Mac · Safari, Chrome or Edge",
-  "mac-firefox": "Mac · Firefox",
+  "mac": "Mac",
   "linux": "Linux · Chrome or Chromium",
   "linux-firefox": "Linux · Firefox",
   "other": "Another system",
@@ -37,11 +36,10 @@ type Desktop = keyof typeof desktops;
 function desktopKind(): Desktop {
   const agent = navigator.userAgent;
   const firefox = /Firefox\//.test(agent);
-  if (/Macintosh/.test(agent)) return firefox ? "mac-firefox" : "mac";
+  if (/Macintosh/.test(agent)) return "mac";
   if (/Linux|X11/.test(agent)) return firefox ? "linux-firefox" : /Chrome\/|Chromium\//.test(agent) ? "linux" : "other";
   return "other";
 }
-const FINGERPRINT = "openssl x509 -noout -subject -fingerprint -sha256 -in ~/Downloads/altitude.crt";
 
 /** A code's characters by the server's rule: letters and digits only, uppercased. A mistyped O or 0 stays, so the
  * server can say the code is not right. */
@@ -53,10 +51,10 @@ function formatCode(text: string): string {
   return chars.length < 4 ? chars : `${chars.slice(0, 4)}-${chars.slice(4)}`;
 }
 
-const untrusted: Record<Kind, string> = {
+/** A phone's usual missing step, which its instructions do not make obvious. A desktop's list already ends with it. */
+const untrusted: Partial<Record<Kind, string>> = {
   apple: "The usual missing step is the switch in Certificate Trust Settings.",
   android: "Install the certificate as a CA certificate.",
-  desktop: "Import the certificate as a trusted authority, then restart the browser.",
 };
 
 function Step({ mark, title, aside, children }: { mark: Mark; title: string; aside?: ReactNode; children?: ReactNode }) {
@@ -77,14 +75,10 @@ function Instructions({ kind, name, guide, installLink, here }: { kind: Kind; na
   const compare = <>Compare its name, “{name}”, and its <strong>full SHA-256</strong> with the installer or <code>alt doctor</code> on the hosting computer. If they differ, delete the download and stop.</>;
   const reopen = <li>{installLink ? <>Restart the browser, then reopen the original private link from the installer. It must open without a certificate warning. If it has expired, run <code>~/.local/bin/alt pair</code> for a new code.</>
     : <>Restart the browser and reopen this page. It must open without a certificate warning; if a warning remains, don’t pair.</>}</li>;
-  const firefox = <>
-    <li>In Firefox, open Settings › Privacy &amp; Security › Certificates › View Certificates › Authorities › Import, then choose altitude.crt.</li>
-    <li>Tick Trust this CA to identify websites, then OK.</li>
-  </>;
   const steps = <ol className="pair-instructions">
     <li><a className="btn btn-primary" href={kind === "apple" ? "/api/certificate/altitude.mobileconfig" : "/api/certificate/altitude.crt"}>{kind === "apple" ? "Download the profile" : "Download the certificate"}</a></li>
-    {system === "mac" || system === "mac-firefox" ? <li>In Finder, select altitude.crt in Downloads and press Space. {compare}</li>
-      : system === "linux" || system === "linux-firefox" ? <li>{compare} This shows them: <Command text={FINGERPRINT} /></li>
+    {system === "mac" ? <li>In Finder, select altitude.crt in Downloads and press Space. {compare}</li>
+      : system === "linux" || system === "linux-firefox" ? <li>Open altitude.crt in Downloads; the certificate viewer shows its fingerprints. {compare}</li>
       : <li>{compare}</li>}
     {system === "apple" ? <>
       <li>Open Settings › Profile Downloaded. It must list one Certificate, “{name}”. Tap More Details to compare the SHA-256, then tap Install.</li>
@@ -96,8 +90,10 @@ function Instructions({ kind, name, guide, installLink, here }: { kind: Kind; na
       </> : system === "linux" ? <>
         <li>Open this address in a new tab: <Command text="chrome://certificate-manager" /></li>
         <li>Choose Local certificates › Custom › Installed by you › Trusted Certificates › Import, then altitude.crt.</li>
-      </> : system === "mac-firefox" || system === "linux-firefox" ? firefox
-      : <li>Import it as a trusted authority in this browser or system.</li>}
+      </> : system === "linux-firefox" ? <>
+        <li>In Firefox, open Settings › Privacy &amp; Security › Certificates › View Certificates › Authorities › Import, then choose altitude.crt.</li>
+        <li>Tick Trust this CA to identify websites, then OK.</li>
+      </> : <li>Import it as a trusted authority in this browser or system.</li>}
     {reopen}
   </ol>;
   const chooser = kind === "desktop" ? <label className="pair-choose">Steps for
@@ -109,7 +105,7 @@ function Instructions({ kind, name, guide, installLink, here }: { kind: Kind; na
     <p className="pair-lead">A page opened past a certificate warning cannot prove it is Altitude. Check the certificate against the hosting computer before trusting it.</p>
     {kind === "desktop" && here ? <>
       <ol className="pair-instructions">
-        <li>On this computer, run: <Command text="~/.local/bin/alt trust" />It shows the certificate’s name and full SHA-256, then asks before trusting it in this computer’s browsers.</li>
+        <li>On the computer running Altitude, run: <Command text="~/.local/bin/alt trust" />It shows the certificate’s name and full SHA-256, then asks before trusting it in this computer’s browsers.</li>
         {reopen}
       </ol>
       <details className="pair-manual"><summary className="link">Trust it by hand instead</summary>{chooser}{steps}</details>
@@ -254,7 +250,7 @@ function PairScreen({ trust, guide = SETUP_GUIDE, removed, onPaired, pairingLink
             <button type="button" className="btn btn-primary" onClick={confirm}>Continue</button>
           </> : <>
             <Instructions kind={kind} name={name} guide={guide} installLink={!!linkReady} here={trust.local} />
-            {trusted.status === "untrusted" ? <p role="status" className="text-meta">{kind === "desktop" && trust.local ? "The usual missing step is restarting the browser after alt trust." : untrusted[kind]}</p> : null}
+            {trusted.status === "untrusted" && untrusted[kind] ? <p role="status" className="text-meta">{untrusted[kind]}</p> : null}
             {trusted.status === "unknown" ? <p role="alert" className="text-meta text-danger">Couldn’t check.</p> : null}
             <button type="button" className="btn" disabled={trusted.status === "checking"} onClick={check}>Check again</button>
           </>}
