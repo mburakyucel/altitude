@@ -448,10 +448,13 @@ describe("Pair this device", () => {
     expect(screen.getByText(/In Keychain Access, open “Altitude CA 4F7K”, expand Trust/)).toBeVisible();
     await user.selectOptions(chooser, "linux");
     expect(screen.getByText("chrome://certificate-manager")).toBeVisible();
-    expect(screen.getByText(/the certificate viewer shows its fingerprints/)).toBeVisible();
+    expect(screen.getByText("openssl x509 -in ~/Downloads/altitude.crt -noout -subject -fingerprint -sha256")).toBeVisible();
     await user.selectOptions(chooser, "linux-firefox");
+    // Firefox's import dialog shows the SHA-256 before anything is trusted.
+    expect(screen.getByText(/^Click View\. Compare its name/)).toBeVisible();
     expect(screen.getByText("Tick Trust this CA to identify websites, then OK.")).toBeVisible();
     expect(screen.queryByText("chrome://certificate-manager")).toBeNull();
+    expect(screen.queryByText(/openssl x509/)).toBeNull();
   });
 
   it("on the hosting computer, offers alt trust first and keeps the steps by hand behind a disclosure", async () => {

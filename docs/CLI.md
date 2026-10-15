@@ -793,17 +793,17 @@ including any merge hold.
 
 `alt doctor` leads with the owned service's hosting computer, verified URL and listener exposure,
 then one next step from current state (until a browser is paired, `alt trust` while one of this
-computer's browser stores lacks the certificate, then the installer's private link while it works, else
-trusting the certificate and `alt pair`; then the first missing tool with its command), then a newer
-release when one is offered (with what an automatic update waits for, such as the validation run of a
-named task or an open browser terminal), then tool readiness including a coding agent, which of this
-computer's browser stores trust the certificate, the paired-browser count, the other-device trust state
-until a browser is paired, and the unknown provider state. `--json` lists those stores under
-`certificate_trust.this_computer`. `alt update` installs the newest release now instead of waiting for
-the automatic attempt: from its start new work waits, and it waits up to a minute for work in flight
-before stopping with "Update staged … Retry this version", which leaves that version eligible for its
-automatic attempt. The automatic attempt and the app's Update button run detached and wait up to
-twenty-five minutes.
+computer's browser stores lacks the certificate and the session is not SSH, then the installer's
+private link while it works, else trusting the certificate and `alt pair`; then the first missing tool
+with its command), then a newer release when one is offered (with what an automatic update waits for,
+such as the validation run of a named task or an open browser terminal), then tool readiness including
+a coding agent, which of this computer's browser stores trust the certificate, the paired-browser count,
+the other-device trust state until a browser is paired, and the unknown provider state. `--json` lists
+those stores under `certificate_trust.this_computer`. `alt update` installs the newest release now
+instead of waiting for the automatic attempt: from its start new work waits, and it waits up to a minute
+for work in flight before stopping with "Update staged … Retry this version", which leaves that version
+eligible for its automatic attempt. The automatic attempt and the app's Update button run detached and
+wait up to twenty-five minutes.
 `alt doctor --json` retains
 structured diagnostics. `alt service status` uses the same hosting reading;
 `alt service status --json` includes service-manager details and hosting facts. Conflicting shell
@@ -864,7 +864,8 @@ before pairing. See [certificate setup](SETUP.md#trust-https-on-each-device).
 HTTPS that it serves, in this account's browser stores, to identify websites only: the login keychain on
 a Mac, the Chrome and Firefox NSS databases on Linux through `certutil`. It shows the CA's name, full
 SHA-256, scope and each store, and changes nothing until the terminal (`/dev/tty`, never standard input)
-answers yes; without a terminal it asks nothing. It prints one undo command per store, exits 0 once every
+answers yes, ignoring keys typed before the question; without a terminal it shows the summary and asks
+nothing. Over SSH the question says it changes this computer's browsers. It prints one undo command per store, exits 0 once every
 store it can change trusts the CA, and refuses an external certificate and a container. The installer
 runs it in a terminal on the hosting computer, not over SSH.
 

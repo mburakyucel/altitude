@@ -12,6 +12,7 @@ import shutil
 import ssl
 import subprocess
 import tempfile
+import termios
 
 from . import config, platform, state as S
 
@@ -935,9 +936,11 @@ def _terminal_answer(question: str) -> str | None:
     try:
         # Unbuffered: a buffered reader and writer needs a file it can seek, which a terminal is not.
         with open("/dev/tty", "rb+", buffering=0) as terminal:
+            # Keys typed earlier, during a long install, never answer a question they were not typed for.
+            termios.tcflush(terminal.fileno(), termios.TCIFLUSH)
             terminal.write(question.encode())
             return terminal.readline().decode(errors="replace").strip().lower()
-    except OSError:
+    except (OSError, termios.error):
         return None
 
 
@@ -986,16 +989,21 @@ def trust(out=print, ask=_terminal_answer) -> bool:
             by_hand()
             return True
         width = max(len(store["label"]) for store in missing)
-        out("\n".join(["Trust Altitude's certificate on this computer?",
+        # The question carries what it asks about, so a redirected standard output never hides it.
+        question = "\n".join(["Trust Altitude's certificate on this computer?",
                         f"  Name:    {authority['name']}",
                         f"  SHA-256: {authority['sha256']}",
                         f"  Scope:   {describe_scope(authority['scope'])}",
                         "It will identify websites only, in:",
                         *(f"  {store['label']:<{width}}  {_home(store['path'])}" for store in missing),
                         *(f"Already trusted in {store['label']}." for store in stores if store not in missing),
-                        *dict.fromkeys(store["asks"] for store in missing if store.get("asks"))]))
-        answer = ask("Trust it? [y/N] ")
+                        *dict.fromkeys(store["asks"] for store in missing if store.get("asks")),
+                        *(["This is an SSH session: it changes this computer's browsers, not the one you type on. For "
+                           "a browser there, follow the pair page's Trust it by hand instead."]
+                          if os.environ.get("SSH_CONNECTION") else [])])
+        answer = ask(question + "\nTrust it? [y/N] ")
         if answer is None:
+            out(question)
             out("There is no terminal to ask in, so nothing changed. Run ~/.local/bin/alt trust in a terminal.")
             return False
         if answer not in ("y", "yes"):

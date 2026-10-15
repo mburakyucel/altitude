@@ -2181,12 +2181,14 @@ computer running it."; plain HTTP on the hosting computer (local development) sh
    Finder, select altitude.crt in Downloads and press Space." before the compare sentence, then "Double-click
    altitude.crt and add it to the login keychain." and "In Keychain Access, open “<CA name>”, expand Trust
    and set Secure Sockets Layer (SSL) to Always Trust. Close the window and enter your password."; **Linux ·
-   Chrome or Chromium** puts "Open altitude.crt in Downloads; the certificate viewer shows its
-   fingerprints." before it, then "Open this address in a new tab:" with `chrome://certificate-manager`
-   and **Copy** (a page cannot link to it) and "Choose Local certificates › Custom › Installed by you ›
-   Trusted Certificates › Import, then altitude.crt."; **Linux · Firefox** the same viewer step, then "In
-   Firefox, open Settings › Privacy & Security › Certificates › View Certificates › Authorities › Import,
-   then choose altitude.crt." and "Tick Trust this CA to identify websites, then OK."; **Another system**
+   Chrome or Chromium** puts "In a terminal, run:" with `openssl x509 -in ~/Downloads/altitude.crt -noout
+   -subject -fingerprint -sha256` and **Copy** before it (the GNOME certificate viewer shows no SHA-256),
+   then "Open this address in a new tab:" with `chrome://certificate-manager` and **Copy** (a page cannot
+   link to it) and "Choose Local certificates › Custom › Installed by you › Trusted Certificates › Import,
+   then altitude.crt."; **Linux · Firefox** "In Firefox, open Settings › Privacy & Security › Certificates ›
+   View Certificates › Authorities › Import, then choose altitude.crt.", "Click View." with the compare
+   sentence, since Firefox's import dialog shows the certificate before trusting it, and "Tick Trust this
+   CA to identify websites, then OK."; **Another system**
    "Import it as a trusted authority in this browser or system." The page offers nothing to copy for the
    comparison, which a forged page could forge too. A desktop browser on the hosting computer, outside a
    container and with Altitude's own certificate, first lists "On the computer running Altitude, run:"

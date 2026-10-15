@@ -31,6 +31,7 @@ class TrustCase(ServiceCase):
         self.bin.mkdir()
         (self.bin / "openssl").symlink_to(platform.openssl())
         self.path(str(self.bin))
+        os.environ.pop("SSH_CONNECTION", None)
 
     def path(self, value: str):
         patcher = mock.patch.dict(os.environ, {"PATH": value})
@@ -86,19 +87,28 @@ class TestLinux(TrustCase):
             with self.subTest(reply=reply):
                 self.assertFalse(self.trust(reply))
                 self.assertFalse(self.trusts(self.chrome) or self.trusts(self.firefox), "nothing changed")
-        self.assertEqual(self.asked, ["Trust it? [y/N] "] * 3)
-        self.assertIn("There is no terminal to ask in, so nothing changed.", self.output)
+        self.assertEqual(len(set(self.asked)), 1)
+        self.assertEqual(self.lines, [self.asked[0].removesuffix("\nTrust it? [y/N] "),
+                                      "There is no terminal to ask in, so nothing changed. Run ~/.local/bin/alt trust "
+                                      "in a terminal."], "without a terminal the question is still shown")
         self.trust("n")
-        self.assertEqual(self.lines[-1], "Nothing changed.")
-        self.assertEqual(self.lines[0].splitlines(), [
+        self.assertEqual(self.lines, ["Nothing changed."])
+        self.assertEqual(self.asked[-1].splitlines(), [
             "Trust Altitude's certificate on this computer?",
             f"  Name:    {authority['name']}",
             f"  SHA-256: {authority['sha256']}",
             f"  Scope:   {tls.describe_scope(authority['scope'])}",
             "It will identify websites only, in:",
             "  Chrome and Chromium                 ~/.pki/nssdb",
-            "  Firefox (ab12cd34.default-release)  ~/.mozilla/firefox/ab12cd34.default-release"])
+            "  Firefox (ab12cd34.default-release)  ~/.mozilla/firefox/ab12cd34.default-release",
+            "Trust it? [y/N] "])
         self.assertTrue(authority["scope"]["permitted"], "the scope shown is the CA's private-name limit")
+
+    def test_over_ssh_the_question_says_whose_browsers_it_changes(self):
+        with mock.patch.dict(os.environ, {"SSH_CONNECTION": "192.0.2.10 50000 192.0.2.20 22"}):
+            self.trust("n")
+        self.assertIn("This is an SSH session: it changes this computer's browsers, not the one you type on. For a "
+                      "browser there, follow the pair page's Trust it by hand instead.\nTrust it? [y/N] ", self.asked[0])
 
     def test_yes_trusts_every_browser_store_for_websites_and_prints_the_undo(self):
         self.assertTrue(self.trust("y"))
@@ -107,7 +117,7 @@ class TestLinux(TrustCase):
         self.assertRegex(nickname, r"^Altitude CA [2-9A-Z]{4} · [0-9A-F]{8}$")
         listing = subprocess.run([CERTUTIL, "-L", "-d", f"sql:{self.chrome}"], capture_output=True, text=True).stdout
         self.assertRegex(listing, rf"{nickname}\s+C,,\s*$", "trusted to identify websites only")
-        self.assertEqual(self.lines[1:], [
+        self.assertEqual(self.lines, [
             "Trusted in Chrome and Chromium and Firefox (ab12cd34.default-release). Restart your browser before "
             "opening Altitude.\nTo undo:\n"
             f"  certutil -D -d sql:\"$HOME/.pki/nssdb\" -n '{nickname}'\n"
@@ -146,10 +156,32 @@ class TestLinux(TrustCase):
         (self.home / "snap/chromium/current").mkdir(parents=True)
         (self.bin / "google-chrome").symlink_to(self.bin / "sh")
         self.assertTrue(self.trust("y"))
-        self.assertIn("  Chrome and Chromium                 ~/.pki/nssdb", self.lines[0])
-        self.assertIn("  Chromium (snap)                     ~/snap/chromium/current/.pki/nssdb", self.lines[0])
+        self.assertIn("  Chrome and Chromium                 ~/.pki/nssdb", self.asked[0])
+        self.assertIn("  Chromium (snap)                     ~/snap/chromium/current/.pki/nssdb", self.asked[0])
         self.assertTrue(self.trusts(self.chrome) and self.trusts(self.home / "snap/chromium/current/.pki/nssdb"))
         self.assertEqual(self.chrome.stat().st_mode & 0o777, 0o700)
+
+    def test_a_snap_launcher_is_not_a_chrome_and_newer_firefox_profiles_are_found(self):
+        shutil.rmtree(self.home / ".pki")
+        shutil.rmtree(self.home / ".mozilla")
+        (self.bin / "snap").write_text("#!/bin/sh\n")
+        (self.bin / "snap").chmod(0o755)
+        (self.bin / "chromium").symlink_to(self.bin / "snap")
+        self.database(".config/mozilla/firefox/ef56.default-release")
+        self.assertTrue(self.trust("y"))
+        self.assertEqual(self.lines[0].splitlines()[0], "Trusted in Firefox (ef56.default-release). Restart your browser "
+                         "before opening Altitude.")
+        self.assertFalse((self.home / ".pki").exists(), "the snap reads its own database")
+
+    def test_a_store_that_cannot_be_created_is_named_and_the_others_keep_their_undo(self):
+        shutil.rmtree(self.home / ".pki")
+        (self.home / ".pki").write_text("not a folder\n")
+        (self.bin / "google-chrome").symlink_to(self.bin / "sh")
+        self.assertFalse(self.trust("y"))
+        self.assertEqual(self.lines[0], "Not changed in Chrome and Chromium: Could not create the database folder: "
+                         "Not a directory")
+        self.assertTrue(self.lines[1].startswith("Trusted in Firefox (ab12cd34.default-release)."))
+        self.assertIn("certutil -D -d sql:\"$HOME/.mozilla/firefox/ab12cd34.default-release\"", self.lines[1])
 
     def test_a_flatpak_chrome_is_left_to_its_own_import(self):
         (self.home / ".var/app/com.google.Chrome").mkdir(parents=True)
@@ -196,6 +228,9 @@ class TestLinux(TrustCase):
                 {"label": "Chrome and Chromium", "path": str(self.chrome), "trusted": False},
                 {"label": "Firefox (ab12cd34.default-release)", "path": str(self.firefox), "trusted": False}]})
             self.assertEqual(report["next"], ["Next: trust Altitude's certificate on this computer: alt trust, then run alt pair."])
+            with mock.patch.dict(os.environ, {"SSH_CONNECTION": "192.0.2.10 50000 192.0.2.20 22"}):
+                self.assertEqual(installation.doctor()["next"], ["Next: compare the certificate below with what your "
+                                 "browser shows, trust it, then run alt pair."], "over SSH the browser is elsewhere")
             text = installation.describe_doctor(report)
             self.assertIn("Certificate trust on this computer: not in Chrome and Chromium, Firefox "
                           "(ab12cd34.default-release)", text)
@@ -241,7 +276,7 @@ esac
         authority = self.authority()
         self.assertTrue(self.trust("y"))
         self.assertIn("  macOS login keychain (Safari, Chrome, Edge, Firefox)  ~/Library/Keychains/login.keychain-db\n"
-                      "macOS will ask for your password in a window.", self.lines[0])
+                      "macOS will ask for your password in a window.", self.asked[0])
         calls = self.calls.read_text().splitlines()
         self.assertTrue(calls[0].startswith(f"verify-cert -c {self.service_tls / 'server.crt'} -c "))
         self.assertTrue(calls[0].endswith(" -p ssl -L -q"))
@@ -268,13 +303,10 @@ esac
                          "follow the Mac steps on the pair page.")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestTerminal(unittest.TestCase):
     def test_the_question_is_answered_in_the_terminal_even_when_standard_input_is_the_installer(self):
-        """A real pseudo-terminal, with standard input a pipe that says no, as `curl … | sh` fills it."""
+        """A real pseudo-terminal, with standard input a pipe that says no, as `curl … | sh` fills it, and a no typed
+        before the question that the answer ignores."""
         answer = Path(self.enterContext(tempfile.TemporaryDirectory())) / "answer"
         code = "import sys; from altitude import tls; open(sys.argv[1], 'w').write(repr(tls._terminal_answer('Trust it? [y/N] ')))"
         pid, terminal = pty.fork()
@@ -286,6 +318,7 @@ class TestTerminal(unittest.TestCase):
             os.execv(sys.executable, [sys.executable, "-c", code, str(answer)])
         shown = b""
         try:
+            os.write(terminal, b"n\n")
             while b"Trust it? [y/N] " not in shown:
                 shown += os.read(terminal, 1024)
             os.write(terminal, b"Yes\n")
@@ -293,3 +326,7 @@ class TestTerminal(unittest.TestCase):
         finally:
             os.close(terminal)
         self.assertEqual(answer.read_text(), "'yes'")
+
+
+if __name__ == "__main__":
+    unittest.main()

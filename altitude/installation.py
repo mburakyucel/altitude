@@ -706,7 +706,8 @@ def _next(hosting: dict, pairing: dict, needs: list[dict], trust: dict) -> list[
     if pairing["paired"] == 0:
         from . import state as S
         stores = [row for row in (trust.get("this_computer") or {}).get("stores", []) if not row.get("manual")]
-        if any(row["trusted"] is not True for row in stores):
+        # Over SSH the browser is on another computer, as the installer's offer assumes too.
+        if any(row["trusted"] is not True for row in stores) and not os.environ.get("SSH_CONNECTION"):
             return ["Next: trust Altitude's certificate on this computer: alt trust, then "
                     + (f"open the private link the installer printed (it works once, until {S.local(pairing['code_expires'])})."
                        if pairing.get("code_expires") else "run alt pair.")]

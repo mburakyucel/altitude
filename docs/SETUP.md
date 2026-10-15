@@ -92,10 +92,10 @@ export PATH="$HOME/.local/bin:$PATH"
 `alt doctor` and `alt service status` lead with whether the service runs, its actual address and
 which devices can reach it, verified against the native process and TLS health. They separate the
 saved configuration from shell overrides they ignore. `alt doctor` then names the one next step from
-current state: until a browser is paired, `alt trust` while one of this computer's browsers does not
-trust the certificate, then the installer's private link while it still works, else trusting the
-certificate and running `alt pair`; after that the first missing tool with its command, such as a
-coding agent to install. It also checks tools and sign-ins, shows the command that fixes each
+current state: until a browser is paired, `alt trust` outside an SSH session while one of this
+computer's browsers does not trust the certificate, then the installer's private link while it still
+works, else trusting the certificate and running `alt pair`; after that the first missing tool with
+its command, such as a coding agent to install. It also checks tools and sign-ins, shows the command that fixes each
 failure, names which of this computer's browser stores trust the certificate and counts paired
 browsers; `--json` gives structured output for automation. Neither can see whether other devices
 trust Altitude's certificate or whether a coding provider accepts your account.
@@ -216,7 +216,8 @@ and Altitude renews its server certificate by itself, so a device trusts it once
 ```
 
 It shows the certificate's name, full SHA-256 fingerprint and scope and the browser stores it would
-change, then asks `Trust it? [y/N]` in the terminal; nothing changes unless you answer yes. It trusts
+change, then asks `Trust it? [y/N]` in the terminal; nothing changes unless you answer yes. Over SSH
+it says that it changes the browsers of the computer running Altitude, not of the one you type on. It trusts
 only the certificate Altitude created, as the running service proves it serves, and only to identify
 websites, without administrator rights:
 

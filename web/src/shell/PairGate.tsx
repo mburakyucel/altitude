@@ -78,8 +78,8 @@ function Instructions({ kind, name, guide, installLink, here }: { kind: Kind; na
   const steps = <ol className="pair-instructions">
     <li><a className="btn btn-primary" href={kind === "apple" ? "/api/certificate/altitude.mobileconfig" : "/api/certificate/altitude.crt"}>{kind === "apple" ? "Download the profile" : "Download the certificate"}</a></li>
     {system === "mac" ? <li>In Finder, select altitude.crt in Downloads and press Space. {compare}</li>
-      : system === "linux" || system === "linux-firefox" ? <li>Open altitude.crt in Downloads; the certificate viewer shows its fingerprints. {compare}</li>
-      : <li>{compare}</li>}
+      : system === "linux" ? <li>In a terminal, run: <Command text="openssl x509 -in ~/Downloads/altitude.crt -noout -subject -fingerprint -sha256" />{compare}</li>
+      : system === "linux-firefox" ? null : <li>{compare}</li>}
     {system === "apple" ? <>
       <li>Open Settings › Profile Downloaded. It must list one Certificate, “{name}”. Tap More Details to compare the SHA-256, then tap Install.</li>
       <li>Turn it on: Settings › General › About › Certificate Trust Settings › “{name}”.</li>
@@ -92,6 +92,7 @@ function Instructions({ kind, name, guide, installLink, here }: { kind: Kind; na
         <li>Choose Local certificates › Custom › Installed by you › Trusted Certificates › Import, then altitude.crt.</li>
       </> : system === "linux-firefox" ? <>
         <li>In Firefox, open Settings › Privacy &amp; Security › Certificates › View Certificates › Authorities › Import, then choose altitude.crt.</li>
+        <li>Click View. {compare}</li>
         <li>Tick Trust this CA to identify websites, then OK.</li>
       </> : <li>Import it as a trusted authority in this browser or system.</li>}
     {reopen}

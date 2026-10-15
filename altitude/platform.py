@@ -156,9 +156,12 @@ def install_command(tool: str) -> str | None:
 #: dialog reaches. Chrome reads its database without ever creating it, so an installed Chrome's missing one is made.
 LOGIN_KEYCHAIN = "Library/Keychains/login.keychain-db"
 _CHROMIUM = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "brave-browser")
-_CHROME_NSS = ((".pki/nssdb", "Chrome and Chromium", lambda home: any(map(shutil.which, _CHROMIUM))),
+# A command that resolves to snap's launcher runs the snap, which keeps its own database below.
+_CHROME_NSS = ((".pki/nssdb", "Chrome and Chromium",
+                lambda home: any(found and not os.path.realpath(found).endswith("/snap") for found in map(shutil.which, _CHROMIUM))),
                ("snap/chromium/current/.pki/nssdb", "Chromium (snap)", lambda home: (home / "snap/chromium/current").is_dir()))
-_FIREFOX_PROFILES = (".mozilla/firefox", "snap/firefox/common/.mozilla/firefox", ".var/app/org.mozilla.firefox/.mozilla/firefox")
+_FIREFOX_PROFILES = (".mozilla/firefox", ".config/mozilla/firefox", "snap/firefox/common/.mozilla/firefox",
+                     ".var/app/org.mozilla.firefox/.mozilla/firefox")
 _FLATPAK_CHROME = ((".var/app/com.google.Chrome", "Chrome (Flatpak)"), (".var/app/org.chromium.Chromium", "Chromium (Flatpak)"))
 
 
@@ -237,7 +240,10 @@ def add_trust(store: dict, authority: dict) -> None:
     else:
         database = f"sql:{store['path']}"
         if not (store["path"] / "cert9.db").is_file():
-            store["path"].mkdir(mode=0o700, parents=True, exist_ok=True)
+            try:
+                store["path"].mkdir(mode=0o700, parents=True, exist_ok=True)
+            except OSError as exc:
+                raise RuntimeError(f"Could not create the database folder: {exc.strerror}") from exc
             _trust_run("-N", "-d", database, "--empty-password")
         added = _trust_run("-A", "-d", database, "-n", authority["nickname"], "-t", "C,,", "-i", authority["ca"])
     if added.returncode != 0 or not store_trusts(store, authority):

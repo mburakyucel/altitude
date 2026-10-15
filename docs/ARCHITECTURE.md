@@ -475,12 +475,13 @@ same HTTPS proof as `alt tls-share`, and works on a temporary copy of the proven
 lists the account's browser stores and checks and changes them without administrator rights: on macOS
 the login keychain through `security` (`add-trusted-cert -r trustRoot -p ssl`, checked with
 `verify-cert` against the server certificate, which macOS confirms in its own password window), on Linux
-each NSS database (`~/.pki/nssdb`, snap Chromium's and every Firefox profile with a `cert9.db`) through
+each NSS database (`~/.pki/nssdb`, snap Chromium's and every Firefox profile with a `cert9.db`, in the
+classic, XDG, snap or Flatpak profile folder) through
 `certutil -t C,,` (creating the one an installed Chromium-family browser reads but never creates), found by content because NSS keeps an earlier import's nickname; a Flatpak Chrome is
 named for its own import. The CA is added as "<name> · <first eight fingerprint digits>", and each
 change is checked afterwards rather than trusted from the tool's exit status. The question and answer
-use the controlling terminal (`/dev/tty`), so standard input, which a piped installer fills with itself,
-never answers. It prints one undo command per store. `alt doctor` runs the same checks read-only for
+use the controlling terminal (`/dev/tty`, with earlier keystrokes discarded), so standard input, which a
+piped installer fills with itself, never answers. It prints one undo command per store. `alt doctor` runs the same checks read-only for
 `certificate_trust.this_computer` and its next step. The access view's `trust.command` tells the pairing
 screen that a browser is on the hosting computer, outside a container, with a CA `alt trust` accepts, so
 it leads with that command; the page itself never changes the computer.
