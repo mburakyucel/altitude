@@ -509,22 +509,13 @@ def _machine_run(arguments: list[str], timeout: int = 30) -> str:
     return result.stdout
 
 
-def _machine() -> dict:
-    """Prove the `altitude` connection is that running rootless arm64 machine before any container call.
+def _machine_endpoint() -> tuple[str, str, str]:
+    """The running rootless machine's incarnation and the address and key its `altitude` connection names.
 
-    A connection name is only an alias (#643 proposal review): its address must be the machine's own
-    SSH port, user, key and rootless socket. Verified once per launcher process.
+    A connection name is only an alias (#643 proposal review): its address must be the machine's own SSH
+    port, user, key and rootless socket. Both reads are local, so every container call repeats them.
     """
-    global _machine_verified
-    if _machine_verified is not None:
-        return _machine_verified
-    require_supported()
     name = CONTAINER_MACHINE
-    if host_platform.machine() != "arm64":
-        raise RuntimeError("The Mac container route needs Apple silicon")
-    version = re.search(r"(\d+)\.(\d+)\.(\d+)", _machine_run(["--version"]))
-    if not version or int(version[1]) < 6:
-        raise RuntimeError("Podman 6.0 or newer is required: brew upgrade podman")
     create = (f"podman machine init {name} --cpus {CONTAINER_MACHINE_CPUS} "
               f"--memory {CONTAINER_MACHINE_MEMORY} --disk-size 40")
     try:
@@ -552,13 +543,29 @@ def _machine() -> dict:
             or not re.fullmatch(r"/run/user/\d+/podman/podman\.sock", address.path)):
         raise RuntimeError(f"The {name} connection does not reach the {name} machine's rootless socket; "
                            f"recreate it with podman machine rm {name} and {create}")
+    return f"podman-machine:{name}:{machine.get('Created', '')}", found[0]["URI"], found[0]["Identity"]
+
+
+def _machine() -> dict:
+    """Prove the `altitude` connection reaches that running rootless arm64 machine, once per launcher process."""
+    global _machine_verified
+    if _machine_verified is not None:
+        return _machine_verified
+    require_supported()
+    name = CONTAINER_MACHINE
+    if host_platform.machine() != "arm64":
+        raise RuntimeError("The Mac container route needs Apple silicon")
+    version = re.search(r"(\d+)\.(\d+)\.(\d+)", _machine_run(["--version"]))
+    if not version or int(version[1]) < 6:
+        raise RuntimeError("Podman 6.0 or newer is required: brew upgrade podman")
+    endpoint = _machine_endpoint()
     info = json.loads(_machine_run(["--connection", name, "info", "--format", "json"]))
     host = info["host"]
     if not host["security"]["rootless"] or not host["security"]["seccompEnabled"] or host["arch"] != "arm64":
         raise RuntimeError(f"The {name} connection must reach rootless arm64 Podman with default seccomp")
     if host["cgroupVersion"] != "v2":
         raise RuntimeError(f"The {name} machine needs cgroup v2")
-    _machine_verified = {"machine": name, "identity": f"podman-machine:{name}:{machine.get('Created', '')}",
+    _machine_verified = {"machine": name, "identity": endpoint[0], "endpoint": endpoint,
                          "host": host, "version": info["version"], "store": info["store"]}
     return _machine_verified
 
@@ -1207,7 +1214,11 @@ def container_stop(instance: str) -> None:
 
 def container_arguments(arguments: list[str]) -> list[str]:
     if _darwin():
-        _machine()  # every Mac container call follows proof of the machine's identity
+        # Every call rechecks the alias against the proven machine incarnation, address and key, so a machine
+        # recreated or a connection changed mid-command never receives cleanup meant for the proven one.
+        if _machine_endpoint() != _machine()["endpoint"]:
+            raise RuntimeError(f"The {CONTAINER_MACHINE} machine or its connection changed during this command; "
+                               "nothing further was done. Inspect it, then run the command again")
         return ["podman", "--connection", CONTAINER_MACHINE, *arguments]
     return ["podman", "--remote=false", "--cgroup-manager=cgroupfs", "--runtime=/usr/bin/crun", *arguments]
 

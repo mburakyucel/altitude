@@ -127,7 +127,9 @@ natively for linux/arm64 inside the machine. The machine holds the image, volume
 `podman machine rm altitude` removes all of them. Before its first Podman call, every launcher
 command proves that the `altitude` connection reaches that running rootless arm64 machine: the
 connection's SSH port, user, key and socket match `podman machine inspect altitude`, and the machine
-has at least 4 CPUs and 6 GiB. Any mismatch, a stopped machine or a set `CONTAINER_HOST` refuses and
+has at least 4 CPUs and 6 GiB. Every later call rechecks that the machine and its connection's
+address and key are the ones proven, so a machine recreated or a connection changed mid-command
+receives nothing further. Any mismatch, a stopped machine or a set `CONTAINER_HOST` refuses and
 names the fixing command. The launcher never creates, starts or stops the machine and adds no
 launchd job.
 

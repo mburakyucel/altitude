@@ -91,12 +91,27 @@ class MachineIdentityTests(MachineCase):
         runtime = platform.container_runtime()
         self.assertEqual(runtime["identity"], "podman-machine:altitude:2026-10-15T09:00:00Z")
         self.assertEqual(runtime["transfers"], [])
-        proofs = len(self.calls)
         platform.container_command(["ps"])
         platform.container_command(["ps"])
-        self.assertEqual(len(self.calls), proofs + 2)
-        self.assertEqual(self.calls[-1], ["podman", "--connection", "altitude", "ps"])
+        self.assertEqual(sum(call[1:2] == ["--version"] for call in self.calls), 1)
+        self.assertEqual(sum(call[3:4] == ["info"] for call in self.calls), 1)
+        self.assertEqual(self.calls[-3:], [["podman", "machine", "inspect", "altitude"],
+                                           ["podman", "system", "connection", "list", "--format", "json"],
+                                           ["podman", "--connection", "altitude", "ps"]])
         self.assertNotIn("--remote=false", sum(self.calls, []))
+
+    def test_a_machine_or_connection_changed_after_the_proof_receives_no_cleanup(self):
+        changes = {"recreated": lambda: self.machine.update(Created="2026-10-15T10:00:00Z"),
+                   "readdressed": lambda: (self.machine["SSHConfig"].update(Port=50222), self.connections[0].update(
+                       URI="ssh://core@127.0.0.1:50222/run/user/501/podman/podman.sock"))}
+        for case, change in changes.items():
+            with self.subTest(case):
+                self.setUp()
+                platform.container_runtime()
+                change()
+                with self.assertRaisesRegex(RuntimeError, "changed during this command; nothing further was done"):
+                    container.machine_build_cleanup()
+                self.assertEqual([call for call in self.podman() if call[:1] in (["rm"], ["ps"])], [])
 
     def test_every_mismatch_refuses_before_any_container_call(self):
         cases = {
