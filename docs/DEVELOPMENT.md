@@ -966,8 +966,8 @@ blocks automating it.
 
 A real Claude owner in a container on this machine starts without a sign-in step of its own: after
 `scripts/container.py start`, the owner runs `scripts/container.py sign-in claude --name NAME` under the
-[standing container approval](../AGENTS.md#container-operations-on-this-machine), which copies the sign-in
-Altitude already uses here ([first use](CONTAINERS.md#first-use)). Codex still signs in inside each fresh
+[standing container approval](../AGENTS.md#container-operations-on-this-machine), which covers that copy of
+the sign-in Altitude already uses here into a throwaway test container ([first use](CONTAINERS.md#first-use)). Codex still signs in inside each fresh
 container, because its login renews itself and is never copied.
 
 The container gate removes its verified private containers, volumes and images before asking Podman

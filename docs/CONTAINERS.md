@@ -27,7 +27,8 @@ Task machine commands, when explicitly authorized through the existing grant wor
 the application user inside this container. They do not grant host access; no host runtime socket
 or command bridge is mounted. On this project's machine, the
 [standing container approval](../AGENTS.md#container-operations-on-this-machine) covers host launcher
-operations, rootless Podman, launcher-created containers/images/volumes and execution inside them.
+operations, rootless Podman, launcher-created containers/images/volumes and execution inside them,
+and the launcher's `sign-in` copy of Altitude's own Claude sign-in into a throwaway test container.
 The owner requests that exact policy scope from L3, which records an operator grant citing
 the standing approval without another operator question; see [operator grant](CLI.md#operator-grant).
 Native Altitude installation/service, host trust/network configuration, host credential directories
