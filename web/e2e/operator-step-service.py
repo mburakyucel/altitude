@@ -33,11 +33,17 @@ def main():
         slugs[title] = slug
     time.sleep(1 - time.time() % 1)
 
+    notices = iter((True, False))
+
     class Handler(server.Handler):
         # The fixture's one control reads nothing from the request, so it adds no request source to code scanning.
         def do_PUT(self):
-            # What the task terminal sends once the handed command looks finished: a wake for the owner.
-            T.notify("atlas", slugs["Sign in"], "Terminal: the command looks finished.", by="terminal", attempt=1)
+            # What the task terminal sends for the handed command: first that it looks finished, a wake for the owner
+            # that marks the question; then, handed again, that the terminal ended before it finished.
+            finished = next(notices)
+            T.notify("atlas", slugs["Sign in"], "Terminal: the command looks finished." if finished else
+                     "Terminal: the task terminal ended (closed) before the command finished.", by="terminal",
+                     attempt=1, ran="example-tool sign-in", finished=finished)
             return self._json({"resume_after": bool(S.load_task("atlas", slugs["Sign in"]).get("resume_after"))})
 
     serve(Handler)

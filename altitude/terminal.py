@@ -353,8 +353,9 @@ def _alive(group: int) -> bool:
 
 def _notice(term: Terminal, what: str, finished: bool = False) -> None:
     """Tell the terminal's reader: the task's owner, waking it when it waits, or the project's coordinator, as a
-    queued turn. Altitude sees the shell, not the command's exit status. A command that looks finished clears the
-    operator step it ran; a terminal that ended first leaves the step for the operator. The notice waits for the
+    queued turn. Altitude sees the shell, not the command's exit status. On a task, the notice marks the open question
+    that handed the command as run or ended first. A command that looks finished clears the operator step it ran; a
+    terminal that ended first leaves the step for the operator. The notice waits for the
     project lock on its own thread, so the reader keeps draining output meanwhile."""
     with term.cond:
         command, term.command = term.command, None
@@ -368,7 +369,8 @@ def _notice(term: Terminal, what: str, finished: bool = False) -> None:
     def send():
         try:
             if term.slug is not None:
-                T.notify(term.project, term.slug, text, by="terminal", attempt=command["attempt"])
+                T.notify(term.project, term.slug, text, by="terminal", attempt=command["attempt"],
+                         ran=command["text"], finished=finished)
             elif config.is_managed(term.project):
                 with config.project_activity(term.project) as ready:  # removal waits for the notice, or it for removal
                     if ready and config.is_managed(term.project):

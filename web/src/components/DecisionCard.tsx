@@ -61,6 +61,15 @@ function Receipt({ response, picked, delivery }: { response: NonNullable<Decisio
   </div>;
 }
 
+/** The task terminal's notice for the question's `run` command (SPEC.md §3.8.5); the question stays open meanwhile. */
+function Ran({ ran }: { ran: NonNullable<Decision["ran"]> }) {
+  return <div className="decision-receipt" role="status">
+    <b>{ran.finished ? "Ran in the terminal" : "The terminal closed before this command finished"}</b>
+    <p>{ran.finished ? "The L2 is checking the result." : "Open in terminal to run it again."}</p>
+    <span className="text-meta text-muted" title={exactTime(ran.at)}>{ageText(ran.at)}</span>
+  </div>;
+}
+
 /** Preset and custom answers share one conversational handoff in Needs you and chat. */
 export function QuestionSet({ decisions, group, target, disabled = false, onDenied, onRefresh, refreshKey, chat = false, from = "project", deliveries }: QuestionProps & {
   decisions: Decision[]; group?: QuestionGroup | null; target?: Decision;
@@ -168,6 +177,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
         {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}
         {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{closedBy(question.resolution.by)} · {ageText(question.resolution.at)}</span></> : null}
       </div> : null}
+      {!resolved && !question.response && question.ran ? <Ran ran={question.ran} /> : null}
       {!resolved && question.response ? <Receipt response={question.response} picked={options.find((option) => option.text === question.response!.text)?.label}
         delivery={deliveries?.[question.response.message_id]} /> : null}
       {question.shown ? <ShownFiles shown={question.shown} state={from ? { from, tab: from === "needs" ? "needs" : "work" } : undefined} onOpen={(event) => {

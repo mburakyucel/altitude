@@ -100,6 +100,29 @@ describe("an operator step (SPEC.md §3.8.4)", () => {
   });
 });
 
+describe("a question's command run in the task terminal (SPEC.md §3.8.5)", () => {
+  const signIn = DecisionSchema.parse({ ...base, question: "Sign in from the task terminal.\n\n```run\nexample-tool sign-in\n```" });
+  it.each([
+    [true, "Ran in the terminal", "The L2 is checking the result."],
+    [false, "The terminal closed before this command finished", "Open in terminal to run it again."],
+  ])("says how it went and keeps the question answerable (finished: %s)", (finished, headline, line) => {
+    mount(<QuestionSet decisions={[{ ...signIn, ran: { at: "2026-10-15T09:00:00Z", finished } }]} />);
+    const status = screen.getByRole("status");
+    expect(status.querySelector("b")?.textContent).toBe(headline);
+    expect(status.querySelector("p")?.textContent).toBe(line);
+    expect(screen.getByRole("textbox", { name: /^Your answer to:/ })).toBeEnabled();
+  });
+  it("has no note before the command runs, and an answer's receipt replaces it", () => {
+    const { unmount } = mount(<QuestionSet decisions={[signIn]} />);
+    expect(screen.queryByRole("status")).toBeNull();
+    unmount();
+    mount(<QuestionSet decisions={[{ ...signIn, ran: { at: "2026-10-15T09:00:00Z", finished: true },
+      response: { text: "It printed a warning.", at: "2026-10-15T09:01:00Z", message_id: "m1" } }]} />);
+    expect(screen.queryByText("Ran in the terminal")).toBeNull();
+    expect(screen.getByText("It printed a warning.")).toBeVisible();
+  });
+});
+
 describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () => {
   const shown = { url: "/projects/atlas/tasks/gate/view/q1/1", available: true, newer_url: null, images: [],
     document: { name: "settings.md", path: "design/settings.md", heading: "Settings layout", excerpt: "One page, three sections." } };

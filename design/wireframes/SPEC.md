@@ -1065,6 +1065,26 @@ step does not name keeps its own wait.
 `web/e2e/project-step.pw.ts` walks Needs you, the Work rows, the task page, Open in terminal, and the card and
 the row after the notice at both widths.
 
+#### 3.8.5 A question's command after it runs
+
+An owner hands the operator a command as a plain question with a `run` block (§3.8). Its task terminal's
+Terminal notice for exactly that command (§3.10 Terminal) also marks the question, so its card, in Needs you and
+the task conversation, shows how it went within a second or two, while the owner checks the output. Under the
+question, in the receipt's place and form (a hairline above, `role=status`), one of:
+
+| The notice | Bold line | Then |
+| --- | --- | --- |
+| The command looks finished | **Ran in the terminal** | "The L2 is checking the result." and the age (muted, exact time on hover) |
+| The terminal ended before the command finished, or before it ran | **The terminal closed before this command finished** | "Open in terminal to run it again." and the age |
+
+The question stays open with its id, revision, command block and answer field, so the operator can still reply,
+for example with what the command printed; it leaves Needs you only as any question does. A later notice for the
+same command replaces the note. Resolving the question closes it as usual; asking it again publishes a new revision
+without the note. A command the operator types without the `run` block, a Ctrl+C before Enter, another `run` block's
+command and a later attempt than the one that asked leave the card as it was. A saved answer's receipt (§3.8.2)
+shows instead of the note. The note is on the question's record, so a reload, a reconnect and another device show
+it alike. `web/e2e/operator-step.pw.ts` walks both notes in Needs you and the task conversation at both widths.
+
 ### 3.9 Open the owning L2 question
 
 `/projects/:name/tasks/:slug?question=<id>&revision=<n>` opens the owning human conversation at
