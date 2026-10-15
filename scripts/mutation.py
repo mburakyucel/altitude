@@ -186,7 +186,8 @@ def main() -> int:
                              text=True).stdout.strip()
     args.results.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    scratch = Path(tempfile.mkdtemp(prefix="altitude-mutation-"))
+    # In /tmp and resolved, like the tests' own temporary root: short enough for their Unix sockets on macOS too.
+    scratch = Path(tempfile.mkdtemp(prefix="altitude-mutation-", dir="/tmp")).resolve()
     try:
         source, venv = scratch / "source", scratch / "venv"
         copy_tree(source)
@@ -202,13 +203,13 @@ def main() -> int:
         Path(site, "altitude_mutation.pth").write_text('import os; os.environ.pop("MUTANT_UNDER_TEST", None)\n')
         mutmut = str(venv / "bin" / "mutmut")
         # Git hooks and `bin/alt` start `python3` from PATH, and the mutated modules import mutmut. The tests'
-        # temporary folders sit in the scratch folder, because a worker mutmut stops never removes its own. With
-        # the scratch Python, hooks, `bin/alt` and the tests' fake tools all there, a process the tests leave
-        # behind names the scratch folder in its command, which is how strays are told apart.
+        # temporary folders sit in the scratch folder, as in a validation run, because a worker mutmut stops never
+        # removes its own. With the scratch Python, hooks, `bin/alt` and the tests' fake tools all there, a
+        # process the tests leave behind names the scratch folder in its command, which is how strays are told
+        # apart.
         env = {k: v for k, v in os.environ.items() if k != "ALTITUDE_ACTOR"}
-        env["PATH"] = f"{venv / 'bin'}{os.pathsep}{env.get('PATH', '')}"
-        env["TMPDIR"] = str(scratch / "tmp")
-        (scratch / "tmp").mkdir()
+        env.update(PATH=f"{venv / 'bin'}{os.pathsep}{env.get('PATH', '')}", ALTITUDE_VALIDATION="1",
+                   TMPDIR=str(scratch))
         patterns = [pattern for module in modules.values() for pattern in module]
         with open(args.results / "mutmut.log", "wb") as log:
             returncode = run_mutmut([mutmut, "run", *patterns], source, env, scratch, log)
