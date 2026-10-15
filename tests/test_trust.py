@@ -3,9 +3,12 @@ fixture macOS `security`; the running service is a real HTTPS health endpoint. N
 import hashlib
 import os
 from pathlib import Path
+import pty
 import shutil
 import ssl
 import subprocess
+import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -267,3 +270,26 @@ esac
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTerminal(unittest.TestCase):
+    def test_the_question_is_answered_in_the_terminal_even_when_standard_input_is_the_installer(self):
+        """A real pseudo-terminal, with standard input a pipe that says no, as `curl … | sh` fills it."""
+        answer = Path(self.enterContext(tempfile.TemporaryDirectory())) / "answer"
+        code = "import sys; from altitude import tls; open(sys.argv[1], 'w').write(repr(tls._terminal_answer('Trust it? [y/N] ')))"
+        pid, terminal = pty.fork()
+        if pid == 0:
+            read, write = os.pipe()
+            os.write(write, b"n\n")
+            os.dup2(read, 0)
+            os.chdir(Path(__file__).resolve().parent.parent)
+            os.execv(sys.executable, [sys.executable, "-c", code, str(answer)])
+        shown = b""
+        try:
+            while b"Trust it? [y/N] " not in shown:
+                shown += os.read(terminal, 1024)
+            os.write(terminal, b"Yes\n")
+            os.waitpid(pid, 0)
+        finally:
+            os.close(terminal)
+        self.assertEqual(answer.read_text(), "'yes'")

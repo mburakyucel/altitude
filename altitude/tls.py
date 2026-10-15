@@ -933,10 +933,10 @@ def _terminal_answer(question: str) -> str | None:
     """The answer typed in this process's terminal, never its standard input, which `curl … | sh` fills with the
     installer itself; None when there is no terminal to ask in."""
     try:
-        with open("/dev/tty", "r+") as terminal:
-            terminal.write(question)
-            terminal.flush()
-            return terminal.readline().strip().lower()
+        # Unbuffered: a buffered reader and writer needs a file it can seek, which a terminal is not.
+        with open("/dev/tty", "rb+", buffering=0) as terminal:
+            terminal.write(question.encode())
+            return terminal.readline().decode(errors="replace").strip().lower()
     except OSError:
         return None
 
