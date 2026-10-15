@@ -476,8 +476,6 @@ class AltitudeCase(unittest.TestCase):
         self.runtime_tmp = config.ROOT / "cases" / self.tmp.name
         self.runtime_tmp.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.runtime_tmp, True)
-        # An offered or running update a case records fences every later case's admissions (#1003).
-        self.addCleanup((config.ROOT / "update.json").unlink, missing_ok=True)
         self.patch(config, "SOURCE_COPY", self.tmp / "source-copy")
         self.patch(config, "SCRATCH", self.tmp / "task-scratch")
         if self.host == "linux" and NATIVE_PLATFORM != "linux":
