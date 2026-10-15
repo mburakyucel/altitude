@@ -1599,10 +1599,13 @@ shell trusts, with `github.com` resolving to the loopback.
   stored answer, refused.
 - `jobs`: the account, logged in and outside any sandbox, runs the revision's own probe job rows
   (`job-pipe`, `job-file-output`, `exit-cleanup`, `stop-descendants`, `time-limit`,
-  `limit-after-owner-exit`, `logged-job` and `detached-job`) as real launchd jobs in its own domain,
-  which launchd refuses a worker sandbox. Every row must pass: Stop ends each descendant, including
-  one that leaves by `setsid`, double fork or a cleared environment or keeps forking, before the job
-  reads inactive, and the time limit holds also after its owner exits.
+  `limit-after-owner-exit`, `logged-job`, `detached-job` and `launch-input`) as real launchd jobs in
+  its own domain, which launchd refuses a worker sandbox. Every row must pass: Stop ends each
+  descendant, including one that leaves by `setsid`, double fork or a cleared environment or keeps
+  forking, before the job reads inactive, and the time limit holds also after its owner exits. The
+  `launch-input` job, confined and launched as a review is, takes its own folder and a fictional
+  sign-in from its input's first line, reads but cannot write a home settings file linked into that
+  folder, and cannot list the launcher's job folders or read another job's saved launch input there.
 - `read-only-home`: the account, logged in and outside any sandbox, runs the revision's own
   read-only-home suite cases (`tests.test_worker_writes`, `tests.test_worker_roots` and the read-only
   landing case) with Homebrew's Python 3.12. Every case must run and pass, none skipped: each confines
