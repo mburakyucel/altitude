@@ -541,9 +541,10 @@ while True:
 - **Waiting and stopping.** A request that finds the machine busy waits for it, admitted in arrival
   order, for up to 70 minutes (one run's hour and its cleanup, the client's budget); after that it is
   refused with what still holds the machine. While it waits, `alt task validate` prints the task whose
-  run holds the machine, when that run's limit ends and how many requests are ahead. Every check is
-  repeated at admission. altd checks each request's connection every two seconds: a client that stops,
-  is interrupted or loses its connection leaves the line, or, once admitted, has its run stopped and
+  run holds the machine, when that run's limit ends and how many requests are ahead, and once it is
+  admitted it says so with its own run's limit, so its last line never reads as waiting while the run
+  goes on. Every check is repeated at admission. altd checks each request's connection every two
+  seconds: a client that stops, is interrupted or loses its connection leaves the line, or, once admitted, has its run stopped and
   recorded as `stopped`. Stopping ends the run's processes (on Linux, SIGTERM and SIGKILL five seconds
   later), and cleanup follows, so the machine is usually free for the next request within a few seconds. The
   client ends when the process that started it ends, because an engine can cancel a command yet leave
@@ -555,8 +556,8 @@ while True:
   apart from this slot: at most a quarter of the computer's cores run at once (at least one; two on
   an 8-core Mac), and `alt machine show` reports the number as `machine_runs`. A command beyond
   that waits in arrival order for up to 30 minutes, printing the commands that hold the places,
-  when their limits end and how many requests are ahead. A client that stops or loses its connection
-  leaves the line, or has its command stopped with that reason recorded, which frees its place.
+  when their limits end and how many requests are ahead, then that it was admitted. A client that
+  stops or loses its connection leaves the line, or has its command stopped with that reason recorded, which frees its place.
   A command still running when altd restarts keeps a place until it ends. A task still runs one
   command at a time.
 - **Storage.** The image, Podman's storage, the cloud-image cache and each run's area live in
@@ -955,14 +956,20 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself; with `TRUST`, the installer's consented certificate trust opening its private link in Playwright's Chromium and Firefox without a warning; on Ubuntu 24.04 x86_64 | Desktop login/logout, distribution or snap browsers, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop ends every descendant and whose time limits hold; the suite's read-only-home cases, each confining a child with Seatbelt or Codex's own sandbox; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop and time limits end every descendant, a pseudo-terminal's child among them; the suite's read-only-home cases, each confining a child with Seatbelt or Codex's own sandbox; a source checkout cloned from an origin in the guest, whose first start creates Altitude's own copy of its repository and runs from it, and whose service deploys a newer main pushed to that origin through the copy; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
-| Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` or `--browser` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, interrupted-build and supervisor cleanup, private backup/restore and failure cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Physical-device routing/trust, real authentication/provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 launcher/backup lanes pass; actual-daemon phone/desktop onboarding and task lane passes; [coverage and limits](CONTAINERS.md#evidence) |
+| Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` or `--browser` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, a handed-over Altitude sign-in kept across replacement, interrupted-build and supervisor cleanup, private backup/restore and failure cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Physical-device routing/trust, real authentication/provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 launcher/backup lanes pass; actual-daemon phone/desktop onboarding and task lane passes; [coverage and limits](CONTAINERS.md#evidence) |
 | macOS installation lane | `make installation-mac RESULTS=dir` ([macOS installation lane](#macos-installation-lane), in a task through `alt task run` under an operator grant) | A built release's `install.sh` (prerequisites, download through a local release server, checksum, tampered-download refusal), its LaunchAgent and HTTPS health, `alt doctor`, update detection by the installed daemon (app notice, `alt` notice, doctor), `alt update`, the app's Update button as a detached launchd job, failed-update rollback and uninstall retention, on this Mac under a throwaway home | A fresh Mac or another account, login/logout, reboot, browser/device CA trust, the download from GitHub itself, the 12-hour schedule and once-a-day notice timing, provider compatibility | In use on macOS Apple silicon |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement and Safari | Other macOS versions or architectures | Not established; the [macOS VM run](#macos-vm-run)'s `jobs` phase runs native launchd jobs in a guest, and no automated lane runs browsers on the Mac |
 | Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; iOS Simulator on a Mac through `make ui-simulator`; physical checks by arrangement |
+
+A real Claude owner in a container on this machine starts without a sign-in step of its own: after
+`scripts/container.py start`, the owner runs `scripts/container.py sign-in claude --name NAME` under the
+[standing container approval](../AGENTS.md#container-operations-on-this-machine), which covers that copy of
+the sign-in Altitude already uses here into a throwaway test container ([first use](CONTAINERS.md#first-use)). Codex still signs in inside each fresh
+container, because its login renews itself and is never copied.
 
 The container gate removes its verified private containers, volumes and images before asking Podman
 to retire that store's pause process with `system migrate`. It never applies this operation to a
@@ -1547,7 +1554,8 @@ download from GitHub itself or the real check and notice schedule.
 silicon Mac through Apple's Virtualization framework, at no cost and without root. It needs Xcode's
 command line tools, which compile and locally sign its Swift helper `scripts/macos_vm.swift` with the
 virtualization entitlement, Python 3.12, `pnpm` with the web packages already in its store (the
-release build runs offline) and GitHub CLI, which it copies into the guests. One command builds the guests once and runs every phase against a committed
+release build runs offline) and GitHub CLI, which it copies into the guests; the `source` phase also copies Homebrew's
+Node with the kegs it links, the pnpm version `web/package.json` pins from Corepack's cache and the pnpm store. One command builds the guests once and runs every phase against a committed
 revision (default: HEAD):
 
 ```sh
@@ -1630,8 +1638,21 @@ shell trusts, with `github.com` resolving to the loopback.
   Altitude's profile, so the runner copies this Mac's Codex CLI into the guest with an empty settings
   folder and no sign-in, and the opt-in `ALTITUDE_TEST_CODEX_SANDBOX=1` case runs that sandbox with a
   task's permissions and the job's environment, asking no model; only the scratch folder may be
-  written. The suite's home lies outside the temporary folders that sandbox admits, as in a
-  validation run. A Mac without the Codex CLI stops the phase.
+  written. Under both sandboxes the launcher's job folders, and a job's input saved there, can be
+  neither read nor written. The suite's home lies outside the temporary folders that sandbox admits,
+  as in a validation run. A Mac without the Codex CLI stops the phase.
+- `source`: the account sets up a [source checkout](OPERATIONS.md#run-from-a-source-checkout) as
+  documented, with this Mac's Node and pnpm in place: it clones the revision from an origin in the
+  guest, made from a bundle of its history, runs `make web` and `alt tls-init`, and `make
+  install-service` must start `dev.altitude.altd` from `~/Library/LaunchAgents`, answering HTTPS
+  health as a source install. Altitude's copy of its repository, `~/.altitude-repository`, must not
+  exist before that first start and afterwards hold the revision, fetched from the same origin, with
+  the service running its export under `.altitude-source/`. The checkout is then registered as the
+  project `altitude` and a newer main, a commit adding a file under `scripts/` and a mark to the
+  web app's page, is pushed to the origin. Within seven minutes the service must have fast-forwarded
+  the checkout through the copy, built the web app and restarted into the newer main: a new process,
+  with the checkout, the copy and the export its startup activated all at the new commit, serving
+  the page with the mark the first start did not serve. The service's logs are kept.
 
 `PUBLISHED=<baseline>..<candidate>` names two published release tags instead of `SOURCE` and runs only
 the `published` phase. Its isolated environment puts Homebrew OpenSSL first for baselines whose
@@ -1656,14 +1677,14 @@ saved name, and keep configuration, TLS identity and data unchanged before unins
 and load average before and after, the guest's sizing, each image's restore image, macOS build,
 prerequisites and disk footprint, and per phase the probe outcomes, every attempt's and step's exit
 and result, the guest's load average, the disk the clone took and the run time; `privacy` and `jobs` add the probe's rows and
-the guest's Python, and a `PUBLISHED` run each release's tag, commit and checksums. Each step's full output, the
+the guest's Python, `source` its two commits and the Node kegs it added, and a `PUBLISHED` run each release's tag, commit and checksums. Each step's full output, the
 listing each refusal is compared against, the lifecycle's own results and the guest helper's log stay beside it. Everything the runner writes
 lives in `~/.cache/altitude-installation-vm/macos`: the helper, the release build and its temporary files, the images (about 26 GiB for macOS
 26.6.2) and per-run clones (about 1 GiB at most), deleted after each phase, also after a failure or a
 stop. One guest runs at a time, and the runner stops whenever less than 10 GiB of disk would stay
 free. Building the images takes about fifteen minutes after the restore image's download. On an
 unloaded Mac `fresh` and `prerequisites` take under half a minute each, `lifecycle` about five
-minutes, `login` just over one, `privacy` under one and `published` about one and a half; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
+minutes, `login` just over one, `privacy` under one, `source` about two and `published` about one and a half; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
 run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with

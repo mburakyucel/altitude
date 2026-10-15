@@ -847,6 +847,8 @@ a command line or in a log, and the operator's own Claude sign-in stays untouche
 engine's [sign-in lapse](OPERATIONS.md#engine-sign-in-recovery), and each project's chat reminds the
 operator to sign in again two weeks before the year ends, counted from when it was saved. Usage
 readings and improvement reviews still read the operator's own sign-in.
+A container deployment on the same computer takes this sign-in from the host with the launcher's
+`sign-in` command ([first use](CONTAINERS.md#first-use)).
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
 from the record the service wrote when it started, and checks over HTTPS that the
@@ -1645,6 +1647,15 @@ left leaves the candidate published and unmerged. GitHub registers a head's chec
 a required check absent from the head is waited for within the bound rather than read as skipped;
 landing names it and the checks that have registered. A required check that never registers within
 the bound ends the wait as `missing` and does not merge.
+
+A Git command that reaches origin (reading or writing the line, refreshing main or the branch, pushing)
+and fails on the network, such as a connection that times out or a GitHub server error, is tried again
+after 15 seconds, doubling to once a minute, so a flaky connection neither ends the landing nor costs its
+place. Its tries stop five minutes after its first failure, as long as the line keeps a silent head's
+turn; no try runs past that. Landing then ends naming the operation and the network failure, and the
+candidate stays published and unmerged. It leaves the line, retrying the same way for at most five more
+minutes; an entry it cannot remove is dropped once it heads the line without a heartbeat for five
+minutes. Refusals (authentication, a missing branch, a rejected or stale push) are not retried.
 
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
 Run one landing command per task worktree; collect or cancel an existing command before retrying.

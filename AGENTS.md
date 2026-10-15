@@ -239,9 +239,13 @@ The operator's project-chat approval of 2026-10-06 18:24 UTC (`c6f1ba6f5929`) st
 operator revokes it: L3 records a container-scoped operator grant on an owner's request without
 another operator question. Its scope is the Linux container deployment on this machine:
 `scripts/container.py` operations, rootless Podman, the volumes, images and containers the launcher
-creates, and anything executed inside those containers. It excludes the operator's native Altitude
-installation and service, host trust stores and network configuration, host credential directories,
-and every other host resource the launcher did not create. It grants nothing for other projects.
+creates, and anything executed inside those containers. By the operator's decision of 2026-10-15
+(`7ea8634a92bd`), it also covers the launcher's `sign-in` command copying Altitude's own Claude
+sign-in, and only that, from this computer into a throwaway test container the launcher created;
+anything running in that container can read it. It excludes the operator's native Altitude
+installation and service, host trust stores and network configuration, host credential directories
+apart from that one copy, including the operator's personal engine and GitHub logins, and every other
+host resource the launcher did not create. It grants nothing for other projects.
 
 ### VM lane runs on this Mac
 

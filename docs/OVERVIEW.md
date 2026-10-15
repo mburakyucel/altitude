@@ -35,7 +35,7 @@ joins an ordered merge line per repository. Merging needs the hosted `check` (th
 on the current head with current main, plus every hold and review assessment. Faults block only their
 own task, file a private incident and queue one L3 message. A merged change to Altitude activates at
 the next quiet point through a guarded restart. The container deployment is a rootless Podman Linux
-image still under validation.
+image still under validation, run on a Linux host or, through a Podman machine, from a Mac.
 
 ## Architecture sections
 

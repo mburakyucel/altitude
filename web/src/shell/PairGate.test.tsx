@@ -119,6 +119,8 @@ describe("Install pairing link", () => {
     expect(fixture.pairs).toHaveLength(0);
     await act(async () => access.resolve());
     expect(await screen.findByText("Pairing…")).toBeVisible();
+    // The screen shows "Pairing…" once trust is confirmed; the request follows from the effect after that render.
+    await waitFor(() => expect(fixture.pairs).toHaveLength(1));
     expect(screen.queryByLabelText("Pairing code")).toBeNull();
     expect(document.body.textContent).not.toContain("ABCD-2345");
     expect(document.querySelector('input[value="ABCD-2345"]')).toBeNull();

@@ -24,6 +24,14 @@ attachment, which does not use polkit, and fails on unexpected management attemp
 validation of the selected runtime clients, not hostile-process confinement. The
 [container evidence](CONTAINERS.md#evidence) records the tested boundaries.
 
+On a Mac the same launcher drives Altitude's own rootless Podman machine through Podman's
+connection, and Podman inside that machine owns each container's lifetime; there is no Mac
+supervisor or launchd job. Before its first Podman call a launcher process proves that the
+`altitude` connection reaches that running rootless arm64 machine. Limits and recreation emptiness
+are read from the container's scope inside the machine; a transfer's foreground client owns it and
+its record binds to the machine's incarnation. [On a Mac](CONTAINERS.md#on-a-mac-podman-machine)
+describes the route and its gaps.
+
 The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
 inside a rootless Linux image. `platform.py` reads image identity outside writable volumes and owns
 runtime/bootstrap operations. Its protected image-path check recognizes root ownership through a
@@ -1133,10 +1141,12 @@ so a minute later landing starts the candidate again: it re-reads the PR, checks
 review before any merge. A refusal once the merge command has run first asks GitHub whether the PR
 merged at the candidate head; if it did, landing records that merge instead of publishing again. A PR
 it created is read back by its URL, never created twice. A refusal with a minute or less left in the
-bound ends the landing. Polls hold the task review lock only for local review reads; network reads and
-sleeps leave review requests available. A notice names every stale review and subject with the
-assessed/current values of its changed evidence, so the owner posts explanations together before
-assessing each request.
+bound ends the landing. A Git command that reaches origin and fails on the network is tried again after
+15 seconds, doubling to once a minute, within five minutes of its first failure, the time the line keeps a
+silent head's turn, so a flaky connection neither ends a landing nor costs its place; refusals are not
+retried. Polls hold the task review lock only for local review reads; network reads and sleeps leave
+review requests available. A notice names every stale review and subject with the assessed/current values of its
+changed evidence, so the owner posts explanations together before assessing each request.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
 Final candidate, checks, ownership and hold validation repeats after assessment.
 Missing or unfinished review, head or PR identity movement or ownership loss refuses.
@@ -1622,6 +1632,8 @@ checkpoint hooks and its engine driver each send one short request to `POST /api
 altd admits a request as it admits the owner's other commands, from a process in the task's current worker job
 carrying the task's current attempt (see [Isolation and landing](#isolation-and-landing)), and applies it as that task's L2, with the
 project, task and attempt its record names. A request names its project and task, and altd refuses one for another.
+A request connects to altd directly, past any proxy the worker's network settings name, because altd admits the
+connecting process.
 - **Verbs.** `alt` in the worker reads the content of each input file it names (`--file`, `--questions-file`) and of
   each file it shows (`--show`, with the document's own images), with its standard input, and sends them with its
   arguments. altd runs the verb as the task's L2 with that content and never opens a path the worker names.

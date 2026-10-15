@@ -148,6 +148,7 @@ class TestVolumeLocks(AltitudeCase):
 class TestContainerLauncher(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.patch(platform.sys, "platform", "linux")  # the Linux launcher, on any host
         self.calls = []
         self.volumes = {}
         self.patch(platform, "container_runtime", return_value={})

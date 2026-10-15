@@ -12,6 +12,7 @@ from scripts import container
 class ContainerBuildTests(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.patch(platform.sys, "platform", "linux")  # the Linux launcher, on any host
         self.root = self.tmp / 'private-build'
         self.root.mkdir(mode=0o700)
 

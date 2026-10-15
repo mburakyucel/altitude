@@ -48,7 +48,7 @@ endif
 installation-mac: ## installation lifecycle on this Mac under a throwaway HOME and LaunchAgent label: install.sh, update detection, alt update, the Update button, failed-update recovery, uninstall (RESULTS=dir [SOURCE=ref]); outside the worker sandbox, inside a task with alt task run
 	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))
 	python3 scripts/installation_mac.py "$(RESULTS)" --source "$(or $(SOURCE),HEAD)"
-installation-macos-vm: ## The public install.sh in throwaway offline macOS guests on this Apple silicon Mac: refusals, lifecycle, login after a restart, the confinement and job probes (RESULTS=dir [SOURCE=ref] | PUBLISHED=baseline..candidate published tags); inside a task, through `alt task run` under an operator grant
+installation-macos-vm: ## The public install.sh in throwaway offline macOS guests on this Apple silicon Mac: refusals, lifecycle, login after a restart, the confinement and job probes, a source install's first start and deploy (RESULTS=dir [SOURCE=ref] | PUBLISHED=baseline..candidate published tags); inside a task, through `alt task run` under an operator grant
 	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))
 	python3.12 scripts/installation_macos_vm.py image
 	python3.12 scripts/installation_macos_vm.py run "$(RESULTS)" $(if $(PUBLISHED),--published "$(PUBLISHED)",--source "$(or $(SOURCE),HEAD)")
