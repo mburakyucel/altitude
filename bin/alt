@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, l3, project_setup, state as S, tasks as T  # noqa: E402
+from altitude import config, engines, l3, project_setup, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
 #: altd runs this verb for a task worker: its input arrives on stdin as JSON, with every input file's content.
@@ -569,6 +569,8 @@ def main(argv=None) -> None:
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
     sub.add_parser("tls-share", help="offer the HTTPS certificate to a phone on this network for ten minutes")
     sub.add_parser("pair", help="print a one-time code that pairs one browser with Altitude")
+    sub.add_parser("sign-in", help="create the sign-in Altitude's runs of an engine use, from your own account").add_argument(
+        "engine", choices=engines.TOKEN_SETUP)
 
     args = ap.parse_args(argv)
     if DOOR:
@@ -1152,6 +1154,15 @@ def main(argv=None) -> None:
         except speech.SpeechError as exc:
             sys.exit(f"alt voice {args.vcmd}: {exc}")
         out(speech.status())
+        return
+    if c == "sign-in":
+        if ACTOR != config.OPERATOR_ACTOR:
+            sys.exit("alt sign-in: only the operator signs Altitude in")
+        try:
+            engines.save_sign_in(args.engine)
+        except (OSError, RuntimeError, ValueError) as exc:
+            sys.exit(f"alt sign-in: {exc}")
+        print(f"Altitude's {config.ENGINE_LABELS[args.engine]} runs now use this sign-in. Your own is unchanged.")
         return
     if c == "pair":
         if ACTOR != config.OPERATOR_ACTOR:

@@ -54,7 +54,7 @@ class TestEngineInterface(unittest.TestCase):
         task = {"l2_engine": "fixture-engine", "session_id": "fixture-session"}
         self.assertIsNone(common.public_message_identity("fixture-engine", record))
         self.assertIsNone(common.window_hold("fixture-engine"))
-        self.assertIsNone(common.session_context_source(task))
+        self.assertIsNone(common.session_context_source("fixture-project", "fixture-task", task))
         self.assertEqual(common.transcript_rows("fixture-engine", record, "/fixture"), [])
         self.assertIsNone(common.background_work("fixture-engine", [record]))
 

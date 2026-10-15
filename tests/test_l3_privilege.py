@@ -763,7 +763,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         claude = popen("claude", [{"type": "result", "result": "ok", "session_id": "sid", "is_error": False}])
         with mock.patch.object(engines.common, "usage_hold", return_value=None), \
              mock.patch.object(engines.common.subprocess, "Popen", side_effect=claude):
-            engines.claude_print("prompt", unit="altitude-coordinator-fixture.service", cwd=runtime, permission_mode="dontAsk", permission_prompts="none",
+            engines.claude_print("prompt", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home", cwd=runtime, permission_mode="dontAsk", permission_prompts="none",
                                  restricted=True, tools=l3.L3_TOOLS, allowed_tools=engines.L3_ALLOWED_TOOLS,
                                  add_dirs=(self.repo, config.ROOT), settings=self.tmp / "settings.json")
         job, process = seen["claude"]

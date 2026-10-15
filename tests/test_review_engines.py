@@ -170,7 +170,9 @@ class ReviewEngineTests(AltitudeCase):
                 if engine == "codex":
                     self.assertTrue(received.read_text().endswith("Review the design"))
                     continue
-                line = json.loads(received.read_text())
+                # Claude starts with its own folder and Altitude's sign-in, read from the input's first line.
+                launch, line = map(json.loads, received.read_text().splitlines())
+                self.assertEqual(launch, {"CLAUDE_CONFIG_DIR": str(self.runtime.resolve() / "claude")})
                 content = line["message"]["content"]
                 self.assertEqual((line["type"], line["message"]["role"]), ("user", "user"))
                 self.assertTrue(content[0]["text"].endswith("Review the design"))

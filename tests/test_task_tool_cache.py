@@ -76,10 +76,11 @@ class TaskToolCache(AltitudeCase):
                                 self.assertTrue(caches[key].is_relative_to(scratch.resolve() / "tool-cache"))
                                 if engine == "claude":
                                     self.assertTrue(any(caches[key].is_relative_to(path) for path in kw["writable"]))
-                            if engine == "claude":
-                                self.assertFalse(any(config.ROOT.resolve().is_relative_to(Path(path).resolve())
-                                                     or Path(path).resolve().is_relative_to(config.ROOT.resolve())
-                                                     for path in kw["writable"]), kw["writable"])
+                            if engine == "claude":  # the task's own Claude folder is its one root in Altitude's home
+                                self.assertEqual([path for path in kw["writable"]
+                                                  if config.ROOT.resolve().is_relative_to(Path(path).resolve())
+                                                  or Path(path).resolve().is_relative_to(config.ROOT.resolve())],
+                                                 [Path(root) / "claude"], kw["writable"])
                             self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", child_env)
                             return ["/usr/bin/env", "-i", *(f"{k}={v}" for k,v in child_env.items()), *argv]
                         with mock.patch.object(platform.sys, "platform", host), \

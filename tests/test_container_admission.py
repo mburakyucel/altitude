@@ -175,7 +175,7 @@ class ContainerAdmission(AltitudeCase):
     def test_every_provider_primitive_refuses_before_launch_or_capability_side_effects(self):
         self.change("pause")
         invocations = [
-            lambda: engines.claude_print("fixture", unit="altitude-coordinator-fixture.service", cwd=self.tmp),
+            lambda: engines.claude_print("fixture", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home", cwd=self.tmp),
             lambda: engines.codex_exec("fixture", unit="altitude-coordinator-fixture.service", cwd=self.tmp),
             lambda: engines.common._start_worker("claude", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
             lambda: engines.common._start_worker("codex", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),

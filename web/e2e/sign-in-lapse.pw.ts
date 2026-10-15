@@ -11,9 +11,9 @@ import { walkthrough } from "./walkthrough";
 test.use({ serviceScript: "sign-in-lapse-service.py" });
 
 const answering = "Claude's sign-in has lapsed, so Codex is answering for now. " +
-  "To sign in, run claude auth login on the computer running Altitude.";
+  "To sign in, run alt sign-in claude on the computer running Altitude.";
 const waiting = "Claude's sign-in has lapsed and no other engine can answer, so your message waits and sends once " +
-  "you are signed in again. To sign in, run claude auth login on the computer running Altitude.";
+  "you are signed in again. To sign in, run alt sign-in claude on the computer running Altitude.";
 
 function views(page: Page) {
   const main = page.getByRole("main");
@@ -39,7 +39,7 @@ test("a lapsed sign-in answers on the other engine and says so once", async ({ p
   await walk.state("02-answered-on-the-other-engine", {
     action: () => v.send.click(),
     visible: [v.convo.getByText("The activation is waiting for the next quiet point."), v.notice(answering),
-      v.notice(answering).getByText("claude auth login", { exact: true })],
+      v.notice(answering).getByText("alt sign-in claude", { exact: true })],
     hidden: [v.provider, v.convo.getByText("L3 could not answer this turn.")],
   });
   expect(await v.notice(answering).locator(".sys-text").innerText()).toBe(answering);

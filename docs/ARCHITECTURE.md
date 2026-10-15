@@ -737,8 +737,10 @@ Signing in cures an authentication rejection at once, so it has its own record, 
 sign-in lapse: an operator coordinator message or Retry that finds no engine withdraws it for the
 engine that turn then attempts, and each explicit task resume request withdraws it for the task's
 engine. A credential still invalid records it again on that attempt, within the same lapse, and
-automatic turns and resumes keep waiting. The quota refresh records a lapse when its read is refused
-for sign-in; its successful read, or a successful coordinator turn, ends it. Each project's
+automatic turns and resumes keep waiting. On an engine whose runs share the CLI's sign-in (Codex), the
+quota refresh records a lapse when its read is refused for sign-in and its successful read ends it;
+Claude's runs use Altitude's own sign-in, so saving it with `alt sign-in claude` ends theirs. A
+successful coordinator turn ends a lapse on either engine. Each project's
 conversation gets one heads-up line per lapse naming the engine, what the turn did (answered on
 another engine, waits, or stopped) and the engine's sign-in command; failed turns show the
 rejection's plain reason, never provider text. A current model-specific weekly reading at 100% also
@@ -882,9 +884,10 @@ stdout bound, so a long review cannot exhaust it. Both are provider
 properties established by recorded reviewer runs, not by the suite. The result's `text` is a
 one-sentence verdict the UI shows as the review's summary. The adapter records the first
 content-bearing read in the review runtime; a reviewer that read no content fails with that reason
-instead of completing with no coverage. CLI-internal authentication uses
-the configured account. The reviewer environment keeps only home, login name, path, locale and engine
-configuration directories; the login name lets Claude find its macOS Keychain sign-in. Deterministic fixtures verify application behavior and adapter configuration;
+instead of completing with no coverage. Codex authenticates with the
+CLI's configured account and Claude with Altitude's own sign-in in its review folder (see
+[isolation and landing](#isolation-and-landing)). The reviewer environment keeps only home, login name, path,
+locale and engine configuration directories; the login name lets a CLI find its macOS Keychain sign-in. Deterministic fixtures verify application behavior and adapter configuration;
 live-provider compatibility remains unverified under the standing testing decision.
 
 Failed review executions retain bounded sanitized stderr, launcher exit status and capture-completeness
@@ -1433,9 +1436,11 @@ and runs on that phone with Apple's UI testing. See the
 Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. That job also runs under Altitude's own sandbox, Seatbelt on macOS and
 bubblewrap on Linux (`platform.job_command`): it may signal only processes in its own sandbox, never its supervisor,
-and write only under its worktree, the worktree's Git directories except their [read-only parts](#isolation-and-landing),
-Altitude's home, Claude's own state, the GitHub CLI's configuration and temporary directories, and never reads
-Altitude's credentials. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places);
+and write only under its own roots (a task worker's worktree, the worktree's Git directories except their
+[read-only parts](#isolation-and-landing) and its scratch folder; a coordinator turn's runtime folder and Altitude's
+home), the job's own Claude folder and temporary directories, and never reads
+Altitude's credentials. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
+or the launcher's job folders, which hold each job's piped input and relay its output;
 launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
 whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
@@ -1443,11 +1448,33 @@ Events, which script running apps with only macOS's Automation consent in the wa
 its own processes and a device folder with its own terminals, reaches neither the session bus nor the user manager,
 and cannot write the control groups. It shares the network, /tmp and the rest of the per-user runtime folder, as
 Codex's profile does, so a socket another program keeps there stays reachable. Its
-home is a fresh folder holding the home's entries read-only, so a new name there lasts only as long as the job;
-Claude's account file stays writable and is saved in place, and Claude processes in different jobs do not share its
-lock. A
+home is a fresh folder holding the home's entries read-only, so a new name there lasts only as long as the job. A
 sandbox cannot start inside it where the distribution restricts user namespaces, as Ubuntu 24.04 does. Every Claude
-L3 turn also runs as a job of its own under the same sandbox. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
+L3 turn also runs as a job of its own under the same sandbox.
+
+Every Claude job Altitude starts has a Claude folder of its own (`CLAUDE_CONFIG_DIR`), so no job writes
+the operator's `~/.claude`, `~/.claude.json` or the GitHub CLI's configuration, which another run or
+Altitude's own `gh` calls load. A task worker's folder is `l2-engine/claude` in its task folder, the one
+part of Altitude's home the worker writes, and keeps the task's sessions across turns and after the task is
+archived; a coordinator's is one per project in the persistent coordinator folder beside Altitude's private
+configuration; a review's lives and ends with its runtime. The engine driver, already inside the job, creates
+the folder's contents and links the operator's `settings.json`, `CLAUDE.md`, skills, agents, commands, plugins
+and output styles into it, read-only to the job; the folder's own state file starts empty.
+A session resumed for the first time in its folder is first copied there from the operator's folder,
+where Claude kept every session before jobs had folders of their own. Workers read the project's notes
+from the operator's folder (`autoMemoryDirectory`) without being able to change them. Every Claude job
+signs in with Altitude's own subscription token (`alt sign-in claude`, kept in the private access
+store), handed over in its launch input like the GitHub token below and exported by the driver as
+`CLAUDE_CODE_OAUTH_TOKEN`, so a job never reads or refreshes the operator's sign-in; a review, which
+runs without the driver, reads the same environment from the first line of its input. Without that
+token Claude reports itself signed out, which is an ordinary [sign-in lapse](#engine-integration-boundary);
+two weeks before its year ends, counted from when it was saved, each project's conversation gets one
+heads-up line to renew it.
+Altitude reads a task's transcript, context and token usage in its job's folder, without following a
+link the job planted there, and in the operator's folder for a session recorded before. Altitude's usage
+readings and improvement reviews still run outside any job on the operator's sign-in.
+
+On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
 roots and the same read-only Git parts. The session bus and manager runtime directory (including its direct private socket) are denied;
 other runtime-directory paths retain their policy. The generated profile also supplies provider-free
 confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
@@ -1456,10 +1483,11 @@ bus, reads the token with `gh auth token`, and the job receives it in its launch
 job's engine driver reads. The driver exports it as `GH_TOKEN` to the engine it starts, which reads only
 its own input pipe from the driver. Altitude never puts
 the token among the job's settings (they form its command line) or in a log, and writes it to disk only
-in the macOS launcher's private input copy until the job's supervisor starts. The engine and its tools
+in the macOS launcher's private input copy until the job's supervisor starts, in a job folder no sandbox Altitude
+applies can read. The engine and its tools
 hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex shell snapshot) can hold it
 too. A launcher without a sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
-(the two Seatbelt profiles cannot nest); its worker and coordinator profiles deny macOS's private places. Both use the same door; private worker records and output identify both engines' sessions
+(the two Seatbelt profiles cannot nest); its worker and coordinator profiles deny macOS's private places and the job folders. Both use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
 recorded coalition has members. Unknown states, bus failures and query timeouts
@@ -1579,12 +1607,14 @@ reading, so a worker that cannot write the home still shares them. `tests/test_w
 verbs, both hooks and the driver on both engines, and `tests/test_land.py` a landing, with Altitude's home
 read-only to them.
 
-No worker's writable roots include Altitude's home. A worker writes its worktree, the Git parts
+No worker's writable roots include Altitude's records. A worker writes its worktree, the Git parts
 [isolation](#isolation-and-landing) allows, temporary folders and its own scratch folder,
 `~/.altitude-scratch/<project>/<task>` (`ALTITUDE_SCRATCH`), for drafts, held patches, verb input files and tool
 caches. altd makes it at launch beside the home and deletes it, without following links, when the task is done or
-rejected; it never reads it. `tests/test_worker_roots.py` confines a process to each engine's roots and finds every
-record refused, its own task's included, and the scratch folder writable.
+rejected; it never reads it. A Claude worker also writes its own [Claude folder](#isolation-and-landing) in its
+task's engine records, which altd reads without following links. `tests/test_worker_roots.py` confines a process
+to each engine's roots and finds every record refused, its own task's included, and every other task's Claude
+folder, with the scratch folder and its own Claude folder writable.
 
 ### Operator terminal
 

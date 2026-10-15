@@ -172,7 +172,7 @@ class TestCodexAdapter(AltitudeCase):
         self.assertFalse(any("fixture-token" in arg for arg in command), "job settings appear on its command line")
         self.assertFalse(any("fixture-token" in arg for arg in spec["command"]))
         self.assertFalse({"GH_TOKEN", "GITHUB_TOKEN", "DBUS_SESSION_BUS_ADDRESS"} & set(self.job_env))
-        self.assertEqual(spec["github_token"], "fixture-token")
+        self.assertEqual(spec["env"], {"GH_TOKEN": "fixture-token"})
         settings = [spec["command"][i + 1] for i, arg in enumerate(spec["command"]) if arg == "-c"]
         rules = tomllib.loads("\n".join(settings))["permissions"]["altitude-task"]["filesystem"]
         self.assertEqual({path for path, access in rules.items() if access == "deny"},
@@ -194,7 +194,7 @@ class TestCodexAdapter(AltitudeCase):
         turn = next(row for row in read if row.get("method") == "turn/start")
         self.assertTrue(turn["params"]["input"][0]["text"].endswith("\n\nbrief"))
         log.unlink()
-        unsigned = subprocess.run(driver, input=json.dumps({**spec, "github_token": ""}).encode() + b"\n",
+        unsigned = subprocess.run(driver, input=json.dumps({**spec, "env": {}}).encode() + b"\n",
                                   capture_output=True, env=env, timeout=60)
         self.assertEqual(unsigned.returncode, 0, unsigned.stderr)
         self.assertIn("HTTP 401: Requires authentication", signed.read_text())
@@ -202,7 +202,7 @@ class TestCodexAdapter(AltitudeCase):
         # A launcher without a sign-in still starts the worker, without a token.
         (state / "token.txt").unlink()
         _, procs = self._launch(actual_settings=True)
-        self.assertEqual(launch_spec(procs[0])["github_token"], "")
+        self.assertEqual(launch_spec(procs[0])["env"], {})
 
     def test_fresh_turn_runs_codex_app_server_in_the_worktree_with_the_persona_in_front(self):
         persona = self.tmp / "l2.md"
@@ -213,8 +213,8 @@ class TestCodexAdapter(AltitudeCase):
         self.assertEqual(procs[0].cmd, ["svc", engines.codex._codex_unit(row["id"]), *engines.common._driver_command()])
         spec = launch_spec(procs[0])
         self.assertEqual(spec["command"], [config.CODEX_BIN, "app-server", "--strict-config", "-c", "s1", "-c", "s2"])
-        self.assertEqual((spec["engine"], spec["cwd"], spec["model"], spec["resume"], spec["github_token"]),
-                         ("codex", str(self.worktree), "gpt-6.1-sol", None, ""))
+        self.assertEqual((spec["engine"], spec["cwd"], spec["model"], spec["resume"], spec["env"]),
+                         ("codex", str(self.worktree), "gpt-6.1-sol", None, {}))
         self.assertEqual(spec["sends"], str(engines.worker_sends(row["id"], job_root=self.job_root)))
         self.assertEqual([part["type"] for part in spec["input"]], ["text"])
         sent = spec["input"][0]["text"]

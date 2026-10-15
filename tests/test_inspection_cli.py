@@ -383,7 +383,7 @@ class TestInspectionCLI(AltitudeCase):
 
         with mock.patch.object(engines, "usage_hold", return_value=None), \
              mock.patch.object(engines.common.subprocess, "Popen", return_value=Process()):
-            parsed = engines.claude_print("prompt", unit="altitude-coordinator-fixture.service", cwd=self.tmp, settings=self.tmp / "settings.json")
+            parsed = engines.claude_print("prompt", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home", cwd=self.tmp, settings=self.tmp / "settings.json")
         self.assertEqual(parsed["tools"], [{"name": "Bash", "command": "alt queue"}])
 
         events = "\n".join([json.dumps({"type": "thread.started", "thread_id": "cx"}),
