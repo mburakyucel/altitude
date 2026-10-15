@@ -193,14 +193,18 @@ class NativeSession:
 
     def stat(self) -> tuple:
         try:
-            info = self.path.stat()
-            return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+            fd = storage.read_open(self.path)
         except OSError:
             return ()
+        try:
+            info = os.fstat(fd)
+            return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+        finally:
+            os.close(fd)
 
     def read(self) -> tuple[bytes, None]:
-        data = self.path.read_bytes()
-        return data, None
+        with os.fdopen(storage.read_open(self.path), "rb") as stream:
+            return stream.read(), None
 
 
 def invocation(job: int, root: Path, worker: str) -> RuntimeInvocation | None:

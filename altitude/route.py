@@ -290,6 +290,27 @@ def signed_in(engine: str) -> None:
     _rejection_path({"engine": engine}, "sign-in").unlink(missing_ok=True)
 
 
+#: Altitude's own sign-in on an engine (`alt sign-in`) lasts a year; each project hears of its end this many days before.
+SIGN_IN_DAYS, RENEW_DAYS = 365, 14
+
+
+def tell_renewal(engine: str, project: str) -> int | None:
+    """The whole days left of Altitude's own sign-in on the engine, once per project and sign-in when its end is near;
+    None otherwise. An ended one is a sign-in lapse instead."""
+    from . import access
+    saved = access.engine_token_saved(engine)
+    left = saved + SIGN_IN_DAYS * 86400 - time.time() if saved is not None else None
+    if left is None or not 0 < left <= RENEW_DAYS * 86400:
+        return None
+    path = config.MONITOR_DIR / f"renewal-{engine}.json"
+    data = S.read_json(path, {})
+    told = data.get("told", []) if data.get("saved") == saved else []
+    if project in told:
+        return None
+    S.write_json(path, {"saved": saved, "told": [*told, project]})
+    return int(left // 86400)
+
+
 def tell_sign_in(engine: str, project: str) -> bool:
     """True once per lapse and project: the first time this project's conversation learns of the lapse."""
     path = _rejection_path({"engine": engine}, "sign-in")

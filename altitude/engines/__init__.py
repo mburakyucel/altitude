@@ -15,6 +15,7 @@ from .common import (
     installation,
     install_command,
     sign_in,
+    save_sign_in,
     session_timeout,
     ImageInputError,
     image_capability,
@@ -96,6 +97,7 @@ from .claude import (
     claude_settings,
     claude_print,
     claude_agents,
+    notes_folder,
     JOBS_DIR,
     claude_job_detail,
     CLAUDE_RESULT_FACTS,
@@ -117,6 +119,7 @@ from .common import _safe_output, _shell_command
 
 INSTALL = {engine: common.implementation(engine).INSTALL_COMMAND for engine in config.ENGINES}
 SIGN_IN = {engine: common.implementation(engine).SIGN_IN for engine in config.ENGINES}
+TOKEN_SETUP = [engine for engine in config.ENGINES if common.implementation(engine).TOKEN_SETUP]
 
 
 def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:

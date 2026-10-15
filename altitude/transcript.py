@@ -80,7 +80,8 @@ def _redact(value):
 def _read_jsonl(path: Path) -> list[tuple[dict | None, str | None]]:
     """Return complete records plus visible errors. An unfinished final line is retried next poll."""
     try:
-        data = path.read_bytes()
+        with os.fdopen(storage.read_open(path), "rb") as stream:
+            data = stream.read()
     except OSError:
         return [(None, "source unavailable")]
     return _parse_jsonl(data)
@@ -182,7 +183,7 @@ def _activity(project: str, slug: str, task: dict, source) -> dict:
               "background": None}
     engine = engines.transcript_engine(task)
     worktree = str(task.get("worktree") or "")
-    context = engines.session_context_source(task)
+    context = engines.session_context_source(project, slug, task)
     # These timestamps stay attached to actual native source messages, never poll/turn start times.
     native_text: dict[tuple[str, int, str], str] = {}
     started = _when(source.record.get("started_at")) if source else None

@@ -6,7 +6,8 @@ credential: only the operator's account can read it, and none of Altitude's sand
 it is the proof of being the operator on this machine. `devices.json` holds each
 paired browser's name, times and the SHA-256 of its random key (never the key itself), plus at most one
 pairing code, also hashed. `alt pair` writes a code here directly, so pairing and lockout recovery need no
-running browser, no particular bind address and nothing platform-specific.
+running browser, no particular bind address and nothing platform-specific. `<engine>.token` is the sign-in
+Altitude's runs of that engine use instead of the operator's own; `alt sign-in` stores it.
 """
 from __future__ import annotations
 
@@ -82,6 +83,27 @@ def machine_key() -> str | None:
         return (DIR / "machine.key").read_text().strip() or None
     except OSError:
         return None
+
+
+def engine_token(engine: str) -> str | None:
+    """The sign-in of Altitude's own runs on an engine that takes one from the operator (`alt sign-in`)."""
+    try:
+        return (DIR / f"{engine}.token").read_text().strip() or None
+    except OSError:
+        return None
+
+
+def engine_token_saved(engine: str) -> float | None:
+    """When that sign-in was saved, from which its year runs."""
+    try:
+        return (DIR / f"{engine}.token").stat().st_mtime
+    except OSError:
+        return None
+
+
+def save_engine_token(engine: str, token: str) -> None:
+    with _locked():
+        S.atomic_write(DIR / f"{engine}.token", token + "\n")  # mkstemp: 0600
 
 
 def prepare() -> None:

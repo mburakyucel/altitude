@@ -214,15 +214,17 @@ def container_unavailable(subject: str) -> str | None:
     return IMAGE_MANAGED
 
 
-def coordinator_directory() -> Path:
+def coordinator_directory(*, persistent: bool = False) -> Path:
     """The folder of the coordinators' sockets and per-turn command folders, one per installation: outside every
     root a task worker may write, so no worker can replace a socket or a command there. On Linux it is in the
     per-user runtime folder, so sockets never become persistent backup data (#543); on macOS, whose per-user
     temporary folder workers may write, it is beside Altitude's private configuration, named by the installation
-    alone so a project's socket stays within macOS's 103-byte socket path limit under any home up to 64 bytes (#973)."""
+    alone so a project's socket stays within macOS's 103-byte socket path limit under any home up to 64 bytes (#973).
+    The `persistent` folder, for what must outlast a restart such as a coordinator's own engine sessions, is there on
+    both."""
     from . import config
     name = hashlib.sha256(str(config.ROOT.resolve()).encode()).hexdigest()[:12]
-    if _darwin():
+    if _darwin() or persistent:
         return config.HOME / ".config/altitude" / name
     return Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / f"altitude-{name}"
 
@@ -1214,11 +1216,14 @@ def job_env(env: dict) -> dict:
 
 
 def job_control_paths() -> tuple[Path, ...]:
-    """Deny the session bus and manager runtime, including its direct private socket.
+    """Deny the session bus and manager runtime, including its direct private socket; on macOS, the launcher's job
+    folders, which hold each job's piped launch input, with its tokens, until the job reads it, and relay its output.
 
     Issue #543: native file masks reuse a descriptor consumed by the first bind-data operation.
     Masking the manager directory uses a directory mount and keeps both control sockets denied.
     """
+    if _darwin():
+        return (Path(os.path.realpath(_jobs())),)
     runtime = Path(f"/run/user/{os.getuid()}")
     return runtime / "bus", runtime / "systemd"
 
@@ -2160,9 +2165,9 @@ def secret_places() -> tuple[str, ...]:
 
 
 def private_rule() -> str:
-    """Seatbelt's refusal of every private place and of Altitude's credentials. A profile puts it after its own file
-    rules, so no root it admits can reopen one."""
-    places = (*private_places(), *secret_places())
+    """Seatbelt's refusal of every private place, of Altitude's credentials and of its job folders. A profile puts it
+    after its own file rules, so no root it admits can reopen one."""
+    places = (*private_places(), *secret_places(), *map(str, job_control_paths()))
     return f"(deny file-read* file-write* {' '.join(_filters('subpath', places))})"
 
 
