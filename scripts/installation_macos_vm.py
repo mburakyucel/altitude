@@ -894,7 +894,10 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     alt = f"/Users/{ACCOUNT}/.local/bin/alt"
 
     def step(name: str, command: str, timeout: int = 120) -> subprocess.CompletedProcess:
-        result = guest.ssh(f"zsh -lc {quote(command)}", timeout=timeout, check=False)
+        try:
+            result = guest.ssh(f"zsh -lc {quote(command)}", timeout=timeout, check=False)
+        except subprocess.TimeoutExpired as expired:  # a command waiting for a person: its log says so
+            result = subprocess.CompletedProcess(command, 124, expired.stdout or "", f"timed out after {timeout}s\n")
         (results / f"{len(steps) + 1:02d}-{name}.log").write_text(f"$ {command}\n# exit {result.returncode}\n"
                                                                     f"{result.stdout}{result.stderr}")
         steps.append({"step": name, "exit": result.returncode})
@@ -958,14 +961,16 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     check(link is not None and link.group(1) == origin, "the installer printed no private pairing link for its address")
     code = link.group(2)
     running()
-    # The account trusts the generated authority in its login keychain for SSL, as SETUP.md asks. The guest's rule that
-    # asks for the account's password to change trust settings is set to allow, standing in for the person typing it.
+    # macOS trusts the generated authority for SSL. Changing the account's own trust settings waits for a confirmation
+    # in the desktop session, so the guest trusts it in the System keychain's admin settings instead, with the rule that
+    # asks an administrator to confirm set to allow, standing in for the person confirming.
     chain = f"security verify-cert -L -p ssl -n {urlsplit(origin).hostname} -c ~/.config/altitude/tls/server.crt " \
             "-c ~/.config/altitude/tls/ca.crt"
     check(step("untrusted", chain).returncode != 0, "macOS trusted the certificate before the authority was trusted")
-    trusted = step("trust", "sudo -n security authorizationdb write com.apple.trust-settings.user allow && " + desktop +
-                   "security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db "
-                   "~/.config/altitude/tls/ca.crt")
+    check(step("trust-rule", "sudo -n security authorizationdb write com.apple.trust-settings.admin allow",
+               timeout=60).returncode == 0, "the trust-settings rule could not be set")
+    trusted = step("trust", "sudo -n security add-trusted-cert -d -r trustRoot -p ssl -k /Library/Keychains/System.keychain "
+                   "~/.config/altitude/tls/ca.crt", timeout=60)
     check(trusted.returncode == 0 and step("trusted", chain).returncode == 0, "macOS does not trust the certificate")
     safari = step("safari", "defaults read /Applications/Safari.app/Contents/Info CFBundleShortVersionString").stdout.strip()
     # macOS opens the printed link in the default browser, which pairs itself with the link's code: only a browser
