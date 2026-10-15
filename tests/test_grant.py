@@ -793,7 +793,8 @@ class TestOperatorGrant(AltitudeCase):
         self.assertEqual((answer["n"], answer["exit"], answer["output"]), (1, 0, "first\n"))
         *waits, answer = [json.loads(row) for row in second.read().splitlines()]
         self.assertEqual((answer["n"], answer["exit"], answer["output"]), (2, 0, "second\n"))
-        self.assertIn(f"the command of {self.project}/{self.slug} holds a place until its limit at", waits[-1]["waiting"])
+        self.assertIn(f"the command of {self.project}/{self.slug} holds a place until its limit at", waits[-2]["waiting"])
+        self.assertRegex(waits[-1]["waiting"], r"^admitted to a machine-run place until its limit at \S+\+00:00$")
         self.assertEqual([(r["n"], r["command"]) for r in self.rows()], [(1, "echo first"), (2, "echo second")])
         self.assertEqual((server.MACHINE_LINE.holders, self.waiting()), ([], 0), "each command's end frees its place")
 
@@ -875,7 +876,8 @@ class TestOperatorGrant(AltitudeCase):
                          "[altitude] waiting for a machine-run place: the command of other/task holds a place\n")
         release.set()
         stdout, stderr = owner.communicate(timeout=60)
-        self.assertEqual((owner.returncode, stderr), (0, ""))
+        self.assertEqual(owner.returncode, 0, stderr)
+        self.assertRegex(stderr, r"^\[altitude\] admitted to a machine-run place until its limit at [^+\n]+\n$")
         self.assertTrue(stdout.startswith("after\n"), stdout)
 
     def test_revoking_the_grant_stops_the_command_it_is_running_even_when_regranted_at_once(self):

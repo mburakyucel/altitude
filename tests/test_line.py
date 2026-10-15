@@ -57,6 +57,24 @@ class TestLine(unittest.TestCase):
         self.assertEqual(told, ["waiting for a place: running"])
         self.assertEqual(places._queue, [])
 
+    def test_a_request_that_waited_is_told_when_it_is_admitted(self):
+        """An owner read the wait line its client printed last as a stuck machine an hour after its own run started."""
+        places, told, admitted = line.Line(1, "a place"), [], threading.Event()
+
+        def request():
+            with places.turn("second", 60, command="test", wait=30, watch=.01, waiting=told.append):
+                admitted.set()
+        with places.turn("running", None, command="test", waiting=told.append):   # admitted at once: told nothing
+            waiter = threading.Thread(target=request)
+            waiter.start()
+            while not told:
+                time.sleep(.001)
+        waiter.join(30)
+        self.assertTrue(admitted.is_set())
+        self.assertEqual(told[0], "waiting for a place: running")
+        self.assertRegex(told[-1], r"^admitted to a place until its limit at \S+\+00:00$")
+        self.assertEqual(len(told), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

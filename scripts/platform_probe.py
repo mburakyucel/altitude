@@ -70,9 +70,10 @@ def until(condition, timeout: float) -> bool:
 
 
 # A tree that tries every way out: an ordinary child, a double-forked setsid daemon, one that also clears its
-# environment, and children that keep forking while Stop runs. Every process carries the marker in its command line.
+# environment, a pseudo-terminal's child (a session of its own, as a test's forkpty makes), and children that keep forking
+# while Stop runs. Every process carries the marker in its command line.
 TREE = r"""
-import os, sys, time
+import os, pty, sys, time
 marker = sys.argv[1]
 def daemon(clear):
     if os.fork(): return
@@ -82,6 +83,8 @@ def daemon(clear):
 if os.fork() == 0:
     os.execv(sys.executable, [sys.executable, "-c", "import time; time.sleep(120)", marker])
 daemon(False); daemon(True)
+if pty.fork()[0] == 0:
+    os.execv(sys.executable, [sys.executable, "-c", "import time; time.sleep(120)", marker])
 for _ in range(3):
     if os.fork() == 0:
         while True:
@@ -148,20 +151,24 @@ def stop_descendants():
     finally:
         proc.kill()
         proc.wait()
-    return f"{before} processes (ordinary, setsid double fork, cleared environment, forking) stopped in {elapsed:.1f}s"
+    return (f"{before} processes (ordinary, setsid double fork, cleared environment, pseudo-terminal, forking) stopped "
+            f"in {elapsed:.1f}s")
 
 
 @row
 def time_limit():
+    marker = f"probe-limit-{NONCE}"
     job = name("limit")
     started = time.monotonic()
-    result = subprocess.run(platform.job_command(job, ["/bin/sleep", "60"], env(), runtime_max=2),
-                            stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
+    result = subprocess.run(platform.job_command(job, [sys.executable, "-c", TREE, marker], env(), runtime_max=3),
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
     elapsed = time.monotonic() - started
-    # A job that never starts also fails at once; only one stopped at its limit has run for two seconds.
-    check(result.returncode != 0 and 2 <= elapsed < 15, f"status {result.returncode} after {elapsed:.1f}s")
+    # A job that never starts also fails at once; only one stopped at its limit has run for three seconds.
+    check(result.returncode != 0 and 3 <= elapsed < 20, f"status {result.returncode} after {elapsed:.1f}s")
+    check(result.stdout.strip() == "tree up", f"tree did not start: {result.stdout!r}")
     check(not platform.job_active(job, env()), "job active after its limit")
-    return f"stopped at the 2s limit after {elapsed:.1f}s (status {result.returncode})"
+    check(until(lambda: not marked(marker), 5), f"survivors after the limit: {marked(marker)}")
+    return f"the whole tree stopped at the 3s limit after {elapsed:.1f}s (status {result.returncode})"
 
 
 @row

@@ -458,8 +458,10 @@ class TestValidationRunner(ClientStop, RunnerCase):
         self.assertEqual((answer["exit"], answer["output"]), (0, "second\n"))
         *waits, answer = [json.loads(line) for line in third.read().splitlines()]
         self.assertEqual((answer["exit"], answer["output"]), (0, "third\n"))
-        self.assertIn("the validation run of", waits[-1]["waiting"], "the line moved up behind the second run")
-        self.assertNotIn("ahead", waits[-1]["waiting"])
+        self.assertIn("the validation run of", waits[-2]["waiting"], "the line moved up behind the second run")
+        self.assertNotIn("ahead", waits[-2]["waiting"])
+        self.assertRegex(waits[-1]["waiting"], r"^admitted to the validation slot until its limit at \S+\+00:00$",
+                         "a run's last line before its answer never reads as waiting")
         self.assertEqual(json.loads(silent.getresponse().read())["output"], "silent\n")
         self.assertEqual([(row["command"], row["ended"]) for slug in (self.slug, tasks["second"], tasks["third"],
                                                                       tasks["silent"]) for row in self.rows(slug)],
@@ -531,7 +533,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         waiting.readline()
         T.block(self.project, other, "Waiting", actor="l2", expected_state="running", expected_attempt=1)
         release.touch()
-        self.assertEqual(json.loads(waiting.read()), {
+        self.assertEqual(json.loads(waiting.read().splitlines()[-1]), {
             "error": "alt task validate: only the running owner's current attempt may run validation"})
         self.assertEqual((len(self.rows()), self.ledger(other).exists()), (1, False))
 
@@ -781,8 +783,11 @@ class TestValidationRunner(ClientStop, RunnerCase):
         [result] = done
         self.assertEqual(result.returncode, 0, result.stderr)
         # The terminal reads the limit in local time; the stream itself carries ISO with offset.
-        self.assertEqual(result.stderr, "[altitude] waiting for the validation slot: the validation run of other/task "
-                                        f"holds this machine until its limit at {S.local('2026-10-08T02:08:48+00:00')}\n")
+        waited, admitted = result.stderr.splitlines()
+        self.assertEqual(waited, "[altitude] waiting for the validation slot: the validation run of other/task "
+                                 f"holds this machine until its limit at {S.local('2026-10-08T02:08:48+00:00')}")
+        self.assertRegex(admitted, r"^\[altitude\] admitted to the validation slot until its limit at \S")
+        self.assertNotIn("+00:00", admitted)
         self.assertIn("after\n", result.stdout)
 
     def test_a_request_activation_turns_away_waits_through_the_restart_and_runs(self):
