@@ -628,11 +628,16 @@ def restart_in_progress() -> bool:
 
 
 def activation_pending() -> bool:
-    """Merged changes await activation, requested or not. Long admissions (validation and review runs) wait from
-    here, so in-flight work drains to the quiet point instead of being replaced by new work; a failure lifts it."""
+    """Merged changes or an offered automatic update await activation, requested or not. Long admissions (validation,
+    review and improvement runs) wait from here, so in-flight work drains to the quiet point instead of being replaced
+    by new work (#1003); a failure lifts it. An open browser terminal defers the update itself, so it lifts the fence
+    until it closes and work keeps going meanwhile."""
     from . import platform
-    if platform.containerized() or RELEASE is not None:
-        return restart_in_progress()
+    if platform.containerized():
+        return False
+    if RELEASE is not None:
+        from . import installation, terminal
+        return restart_in_progress() or bool(installation.automatic_update_offered()) and not terminal.any_open()
     from . import state as S
     pending = S.read_json(MONITOR_DIR / "restart-pending.json", {}) or {}
     return bool(pending) and not pending.get("failed")

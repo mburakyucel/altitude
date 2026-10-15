@@ -381,11 +381,18 @@ the service restart it causes; it passes the operator terminal's request checks,
 no login, so anyone who can open the page can start an update to that verified release, never a
 downgrade or another build.
 
-The `update_automatic` machine setting defaults to true. At the existing restart quiet point,
-the daemon holds the exclusive restart gate, checks that no browser terminal is open, and reserves
-the offered version before starting the same detached updater. Terminal creation holds the shared
-gate through registration. The reservation fences new dispatch/resume work and terminal creation;
-running workers continue. Turning automatic updates off restores the confirm-and-update flow;
+The `update_automatic` machine setting defaults to true. From the moment a release waits for its
+automatic attempt, `config.activation_pending` is true, as for merged changes on a source install,
+so new validation, adversarial review and improvement runs wait and those in flight drain. An open
+browser terminal defers the update and lifts that fence until it closes. Once no terminal is open
+and none of those runs is in flight, the daemon reserves the offered version under the terminal
+registry's lock, so no terminal opens before the reservation refuses new ones, and starts the same
+detached updater. The reservation fences new dispatch/resume work, L3 turns, report verification
+and terminal creation; running workers continue. The detached updater waits up to
+`UPDATE_DRAIN_SECONDS` for the exclusive restart gate, longer than an L3 turn's limit, so it does not
+depend on a tick finding an instant with nothing in flight. Each tick records what the
+offered version waits for in `update.json`, and `update_status` returns it as `waiting_for` for the
+notice, Settings and `alt doctor`. Turning automatic updates off restores the confirm-and-update flow;
 turning checks off also prevents automatic starts, without changing the saved automatic preference.
 Neither setting cancels an admitted update. Sources and containers retain their existing lifecycle.
 
@@ -838,7 +845,8 @@ no reservation while waiting for preparation and no automatic retry. L2 and revi
 set expectations for a relatively quick, focused review without a programmatic duration cutoff.
 The command waits without a review deadline; streamed JSON whitespace detects disconnected callers.
 Owner changes, cancellation and caller disconnect stop the run. Planned activation waits for in-flight
-reviews to return their results; new review runs wait while activation is pending. Capacity contention refuses
+reviews to return their results; new review runs wait while activation, or an installed release's
+offered automatic update, is pending. Capacity contention refuses
 `run` and leaves the accepted request waiting for the reviewer, shown as such, until a later explicit run. Unexpected restart reconciliation cancels an
 orphaned invocation rather than leaving it running without a result consumer.
 The engine checks service inspection before launch. Its cleanup stops the independent reviewer unit
@@ -1427,7 +1435,8 @@ runs and refuses new ones. At startup, before
 admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted
 and removes their scratch files. Failed evidence delivery retains the original area and keeps the
 runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
-evidence recording and cleanup, and refuses admission while activation is pending. On a Mac,
+evidence recording and cleanup, and refuses admission while activation, or an installed release's offered
+automatic update, is pending. On a Mac,
 `--simulator` adds a disposable iOS Simulator iPhone (`altitude/simulator.py`): altd creates it in a
 private device set in the run's area and removes it afterwards, and the run, which stays refused the
 Simulator service, reaches only that phone's Safari pages through altd's filtering relay, and two fixed native

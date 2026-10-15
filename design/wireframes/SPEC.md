@@ -1793,8 +1793,11 @@ request denial, loading, read error, empty, dismissed and new-event states are w
 and desktop in `web/e2e/restart-banner.pw.ts`, including removals after actions.
 
 **New version (installed copies).** When the overview's `update` names a newer followed release,
-automatic updates show **Altitude <version> will install automatically at the next quiet point,
-when no browser terminal is open.** with **What’s new** and ×. When automatic updates are off or
+automatic updates show **Altitude <version> installs automatically at the next quiet moment.** with
+**What’s new** and ×; while something is in the way it adds "Waiting for <a>, <b> and <c>." from the
+daemon's last check, naming open browser terminals by where they are ("the browser terminal open in
+<project>/<task>") and long runs by task ("the validation run of <project>/<task>", "the adversarial
+review of …", "the improvement review of <project>"). When automatic updates are off or
 that version has already been attempted, the row reads **Altitude <version> is available. What’s
 new · Update · ×**. What’s new opens the release page. Update turns the row into a confirm: "Install Altitude
 <version>? Altitude checks the download, then restarts. If <version> does not start, <current>
@@ -1992,11 +1995,11 @@ containers and browsers in throwaway containers on this computer, and each run i
 Turning this off stops a running one." It saves like Terminal; turning it off stops the running run and
 refuses new ones. Where Terminal is unavailable its switch looks off and disabled; its accessible description and a press reveal "Not available here: <reason>." Where this computer cannot run validation the row is absent. `web/e2e/validation-switch.pw.ts` walks on, off, a refused change and
 the absent row at both widths.
-An installed copy adds a **Version** row: the installed version, with "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
+An installed copy adds a **Version** row: the installed version, with "· <version> is available · What’s new" with the copyable `alt update` command; while an automatic update is pending, "· <version> waits for <a> and <b>" or, with nothing in the way, "· <version> installs automatically". A **Check for
 new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
 release. Nothing else is sent. Turning this off also stops automatic updates." An **Automatic
-updates** switch (on after install) says "Install new versions at the next quiet point, when no
-browser terminal is open. Turn this off to be asked before installing." Both save on change,
+updates** switch (on after install) says "Install new versions at the next quiet moment. Turn this
+off to be asked before installing." Both save on change,
 disable while saving, show **Saving…**, and retain the prior setting with an inline error if denied.
 Turning checks off hides the newer release and notice and disables Automatic updates, retaining
 its saved preference for when checks resume. A failed update retains **Try again** in About even

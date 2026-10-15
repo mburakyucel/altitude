@@ -1397,8 +1397,8 @@ def settle_send_now(project: str, slug: str, message_id: str, outcome: str, *, a
 
 def _settle_send_now(project: str, task: dict, message_id: str, outcome: str, **receipt) -> None:
     claim = task.get("send_now") or {}
-    if claim.get("id") != message_id:
-        return  # already settled from the same outcome file
+    if claim.get("id") != message_id or claim.get("agent_id") != receipt["agent_id"]:
+        return  # already settled from the same outcome file, or handed to another worker
     task.pop("send_now")
     if outcome == "returned":
         return  # still in the inbox, for the session's next user turn

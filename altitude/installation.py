@@ -169,6 +169,9 @@ def latest_release(repository: str, current: str) -> dict | None:
 UPDATE_CHECK_SECONDS = 12 * 3600
 UPDATE_RETRY_SECONDS = 3600
 UPDATE_STALE_SECONDS = 1800
+# How long a detached update waits for work in flight once its request fences new work: an L3 turn's own limit and
+# margin (#1003). `alt update` in a terminal waits a minute.
+UPDATE_DRAIN_SECONDS = 1500
 # The page shows only this next step; the cause stays in the terminal or the update unit's log.
 UPDATE_FAILED = "Run alt update in a terminal to see why."
 UPDATE_VERIFICATION_FAILED = "The installed application failed its release check. Run alt update in a terminal to see why."
@@ -221,7 +224,7 @@ def update_status() -> dict | None:
     if platform.containerized():
         return {"current": (config.RELEASE or {}).get("version"), "available": None, "check": False,
                 "automatic": False, "automatic_pending": False, "command": None, "checked": None, "attempt": None, "installed": None,
-                "managed": "image", "reason": platform.IMAGE_MANAGED}
+                "waiting_for": [], "managed": "image", "reason": platform.IMAGE_MANAGED}
     if config.RELEASE is None:
         return None
     current = config.RELEASE["version"]
@@ -235,11 +238,14 @@ def update_status() -> dict | None:
     attempt = last if last.get("state") in ("running", "failed") and last.get("version") != current else None
     installed = ({"version": current, "notes": f"{config.RELEASE['repository']}/releases/tag/{current}"}
                  if last.get("automatic") and last.get("version") == current and last.get("state") == "succeeded" else None)
+    pending = bool(automatic and newer and last.get("state") != "running"
+                   and latest["version"] not in record.get("automatic_attempts", []))
+    wait = record.get("waiting") or {}
     return {"current": current, "available": latest if newer else None, "check": check,
-            "automatic": automatic, "automatic_pending": bool(automatic and newer and last.get("state") != "running"
-                and latest["version"] not in record.get("automatic_attempts", [])), "command": "alt update",
+            "automatic": automatic, "automatic_pending": pending, "command": "alt update",
             "checked": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record["checked"])) if record.get("checked") else None,
-            "attempt": attempt, "installed": installed}
+            "attempt": attempt, "installed": installed,
+            "waiting_for": wait.get("for", []) if pending and wait.get("version") == latest["version"] else []}
 
 
 def update_running() -> bool:
@@ -301,10 +307,19 @@ def _require_no_update(prefix: Path) -> None:
 def automatic_update() -> str | None:
     """The offered release the daemon installs at its next quiet point; each version is tried once."""
     reconcile_update()
+    return automatic_update_offered()
+
+
+def automatic_update_offered() -> str | None:
+    """The release waiting for its automatic attempt, without reconciling: the admission fence reads it."""
     status = update_status()
-    if not status or not status["automatic_pending"]:
-        return None
-    return status["available"]["version"]
+    return status["available"]["version"] if status and status["automatic_pending"] else None
+
+
+def record_update_wait(version: str, waiting: list[str]) -> None:
+    """What the daemon's last quiet-point check found the offered release waiting for, for the page and `alt doctor`."""
+    with _changing_update_record() as record:
+        record["waiting"] = {"version": version, "for": waiting}
 
 
 def update_notice() -> str | None:
@@ -319,7 +334,7 @@ def update_notice() -> str | None:
     except (OSError, ValueError):
         return None
     version = status["available"]["version"]
-    when = "installs when Altitude is next idle; alt update installs it now" if status["automatic_pending"] else "run alt update"
+    when = "installs at the next quiet moment; alt update installs it now" if status["automatic_pending"] else "run alt update"
     return f"Altitude {version} is available: {when} (notes: {config.RELEASE['repository']}/releases/tag/{version})"
 
 
@@ -430,7 +445,9 @@ def _update(version: str | None, ident: str) -> dict:
         archive.write_bytes(_get(base, ARCHIVE_LIMIT))
         checksum = _get(base + ".sha256", 1024).decode(errors="replace").split()[:1]
         with _prepare_install(archive, checksum[0] if checksum else "", _prefix(), newer=version) as prepared:
-            result = _activate(*prepared, newer=version)
+            # The detached update's request already fences new work; what runs finishes first.
+            result = _activate(*prepared, newer=version,
+                               wait=UPDATE_DRAIN_SECONDS if os.environ.get("ALTITUDE_UPDATE_ATTEMPT") else 60)
     _finish_attempt(ident, "succeeded")
     # Devices already trust this installation, so the summary leaves out its paths and trust steps.
     return {"version": version, "updated": True, "service": result["service"], "url": result["url"],
@@ -699,8 +716,20 @@ def _next(hosting: dict, pairing: dict, needs: list[dict]) -> list[str]:
     return ["Next: nothing is left to set up; open Altitude in your browser."]
 
 
+def describe_update(update: dict | None) -> list[str]:
+    """`alt doctor`'s line about a newer release, naming what an automatic update waits for."""
+    if not update or not update.get("available"):
+        return []
+    version, waiting = update["available"]["version"], update["waiting_for"]
+    if not update["automatic_pending"]:
+        return [f"Update: Altitude {version} is available; alt update installs it."]
+    listed = ", ".join(waiting[:-1]) + " and " + waiting[-1] if len(waiting) > 1 else "".join(waiting)
+    return [f"Update: Altitude {version} installs automatically at the next quiet moment"
+            + (f"; waiting for {listed}." if waiting else ".")]
+
+
 def describe_doctor(report: dict) -> str:
-    lines = [describe_hosting(report["hosting"]), *report["next"], "", "Readiness:"]
+    lines = [describe_hosting(report["hosting"]), *report["next"], *describe_update(report["update"]), "", "Readiness:"]
     lines += [f"  {item['name']}: {item['state']}" for item in report["checks"]]
     lines += ["  " + item["detail"] for item in report["checks"]
               if item["state"] in ("unavailable", "unknown") and isinstance(item.get("detail"), str)]
@@ -1109,7 +1138,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
             return _activate(*prepared, newer=newer)
 
 
-def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer: str | None) -> dict:
+def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer: str | None, wait: float = 60) -> dict:
     """Activate verified contents while the caller owns install.lock, including download for an update."""
     from . import config, platform, tls
     if (prefix / "pending.json").exists():
@@ -1161,7 +1190,7 @@ def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer
         atomic(path, content, 0o755)
     tls.initialize()
     # This is the same narrow gate used by dispatch, resume, L3 and report verification.
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + wait
     while True:
         with config.restart_lock(exclusive=True) as quiet:
             if quiet:
@@ -1189,7 +1218,8 @@ def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer
                 (prefix / "pending.json").unlink()
                 break
         if time.monotonic() >= deadline:
-            raise RuntimeError("Update staged; activation waits for dispatch, L3 or report verification. Retry this version.")
+            raise RuntimeError("Update staged; activation waits for a dispatch, L3 turn, review, validation run or report "
+                               "verification in flight. Retry this version.")
         time.sleep(0.25)
     result = {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
             "network": tls.address_view(config.network(saved["environment"])), "lifecycle": platform.installation_lifecycle(),
