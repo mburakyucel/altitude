@@ -381,11 +381,18 @@ the service restart it causes; it passes the operator terminal's request checks,
 no login, so anyone who can open the page can start an update to that verified release, never a
 downgrade or another build.
 
-The `update_automatic` machine setting defaults to true. At the existing restart quiet point,
-the daemon holds the exclusive restart gate, checks that no browser terminal is open, and reserves
-the offered version before starting the same detached updater. Terminal creation holds the shared
-gate through registration. The reservation fences new dispatch/resume work and terminal creation;
-running workers continue. Turning automatic updates off restores the confirm-and-update flow;
+The `update_automatic` machine setting defaults to true. From the moment a release waits for its
+automatic attempt, `config.activation_pending` is true, as for merged changes on a source install,
+so new validation, adversarial review and improvement runs wait and those in flight drain. An open
+browser terminal defers the update and lifts that fence until it closes. Once no terminal is open
+and none of those runs is in flight, the daemon reserves the offered version under the terminal
+registry's lock, so no terminal opens before the reservation refuses new ones, and starts the same
+detached updater. The reservation fences new dispatch/resume work, L3 turns, report verification
+and terminal creation; running workers continue. The detached updater waits up to
+`UPDATE_DRAIN_SECONDS` for the exclusive restart gate, longer than an L3 turn's limit, so it does not
+depend on a tick finding an instant with nothing in flight. Each tick records what the
+offered version waits for in `update.json`, and `update_status` returns it as `waiting_for` for the
+notice, Settings and `alt doctor`. Turning automatic updates off restores the confirm-and-update flow;
 turning checks off also prevents automatic starts, without changing the saved automatic preference.
 Neither setting cancels an admitted update. Sources and containers retain their existing lifecycle.
 
@@ -740,10 +747,11 @@ engine that turn then attempts, and each explicit task resume request withdraws 
 engine. A credential still invalid records it again on that attempt, within the same lapse, and
 automatic turns and resumes keep waiting. On an engine whose runs share the CLI's sign-in (Codex), the
 quota refresh records a lapse when its read is refused for sign-in and its successful read ends it;
-Claude's runs use Altitude's own sign-in, so saving it with `alt sign-in claude` ends theirs. A
+Claude's runs use Altitude's own sign-in, so saving a new one ends theirs. A
 successful coordinator turn ends a lapse on either engine. Each project's
 conversation gets one heads-up line per lapse naming the engine, what the turn did (answered on
-another engine, waits, or stopped) and the engine's sign-in command; failed turns show the
+another engine, waits, or stopped) and how to sign in again: Settings › Prerequisites for an engine
+Altitude signs in itself, else the engine's sign-in command; failed turns show the
 rejection's plain reason, never provider text. A current model-specific weekly reading at 100% also
 excludes only that model. The router never derives model allowances from an
 account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
@@ -838,7 +846,8 @@ no reservation while waiting for preparation and no automatic retry. L2 and revi
 set expectations for a relatively quick, focused review without a programmatic duration cutoff.
 The command waits without a review deadline; streamed JSON whitespace detects disconnected callers.
 Owner changes, cancellation and caller disconnect stop the run. Planned activation waits for in-flight
-reviews to return their results; new review runs wait while activation is pending. Capacity contention refuses
+reviews to return their results; new review runs wait while activation, or an installed release's
+offered automatic update, is pending. Capacity contention refuses
 `run` and leaves the accepted request waiting for the reviewer, shown as such, until a later explicit run. Unexpected restart reconciliation cancels an
 orphaned invocation rather than leaving it running without a result consumer.
 The engine checks service inspection before launch. Its cleanup stops the independent reviewer unit
@@ -1429,7 +1438,8 @@ runs and refuses new ones. At startup, before
 admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted
 and removes their scratch files. Failed evidence delivery retains the original area and keeps the
 runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
-evidence recording and cleanup, and refuses admission while activation is pending. On a Mac,
+evidence recording and cleanup, and refuses admission while activation, or an installed release's offered
+automatic update, is pending. On a Mac,
 `--simulator` adds a disposable iOS Simulator iPhone (`altitude/simulator.py`): altd creates it in a
 private device set in the run's area and removes it afterwards, and the run, which stays refused the
 Simulator service, reaches only that phone's Safari pages through altd's filtering relay, and two fixed native
@@ -1466,13 +1476,28 @@ and output styles into it, read-only to the job; the folder's own state file sta
 A session resumed for the first time in its folder is first copied there from the operator's folder,
 where Claude kept every session before jobs had folders of their own. Workers read the project's notes
 from the operator's folder (`autoMemoryDirectory`) without being able to change them. Every Claude job
-signs in with Altitude's own subscription token (`alt sign-in claude`, kept in the private access
+signs in with Altitude's own subscription token (made by the sign-in below and kept in the private access
 store), handed over in its launch input like the GitHub token below and exported by the driver as
 `CLAUDE_CODE_OAUTH_TOKEN`, so a job never reads or refreshes the operator's sign-in; a review, which
 runs without the driver, reads the same environment from the first line of its input. Without that
 token Claude reports itself signed out, which is an ordinary [sign-in lapse](#engine-integration-boundary);
 two weeks before its year ends, counted from when it was saved, each project's conversation gets one
 heads-up line to renew it.
+Altitude makes that sign-in itself (`engines/token_setup.py`) for an engine whose runs take a token from the
+operator (`TOKEN_SETUP`), through `GET` and `POST /api/sign-in/<engine>` from a paired browser or with the
+machine key (`alt sign-in`); workers cannot read the key. Starting runs the engine's setup command
+(`claude setup-token`) as the session leader of a pseudo-terminal of altd's own, 4000 columns wide so nothing
+wraps, in a fresh settings folder inside the private access store that is removed afterwards, with no sign-in
+of its own in its environment and a browser command that does nothing. altd reads that screen through a small
+terminal model and returns only the sign-in link it shows; finishing types the code the operator pasted
+(printable characters only) and waits for the outcome. A token is accepted only when the command exits 0
+after the code and exactly one distinct token of the engine's shape stood alone on a line; it goes straight
+to `access.save_engine_token` and ends the sign-in lapse. Anything else fails with one of four fixed sentences
+(code not accepted, expired after ten minutes, interrupted, not followed) and saves nothing, so an earlier
+sign-in keeps working. One sign-in per engine is open at a time, held in altd's memory: starting another
+replaces it; cancelling, failing or the ten minutes ending kill the command's whole process group, and altd's
+exit hangs up its terminal. Nothing read from the screen is logged, recorded or returned except the link,
+and a failed request answers with fixed text and logs only the exception's type.
 Altitude reads a task's transcript, context and token usage in its job's folder, without following a
 link the job planted there, and in the operator's folder for a session recorded before. Altitude's usage
 readings and improvement reviews still run outside any job on the operator's sign-in.
@@ -1702,7 +1727,8 @@ on its own thread so the reader keeps draining output while it waits for the pro
 does and wakes a blocked owner unless it is stopped or faulted; a task no longer running or blocked, or on a later
 attempt than the one current when the page named the command, gets none. It is no conversation entry and grants
 nothing. For a project terminal, `l3.queue_message` queues it for the coordinator as a `terminal` system turn,
-which the conversation shows as a system line; a project no longer managed gets none. When naming the command
+which the conversation shows as a system line; a project no longer managed gets none. When a command that looks
+finished is an open [operator step](#operator-steps)'s, the same notice clears that step (`tasks.step_ran`) and says so. When naming the command
 fails, the page still types it and asks the operator to reply in chat instead. altd does not see the command's exit status, so the notice sends the
 reader to `alt task terminal` or `alt project terminal` to verify; a shell builtin that waits for input without a child looks finished.
 A command the operator types without a `run` block sends no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
@@ -2401,7 +2427,8 @@ without a repository, sign-in or network request, then sign-in), each engine's l
 engine seam (`engines.sign_in`), on Linux the agent sandbox (`platform.sandbox_tool`, optional when a signed-in agent
 brings its own sandbox) and Git, as met, unmet with the terminal command to run (the install command from
 `platform.install_command` or `engines.install_command` for a missing tool or a GitHub CLI too old to land, else
-its sign-in command), or optional once one engine is signed in. With no engine installed, one row asks for at least
+its sign-in command, or, for an engine Altitude signs in itself, `sign_in`, which shows **Sign in** in its row
+instead), or optional once one engine is signed in. With no engine installed, one row asks for at least
 one coding agent and lists each engine's install command as an option. The projects step lists the folders under the projects folder
 (`config.project_roots()`: the machine setting `projects_folder`, else `ALTITUDE_ROOTS`), changes
 that folder in place and starts L3 for one or all of them through `POST /api/project/add`, in order,
@@ -2953,6 +2980,28 @@ refresh.
 Unknown overview reads never imply zero attention. Failed refreshes identify saved counts and
 status as stale; Work links stay available, while Needs you disables answers until a fresh read.
 App Back and browser history preserve the originating Work or Needs you view.
+
+### Operator steps
+
+A command only the operator can run for a project's own recovery, with no owning task to ask it, is an
+operator step: the project's `steps.json` under `ALTITUDE_HOME`, written by `tasks.publish_step`. The
+coordinator publishes one with `alt project step -`, which altd answers only on that project's coordinator
+socket, as it does `alt project message`. Stdin is the plain question: its first line names the step and it
+holds exactly one `run` block of one command line, split at fences as the page splits them
+(`tasks.run_commands`); `--task <slug>` names each unfinished task waiting on it. Publishing the same command
+again revises that step in place and adds the tasks it names. The step is a row in the overview queue and the project's decisions with no
+`slug`, `kind` `step`, its `id` and the tasks it names, so Needs you shows it as a card in the project's section
+with **Open in terminal** opening the project terminal (spec §3.8.4), and the badge, alerts and digest count
+it. A task it names that is blocked or reported, without a fault, Stop or pending resume, reads the operator's
+turn with the step's first line
+(`tasks.block_status`), on its Work row and task page, instead of waiting on the coordinator; the task page
+keeps the owner's open note to L3 out of sight meanwhile. The project terminal's notice that exactly that command
+looks finished clears the step (`tasks.step_ran`) and asks the coordinator to verify the output and tell the
+tasks it named; a terminal that ended first leaves the step open; `alt project step --withdraw <id> --reason '…'` clears one settled
+another way, and removing the project withdraws its steps. The notice is queued before the step clears, so a
+notice that fails leaves the step in Needs you. A stale Needs you read offers the command with Copy only. The
+project's `events.log` records `step` rows for `asked`, `revised`, `ran` and `withdrawn`.
+A step for an owner's own work stays on that task as its question, with its task terminal.
 
 ### From model judgment to a task question
 

@@ -159,6 +159,76 @@ class TestDecisions(AltitudeCase):
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, step["slug"])), f"{name}'s turn · 1 question",
                          "once the Terminal notice wakes the owner, the label no longer asks for the step")
 
+    def test_a_recovery_step_from_l3_waits_in_needs_you_and_is_the_waiting_tasks_turn(self):
+        # I-20261014-020125: L3 posted the one recovery command in project chat and repeated it twice; nothing in
+        # Needs you showed it, and the two tasks waiting on it read "waiting on L3" for a day.
+        name = config.operator_label()
+        waiting = self.blocked("VM harness", "The service checkout must be restored first.", waiting_on="l3")
+        other = self.blocked("Export access", "CI export access is missing.", waiting_on="l3")
+        text = ("Restore the service checkout so merged changes activate again.\n\n"
+                "Two files there differ from main.\n\n```run\ngit -C ~/example restore README.md\n```")
+        # The coordinator's socket carries the verb, its text on stdin.
+        reply = server.l3_verb_request(self.project, {"kind": "alt", "args": ["project", "step", "-", "--task", waiting["slug"]],
+                                                      "stdin": text})
+        step = json.loads(reply["stdout"])
+        self.assertEqual((step["command"], step["tasks"]), ("git -C ~/example restore README.md", [waiting["slug"]]))
+        [row] = [row for row in T.decisions(self.project) if row["kind"] == "step"]
+        self.assertEqual((row["slug"], row["asked_by"], row["question"], row["alert_key"]),
+                         (None, "l3", text, f"{self.project}:step:{step['id']}"))
+        self.assertEqual(row["tasks"], [{"slug": waiting["slug"], "title": "VM harness"}])
+        label = lambda task: T.block_status(self.project, S.load_task(self.project, task["slug"]))
+        self.assertEqual(label(waiting), ("waiting-operator", f"{name}'s turn · Restore the service checkout so merged changes activate again."))
+        self.assertEqual(label(other), ("waiting-l3", "waiting on L3"), "a task the step does not name keeps its own wait")
+        again = l3.step_verb(self.project, ["-", "--task", other["slug"]], text)
+        self.assertEqual(again["id"], step["id"], "publishing the same command revises the one step")
+        self.assertEqual(again["tasks"], [waiting["slug"], other["slug"]], "a revision adds tasks, never drops one still waiting")
+        self.assertEqual([r["id"] for r in T.decisions(self.project) if r["kind"] == "step"], [step["id"]])
+        self.assertEqual(label(other)[0], "waiting-operator")
+        self.assertEqual(T.step_ran(self.project, "git -C ~/example restore other.md"), [], "another command clears nothing")
+        [ran] = T.step_ran(self.project, "git -C ~/example restore README.md")
+        self.assertEqual(ran["tasks"], [waiting["slug"], other["slug"]])
+        self.assertEqual([r for r in T.decisions(self.project) if r["kind"] == "step"], [])
+        self.assertEqual(label(waiting), ("waiting-l3", "waiting on L3"), "after the step ran, L3 verifies and resumes")
+        self.assertEqual([(r["action"], r["id"]) for r in S.read_project_log(self.project) if r["kind"] == "step"],
+                         [("asked", step["id"]), ("revised", step["id"]), ("ran", step["id"])])
+
+    def test_a_step_with_no_waiting_task_is_withdrawn_only_with_its_reason(self):
+        text = "Restore the service checkout.\n\n```run\ngit -C ~/example restore README.md\n```"
+        step = l3.step_verb(self.project, ["-"], text)
+        self.assertEqual(step["tasks"], [])
+        for args, why in ((["--withdraw", step["id"]], "needs the reason"),
+                          (["--withdraw", "000000000000", "--reason", "Verified."], "no open operator step")):
+            with self.assertRaisesRegex(ValueError, why):
+                l3.step_verb(self.project, args, "")
+        l3.step_verb(self.project, ["--withdraw", step["id"], "--reason", "The operator restored it from a desktop terminal."], "")
+        self.assertEqual(T.decisions(self.project), [])
+        for bad in ("Restore it by hand.", "Two.\n\n```run\na\n```\n\n```run\nb\n```", "Two lines.\n\n```run\na\nb\n```",
+                    "Hidden.\n\n```run\necho ​hi\n```"):
+            with self.assertRaisesRegex(ValueError, "exactly one `run` block"):
+                l3.step_verb(self.project, ["-"], bad)
+        done = self.blocked("Finished", "Done.", waiting_on="l3")
+        S.save_task(self.project, {**S.load_task(self.project, done["slug"]), "state": "done"})
+        with self.assertRaisesRegex(ValueError, "finished"):
+            l3.step_verb(self.project, ["-", "--task", done["slug"]], text)
+        with self.assertRaisesRegex(ValueError, "no task"):
+            l3.step_verb(self.project, ["-", "--task", "missing-task"], text)
+
+    def test_the_run_blocks_of_a_step_split_at_fences_as_the_page_splits_them(self):
+        self.assertEqual(T.run_commands("A.\n```run\none\n```\n````\n```run\nnot a block\n```\n````\n~~~run\ntwo\n~~~\n```run\nopen"),
+                         ["one", "two", "open"])
+        # Review finding: a fence line ending in a bare CR opened a block here but not on the page; steps keep LF.
+        step = T.publish_step(self.project, "Restore it.\r\n\r\n```run\r\necho restored\r\n```", [])
+        self.assertEqual((step["text"], step["command"]), ("Restore it.\n\n```run\necho restored\n```", "echo restored"))
+        self.assertEqual(T.publish_step(self.project, "Restore it.\r```run\recho bare\r```", [])["command"], "echo bare")
+
+    def test_removing_the_project_withdraws_its_steps(self):
+        # Review finding: a project added again brought back an old incident's command, with an alert.
+        step = T.publish_step(self.project, "Restore it.\n\n```run\necho restored\n```", [])
+        config.remove_project(self.project)
+        self.assertEqual(T.operator_steps(self.project), [])
+        self.assertEqual([(r["action"], r["id"], r.get("reason")) for r in S.read_project_log(self.project) if r["kind"] == "step"],
+                         [("asked", step["id"], None), ("withdrawn", step["id"], "the project was removed")])
+
     def test_a_fault_park_after_a_reply_keeps_the_turn_with_the_owner(self):
         # Only the owner's own park or report asks again; a fault is L3's to repair, not the operator's turn.
         task = self.blocked("Rollback", "How long should the old index stay?")

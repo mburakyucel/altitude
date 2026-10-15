@@ -6,6 +6,11 @@ import type { Overview, Update } from "../data/api";
 
 const DISMISSED = "altitude.update.dismissed";
 
+/** "a", "a and b", "a, b and c": the work a pending automatic update waits for. */
+export function waitingText(waiting: string[]) {
+  return waiting.length > 1 ? `${waiting.slice(0, -1).join(", ")} and ${waiting[waiting.length - 1]}` : waiting[0] ?? "";
+}
+
 /**
  * An installed copy's pending release, installation result, or Update after a confirm. The daemon runs the same
  * verified `alt update` for exactly this version; Altitude restarts into it or restores the running one.
@@ -48,7 +53,7 @@ export function UpdateNotice({ update }: { update: Update | null | undefined }) 
   </div>;
 
   if (update.automatic_pending && !failed) return <div className="restart-banner update-notice" role="status" aria-label="New version">
-    <p className="restart-banner-summary">Altitude {available!.version} will install automatically at the next quiet point, when no browser terminal is open.{" "}
+    <p className="restart-banner-summary">Altitude {available!.version} installs automatically at the next quiet moment.{update.waiting_for.length ? ` Waiting for ${waitingText(update.waiting_for)}.` : ""}{" "}
       <a href={available!.notes} target="_blank" rel="noreferrer">What’s new</a>
     </p>
     {dismiss}
