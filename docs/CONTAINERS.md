@@ -115,8 +115,12 @@ Podman connections and rootful machines are not used.
 brew install podman
 podman machine init altitude --cpus 4 --memory 6144 --disk-size 40
 podman machine start altitude
-python3 scripts/container.py preflight
+python3.12 scripts/container.py preflight
 ```
+
+The launcher needs Python 3.12 or newer, as [setup](SETUP.md) does; the `python3` that ships with
+Xcode is older. If the machine's first start is cut short, it no longer boots; remove it with
+`podman machine rm altitude` and create it again.
 
 Then build, start and operate the container with the commands in this document; the image is built
 natively for linux/arm64 inside the machine. The machine holds the image, volumes and container, so
@@ -146,7 +150,7 @@ Mac and the helper runs in the machine. The launcher's own foreground process ow
 
 The machine runs while the user is logged in. Logging out or shutting down ends it abruptly, without
 the container's graceful stop, so stop the container first. Nothing starts at login. After a login
-or restart, run `podman machine start altitude`, then `python3 scripts/container.py restart --name
+or restart, run `podman machine start altitude`, then `python3.12 scripts/container.py restart --name
 altitude`, which keeps the instance and its admission. While the machine is stopped, commands report
 that container state and cleanup are unconfirmed. During sleep the machine pauses with the Mac.
 There is no Mac counterpart to the Linux service-manager monitor; fixture tests check that the Mac
@@ -370,8 +374,9 @@ Policy refusals name their category without logging private file names: unsuppor
 set-ID modes, special files, extended attributes, ACL identifiers or volume layout. Namespace file
 owners and named POSIX ACL users/groups must use IDs 0 or 1000. Paths have at most 128 components.
 Sockets left by Git fsmonitor or SSH ControlMaster must be removed only after their owner stops;
-setgid shared repositories and `security.selinux` labels are unsupported. Backup on an SELinux-labeled
-volume is therefore unavailable with this image; the tested Ubuntu tuple has no SELinux enforcement.
+setgid shared repositories and security labels other than SELinux are unsupported. A backup leaves
+out `security.selinux` labels, which belong to the runtime rather than the data, and restored files take
+the label the runtime gives new files in their volume.
 
 Resume claims identify their owner by PID, process start time, boot identity and PID namespace through
 the platform seam. A numerically reused PID cannot keep an earlier claim live. Missing identity enters
