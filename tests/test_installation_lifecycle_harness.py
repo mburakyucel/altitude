@@ -412,7 +412,8 @@ class TestInstallationVm(AltitudeCase):
         with self.assertRaisesRegex(SystemExit, "no SHA256SUMS"):
             attempt("unlisted")
 
-    def test_published_baseline_run_updates_to_a_candidate_on_its_channel_through_every_phase(self):
+    def lane(self, baseline: str | None):
+        """A lane run whose VM, downloads, builds and harness are fixtures: the builds, phases and vm.json it made."""
         from scripts import installation_vm as vm
         phases, builds = [], []
         native = subprocess.run
@@ -443,13 +444,31 @@ class TestInstallationVm(AltitudeCase):
                 mock.patch.object(vm, "base_image", return_value={"image": "fixture"}), mock.patch.object(vm, "Machine", Machine), \
                 mock.patch.object(vm, "harness", side_effect=harness), \
                 mock.patch.object(vm, "reachable", side_effect=lambda machine: next(reachable)), mock.patch("sys.stdout"):
-            code = vm.run(results, "c" * 40, self.tmp / "cache", "v0.1.2")
+            code = vm.run(results, "c" * 40, self.tmp / "cache", baseline)
         record = json.loads((results / "vm.json").read_text())
         self.assertEqual((code, record["passed"]), (0, True))
+        self.assertEqual([phase for _, phase in phases], ["all", "bootstrap", "update", "reboot-install", "reboot-verify"])
+        return builds, {commits for commits, _ in phases}
+
+    def test_published_baseline_run_updates_to_a_candidate_on_its_channel_through_every_phase(self):
+        builds, commits = self.lane("v0.1.2")
         # A stable baseline follows only stable releases, so its own daemon can install the candidate automatically.
         self.assertEqual(builds, [(("candidate", "v0.2.0"),)])
-        self.assertEqual([phase for _, phase in phases], ["all", "bootstrap", "update", "reboot-install", "reboot-verify"])
-        self.assertEqual({commits for commits, _ in phases}, {f"{'b' * 40}..{'c' * 40}"})
+        self.assertEqual(commits, {f"{'b' * 40}..{'c' * 40}"})
+
+    def test_same_source_run_builds_both_versions_from_the_one_commit(self):
+        builds, commits = self.lane(None)
+        self.assertEqual(builds, [(("baseline", "v0.0.0-rc.1"), ("candidate", "v0.1.0-rc.1"))])
+        self.assertEqual(commits, {"c" * 40})
+
+    def test_the_update_phases_failing_release_sorts_between_baseline_and_candidate(self):
+        from scripts import installation_vm as vm
+        # The baseline's daemon tries the failing release first and then still follows the candidate.
+        for baseline in ("v0.0.0-rc.1", "v0.1.0-rc.2", "v0.7.0"):
+            with self.subTest(baseline):
+                versions = (baseline, following(baseline), vm.next_minor(baseline))
+                self.assertEqual(sorted(versions, key=installation.version_key), list(versions))
+                self.assertEqual(len({"-rc." in version for version in versions}), 1)
 
     def test_public_run_downloads_both_releases_keeps_only_the_internet_and_runs_both_public_phases(self):
         from scripts import installation_vm as vm

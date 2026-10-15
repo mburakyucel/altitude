@@ -1360,11 +1360,15 @@ then uninstalled. The `update` phase installs the baseline while the account's s
 GitHub's release lookup and release downloads: the release host and its `api.` host resolve to the
 guest's loopback, and the account's user manager gives the service and its update job the throwaway
 authority as `SSL_CERT_FILE`. A release-candidate baseline reads a listing that initially names the
-baseline and an ignored draft; a stable baseline reads GitHub's latest release. The server then
-publishes the candidate. The baseline's daemon must install it automatically with no browser terminal open,
+baseline and an ignored draft; a stable baseline reads GitHub's latest release. The server first
+publishes the baseline's next patch or release candidate, a copy of the candidate whose startup exits. The
+baseline's daemon must try it automatically, record the attempt failed and automatic, and restore itself to a
+healthy baseline with fictional data, settings and TLS identity unchanged; two more forced release checks must
+keep that same failed attempt and download nothing. The server then publishes the candidate. The baseline's
+daemon must install it automatically with no browser terminal open,
 record success and serve the candidate's healthy version with a new PID. The harness then turns
 automatic updates off and publishes a newer synthetic release; a paired app **Update** request
-installs it explicitly. Each update downloads only its archive and checksum. The baseline must have
+installs it explicitly. Each update, the failed one included, downloads only its archive and checksum, once. The baseline must have
 automatic updates (`v0.1.2` or later). The hosts
 entries and unprivileged-port setting these phases need are restored afterwards. The `public-install`
 and `public-update` phases need a guest that reaches GitHub and two published releases, the candidate
@@ -1384,7 +1388,7 @@ evidence is partial acceptance toward #226 and does not close it or establish pu
 `scripts/installation_vm.py` runs the same harness on a Linux x86_64 host with KVM, at no cost and
 without GitHub runners. It needs `qemu-system-x86`, `qemu-utils` and `cloud-image-utils` (installed
 once by the machine's administrator) and read/write access to `/dev/kvm`. One command builds both
-synthetic versions from a committed revision (default: HEAD, which refuses uncommitted edits to tracked
+synthetic versions, `v0.0.0-rc.1` and `v0.1.0-rc.1`, from a committed revision (default: HEAD, which refuses uncommitted edits to tracked
 files), runs every phase
 and leaves the evidence in the results directory. The release builds and the published-release
 downloads take the GitHub repository from the checkout's `origin` remote, which the validation
@@ -1400,7 +1404,7 @@ version and commit against the tag on GitHub, and builds only the candidate from
 under the next minor version on the baseline's release channel, so the update is never a downgrade
 and the baseline follows it. Every phase then installs the published files, `install.sh` included,
 and updates from them to the candidate; in the `update` phase the published release's own daemon
-installs the candidate automatically. The guest stays
+tries the failing release, restores itself and then installs the candidate automatically. The guest stays
 offline, so the published files run exactly, but its own anonymous download from GitHub does not:
 
 ```sh
@@ -1442,8 +1446,7 @@ is restricted to the SSH forward. The online card has no IPv6. Before the harnes
 probes the internet and listeners it opens on the host's loopback and on its network address (the one
 its default route leaves from). Through the online card all three must answer and through the
 restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
-probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap`, `update`
-(not with `BASELINE`, whose published code makes its own lookup) and `reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
+probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap`, `update` and `reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
 commit, published baseline release with its commit and checksums when used, whether it was a recovery or public run, with
 `PUBLIC` the release `latest` named with its commit and checksums and the networks the guest refuses, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
 and QEMU logs; `harness.log` and the `harness-*.log` files are written as the phases run. The runner prints each stage with its

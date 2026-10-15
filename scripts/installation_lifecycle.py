@@ -7,8 +7,9 @@ The whole lifecycle runs in one invocation; `reboot-install`, `logout-verify` an
 over an SSH login from its checks once that login has closed and after the VM restarts. `recovery` installs the candidate over a baseline whose installation
 failed, after the documented cleanup. `bootstrap` runs the built install.sh through its public curl | sh command against a release
 server on this machine's loopback, whose name the root wrapper points here. `update` installs the baseline while that server
-answers for GitHub's release list and downloads, verifies automatic activation of the candidate, then opts out and
-uses the app's Update request for a newer synthetic release.
+answers for GitHub's release list and downloads, verifies that its daemon tries a release whose startup fails once and
+restores itself, then automatically activates the candidate, then opts out and uses the app's Update request for a
+newer synthetic release.
 `public-install` and `public-update` run docs/SETUP.md's command against GitHub itself (see Lifecycle.public). `mac` runs the whole macOS lifecycle under the throwaway HOME installation_mac.py gives it (see
 MacLifecycle); `mac-published` updates a published release to a later published one there, keeping the state made
 through the app (see MacLifecycle.published).
@@ -528,7 +529,8 @@ class Lifecycle:
         self.result["passed"] = True
 
     def update(self):
-        """Default automatic installation, then an explicitly manual app update, from the local release server.
+        """A failed automatic installation, the default automatic installation, then an explicitly manual app update,
+        from the local release server.
 
         The release server answers for api.github.com and github.com, which the root wrapper points at this machine's
         loopback; the account's user manager hands its authority to the service and the update job as SSL_CERT_FILE."""
@@ -558,15 +560,45 @@ class Lifecycle:
         download.mkdir(parents=True)
         (download / new.name).write_bytes(new.read_bytes())
         (download / (new.name + ".sha256")).write_text(new_sha + "\n")
+        # The candidate is on a later minor version, so a release between it and the baseline can fail first.
+        broken_version = following(before["version"])
+        broken_download = root / repository / "releases/download" / broken_version
+        broken_download.mkdir(parents=True)
+        shutil.copytree(new_package, self.home / "failing-package")
+        bad, broken = synthetic_archive(self.home / "failing-package", broken_download / f"altitude-{broken_version}.tar.gz",
+                                        broken_version, failing=True)
+        (broken_download / (bad.name + ".sha256")).write_text(digest(bad) + "\n")
+        self.result["artifacts"].append({"kind": "failure-injection", "version": broken_version, "sha256": digest(bad),
+                                         "commit": broken["commit"], "derived_from_sha256": new_sha,
+                                         "change": "version relabelled; bin/alt records its daemon invocation then exits"})
         httpd, requests = self.release_server(server)
         self.run("trust-release-server", "systemctl", "--user", "set-environment", f"SSL_CERT_FILE={server / 'ca.crt'}")
         try:
             self.install(old, old_sha)
             initial = self.healthy("installed", before)
+            retained = self.retain()
             self.wait_check(before["version"])
             status = self.doctor("automatic-default", before)["update"]
             assert status["automatic"] and status["attempt"] is None, status
-            # No browser terminal is opened anywhere in this journey. The daemon starts this update itself.
+            # No browser terminal is opened anywhere in this journey. The daemon starts each automatic update itself.
+            # A release whose startup exits is tried once: the baseline restores itself and never downloads it again.
+            publish(broken)
+            self.advance_check(broken_version)
+            failed = self.wait_attempt(broken_version, "failed")
+            assert failed["automatic"], failed
+            self.wait_version(before["version"])
+            marker = json.loads((self.results / "failed-startup.json").read_text())
+            assert marker["argv"] == ["serve"] and marker["version"] == broken_version and marker["pid"] > 0, marker
+            self.healthy("automatic-recovered", before)
+            self.doctor("automatic-recovered", before)
+            assert all(digest(path) == value for path, value in retained.items()), "The failed update changed retained data"
+            fetched = [line for line in requests if f"/releases/download/{broken_version}/" in line]
+            assert len(fetched) == 2, requests
+            for _ in range(2):
+                self.advance_check(broken_version)
+                assert self.record()["attempt"] == failed, self.record()
+            assert [line for line in requests if f"/releases/download/{broken_version}/" in line] == fetched, requests
+            write_json(self.results / "automatic-failure-no-repeat.json", {"record": self.record(), "downloads": fetched})
             publish(after)
             self.advance_check(after["version"])
             self.wait_version(after["version"], timeout=300)
@@ -577,6 +609,7 @@ class Lifecycle:
             status = self.doctor("automatic-updated", after)["update"]
             assert status["installed"] == {"version": after["version"],
                                            "notes": f"{after['repository']}/releases/tag/{after['version']}"}, status
+            assert all(digest(path) == value for path, value in retained.items()), "The update changed retained data"
             write_json(self.results / "automatic-update-record.json", self.record())
 
             # Keep the explicit Update button journey, with automatic updates opted out before publication.
@@ -635,12 +668,12 @@ class Lifecycle:
         assert sum(f"GET /repos/{repository}/{lookup} " in line for line in requests) >= 1, requests
         downloads = [line for line in requests if "/releases/download/" in line]
         expected_downloads = [f"GET /{repository}/releases/download/{version}/{name}{suffix} "
-                              for version, name in ((after["version"], new.name), (manual_version, manual_archive.name))
+                              for version, name in ((broken_version, bad.name), (after["version"], new.name),
+                                                    (manual_version, manual_archive.name))
                               for suffix in ("", ".sha256")]
-        assert len(downloads) == 4 and all(any(expected in line for line in downloads)
+        assert len(downloads) == 6 and all(any(expected in line for line in downloads)
                                           for expected in expected_downloads), requests
-        self.uninstall({})
-        self.result["passed"] = True
+        self.uninstall(retained)
 
     def public(self, update: bool):
         """docs/SETUP.md's command run against GitHub itself, as a new user runs it.
