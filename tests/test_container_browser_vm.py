@@ -23,6 +23,7 @@ class ContainerBrowserControllerTests(AltitudeCase):
         with mock.patch.object(container_vm.host, 'validation_in_container', return_value=False), \
                 mock.patch.object(container_vm.vm, 'missing_prerequisites', return_value=[]), \
                 mock.patch.object(container_vm.vm, 'base_image', return_value={}), \
+                mock.patch.object(container_vm.vm, 'user_data', container_vm.vm.user_data), \
                 mock.patch.object(container_vm.subprocess, 'run'), \
                 mock.patch.object(container_vm.vm, 'Machine') as guest:
             machine = guest.return_value
