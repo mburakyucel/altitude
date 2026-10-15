@@ -117,20 +117,22 @@ install_offline_guards()
 sys.addaudithook(_offline_audit)
 
 
-def run_native_sandbox_probe(runtime: Path, settings: list[str], probe: str, arguments: list[str]):
+def run_native_sandbox_probe(runtime: Path, settings: list[str], probe: str, arguments: list[str],
+                             profile: str = "altitude-l3", env: dict | None = None):
     """The existing explicit, zero-model native sandbox probe; no exec/turn invocation is permitted."""
     global _native_sandbox_command
     if os.environ.get("ALTITUDE_TEST_CODEX_SANDBOX") != "1":
         raise AssertionError("native sandbox probe requires ALTITUDE_TEST_CODEX_SANDBOX=1")
     if not _NATIVE_SANDBOX_BINARY:
         raise AssertionError("requested native sandbox verification requires the installed binary")
-    command = [_NATIVE_SANDBOX_BINARY, "sandbox", "-P", "altitude-l3", "-C", str(runtime)]
+    command = [_NATIVE_SANDBOX_BINARY, "sandbox", "-P", profile, "-C", str(runtime)]
     for setting in settings:
         command += ["-c", setting]
     command += ["--", sys.executable, "-c", probe, *arguments]
     _native_sandbox_command = tuple(command)
     try:
-        return subprocess.run(command, cwd=runtime, env=engines.launch_env(), capture_output=True, text=True, timeout=45)
+        return subprocess.run(command, cwd=runtime, env=env or engines.launch_env(), capture_output=True, text=True,
+                              timeout=45)
     finally:
         _native_sandbox_command = None
 
