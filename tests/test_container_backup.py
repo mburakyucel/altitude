@@ -16,6 +16,7 @@ from tests.support import AltitudeCase, container_namespace_metadata
 class BackupTests(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.patch(platform.sys, "platform", "linux")  # the Linux launcher, on any host
         self.patch(platform,'container_user_environment',return_value={'XDG_RUNTIME_DIR':str(self.tmp)})
         self.enterContext(mock.patch.dict(os.environ,{'XDG_DATA_HOME':str(self.tmp/'data')}))
 

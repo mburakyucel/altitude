@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Build and manage Altitude's rootless, volume-only Linux container from a verified release archive."""
+"""Build and manage Altitude's rootless, volume-only Linux container from a verified release archive.
+
+On a Mac the same commands drive Altitude's own Podman machine, where Podman owns the container."""
 from __future__ import annotations
 
 import argparse
@@ -64,11 +66,55 @@ def cleanup_build(root: Path) -> None:
     shutil.rmtree(root)
 
 
+def prepare_context(context: Path, archive: Path, checksum: str) -> dict:
+    app = context / "app"
+    app.mkdir(parents=True)
+    release = installation.extract(archive, checksum, app)
+    packaging = app / "container"
+    if not (packaging / "Containerfile").is_file():
+        raise ValueError("This release predates container support; use a release containing container packaging")
+    shutil.copyfile(packaging / "Containerfile", context / "Containerfile")
+    return release
+
+
+def image_labels(release: dict, checksum: str) -> list[str]:
+    return ["--label", f"{LABEL}=1", "--label", f"org.opencontainers.image.version={release['version']}",
+            "--label", f"org.opencontainers.image.revision={release['commit']}",
+            "--label", f"io.altitude.archive.sha256={checksum.lower()}"]
+
+
+def machine_build_cleanup() -> None:
+    """Remove interrupted Buildah working containers from Altitude's own machine; never prune layers (#643)."""
+    known = set(platform.container_command(["ps", "--all", "--quiet", "--no-trunc"]).split())
+    external = [ident for ident in platform.container_command(["ps", "--all", "--external", "--quiet", "--no-trunc"]).split()
+                if ident not in known]
+    if external:
+        platform.container_command(["rm", "--force", *external], timeout=30)
+
+
+def machine_build(archive: Path, checksum: str, tag: str) -> dict:
+    """Build natively for arm64 in the dedicated machine's store, under the build lock."""
+    with platform.container_build_lock(), tempfile.TemporaryDirectory(prefix="acb-") as directory:
+        machine_build_cleanup()
+        context = Path(directory) / "context"
+        release = prepare_context(context, archive, checksum)
+        try:
+            # Podman 6's only rootless network, pasta, is the machine's default for build steps.
+            platform.container_command(["build", "--force-rm", "--isolation=oci", "--memory=1g",
+                                        "--cpu-quota=100000", "--tag", tag, *image_labels(release, checksum),
+                                        str(context)], timeout=600)
+        finally:
+            machine_build_cleanup()
+    return json.loads(platform.container_command(["image", "inspect", tag]))[0]
+
+
 def build(archive: Path, checksum: str, tag: str, *, delegated: str | None = None,
           root: Path | None = None) -> dict:
     platform.container_runtime()
     if not re.fullmatch(r"localhost/[a-z0-9][a-z0-9/_.-]*:[a-zA-Z0-9_.-]+", tag):
         raise ValueError("Use a local image tag such as localhost/altitude:v0.1.0-rc.2")
+    if platform.container_machine():
+        return machine_build(archive, checksum, tag)
     if delegated is None:
         import uuid
         unit = "altitude-container-build-" + uuid.uuid4().hex + ".service"
@@ -98,19 +144,11 @@ def build(archive: Path, checksum: str, tag: str, *, delegated: str | None = Non
     if root is None:
         raise ValueError("The build needs its private store")
     context = root / "context"
-    app = context / "app"
-    app.mkdir(parents=True)
-    release = installation.extract(archive, checksum, app)
-    packaging = app / "container"
-    if not (packaging / "Containerfile").is_file():
-        raise ValueError("This release predates container support; use a release containing container packaging")
-    shutil.copyfile(packaging / "Containerfile", context / "Containerfile")
+    release = prepare_context(context, archive, checksum)
     build_command(root, ["build", "--force-rm", "--isolation=oci", "--network=slirp4netns",
                                     "--cgroup-parent", parent + "/image-build",
                                     "--memory=1g", "--cpu-quota=100000", "--tag", tag,
-                                    "--label", f"{LABEL}=1", "--label", f"org.opencontainers.image.version={release['version']}",
-                                    "--label", f"org.opencontainers.image.revision={release['commit']}",
-                                    "--label", f"io.altitude.archive.sha256={checksum.lower()}", str(context)], timeout=480)
+                                    *image_labels(release, checksum), str(context)], timeout=480)
     image = json.loads(build_command(root, ["image", "inspect", tag]))[0]
     exported = root / "image.tar"
     build_command(root, ["save", "--format=oci-archive", "--output", str(exported), tag], timeout=60)
@@ -203,7 +241,7 @@ def start(image: str, instance: str, home: str, projects: str, bind: str, public
         '--label', 'io.altitude.lineage='+identity['lineage'], '--label', 'io.altitude.pair='+identity['pair'],
         '--env', 'ALTITUDE_VOLUME_LINEAGE='+identity['lineage'], '--env', 'ALTITUDE_VOLUME_PAIR='+identity['pair'],
         '--env', 'ALTITUDE_RESTORE_SHA='+identity['archive'],
-        "--network=slirp4netns", "--cgroupns=private", "--security-opt=unmask=/proc/*",
+        "--network=" + platform.container_network(), "--cgroupns=private", "--security-opt=unmask=/proc/*",
         "--memory=4g", "--cpus=2", "--pids-limit=1024", "--stop-timeout=30",
         "--volume", f"{home}:/home/altitude:nocopy", "--volume", f"{projects}:/home/altitude/Projects:nocopy",
         "--publish", f"{publish}:{port}:{port}", "--env", f"ALTITUDE_PORT={port}",
@@ -294,9 +332,9 @@ def transfer_helper(operation: dict, action: str, source=None, target=None):
     identity = operation['identity']
     descriptor = {key:identity[key] for key in ('lineage','pair')}
     descriptor['archive'] = operation.get('data_sha', '0'*64)
-    parent = platform.container_parent(operation['unit'])
+    parent = [] if platform.container_machine() else ['--cgroup-parent', platform.container_parent(operation['unit'])]
     platform.container_command(['create','--name',operation['helper'], '--label','io.altitude.backup='+operation['id'],
-        '--cgroup-parent',parent, '--cgroupns=private','--network=none','--read-only','--read-only-tmpfs=false',
+        *parent, '--cgroupns=private','--network=none','--read-only','--read-only-tmpfs=false',
         '--security-opt=no-new-privileges','--cap-drop=all','--cap-add=CHOWN,DAC_OVERRIDE,FOWNER',
         '--memory=1g','--cpus=1','--pids-limit=64','--log-driver=none','--systemd=false',
         '--user=0:0','--workdir=/opt/altitude', *(['--interactive'] if action=='restore' else []),
@@ -435,11 +473,15 @@ def instance_pair_unlocked(value: dict) -> dict:
 
 def transfer_job(operation: dict) -> dict:
     operation.update(id=uuid.uuid4().hex)
-    operation['store']=platform.container_runtime()['store']['graphRoot']
+    operation['store']=platform.container_store_identity(platform.container_runtime())
     root=platform.container_transfer_root(create=True)/operation['id']
     root.mkdir(mode=0o700)
     record=root/'operation.json'
-    operation['unit']='altitude-container-transfer-'+operation['id']+'.service'
+    if platform.container_machine():
+        # The foreground client owns a Mac transfer; recovery refuses while it lives (#643).
+        operation['client']=platform.process_identity(os.getpid())
+    else:
+        operation['unit']='altitude-container-transfer-'+operation['id']+'.service'
     operation['helper']='altitude-transfer-'+operation['id']
     with record.open('x') as target:
         os.fchmod(target.fileno(),0o600); json.dump(operation,target)
@@ -448,6 +490,17 @@ def transfer_job(operation: dict) -> dict:
         fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY)
         try: os.fsync(fd)
         finally: os.close(fd)
+    if platform.container_machine():
+        try:
+            result = transfer_worker(record)
+        except Exception as original:
+            try:
+                cleanup_transfer(record)
+            except Exception as cleanup:
+                raise RuntimeError(f'Transfer failed ({original}); cleanup also failed ({cleanup}). Retained operation {operation["id"]}; inspect transfers before recovery.') from original
+            raise
+        cleanup_transfer(record)  # the finished helper and record, as the Linux unit's stop does; a complete backup stays
+        return result
     command=[sys.executable,'-c','import sys,json;from pathlib import Path;from scripts.container import transfer_worker;'
              'print(json.dumps(transfer_worker(Path(sys.argv[1]))))',str(record)]
     cleanup=[sys.executable,'-c','import sys;from pathlib import Path;from scripts.container import cleanup_transfer;'
@@ -474,8 +527,8 @@ def recover_transfer(identity: str) -> dict:
     record=platform.container_transfer_root()/identity/'operation.json'
     operation=json.loads(record.read_text())
     with platform.container_lineage_lock(operation['identity']['lineage']):
-        if platform.job_active(operation['unit'],platform.container_user_environment()):
-            raise ValueError('Transfer service is still active; recovery refuses')
+        if platform.container_transfer_active(operation):
+            raise ValueError('The transfer is still active; recovery refuses')
         cleanup_transfer(record)
     return {'recovered':identity,'record_removed':not record.exists()}
 

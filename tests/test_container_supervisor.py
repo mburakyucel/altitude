@@ -12,6 +12,7 @@ from tests.support import AltitudeCase
 class ContainerSupervisorTests(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.patch(platform.sys, "platform", "linux")  # the Linux launcher, on any host
         self.unit = platform.container_unit("fixture")
         self.parent = "/user.slice/user-1000.slice/user@1000.service/app.slice/" + self.unit
         self.value = {"Id": "a" * 64, "State": {"Running": True, "Pid": 42},
