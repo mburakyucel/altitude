@@ -3,7 +3,7 @@ import "./code-block.css";
 
 /**
  * Where a conversation's `run` blocks open (SPEC.md §3.3): its terminal, or the reason it has none now.
- * Surfaces without a provider (Live session, Needs you, reports) show commands with Copy only.
+ * Surfaces without a provider (Live session, reports) show commands with Copy only.
  */
 export const ProseTerminal = createContext<{ open: (command: string) => void } | { unavailable: string } | null>(null);
 

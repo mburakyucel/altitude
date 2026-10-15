@@ -270,6 +270,32 @@ def offer_parser():
     return parser
 
 
+def step_parser():
+    """`alt project step`: hand the operator one command (its text on stdin), or withdraw one by id."""
+    parser = _MessageParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("text", nargs="?", help="'-': the step on stdin, its first line naming it, with one run block")
+    parser.add_argument("--task", action="append", default=[], help="a task waiting on this step (repeat)")
+    parser.add_argument("--withdraw", metavar="ID", help="clear a step verified another way or no longer needed")
+    parser.add_argument("--reason")
+    return parser
+
+
+def step_verb(project: str, args: list[str], stdin: str) -> dict:
+    """Run `alt project step` for the project's coordinator."""
+    from . import tasks as T
+    options = step_parser().parse_args(args)
+    try:
+        if options.withdraw:
+            if options.text or options.task:
+                raise ValueError("--withdraw takes only --reason")
+            return T.withdraw_step(project, options.withdraw, options.reason or "")
+        if options.text != "-" or options.reason:
+            raise ValueError("pass the step on stdin with '-'; --reason applies to --withdraw")
+        return T.publish_step(project, stdin, options.task)
+    except (T.TransitionError, S.TaskNotFound) as exc:
+        raise ValueError(str(exc)) from exc
+
+
 OFFER_TITLE_LIMIT = 100
 OFFER_PREFIX = "Create task: "
 OFFER_MOVED_ON = "The conversation has moved on, so this was not sent."

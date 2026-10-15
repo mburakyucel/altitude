@@ -355,6 +355,9 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                 raise ValueError("alt improve takes its arguments, not stdin")
             result = improvement_verb(project, improve.parser().parse_args(args[1:]))
             return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
+        if args[:2] == ["project", "step"]:
+            result = l3.step_verb(project, args[2:], stdin)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         if args[:2] == ["project", "terminal"]:
             if stdin or args[2:] not in ([], ["--json"]):
                 raise ValueError("alt project terminal: the only option is --json")
@@ -3073,23 +3076,31 @@ class RestartBusy(RuntimeError):
 
 
 def auto_update() -> None:
-    """Install the offered release at the quiet point when automatic updates are on (operator, 2026-10-09: a fix
-    should not wait for every installation to update by hand). The restart that activation causes ends an open
-    terminal, so one defers it; detached workers survive it. Each version is tried once."""
+    """Install the offered release when automatic updates are on (operator, 2026-10-09: a fix should not wait for
+    every installation to update by hand). While it is offered, new validation, review and improvement runs wait
+    (`config.activation_pending`), so those in flight drain; then the request fences dispatch, resume, L3 and report
+    work, and the detached update activates once what runs has finished (#1003: waiting for an instant with nothing
+    in flight lost to back-to-back work). The restart ends an open terminal, so one defers it; detached workers
+    survive it. Each version is tried once."""
     if platform.containerized() or config.RELEASE is None:
         return
     version = installation.automatic_update()
     if not version:
         return
-    with config.restart_lock(exclusive=True) as quiet:
-        # Recorded under the gate, so no dispatch, L3 turn or review can start between this check and the fence.
-        if not quiet or terminal.any_open() or restart_waiting_for(check_activity=False):
-            return
-        try:
-            installation.request_update(version, automatic=True)
-        except installation.UpdateRefused:
-            return   # `alt update`, recovery or activation already runs
-    log(f"quiet point: installing Altitude {version} automatically")
+    with terminal.held_open() as terminals:
+        waiting = [f"the browser terminal open in {where}" for where in terminals]
+        waiting += [f"the adversarial review of {task}" for task in reviews.running()]
+        waiting += [f"the improvement review of {project}" for project in config.load_projects() if improve.reading(project)]
+        if held := validation.holder():
+            waiting.append(f"the validation run of {held}")
+        if not waiting:
+            try:
+                installation.request_update(version, automatic=True)
+            except installation.UpdateRefused:
+                return   # `alt update`, recovery or activation already runs
+    installation.record_update_wait(version, waiting)
+    if not waiting:
+        log(f"installing Altitude {version} automatically once work in flight finishes")
 
 
 def restart_service() -> dict:

@@ -325,12 +325,20 @@ alt update
 The daemon makes the same lookup at startup and every twelve hours and records what it finds.
 `alt doctor`, Settings → About and a notice in the app show a newer release, and an
 `alt` command you run in a terminal prints one line about it at most once a day. The app's
-**Automatic updates** switch is on by default. The daemon installs the offered release at the
-existing quiet point, with no browser terminal open: dispatch/resume claims, reviews, validation,
-report verification and coordinator turns must finish first. Running task workers keep running.
-Once the update starts, new work and browser terminals wait until it finishes; the page reconnects
-after restart and shows the installed version and release notes. Close browser terminals to allow
-an automatic update; ordinary desktop terminals do not hold it.
+**Automatic updates** switch is on by default. While a release waits for its automatic attempt,
+new validation, adversarial review and improvement runs wait, as they do for a source activation,
+and their owners hear that Altitude restarts soon to apply an update and to ask again after it. Once
+the ones in flight have finished and no browser terminal is open, the daemon starts the update. From
+that request on, new dispatches, resumes, coordinator turns, report verification and browser
+terminals wait too, and the update activates as soon as the turns and claims in flight end, within
+twenty-five minutes or it fails and the previous version keeps running. Commands under an operator
+grant hold no quiet point. An open browser terminal defers the update and lifts that wait until it
+closes. Until the update starts, the notice, Settings → About and `alt doctor` name what it waits
+for, from the daemon's last thirty-second check, for example "the validation run of
+atlas/check-the-lane" or "the browser terminal open in atlas"; once it starts, the notice shows it
+installing until Altitude restarts. Running task workers keep running. The page reconnects after
+restart and shows the installed version and release notes. Close browser terminals to allow an
+automatic update; ordinary desktop terminals do not hold it.
 
 Turn **Automatic updates** off in Settings to return to prompting. The **Update** button, after
 confirmation, runs `alt update --version` for exactly the version shown, in an independent job
@@ -663,7 +671,7 @@ when it ends; the first run builds the image, which takes several minutes. Setti
 runs**, shown only where this computer can run them, turns the runner off: a running run stops and its container and scratch files are removed
 after its log and results are retained. Each run appears on its task as a machine run with purpose
 `validation`. Activation waits for admitted validation to finish recording evidence, and new runs are
-refused while activation is pending. After an
+refused while activation or an offered [automatic update](#installed-application-lifecycle) is pending. After an
 unexpected daemon exit or host reboot, startup stops abandoned runs, retains their logs and results,
 and records them as interrupted. If copying evidence fails, the ledger names the original paths
 in the runner area; that area stays intact and new runs stay refused pending recovery. A run area

@@ -578,7 +578,7 @@ while True:
   away while activation is pending, including a request already waiting for the machine, so the
   quiet point opens after the run in flight. A request waiting for the machine does not hold activation.
   The line lives in altd, which restarts to activate, so `alt task validate` waits through the restart
-  instead: it says Altitude is activating merged changes, asks again every two seconds for up to the
+  instead: it says Altitude restarts soon to apply an update, asks again every two seconds for up to the
   line's own wait, and joins the new line once altd is back. Requests that waited across a restart
   join it in the order they ask again, not their earlier arrival order.
 - **Record.** Each run is recorded on its task like a [machine run](CLI.md#operator-grant), with
@@ -1599,10 +1599,13 @@ shell trusts, with `github.com` resolving to the loopback.
   stored answer, refused.
 - `jobs`: the account, logged in and outside any sandbox, runs the revision's own probe job rows
   (`job-pipe`, `job-file-output`, `exit-cleanup`, `stop-descendants`, `time-limit`,
-  `limit-after-owner-exit`, `logged-job` and `detached-job`) as real launchd jobs in its own domain,
-  which launchd refuses a worker sandbox. Every row must pass: Stop ends each descendant, including
-  one that leaves by `setsid`, double fork or a cleared environment or keeps forking, before the job
-  reads inactive, and the time limit holds also after its owner exits.
+  `limit-after-owner-exit`, `logged-job`, `detached-job` and `launch-input`) as real launchd jobs in
+  its own domain, which launchd refuses a worker sandbox. Every row must pass: Stop ends each
+  descendant, including one that leaves by `setsid`, double fork or a cleared environment or keeps
+  forking, before the job reads inactive, and the time limit holds also after its owner exits. The
+  `launch-input` job, confined and launched as a review is, takes its own folder and a fictional
+  sign-in from its input's first line, reads but cannot write a home settings file linked into that
+  folder, and cannot list the launcher's job folders or read another job's saved launch input there.
 - `read-only-home`: the account, logged in and outside any sandbox, runs the revision's own
   read-only-home suite cases (`tests.test_worker_writes`, `tests.test_worker_roots` and the read-only
   landing case) with Homebrew's Python 3.12. Every case must run and pass, none skipped: each confines

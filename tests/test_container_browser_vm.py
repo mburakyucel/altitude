@@ -18,6 +18,25 @@ class ContainerBrowserControllerTests(AltitudeCase):
         guest.assert_not_called()
         self.assertFalse(results.exists())
 
+    def test_failed_lane_keeps_guest_journal_before_guest_goes(self):
+        results = self.tmp / 'results'
+        # The lane replaces the guest's package list for its one process; restored here, so a later test in the
+        # same worker reads the installation VM's own list (it failed test_installation_lifecycle_harness).
+        with mock.patch.object(container_vm.host, 'validation_in_container', return_value=False), \
+                mock.patch.object(container_vm.vm, 'user_data', container_vm.vm.user_data), \
+                mock.patch.object(container_vm.vm, 'missing_prerequisites', return_value=[]), \
+                mock.patch.object(container_vm.vm, 'base_image', return_value={}), \
+                mock.patch.object(container_vm.subprocess, 'run'), \
+                mock.patch.object(container_vm.vm, 'Machine') as guest:
+            machine = guest.return_value
+            machine.wait_ready.side_effect = RuntimeError('fictional user service failed')
+            machine.ssh.return_value = SimpleNamespace(stdout='fictional journal\n', stderr='')
+            self.assertEqual(container_vm.run(results, self.tmp / 'cache'), 1)
+        self.assertEqual((results / 'guest-journal.log').read_text(), 'fictional journal\n')
+        self.assertIn('journalctl', machine.ssh.call_args.args[0])
+        machine.stop.assert_called_once_with()
+        self.assertFalse(json.loads((results / 'result.json').read_text())['passed'])
+
     def test_combined_downloads_stop_before_limit_and_counter_reset_refuses(self):
         budget = controller.Budget(self.tmp)
         machine = mock.Mock()

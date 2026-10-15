@@ -374,6 +374,8 @@ def main(argv=None) -> None:
     ps.add_parser("message", parents=[l3.project_message_parser()], help="coordinator socket: send information to a registered project")
     ps.add_parser("terminal", help="coordinator socket: read this project's terminal output (read-only)").add_argument(
         "--json", action="store_true", dest="as_json")
+    ps.add_parser("step", parents=[l3.step_parser()], help="coordinator socket: hand the operator one command in Needs you, "
+                  "opening the project terminal, until its notice or --withdraw clears it")
     ps.add_parser("setup", parents=[project_setup.parser()], help="inspect configuration; --repair requests supported daemon setup")
     r = ps.add_parser("remove"); r.add_argument("name")
     x = ps.add_parser("set"); x.add_argument("name"); x.add_argument("--reason", required=True)
@@ -614,7 +616,7 @@ def main(argv=None) -> None:
     if args.cmd not in ("install", "update", "recover", "uninstall", "doctor", "service"):
         config.ensure_root()
     c = args.cmd
-    if c == "project" and args.pcmd in ("message", "terminal"):
+    if c == "project" and args.pcmd in ("message", "terminal", "step"):
         sys.exit(f"alt project {args.pcmd} is available only through the project's coordinator socket")
     if c == "task" and args.tcmd == "offer":
         sys.exit("alt task offer is available only through the project's coordinator socket, during a chat turn")
@@ -714,10 +716,10 @@ def main(argv=None) -> None:
             nonlocal activating_until
             if activating_until is None:
                 activating_until = time.monotonic() + validation.WAIT
-                print("[altitude] Altitude is activating merged changes; this request asks again once it has "
+                print("[altitude] Altitude restarts soon to apply an update; this request asks again once it has "
                       "restarted", file=sys.stderr, flush=True)
             if time.monotonic() >= activating_until:
-                sys.exit(f"alt task validate: Altitude did not finish activating merged changes within "
+                sys.exit(f"alt task validate: Altitude did not restart for its update within "
                          f"{validation.WAIT // 60} minutes; try again")
             time.sleep(validation.WATCH_SECONDS)
         while True:
