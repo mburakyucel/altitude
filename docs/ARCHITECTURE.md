@@ -301,7 +301,8 @@ they were. `config.REPO` identifies the deployment checkout;
 `config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
 These exports sit outside worker writable roots. The maintenance tick removes an export nothing names:
 the running service's export, the target of `current` and every export named in the brief or session
-settings of a task that is unfinished or not yet cleaned up stay, so live workers keep theirs. Pruning
+settings of a task that is unfinished or not yet cleaned up stay, so live workers keep the export their persona,
+driver and launch paths name; their `alt` and hooks run the activated export ([task door](#task-door)). Pruning
 waits an hour after `current` moves, while the restart helper may still run from the previous export,
 and skips a pass when a task's launch files cannot be read. Managed
 Git guards use `.altitude-source/current/hooks`; setup and launch preflight refresh recognized
@@ -500,9 +501,9 @@ at the certificate. Every POST must come from Altitude's own page or from a clie
 `Sec-Fetch-Site`, when present, must be `same-origin` or `none`, and an `Origin` must name the
 request's `Host`. The `alt` CLI sends neither header; another site open in the operator's browser
 cannot make it send an action. The Vite dev proxy gives the dev page's own requests altd's origin and
-leaves any other page's origin in place. A JSON body is at most 1 MiB; image messages and voice
-recordings have their own limits. A client that sends no complete request line and headers within
-thirty seconds loses its connection. An internal error's text reaches only the CLI and paired
+leaves any other page's origin in place. A JSON body is at most 1 MiB; image messages, voice
+recordings and a task worker's own requests ([task door](#task-door)) have their own limits.
+A client that sends no complete request line and headers within thirty seconds loses its connection. An internal error's text reaches only the CLI and paired
 devices; any other client gets a fixed message, and altd's log keeps the details. The web app's pages refuse to be framed by any page
 (`frame-ancestors 'none'`).
 
@@ -1598,6 +1599,21 @@ project, task and attempt its record names. A request names its project and task
   altd takes and settles only the message it handed that worker, in the sends folder its layout names, without
   following a link.
 
+A worker outlives activation, so its clients follow the activated version rather than the one it launched
+with: `alt` and both hooks start from the launch version's files and, once `current` names another version (a
+source deployment's export or an installed version), run that version's same file in their place
+(`door.follow_activation`). Each command a worker starts therefore sends its door requests, and its requests to
+the owner's other routes, in the form the running altd reads; altd keeps no earlier forms. The worker's
+environment, persona, brief and engine driver stay as launched. The driver and any command already running when
+altd restarts, such as a landing waiting for its checks, keep the code they started with. An installed update
+moves `current` just before it restarts the service, so a command started in that moment can meet the previous
+altd once and be refused.
+
+A request to the owner's routes is read up to 48 MiB, the largest files a worker shows sent as base64 with the
+verb's own text, when a process in an open task's worker job holds its connection; altd decides that from the
+connection before reading the body, and every other client keeps the ordinary 1 MiB. The worker's `alt` refuses a
+larger request before sending it and names its size, so it never meets a closed connection.
+
 Each request carries an identity. altd keeps its outcome in the task's `door/` folder for as long as its client may
 ask again, so a repeat after a dropped answer or a restart gets the first answer rather than a second change; a
 request a restart interrupted
@@ -1924,7 +1940,9 @@ quiet-point waits and available Restart action independently of monitor readings
 loading, read failure, no-update and request-error states. Dismissal changes no scheduling,
 authority or fault state. Every toast has a dismiss control; inline errors and task questions
 retain their recovery and answer controls. Both engines launch L2 workers in independent jobs outside altd's own;
-running and blocked workers survive activation and are adopted afterwards. Each worker unit and the
+running and blocked workers survive activation and are adopted afterwards. A surviving worker's `alt` and
+checkpoint hooks run the activated version from their next invocation, so what they send is what the running
+altd reads ([task door](#task-door)). Each worker unit and the
 service retain `KillMode=control-group` on Linux, and on macOS Stop takes every member of the job's
 coalition, so stopping a worker takes all its descendants. A worker ends when its engine exits or
 its latest turn fails with no activity since; an active job alone is not a live worker. An engine can stay
