@@ -316,7 +316,8 @@ class TestInstallationVm(AltitudeCase):
 
     def test_recovery_and_public_runs_need_a_published_baseline_and_are_separate(self):
         for flags, refusal in ((["--recovery"], "need --baseline-release"), (["--public"], "need --baseline-release"),
-                               (["--baseline-release", "v0.1.0-rc.2", "--recovery", "--public"], "separate runs")):
+                               (["--baseline-release", "v0.1.0-rc.2", "--recovery", "--public"], "separate runs"),
+                               (["--baseline-release", "v0.1.2", "--trust"], "separate run")):
             with self.subTest(flags=flags):
                 result = subprocess.run([sys.executable, "-B", str(REPO / "scripts/installation_vm.py"),
                                          str(self.tmp / "results"), *flags], capture_output=True, text=True, timeout=30)
@@ -469,6 +470,45 @@ class TestInstallationVm(AltitudeCase):
                 versions = (baseline, following(baseline), vm.next_minor(baseline))
                 self.assertEqual(sorted(versions, key=installation.version_key), list(versions))
                 self.assertEqual(len({"-rc." in version for version in versions}), 1)
+
+    def test_trust_run_installs_the_browsers_while_online_then_runs_only_the_trust_phase_isolated(self):
+        from scripts import installation_vm as vm
+        events = []
+        native = subprocess.run
+
+        class Machine:
+            def __init__(self, work, image):
+                pass
+            start = wait_ready = stop = copy = lambda self, *args, **kwargs: None
+            ssh = lambda self, *args, **kwargs: subprocess.CompletedProcess(args, 0, "Ubuntu 24.04 fixture\n", "")
+            unplug_online_card = lambda self: events.append("unplugged")
+
+        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False}, {"internet": False}])
+        results = self.tmp / "results"
+        with mock.patch.object(vm.subprocess, "run", side_effect=lambda command, **kw: subprocess.CompletedProcess(
+                    command, 0, "QEMU emulator version 9.0 fixture\n", "") if command[0] == "qemu-system-x86_64"
+                    else native(command, **kw)), \
+                mock.patch.object(vm, "build", side_effect=lambda commit, work, results, versions: events.append("built")), \
+                mock.patch.object(vm, "base_image", return_value={"image": "fixture"}), mock.patch.object(vm, "Machine", Machine), \
+                mock.patch.object(vm, "browsers", side_effect=lambda machine, work, log: events.append("browsers") or {"node": "v22"}), \
+                mock.patch.object(vm, "harness", side_effect=lambda machine, commits, phase, log: events.append(phase) or 0), \
+                mock.patch.object(vm, "reachable", side_effect=lambda machine: next(reachable)), mock.patch("sys.stdout"):
+            code = vm.run(results, "c" * 40, self.tmp / "cache", trust=True)
+        record = json.loads((results / "vm.json").read_text())
+        self.assertEqual((code, record["passed"], record["trust"], record["browsers"]), (0, True, True, {"node": "v22"}))
+        self.assertEqual(events, ["built", "browsers", "unplugged", "trust"])
+        self.assertIn("installation_browsers.mjs", vm.HARNESS)
+
+    def test_the_guests_playwright_core_must_match_the_lockfile(self):
+        from scripts import installation_vm as vm
+        machine = mock.MagicMock()
+        with mock.patch.object(vm, "download", side_effect=lambda url, path: path.write_bytes(b"substituted")) as fetched:
+            with self.assertRaisesRegex(SystemExit, "does not match the integrity web/pnpm-lock.yaml records"):
+                vm.browsers(machine, self.tmp, self.tmp / "guest-browsers.log")
+        self.assertRegex(fetched.call_args.args[0], r"^https://registry.npmjs.org/playwright-core/-/playwright-core-[0-9.]+\.tgz$")
+        machine.copy.assert_not_called()
+        machine.ssh.assert_not_called()
 
     def test_public_run_downloads_both_releases_keeps_only_the_internet_and_runs_both_public_phases(self):
         from scripts import installation_vm as vm
