@@ -1973,21 +1973,26 @@ project's settings, or when they ask L3 in chat; each needs their agreement to t
 sheet shows.
 
 `improve.py` builds the evidence in code. Signals are exact, versioned predicates over existing task
-records (`SIGNALS_VERSION`): question revisions with no operator message since the previous one,
-refused merge approvals and grants, operator messages after a report, review requests beyond the
-first per subject, findings the final report leaves open, CI rechecks, resume and dispatch failures
-and system faults, reports superseded after verification contradicted them, and escalations. A
-delivery is recorded for every pushed head and a message continuing a reported task supersedes its
-report, so neither counts on its own. The window is
+records (`SIGNALS_VERSION`): question revisions with no operator or L3 message since the previous
+one, refused merge approvals and grants, operator messages after a report, the third and later
+completed review of a subject, findings the final report leaves open, CI rechecks, resume and
+dispatch failures and system faults, reports superseded after verification contradicted them, and
+escalations. A delivery is recorded for every pushed head and a message continuing a reported task
+supersedes its report, so neither counts on its own; a question revised after a reply follows it up,
+and a review re-run after a failed one, a review of new material (`additional`) and one review of the
+fixes are the designed review path. The window is
 tasks finished in the last 14 days, never before 2026-09-22 07:00 UTC and never older than 30 days.
 Task sheets, ranked by signals and operator messages, carry title, outcome, durations and tokens,
-signals with the places that produced them and what each event recorded (its reason or error, or
-what verification found in a replaced report), each question on one line with every revision's place
+signals with the places that produced them and what each event recorded (its reason or error, the
+question an escalation handed on with the answer it got, or what verification found in a replaced
+report), each question on one line with every revision's place, how many revisions followed a reply
 and how it was settled, review findings with their dispositions, and up to four paired quotes (the
-message answered, the operator's words, the reply, 300 characters each). Sheets are whole lines, at
-most 3 KiB each and 48 KiB together: after the head and signal counts, the operator's quotes take the room
-first, then what the signals' events recorded, then questions, then findings, and a last line counts what
-did not fit. Tasks that do not fit are listed
+message answered, the operator's words, the reply, 300 characters each). The quotes are the operator
+messages a signal counts, then those where the operator stepped in unasked, then answers to the owner's
+questions, each kind spread over the conversation. Sheets are whole lines, at
+most 3 KiB each and 48 KiB together: after the head and signal counts, the operator's two most telling
+quotes take the room first, then what the signals' events recorded, then questions, then the other quotes,
+then findings, and a last line counts what did not fit. Tasks that do not fit are listed
 by counts. Operator chat turns fill the remaining room as paired quotes, followed by
 current task titles and earlier suggestions with their outcome (their decision, lapse or L3's reason for
 dropping them). The prompt is at most 64 KiB.

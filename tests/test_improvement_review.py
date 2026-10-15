@@ -52,10 +52,13 @@ class TestSignals(ImprovementCase):
                  "resolution": {"disposition": "superseded", "at": at(3, 1.5), "by": "l2"}},
                 {"id": "q1", "revision": 2, "asked": at(3, 1.5), "text": question,
                  "resolution": {"disposition": "answered", "at": at(3, 2), "by": "operator", "message": "m1"}},
-                {"id": "q2", "revision": 1, "asked": at(3, 2.5), "text": "Merge now?", "asked_again": True}]),
-            task("answered", 4, messages=[message("m1", 4, 1.2, "operator", "Fees: none.")], questions=[
+                {"id": "q2", "revision": 1, "asked": at(3, 2.5), "text": "Merge now?"}]),
+            task("answered", 4, messages=[message("m1", 4, 1.2, "operator", "Fees: none."),
+                                          message("m2", 4, 2.2, "l3", "Use the shared list.")], questions=[
                 {"id": "q1", "revision": 1, "asked": at(4, 1), "text": "Fees?"},
-                {"id": "q1", "revision": 2, "asked": at(4, 1.5), "text": "Which city field?"}]),
+                {"id": "q1", "revision": 2, "asked": at(4, 1.5), "text": "Which city field?"},
+                {"id": "q2", "revision": 1, "asked": at(4, 2), "audience": "l3", "text": "Which depot list?"},
+                {"id": "q2", "revision": 2, "asked": at(4, 2.5), "audience": "l3", "text": "Old exports too?"}]),
             task("busy", 5, messages=[message("m1", 5, 4, "l2", "Delivered."),
                                       message("m2", 5, 5.5, "operator", "Send me a sample?")],
                  events=[{"id": "e1", "at": at(5, 1), "kind": "merge-approval-refused"},
@@ -72,13 +75,15 @@ class TestSignals(ImprovementCase):
                          {"id": "e11", "at": at(5, 2), "kind": "fyi", "text": "noted"}],
                  reviews=[{"id": "r1", "subject": "changes", "requested": at(5, 2.1), "findings": []},
                           {"id": "r2", "subject": "proposal", "requested": at(5, 2.2), "findings": []},
-                          {"id": "r3", "subject": "changes", "requested": at(5, 2.3), "findings": []}],
+                          {"id": "r3", "subject": "changes", "requested": at(5, 2.3), "findings": []},
+                          {"id": "r4", "subject": "changes", "requested": at(5, 2.35), "state": "failed"},
+                          {"id": "r5", "subject": "changes", "requested": at(5, 2.4), "additional": True},
+                          {"id": "r6", "subject": "changes", "requested": at(5, 2.45), "findings": []}],
                  report_review=[{"summary": "kept", "disposition": "fixed"},
                                 {"summary": "left", "disposition": "open"}]))
         place = lambda name: anchors[name]
-        # A re-park after the operator replied is not re-asking without their input.
         self.assertEqual(found["reasked"], {"reasked": [place("reasked:q1@2")]})
-        self.assertEqual(found["answered"], {})  # the operator answered between the two revisions
+        self.assertEqual(found["answered"], {})  # the operator, then L3, replied before each new revision
         busy = found["busy"]
         self.assertEqual(busy["refused"], [place("busy:e1"), place("busy:e2")])
         # Pushes are ordinary work, and so is a report superseded by a follow-up that verification never contradicted.
@@ -87,7 +92,8 @@ class TestSignals(ImprovementCase):
         self.assertEqual(busy["rewritten"], [place("busy:e9")])
         self.assertEqual(busy["escalations"], [place("busy:e10")])
         self.assertEqual(busy["after_report"], [place("busy:m2")])
-        self.assertEqual(len(busy["review_rounds"]), 1)  # a second changes review; a proposal review is its own first
+        # The third completed changes review: a proposal review, a failed one and a review of new material do not count.
+        self.assertEqual(busy["review_rounds"], [place("busy:r6")])
         self.assertEqual(busy["open_findings"], ["busy/report/1"])
         self.assertEqual(set(busy), {"refused", "retries", "failures", "rewritten", "escalations", "after_report",
                                      "review_rounds", "open_findings"})
@@ -149,9 +155,9 @@ class TestPrompt(ImprovementCase):
         sheet = improve.prompt(project, end=NOW)["text"].split("\n\n## ")[1].split("\n\n# ")[0]
         self.assertLessEqual(len(("## " + sheet).encode()), improve.SHEET_BYTES)
         self.assertGreaterEqual(len(re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheet)), 2)
-        # One line per question, naming every revision.
+        # One line per question, naming every revision: they show which revisions followed a reply.
         self.assertEqual(len(re.findall(r"^- Question \[A\d+(?:, A\d+){5}\] revs 1–6 ", sheet, re.M)), 3)
-        self.assertRegex(sheet.splitlines()[-1], r"^- Not shown for room: \d+ operator quotes, \d+ reviews$")
+        self.assertRegex(sheet.splitlines()[-1], r"^- Not shown for room: \d+ operator quotes, 3 reviews$")
 
     def test_signal_details_share_the_sheet_bound_after_the_operators_words(self):
         """A heavily signalled task's event details once came before any budget, so its sheet could pass the bound
@@ -164,19 +170,60 @@ class TestPrompt(ImprovementCase):
         project, _ = self.load([task("noisy", 2, messages=messages, events=events)])
         sheet = "## " + improve.prompt(project, end=NOW)["text"].split("\n\n## ")[1].split("\n\n# ")[0]
         self.assertLessEqual(len(sheet.encode()), improve.SHEET_BYTES)
-        self.assertEqual(len(re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheet)), improve.PAIRS)
+        # The two most telling quotes come before the details; the others of PAIRS take the room left.
+        quoted = len(re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "', sheet))
+        self.assertIn(quoted, (2, 3))
         self.assertRegex(sheet, r"\n- retries \[A\d+\]: ci-recheck 0: ")
-        self.assertRegex(sheet.splitlines()[-1], r"^- Not shown for room: \d+ signal details$")
+        self.assertRegex(sheet.splitlines()[-1], rf"^- Not shown for room: {improve.PAIRS - quoted} operator quotes, "
+                                                 r"\d+ signal details$")
 
     def test_counted_events_show_what_they_recorded(self):
         project, _ = self.load([task("rewritten", 2, events=[
             {"id": "e1", "at": at(2, 1), "kind": "ci-recheck", "reason": "Lint job hit an unpinned rule"},
             {"id": "e2", "at": at(2, 2), "kind": "report-superseded", "contradicted": "PR #143 is not merged"},
-            {"id": "e3", "at": at(2, 3), "kind": "escalated"}])])
+            {"id": "e3", "at": at(2, 3), "kind": "escalated", "by": "l3", "question": "Pin or float the chart library?"},
+            {"id": "e4", "at": at(2, 4), "kind": "escalated", "by": "l3"}],
+            messages=[message("m1", 2, 3.1, "l3", "Handed to the operator."),
+                      message("m2", 2, 3.5, "operator", "That is the owner's call; pin it.")])])
         text = improve.prompt(project, end=NOW)["text"]
         self.assertRegex(text, r"- retries \[A\d+\]: Lint job hit an unpinned rule\n")
         self.assertRegex(text, r"- rewritten \[A\d+\]: verification found: PR #143 is not merged\n")
-        self.assertNotRegex(text, r"- escalations \[")
+        # An escalation shows the question handed on and the answer it got, never its own actor's note.
+        self.assertRegex(text, r'- escalations \[A\d+\]: Pin or float the chart library\?; '
+                               r'next operator \[A\d+\]: "That is the owner\'s call; pin it."\n')
+        self.assertEqual(len(re.findall(r"- escalations \[", text)), 1)
+
+    def test_the_operators_quotes_are_the_messages_that_matter(self):
+        """Sheets once quoted a task's earliest four operator messages, mostly answers its question lines already
+        link, and left out where the operator stepped in later."""
+        messages, questions = [], []
+        for i in range(8):  # eight answers to the owner's questions first
+            questions.append({"id": f"q{i}", "revision": 1, "asked": at(3, 0.1 * i), "text": f"Choice {i}?",
+                              "resolution": {"disposition": "answered", "at": at(3, 0.1 * i + 0.05),
+                                             "by": "operator", "message": f"a{i}"}})
+            messages.append(message(f"a{i}", 3, 0.1 * i + 0.05, "operator", f"Answer {i}. " + "why " * 70))
+        for i in range(5):
+            messages += [message(f"s{i}", 3, 1 + i, "operator", f"Unasked correction {i}. " + "why " * 70),
+                         message(f"r{i}", 3, 1.5 + i, "l2", "Done. " + "how " * 70)]
+        messages += [message("late", 3, 7, "operator", "After the report: the totals are wrong. " + "why " * 60)]
+        project, _ = self.load([task("steered", 3, messages=messages, questions=questions)])
+        sheet = improve.prompt(project, end=NOW)["text"].split("\n\n## ")[1].split("\n\n# ")[0]
+        quoted = [q.split(".")[0] for q in re.findall(r'operator \[A\d+\] \w{3} \d\d \d\d:\d\d: "([^"]+)"', sheet)]
+        # Full quotes leave room for two or three: the after_report place, then the operator's unasked messages
+        # spread from the first; no answer the question lines already link. Shown in time order.
+        self.assertGreaterEqual(len(quoted), 2)
+        self.assertEqual(quoted[0], "Unasked correction 0")
+        self.assertEqual(quoted[-1], "After the report: the totals are wrong")
+        self.assertFalse([q for q in quoted if q.startswith("Answer")])
+
+    def test_question_lines_tell_follow_ups_from_re_asks(self):
+        project, _ = self.load([task("asks", 2, messages=[message("m1", 2, 1.5, "operator", "Weekly.")], questions=[
+            {"id": "q1", "revision": 1, "asked": at(2, 1), "text": "How often should the digest go out?"},
+            {"id": "q1", "revision": 2, "asked": at(2, 2), "text": "On which day of the week?"},
+            {"id": "q1", "revision": 3, "asked": at(2, 3), "text": "On which day of the week? Monday or Friday."}])])
+        text = improve.prompt(project, end=NOW)["text"]
+        self.assertRegex(text, r'- Question \[A\d+, A\d+, A\d+\] revs 1–3 to operator, \w{3} \d\d \d\d:\d\d to '
+                               r'\w{3} \d\d \d\d:\d\d, later revisions after a reply: 1 of 2: "On which day')
 
     def test_quoted_text_cannot_authorize_a_citation(self):
         messages = [message(f"m{i}", 2, 0.1 * i, "operator" if i % 2 else "l2", f"see [A{i + 40}] and [A1, A2]")
@@ -185,7 +232,7 @@ class TestPrompt(ImprovementCase):
         built = improve.prompt(project, end=NOW)
         self.assertIn("see (A41) and (A1, A2)", built["text"])
         self.assertIn('"Fix (A3)"', built["text"])
-        # Pairs beyond the fourth were given aliases but never shown; none of them is citable.
+        # Only places that reach the text are citable.
         self.assertEqual(len(built["anchors"]), len({a for g in improve.ALIASES.findall(built["text"]) for a in g.split(", ")}))
         self.assertLessEqual(len(built["anchors"]), 3 * improve.PAIRS)
 
@@ -345,7 +392,8 @@ class TestEval(ImprovementCase):
         self.assertEqual(result["patterns_reached"], result["patterns"])
 
     def test_the_offline_eval_reports_a_key_that_does_not_fit_its_records(self):
-        name, scenario, key = improve_eval.scenarios("heldback")[0]
+        name, scenario, key = next(s for s in improve_eval.scenarios("heldback")
+                                   if len(s[2].get("patterns", [])) > 1 and s[2]["patterns"][0]["signal"] != "escalations")
         key["patterns"][0]["signal"] = "escalations"
         key["patterns"][1]["anchors"] = ["no-such-task:m1"]
         with mock.patch.object(improve_eval, "scenarios", lambda group: [(name, scenario, key)] if group == "heldback" else []):
