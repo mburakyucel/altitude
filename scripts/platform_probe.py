@@ -158,7 +158,8 @@ def time_limit():
     result = subprocess.run(platform.job_command(job, ["/bin/sleep", "60"], env(), runtime_max=2),
                             stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
     elapsed = time.monotonic() - started
-    check(result.returncode != 0 and elapsed < 15, f"status {result.returncode} after {elapsed:.1f}s")
+    # A job that never starts also fails at once; only one stopped at its limit has run for two seconds.
+    check(result.returncode != 0 and 2 <= elapsed < 15, f"status {result.returncode} after {elapsed:.1f}s")
     check(not platform.job_active(job, env()), "job active after its limit")
     return f"stopped at the 2s limit after {elapsed:.1f}s (status {result.returncode})"
 
