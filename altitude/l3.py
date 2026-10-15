@@ -124,7 +124,6 @@ try:
         client.settimeout(130)
         client.connect({json.dumps(str(broker))})
         client.sendall((json.dumps(request) + "\\n").encode())
-        client.shutdown(socket.SHUT_WR)
         data = bytearray()
         while chunk := client.recv(65536):
             data.extend(chunk)
@@ -147,7 +146,6 @@ try:
         client.settimeout(130)
         client.connect({json.dumps(str(broker))})
         client.sendall((json.dumps(request) + "\\n").encode())
-        client.shutdown(socket.SHUT_WR)
         data = bytearray()
         while chunk := client.recv(65536):
             data.extend(chunk)
@@ -176,7 +174,6 @@ try:
         client.connect({json.dumps(str(broker))})
         request = {{"kind": "service", "unit": unit}}
         client.sendall((json.dumps(request) + "\\n").encode())
-        client.shutdown(socket.SHUT_WR)
         data = bytearray()
         while chunk := client.recv(65536):
             data.extend(chunk)

@@ -20,7 +20,7 @@ from unittest import mock
 from tests.support import AltitudeCase
 from datetime import timedelta
 
-from altitude import config, digest, engines, l3, push, server, state as S, tasks as T
+from altitude import config, digest, engines, l3, platform, push, server, state as S, tasks as T
 
 
 class _Service(http.server.BaseHTTPRequestHandler):
@@ -561,6 +561,7 @@ class TestPush(AltitudeCase):
 
     def test_without_openssl_push_is_simply_unavailable(self):
         self.setenv("PATH", str(self.tmp))
+        self.patch(platform, "_MAC_OPENSSL", ())  # nor in Homebrew's standard places
         with self.assertRaises(push.PushFailure):
             push.public_key()
 
@@ -634,6 +635,7 @@ class TestAlertsAPI(AltitudeCase):
 
     def test_a_machine_that_cannot_sign_says_so_instead_of_handing_out_a_key(self):
         self.setenv("PATH", str(self.tmp))
+        self.patch(platform, "_MAC_OPENSSL", ())  # nor in Homebrew's standard places
         status, out = self.call("GET", "/api/alerts")
         self.assertEqual((status, out["key"]), (200, None))
         self.assertIn("OpenSSL", out["why"])

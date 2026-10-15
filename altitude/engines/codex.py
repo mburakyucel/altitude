@@ -522,7 +522,6 @@ def codex_l3_mcp(broker: str) -> None:
                     client.settimeout(130)
                     client.connect(broker)
                     client.sendall((json.dumps(params["arguments"]) + "\n").encode())
-                    client.shutdown(socket.SHUT_WR)
                     with client.makefile("rb") as stream:
                         response = json.load(stream)
                 result = {"content": [{"type": "text", "text": json.dumps(response)}],

@@ -4,6 +4,7 @@ import os
 import select
 import subprocess
 import sys
+import threading
 import unittest
 from collections import Counter
 from contextlib import contextmanager
@@ -57,6 +58,45 @@ class RuntimeStorage(AltitudeCase):
             pass
         with config.project_activity(self.project, exclusive=True) as acquired:
             self.assertTrue(acquired)
+
+    def test_two_threads_creating_one_lock_or_record_both_open_it(self):
+        """Two coordinator turns of different projects take a new home-wide lock together, as the first ones after a
+        start do; macOS can refuse the create that loses that race (#914)."""
+        opens = {"restart.lock": lambda path: storage.runtime_lock(path).close(),
+                 "log.jsonl": lambda path: os.close(storage.open_runtime(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT))}
+        for round in range(50):
+            for name, opened in opens.items():
+                path, barrier, failures = self.runtime / f"race-{round}" / name, threading.Barrier(2), []
+
+                def create():
+                    barrier.wait()
+                    try:
+                        opened(path)
+                    except OSError as error:
+                        failures.append(error)
+
+                threads = [threading.Thread(target=create) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+                self.assertEqual(failures, [])
+        # The lost race on any kernel: the first create is refused, the name exists by then.
+        real, refused = os.open, []
+
+        def losing(name, flags, *args, **kwargs):
+            if flags & os.O_CREAT and not refused:
+                refused.append(name)
+                os.close(real(name, flags, *args, **kwargs))
+                raise FileNotFoundError(name)
+            return real(name, flags, *args, **kwargs)
+
+        for name, opened in opens.items():
+            refused.clear()
+            with mock.patch.object(storage.os, "open", side_effect=losing):
+                opened(self.runtime / "lost" / name)
+            self.assertEqual(refused, [name])
+            self.assertTrue((self.runtime / "lost" / name).is_file())
 
     def test_simulated_service_backend_keeps_native_filesystem_search_flags(self):
         """Cross-platform service fixtures still operate real storage on the runner's kernel."""
