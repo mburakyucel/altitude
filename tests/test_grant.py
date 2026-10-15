@@ -251,8 +251,18 @@ class TestOperatorGrant(AltitudeCase):
         question = self.ask()
         row = self.answer(question)
         grant = dict(question=question["id"], revision=question["revision"], reason="Burak said yes to this purpose.")
-        with self.assertRaisesRegex(T.TransitionError, "answered the current operator question"):
+        self.tick()
+        relay = T.message(self.project, self.slug, "l3", "The operator said yes in project chat.", by="l3")
+        # Cited before the question is resolved, the operator's answer names the missing step; an unknown or
+        # non-operator message keeps the ordinary refusal.
+        with self.assertRaisesRegex(T.TransitionError, f"question {question['id']} is still open: resolve it from "
+                                                       "the operator's answer with `alt task resolve` first"):
             T.record_grant(self.project, self.slug, row["id"], actor="l2", expected_attempt=1, **grant)
+        for cited in ("0" * 32, relay["id"]):
+            with self.assertRaisesRegex(T.TransitionError, "cite the operator message that answered the current"):
+                T.record_grant(self.project, self.slug, cited, actor="l2", expected_attempt=1, **grant)
+        self.assertEqual(len(self.events("grant-refused")), 3)
+        self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
         self.resolve(question, row)
         for attempt, source in ((2, "task"), (1, "project")):
             with self.assertRaisesRegex(T.TransitionError, "current attempt, from the operator's task-chat answer"):

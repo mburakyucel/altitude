@@ -3207,6 +3207,14 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                 if (decision != current or decision["status"] != "resolved" or decision["audience"] != "operator"
                         or saved.get("disposition") != "answered" or saved.get("remaining")
                         or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
+                    if decision == current and decision["status"] == "open" and decision["audience"] == "operator":
+                        try:
+                            _decision_source(project, from_task or slug, decision, approval, source, exact=True)
+                        except TransitionError:
+                            pass
+                        else:  # an operator message that could answer it, cited before the question was resolved
+                            raise ValueError(f"question {question} is still open: resolve it from the operator's "
+                                             "answer with `alt task resolve` first, then record the grant")
                     raise ValueError("cite the operator message that answered the current operator question revision")
                 operator = _decision_source(project, from_task or slug, decision, approval, source, exact=True)
             previous = task.get("grant")
