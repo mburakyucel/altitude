@@ -342,7 +342,6 @@
      "asked": "2026-10-30T09:26:00+00:00",
      "audience": "operator",
      "text": "How many instalments should the plan allow?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-30T10:41:00+00:00",
@@ -355,7 +354,6 @@
      "asked": "2026-10-30T10:41:00+00:00",
      "audience": "operator",
      "text": "For members who join mid-season: fewer instalments ending with everyone else's, or the full count running into next season?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-30T11:50:00+00:00",

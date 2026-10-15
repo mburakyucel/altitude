@@ -59,7 +59,6 @@ def _questions(slug: str, entries: list[dict], messages: dict[str, str]) -> list
                     "status": "resolved" if resolution else "open", "audience": q.get("audience", "operator"),
                     "question": q["text"], "asked": q["asked"], "since": q["asked"], "asked_by": "l2",
                     "kind": "asks", "resolution": resolution,
-                    **({"asked_again": True} if q.get("asked_again") else {}),
                     "message": {"id": anchor, "at": q["asked"], "role": "l2", "by": "l2", "text": q["text"],
                                 "question_id": q["id"], "question_revision": q["revision"]}})
     return out
@@ -122,8 +121,9 @@ def load(scenario: dict) -> dict[str, str]:
             anchors[f"{slug}:{q['id']}@{q['revision']}"] = f"{slug}/q/{q['id']}/{q['revision']}"
         reviews = []
         for review in task.get("reviews", []):
-            reviews.append({"id": review["id"], "subject": review["subject"], "state": "completed",
-                            "requested_at": review["requested"], "requested_by": "l2",
+            reviews.append({"id": review["id"], "subject": review["subject"], "state": review.get("state", "completed"),
+                            "additional": bool(review.get("additional")), "requested_at": review["requested"],
+                            "requested_by": "l2",
                             "result": {"text": "", "findings": review.get("findings", []), "limitations": []},
                             "dispositions": review.get("dispositions", []),
                             "message": {"id": review["id"], "at": review["requested"], "role": "system", "by": "l2",

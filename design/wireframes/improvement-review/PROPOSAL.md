@@ -140,10 +140,10 @@ with like. The card names the signal itself, never a narrower claim the predicat
 
 | Signal (card wording) | Predicate |
 | --- | --- |
-| Questions re-asked without your input | A question's new revision with no operator message to that task since its previous revision |
+| Questions re-asked with no reply in between | A question's new revision with no operator or L3 message to that task since its previous revision |
 | Approvals refused | `merge-approval-refused` and `grant-refused` events |
 | Your messages after a report | Operator messages on a task after its owner reported, before it closed |
-| Review rounds beyond the first | `review-requested` events beyond the first per subject (proposal, changes) |
+| Review rounds beyond the second | `review-requested` events of the third and later completed review per subject (proposal, changes); failed, withdrawn and `additional` reviews do not count |
 | Review findings open at completion | Findings the owner's final report leaves `open` |
 | CI rechecks | `ci-recheck` events (a delivery is recorded for every pushed head, so pushes never count) |
 | Resume or dispatch failures | `resume-failed` and `dispatch-failed` events and system faults |
@@ -357,7 +357,7 @@ task; the last card leaving leaves **Nothing needs you.** alone, or the empty pa
 - **Seen in**: up to three underlined links, each a task title opening its cited place (question,
   message or event). More citations show **<n> more** (underlined), which expands the rest in place.
 - The count, muted, in the signal's own words: **<Signal> in <n> of <N> tasks**, e.g. **Questions
-  re-asked without your input in 3 of 14 tasks**; absent when the suggestion has no signal.
+  re-asked with no reply in between in 3 of 14 tasks**; absent when the suggestion has no signal.
 - **Make a task** (bordered, accent text) and **Dismiss** (ghost beside it). No filled buttons, so the
   card never competes with a question above it.
 - Footer: an underlined **Details**, opening in place: what was read and left out, what L3 dropped and
@@ -375,7 +375,7 @@ task; the last card leaving leaves **Nothing needs you.** alone, or the empty pa
 | Typed answer | You reply in chat; L3 records it citing your message and the card changes the same way. |
 | Lapsed | The suggestion folds to its chip, muted title and **Not decided**; the card leaves Needs you once nothing on it is undecided. |
 | Pattern found again after a task for it | A muted **Seen again after <task>** line under the explanation. |
-| Later run, enough work since a change | The card opens with **Since earlier changes**: one row per accepted suggestion with a signal, e.g. **Questions re-asked without your input: 3 of 14 tasks before, 0 of 11 since**, linking the task that made the change. |
+| Later run, enough work since a change | The card opens with **Since earlier changes**: one row per accepted suggestion with a signal, e.g. **Questions re-asked with no reply in between: 3 of 14 tasks before, 0 of 11 since**, linking the task that made the change. |
 | Conversation loading, read failure, listening, microphone denied | Unchanged (SPEC §3.3, §3.6); the card asks for no permission. |
 
 Phone (390 px) and desktop use the same card in the conversation column and in Needs you; on the phone

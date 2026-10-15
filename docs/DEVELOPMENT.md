@@ -1138,8 +1138,9 @@ The eval measures whether the improvement review finds recurring friction, on fi
 before any real conversation is read
 ([design](../design/wireframes/improvement-review/PROPOSAL.md#proving-it-works)). Scenarios are
 fictional projects in `tests/fixtures/improvement/` ([format](../tests/fixtures/improvement/README.md)),
-in three sets: `develop/` for writing the reviewer's instructions, `heldback/` for the reported
-numbers, and `scale/` for projects at a real project's volume (two planted, one control). Each command
+in three sets: `develop/` for writing the reviewer's instructions, including every set already run live,
+`heldback/` for the reported numbers, and `scale/` for held-back projects at a real project's volume (one
+planted, one control). Each command
 loads the scenarios into its own throwaway Altitude home and refuses the real one.
 
 The offline part runs without a model and is part of `make check`
@@ -1152,8 +1153,8 @@ ALTITUDE_HOME="$(mktemp -d)" python3 -m altitude.improve_eval offline
 It prints one line per signal: places planted in `signals.json`, how many fired, how many reached
 their own task's sheet under their alias, ordinary places that fired, and planted scenario patterns
 whose places reach their prompt. It fails when a signal misses a planted place or fires on ordinary
-work (repeated pushes, a report continued by a message, a question re-asked after the operator
-answered, a first review), when a prompt or sheet is over its bound, when a long conversation's sheet
+work (repeated pushes, a report continued by a message, a question revised after an operator or L3
+reply, a second review, a review re-run after a failed one or of new material), when a prompt or sheet is over its bound, when a long conversation's sheet
 quotes no operator message, or when a scenario's key does not fit its records.
 
 The live part calls the reviewer on the plan and runs by hand:
