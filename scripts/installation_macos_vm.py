@@ -919,10 +919,51 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
               f"health reports {answer}")
         return answer
 
+    def browser(name: str, path: str, code: str | None = None, jar: str = f"{SHARED}/browser-cookies") -> tuple[int, dict]:
+        """The page's own request at the printed origin, from a browser that trusts the generated authority."""
+        command = (f"curl -sS --max-time 10 --cacert ~/.config/altitude/tls/ca.crt --connect-to ::127.0.0.1: "
+                   f"-b {jar} -c {jar} -A 'Mozilla/5.0 (Macintosh) macOS VM lane' -w '\\n%{{http_code}}' ")
+        if code is not None:
+            command += f"-H 'Origin: {origin}' -H 'Content-Type: application/json' --data {quote(json.dumps({'code': code}))} "
+        body, _, status = step(name, command + quote(origin + path)).stdout.rpartition("\n")
+        return int(status), json.loads(body) if body.startswith("{") else {}
+
+    def paired() -> bool:
+        return browser("access", "/api/access")[1].get("paired") is True
+
     installed = step("install", public_command(repository), timeout=300)
     check(installed.returncode == 0 and f"Altitude {version} is installed" in installed.stdout, "the installer failed")
-    port = int(re.search(r"(?:Address|Open Altitude): https://\S+:(\d+)", installed.stdout).group(1))
+    origin, port = re.search(r"^Address: (https://\S+:(\d+)) ", installed.stdout, re.M).groups()
+    port = int(port)
+    link = re.search(r"It pairs this browser and opens First run:\n +(\S+)/projects#pair=(\S+)\n +Works once, for 10 "
+                     r"minutes\. Keep it private\.\n", installed.stdout)
+    check(link is not None and link.group(1) == origin, "the installer printed no private pairing link for its address")
+    code = link.group(2)
+    running()
+    # Opening the printed link: the page at its origin, then the page's pairing request with the fragment's code.
+    check(browser("page", "/projects")[0] == 200 and not paired(), "the link's page is not served to an unpaired browser")
+    status, answer = browser("pair", "/api/pair", code)
+    check(status == 200 and "device" in answer and paired(), f"the printed link did not pair: {status} {answer}")
+    # The link works once; another browser, or a well-formed unknown code, is told to make a new one.
+    for name, tried in (("pair-again", code), ("pair-unknown", "2345-6789")):
+        status, answer = browser(name, "/api/pair", tried, jar=f"{SHARED}/other-browser-cookies")
+        check(status == 410 and "expired or was already used" in answer.get("error", ""), f"{name}: {status} {answer}")
+    def identity(name: str) -> str:
+        """The digests of the certificate authority, server key and certificate, all four present."""
+        digests = step(name, "shasum -a 256 ~/.config/altitude/tls/ca.crt ~/.config/altitude/tls/ca.key "
+                             "~/.config/altitude/tls/server.key ~/.config/altitude/tls/server.crt")
+        check(digests.returncode == 0 and len(re.findall(r"^[0-9a-f]{64}  ", digests.stdout, re.M)) == 4,
+              "the HTTPS identity files are not all readable")
+        return digests.stdout
+
+    certificate = identity("identity")
+    # Running the public command again keeps the paired browser and the certificate and prints no new link.
+    again = step("install-again", public_command(repository), timeout=300)
+    check(again.returncode == 0 and "#pair=" not in again.stdout and f"2. Open Altitude: {origin}" in again.stdout,
+          "the second installation failed or printed a pairing link")
     before = running()
+    check(identity("identity-again") == certificate and paired(),
+          "the second installation changed the certificate or lost the paired browser")
     help_text = step("doctor-help", f"{alt} doctor --help").stdout
     doctor = step("doctor", f"{alt} doctor" + (" --json" if "--json" in help_text.split() else ""))
     report = json.loads(doctor.stdout)
@@ -939,6 +980,7 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     check(restarted.returncode == 0 and restarted.stdout.strip() != booted, "the guest did not restart")
     after = running()
     check(after["pid"] != before["pid"], "the service was not started again after the restart")
+    check(paired(), "the paired browser was lost after the restart")
     removed = step("uninstall", f"{alt} uninstall")
     check(removed.returncode == 0 and json.loads(removed.stdout)["uninstalled"], "uninstall failed")
     gone = step("removed", f"test ! -e {agent} && ! launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} >/dev/null 2>&1 && "
