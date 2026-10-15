@@ -1,23 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { useOverview } from "../data/api";
-import type { Decision, Overview } from "../data/api";
-import { DecisionCard } from "../components/DecisionCard";
+import type { Attention, Decision, Overview } from "../data/api";
+import { DecisionCard, StepCard } from "../components/DecisionCard";
 import { ImprovementCard } from "../components/Improvement";
 import type { QuestionOrigin } from "../components/DecisionCard";
 import { useVisitReturn } from "../components/visitMemory";
 import { DecisionAlertToggle } from "../data/alerts";
-import { attentionSummary, decisionGroups } from "../data/decisions";
+import { attentionSummary, decisionGroups, isStep } from "../data/decisions";
 import { useSelectedProject } from "../shell/scope";
 
 /** The subtitle: how much waits, across how many projects. */
-export function needsSummary(queue: Decision[]): string {
+export function needsSummary(queue: Attention[]): string {
   const projects = new Set(queue.map((d) => d.project));
   const where = projects.size === 1 ? `in ${[...projects][0]}` : `across ${projects.size} projects`;
   return `${attentionSummary(queue)} ${where}`;
 }
 
 /** Section order (SPEC.md §3.8): the selected project first when it has items, then first appearance. */
-export function projectOrder(queue: Decision[], selected: string | null): string[] {
+export function projectOrder(queue: Attention[], selected: string | null): string[] {
   const projects = [...new Set(queue.map((decision) => decision.project))];
   return selected && projects.includes(selected) ? [selected, ...projects.filter((project) => project !== selected)] : projects;
 }
@@ -117,9 +117,12 @@ export default function NeedsYou() {
                     </button>
                   </h2>
                   <div className="needs-project-cards" hidden={!open}>
-                    {decisionGroups(items).map((group) => (
-                      <DecisionCard key={`${group[0]!.slug}:${group[0]!.group_id || group[0]!.id}`} decision={group[0]!} decisions={group} from="needs" disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />
-                    ))}
+                    {decisionGroups(items).map((group) => {
+                      const first = group[0]!;
+                      if (isStep(first)) return <StepCard key={`step:${first.id}`} step={first} disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />;
+                      const decisions = group.filter((row): row is Decision => !isStep(row));
+                      return <DecisionCard key={`${first.slug}:${first.group_id || first.id}`} decision={first} decisions={decisions} from="needs" disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />;
+                    })}
                   </div>
                 </section>
               );

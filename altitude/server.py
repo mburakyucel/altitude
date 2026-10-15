@@ -355,6 +355,9 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                 raise ValueError("alt improve takes its arguments, not stdin")
             result = improvement_verb(project, improve.parser().parse_args(args[1:]))
             return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
+        if args[:2] == ["project", "step"]:
+            result = l3.step_verb(project, args[2:], stdin)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         if args[:2] == ["project", "terminal"]:
             if stdin or args[2:] not in ([], ["--json"]):
                 raise ValueError("alt project terminal: the only option is --json")
