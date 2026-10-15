@@ -43,11 +43,16 @@ the container deployment, a real iPhone) stays as a checklist on the change's ow
 on the required CI. The PR merges with `Addresses #N`, and the issue closes once that installation
 records the evidence. By the operator's decision of 2026-10-10, L3 comments, labels and closes these
 issues, filing one when the change has none, as [pending device
-verification](docs/DEVELOPMENT.md#pending-device-verification) describes. Linux merge checks and holds
-are unchanged. A task completes when its own installation's authorized work and required checks are
-satisfied. Verification owed only by the other installation stays on the change's issue for that
-installation; it does not hold local task completion or require the operator to route the work.
-Explicit acceptance and release gates still apply, and Linux evidence does not establish Mac
+verification](docs/DEVELOPMENT.md#pending-device-verification) describes. By the operator's direction
+of 2026-10-15, verification owners prove device and browser behavior in emulators, simulators or the
+disposable VM and container lanes, adding harness rows where needed within their authorized outcome;
+a single command the operator runs is acceptable when nothing else can produce the evidence. Owners
+do not ask the operator for hands-on checks such as clicking through a browser, phone or app or
+inspecting a screen by eye; what cannot be automated stays owed on the issue with its reason. Linux
+merge checks and holds are unchanged. A task completes when its own installation's authorized work
+and required checks are satisfied. Verification owed only by the other installation stays on the
+change's issue for that installation; it does not hold local task completion or require the operator
+to route the work. Explicit acceptance and release gates still apply, and Linux evidence does not establish Mac
 acceptance. By the operator's decisions of 2026-10-09 and 2026-10-10, the early preview supports
 Linux with a systemd user manager and macOS 15 or newer, validated on Ubuntu 24.04 x86_64 and Apple
 silicon; the [roadmap](docs/ROADMAP.md#native-macos-runtime) lists the native confirmation still open.

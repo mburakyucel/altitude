@@ -10,7 +10,6 @@ import subprocess
 import sys
 import time
 import types
-import unittest
 from unittest import mock
 
 from tests.support import AltitudeCase, REPO
@@ -777,9 +776,6 @@ class TestInstallationVmCapture(AltitudeCase):
 class TestInstallationMacosVm(AltitudeCase):
     """The macOS VM lane's offline guest setup, isolation and judging; no guest, helper or restore image."""
 
-    # Known defect #973: the macOS coordinator sockets take 68 bytes beneath HOME, so the guest's 56-byte lifecycle
-    # home makes a 124-byte path. The fix that shortens the path removes this marker.
-    @unittest.expectedFailure
     def test_registered_project_broker_fits_the_actual_guest_lifecycle_home(self):
         from scripts import installation_macos_vm as vm
         from altitude import config, l3, platform
@@ -802,11 +798,10 @@ class TestInstallationMacosVm(AltitudeCase):
         work = commands[0].split('work="', 1)[1].split('"', 1)[0]
         self.assertTrue(work.startswith(vm.SHARED + "/"))
         self.assertIn('TMPDIR="$temp"', commands[0])
-        with mock.patch.object(config, "HOME", Path(work) / "home"), \
-             mock.patch.object(config, "ROOT", Path(work) / "home/.altitude"), \
-             mock.patch.object(platform.sys, "platform", "darwin"), \
-             mock.patch.object(platform, "containerized", return_value=False):
-            self.assertLess(len(str(l3.verb_socket_path("fictional")).encode()), 104)
+        home = Path(work) / "home"  # the guest's HOME="$work/home"
+        with mock.patch.object(config, "HOME", home), mock.patch.object(config, "ROOT", home / ".altitude"), \
+             mock.patch.object(platform, "_darwin", return_value=True):
+            self.assertLessEqual(len(str(l3.verb_socket_path("fictional")).encode()), 103)
 
     class Guest:
         """Answers the lane's probes as a guest whose network card is plugged in until `unplug`."""

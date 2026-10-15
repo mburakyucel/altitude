@@ -44,26 +44,11 @@ def container_namespace_metadata(root: Path):
 REPO = Path(__file__).resolve().parent.parent
 _NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))
 _native_sandbox_command = None
-
-
-def _suite_folder() -> Path:
-    """Resolved, so symlinked temporary roots (macOS /var -> /private/var) compare equal to resolved paths, and short,
-    so Unix sockets stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes): the macOS coordinator sockets
-    take 68 bytes beneath HOME. A validation run's own temporary folder, the only one its macOS profile admits, is
-    12 bytes longer than /tmp's, so each test process there takes the next free number instead of an `at-` name."""
-    temp = os.environ.get("ALTITUDE_VALIDATION") and os.environ.get("TMPDIR")
-    if not temp:
-        return Path(tempfile.mkdtemp(prefix="at-", dir="/tmp")).resolve()
-    number = 0
-    while True:
-        try:
-            (folder := Path(temp) / str(number)).mkdir(mode=0o700)
-            return folder.resolve()
-        except FileExistsError:
-            number += 1
-
-
-SUITE = _suite_folder()
+# Resolved, so symlinked temporary roots (macOS /var -> /private/var) compare equal to resolved paths, and short,
+# so Unix sockets under a case directory stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes). A
+# validation run's own temporary folder is as short, and the only one its macOS profile admits.
+SUITE = Path(tempfile.mkdtemp(prefix="at-", dir=os.environ.get("ALTITUDE_VALIDATION") and
+                              os.environ.get("TMPDIR") or "/tmp")).resolve()
 tempfile.tempdir = str(SUITE)
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
 OFFLINE_BIN = SUITE / "bin"

@@ -53,6 +53,7 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.parse import urlsplit
 
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS.parent))
@@ -70,6 +71,7 @@ GIB = 1 << 30
 FLOOR = 10 * GIB
 RELAY_LABEL = "dev.altitude.vm-relay"
 SHARED = "/Users/Shared/altitude-vm"
+DRIVER_PORT = 4444  # safaridriver in the guest
 STARTED = time.monotonic()
 
 
@@ -881,8 +883,9 @@ def lifecycle(guest: Guest, results: Path, record: dict, baseline: Path, candida
 
 
 def phase_login(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
-    """The account's own installation through the public command, its LaunchAgent started again by the automatic login
-    after the guest restarts, and its uninstall."""
+    """The account's own installation through the public command, its private link opened by macOS in Safari once the
+    account trusts the generated authority, its LaunchAgent started again by the automatic login after the guest
+    restarts, and its uninstall."""
     add_github_cli(guest, record)
     record["prerequisites"] = prerequisites(guest)
     steps = record["steps"] = []
@@ -931,6 +934,21 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     def paired() -> bool:
         return browser("access", "/api/access")[1].get("paired") is True
 
+    def safari_devices() -> int:
+        return len(re.findall(r'"name": "Safari on Mac"', guest.ssh(f"cat {devices}", check=False).stdout))
+
+    def driver(name: str, method: str, path: str, body: dict | None = None, log: bool = True):
+        """One Safari WebDriver command and its value."""
+        command = f"curl -sS --max-time 60 -X {method} -H 'Content-Type: application/json' "
+        if body is not None:
+            command += f"--data {quote(json.dumps(body))} "
+        command += quote(f"http://127.0.0.1:{DRIVER_PORT}/session{path}")
+        result = step(name, command, timeout=90) if log else guest.ssh(command, timeout=90, check=False)
+        return json.loads(result.stdout).get("value") if result.stdout.startswith("{") else None
+
+    devices = "~/.config/altitude/access/devices.json"
+    # Commands in the account's desktop session, where macOS opens links and Safari runs.
+    desktop = f"sudo -n launchctl asuser {ACCOUNT_UID} sudo -n -u {ACCOUNT} "
     installed = step("install", public_command(repository), timeout=300)
     check(installed.returncode == 0 and f"Altitude {version} is installed" in installed.stdout, "the installer failed")
     origin, port = re.search(r"^Address: (https://\S+:(\d+)) ", installed.stdout, re.M).groups()
@@ -940,14 +958,76 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     check(link is not None and link.group(1) == origin, "the installer printed no private pairing link for its address")
     code = link.group(2)
     running()
-    # Opening the printed link: the page at its origin, then the page's pairing request with the fragment's code.
+    # The account trusts the generated authority in its login keychain for SSL, as SETUP.md asks. The guest's rule that
+    # asks for the account's password to change trust settings is set to allow, standing in for the person typing it.
+    chain = f"security verify-cert -L -p ssl -n {urlsplit(origin).hostname} -c ~/.config/altitude/tls/server.crt " \
+            "-c ~/.config/altitude/tls/ca.crt"
+    check(step("untrusted", chain).returncode != 0, "macOS trusted the certificate before the authority was trusted")
+    trusted = step("trust", "sudo -n security authorizationdb write com.apple.trust-settings.user allow && " + desktop +
+                   "security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db "
+                   "~/.config/altitude/tls/ca.crt")
+    check(trusted.returncode == 0 and step("trusted", chain).returncode == 0, "macOS does not trust the certificate")
+    safari = step("safari", "defaults read /Applications/Safari.app/Contents/Info CFBundleShortVersionString").stdout.strip()
+    # macOS opens the printed link in the default browser, which pairs itself with the link's code: only a browser
+    # that trusts the certificate runs the page.
+    opened = step("open", desktop + f"open {quote(f'{origin}/projects#pair={code}')}")
+    check(opened.returncode == 0, "macOS did not open the link")
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline and not safari_devices():
+        time.sleep(3)
+    check(step("safari-paired", f"grep -c '\"name\": \"Safari on Mac\"' {devices}").stdout.strip() == "1",
+          "the default browser did not pair through the printed link")
+    # The page at the link's origin, then its pairing request with a new code, from a client whose cookies the lane reads.
     check(browser("page", "/projects")[0] == 200 and not paired(), "the link's page is not served to an unpaired browser")
-    status, answer = browser("pair", "/api/pair", code)
-    check(status == 200 and "device" in answer and paired(), f"the printed link did not pair: {status} {answer}")
+    fresh = re.search(r"Pairing code: (\S+)", step("alt-pair", f"{alt} pair").stdout).group(1)
+    status, answer = browser("pair", "/api/pair", fresh)
+    check(status == 200 and "device" in answer and paired(), f"the page's pairing request did not pair: {status} {answer}")
     # The link works once; another browser, or a well-formed unknown code, is told to make a new one.
     for name, tried in (("pair-again", code), ("pair-unknown", "2345-6789")):
         status, answer = browser(name, "/api/pair", tried, jar=f"{SHARED}/other-browser-cookies")
         check(status == 410 and "expired or was already used" in answer.get("error", ""), f"{name}: {status} {answer}")
+    # Safari under WebDriver opens a new private link in its own window: the page pairs and shows First run, and neither
+    # the address nor the history entries it can go back and forward to keep the code.
+    job = plistlib.dumps({"Label": "dev.altitude.vm-safaridriver",
+                          "ProgramArguments": ["/usr/bin/safaridriver", "-p", str(DRIVER_PORT)]}).decode()
+    started = step("driver", f"pkill -x Safari; while pgrep -x Safari >/dev/null; do sleep 1; done; "
+                             f"sudo -n safaridriver --enable && printf %s {quote(job)} > {SHARED}/safaridriver.plist && "
+                             f"launchctl bootstrap gui/{ACCOUNT_UID} {SHARED}/safaridriver.plist && for i in $(seq 30); do "
+                             f"curl -fsS http://127.0.0.1:{DRIVER_PORT}/status && break; sleep 1; done")
+    check(started.stdout.startswith("{") and json.loads(started.stdout)["value"]["ready"], "safaridriver is not ready")
+    session = driver("session", "POST", "", {"capabilities": {"alwaysMatch": {"browserName": "safari"}}}) or {}
+    check("sessionId" in session, f"Safari did not start a WebDriver session: {session}")
+    window = "/" + session["sessionId"]
+    driven = re.search(r"Pairing code: (\S+)", step("alt-pair-driven", f"{alt} pair").stdout).group(1)
+    # A known page first, so going back from the link's page has somewhere to go.
+    check(driver("start", "POST", window + "/url", {"url": f"{origin}/api/health"}) is None
+          and driver("navigate", "POST", window + "/url", {"url": f"{origin}/projects#pair={driven}"}) is None,
+          "Safari did not open the link")
+    page = {"script": "const done = arguments[arguments.length - 1]; fetch('/api/access').then((r) => r.json()).then("
+                      "(a) => done({href: location.href, entries: history.length, paired: a.paired === true, heading: "
+                      "document.querySelector('[aria-label=\"First run\"] h1')?.textContent ?? null}), "
+                      "(e) => done({error: String(e)}))", "args": []}
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not ((driver("poll", "POST", window + "/execute/async", page, log=False) or {})
+                                               .get("heading")):
+        time.sleep(2)
+    shown = driver("shown", "POST", window + "/execute/async", page) or {}
+    check(shown.get("paired") and shown.get("heading") == "Welcome to Altitude",
+          f"Safari did not pair and show First run: {shown}")
+    moved = [driver("back", "POST", window + "/back", {}), driver("earlier", "GET", window + "/url"),
+             driver("forward", "POST", window + "/forward", {}), driver("later", "GET", window + "/url")]
+    addresses = [shown.get("href"), moved[1], moved[3]]
+    check(moved[0] is None and moved[2] is None and moved[1] == f"{origin}/api/health"
+          and shown["href"].startswith(f"{origin}/projects") and moved[3] == shown["href"]
+          and not any("#pair" in str(address) or driven in str(address) for address in addresses),
+          f"the private code stayed in Safari's address or history: {addresses}")
+    driver("close", "DELETE", window)
+    stopped = step("driver-stopped", f"launchctl bootout gui/{ACCOUNT_UID}/dev.altitude.vm-safaridriver; pkill -x Safari; "
+                                     f"rm -f {SHARED}/safaridriver.plist; grep -c '\"name\": \"Safari on Mac\"' {devices}")
+    check(stopped.stdout.strip().endswith("2"), "Safari's second pairing is not recorded")
+    record["safari"] = {"version": safari, "webdriver": session.get("capabilities", {}).get("browserVersion"),
+                        "entries": shown.get("entries"), "addresses": addresses}
+
     def identity(name: str) -> str:
         """The digests of the certificate authority, server key and certificate, all four present."""
         digests = step(name, "shasum -a 256 ~/.config/altitude/tls/ca.crt ~/.config/altitude/tls/ca.key "

@@ -2,13 +2,15 @@
 Altitude's home: a process confined to the roots each engine's launch names is refused every record there, its own
 task's included (docs/ARCHITECTURE.md#task-door)."""
 import json
+import os
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo, read_only_home, require_read_only_home
-from altitude import config, dispatch, engines, state as S, tasks as T
+from altitude import config, dispatch, engines, l3, platform, state as S, tasks as T
 
 CHILD = r'''
 import json, os, sys
@@ -77,6 +79,22 @@ class WorkerRoots(AltitudeCase):
 
     def assert_only_scratch(self, written: dict):
         self.assertEqual({name for name, allowed in written.items() if allowed}, {"scratch"}, written)
+
+    def test_no_engines_roots_reach_the_coordinator_folder_on_either_platform(self):
+        """A worker that could write the coordinators' folder or any folder above it could plant, replace or redirect
+        a socket or a turn's commands (#973 moved its name on macOS)."""
+        for darwin in (False, True):
+            with mock.patch.object(platform, "_darwin", return_value=darwin):
+                folder = platform.coordinator_directory().resolve()
+                self.assertEqual(l3.verb_socket_path(self.project).parent.resolve(), folder)
+            for engine in ("claude", "codex"):
+                with self.subTest(darwin=darwin, engine=engine):
+                    writable, _ = self.roots(engine)
+                    # A root ending in * admits every path that starts with it (Claude's account file family).
+                    patterns = [os.path.realpath(str(root)[:-1]) for root in writable if str(root).endswith("*")]
+                    self.assertFalse([prefix for prefix in patterns if str(folder).startswith(prefix)], writable)
+                    self.assertFalse([root for root in writable if not str(root).endswith("*")
+                                      and folder.is_relative_to(root.resolve())], writable)
 
     def test_each_engines_roots_admit_the_scratch_folder_and_no_record_in_the_home(self):
         require_read_only_home(self)
