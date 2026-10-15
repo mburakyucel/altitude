@@ -2195,15 +2195,22 @@ the route the browser asked for, with First run when no project exists.
 
 The installer leads with whether Altitude is installed and running on this computer, then
 "Address: <URL> (opens only on this computer)" (or "(reachability from other devices is not checked
-here)" for a network listener) and that closing the terminal or browser leaves it running, then
-**Next:** — 1. trust the certificate, with its name, full SHA-256, file and the versioned guide; 2. open
-the private link — then "For a phone or another computer, see Settings → Network." and the optional
+here)" for a network listener) and that closing the terminal or browser leaves it running. In a
+terminal on the hosting computer, not over SSH, and with Altitude's own certificate, it then runs
+`~/.local/bin/alt trust`, which shows the certificate's name, full SHA-256 and scope and asks "Trust it?
+[y/N]" in the terminal, also when the script arrives piped from curl. After yes, **Next:** reads "1. Restart
+your browser if it is open, then open Altitude with this private link. It pairs this browser and opens
+First run:". Otherwise **Next:** — 1. "Trust Altitude's certificate: run ~/.local/bin/alt trust on this
+computer, or follow the steps the page shows on another computer. Check it shows:" (with an external
+certificate, "Trust Altitude's certificate in your browser. Before trusting it, check it shows:"), with
+its name, full SHA-256, file and the versioned guide; 2. open the private link — then "For a phone or
+another computer, see Settings → Network." and the optional
 terminal setup. In an SSH session with a local-only address, step 2 adds "Over SSH, from your own
 computer run `ssh -L <port>:127.0.0.1:<port> <this server>`, then open the link there." with the
 installed port. The link occupies one unbroken line, followed by "Works once, for 10 minutes. Keep it
 private." and "If it expires, run ~/.local/bin/alt pair." Normal terminal/OS link handlers choose
 the browser on the viewing device; over SSH, loopback refers to that device. The installer
-launches no browser and changes no trust stores.
+launches no browser and changes a trust store only after that yes.
 
 The card is at most 28rem wide, with 16px outer margin and horizontal padding on phone, 24px
 card padding on desktop, and 48px controls. Text and errors wrap naturally without truncation;
@@ -2221,8 +2228,26 @@ computer running it."; plain HTTP on the hosting computer (local development) sh
    **Download the certificate** (everything else); "Compare its name, “<CA name>”, and its full SHA-256
    with the installer or alt doctor on the hosting computer. If they differ, delete the download and
    stop."; the device's install step (Profile Downloaded and Certificate Trust Settings on
-   iPhone/iPad, CA certificate install on Android, trusted-authority import elsewhere); and the
-   reopen step. With a pending install link it reads "Restart the browser, then reopen the original
+   iPhone/iPad, CA certificate install on Android); and the reopen step. On a desktop, a **Steps for**
+   label above a full-width menu, preset from the browser's report, chooses the list: **Mac** puts "In
+   Finder, select altitude.crt in Downloads and press Space." before the compare sentence, then "Double-click
+   altitude.crt and add it to the login keychain." and "In Keychain Access, open “<CA name>”, expand Trust
+   and set Secure Sockets Layer (SSL) to Always Trust. Close the window and enter your password."; **Linux ·
+   Chrome or Chromium** puts "In a terminal, type this command yourself:" with `openssl x509 -in
+   ~/Downloads/altitude.crt -noout -subject -fingerprint -sha256` and no **Copy** before it (the GNOME
+   certificate viewer shows no SHA-256, and a forged page could copy a look-alike command),
+   then "Open this address in a new tab:" with `chrome://certificate-manager` and **Copy** (a page cannot
+   link to it) and "Choose Local certificates › Custom › Installed by you › Trusted Certificates › Import,
+   then altitude.crt."; **Linux · Firefox** "In Firefox, open Settings › Privacy & Security › Certificates ›
+   View Certificates › Authorities › Import, then choose altitude.crt.", "Click View." with the compare
+   sentence, since Firefox's import dialog shows the certificate before trusting it, and "Tick Trust this
+   CA to identify websites, then OK."; **Another system**
+   "Import it as a trusted authority in this browser or system." The page offers nothing to copy for the
+   comparison, which a forged page could forge too. A desktop browser on the hosting computer, outside a
+   container and with Altitude's own certificate, first lists "On the computer running Altitude, run:"
+   with `~/.local/bin/alt trust` and **Copy**, "It shows the certificate’s name and full SHA-256, then asks
+   before trusting it in this computer’s browsers." and the reopen step, then a collapsed **Trust it by
+   hand instead** disclosure with the menu and its list; the page itself never changes the computer. With a pending install link it reads "Restart the browser, then reopen the original
    private link from the installer. It must open without a certificate warning. If it has expired, run
    ~/.local/bin/alt pair for a new code."; otherwise "Restart the browser and reopen this page. It must
    open without a certificate warning; if a warning remains, don’t pair." A versioned **Certificate
@@ -2245,7 +2270,7 @@ computer running it."; plain HTTP on the hosting computer (local development) sh
 | Unreachable | "Could not reach Altitude." and Retry. |
 | Local HTTP development | No certificate claim; the Pair item. Local HTTPS follows the trust states below. |
 | Plain HTTP | ! with the plain-HTTP sentence; no other items. |
-| Not trusted yet | ○ with the device's instructions, its reason without repeating the pill ("The usual missing step is the switch in Certificate Trust Settings." on iPhone/iPad, "Install the certificate as a CA certificate." on Android, "Import the certificate as a trusted authority, then restart the browser." elsewhere) and **Check again**; no Pair item. |
+| Not trusted yet | ○ with the device's instructions, a phone's reason without repeating the pill ("The usual missing step is the switch in Certificate Trust Settings." on iPhone/iPad, "Install the certificate as a CA certificate." on Android; a desktop's list already ends with the restart step) and **Check again**; no Pair item. |
 | Checking | A spinner named Checking… and a disabled **Check again**. |
 | Couldn't check | ! and "Couldn't check." with **Check again**, never phrased as untrusted. |
 | External certificate | ○ with the Private tab sentence, the guide link and **Continue**. |
@@ -2285,7 +2310,9 @@ the current device, and with answered access and trust replies a device on the n
 checking, trusted and paired, Couldn't check, plain HTTP with and without an address and an external
 certificate; at phone width an iPhone's profile instructions, and its Safari and Home Screen app pairing as
 separate devices. `web/e2e/trust.pw.ts` walks Chromium over real HTTPS past the certificate warning, and
-ignoring certificate errors, to Not trusted yet with no Pair item.
+ignoring certificate errors, to Not trusted yet with no Pair item. `web/e2e/trust-steps.pw.ts` walks the
+desktop steps in both widths: the hosting computer's `alt trust`, its steps by hand and Trusted removing
+them, and each **Steps for** choice with a switch to another.
 
 ## 4. Behaviour rules
 
