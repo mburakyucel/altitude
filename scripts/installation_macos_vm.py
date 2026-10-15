@@ -948,15 +948,21 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     for name, tried in (("pair-again", code), ("pair-unknown", "2345-6789")):
         status, answer = browser(name, "/api/pair", tried, jar=f"{SHARED}/other-browser-cookies")
         check(status == 410 and "expired or was already used" in answer.get("error", ""), f"{name}: {status} {answer}")
-    identity = ("shasum -a 256 ~/.config/altitude/tls/ca.crt ~/.config/altitude/tls/ca.key ~/.config/altitude/tls/server.key "
-                "~/.config/altitude/tls/server.crt")
-    certificate = step("identity", identity).stdout
+    def identity(name: str) -> str:
+        """The digests of the certificate authority, server key and certificate, all four present."""
+        digests = step(name, "shasum -a 256 ~/.config/altitude/tls/ca.crt ~/.config/altitude/tls/ca.key "
+                             "~/.config/altitude/tls/server.key ~/.config/altitude/tls/server.crt")
+        check(digests.returncode == 0 and len(re.findall(r"^[0-9a-f]{64}  ", digests.stdout, re.M)) == 4,
+              "the HTTPS identity files are not all readable")
+        return digests.stdout
+
+    certificate = identity("identity")
     # Running the public command again keeps the paired browser and the certificate and prints no new link.
     again = step("install-again", public_command(repository), timeout=300)
     check(again.returncode == 0 and "#pair=" not in again.stdout and f"2. Open Altitude: {origin}" in again.stdout,
           "the second installation failed or printed a pairing link")
     before = running()
-    check(step("identity-again", identity).stdout == certificate and paired(),
+    check(identity("identity-again") == certificate and paired(),
           "the second installation changed the certificate or lost the paired browser")
     help_text = step("doctor-help", f"{alt} doctor --help").stdout
     doctor = step("doctor", f"{alt} doctor" + (" --json" if "--json" in help_text.split() else ""))
