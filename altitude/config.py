@@ -783,7 +783,9 @@ def _idle_project(name: str):
 
 
 def remove_project(name: str) -> None:
+    from . import tasks as T
     with _idle_project(name):
+        T.withdraw_steps_of_removed_project(name)
         _write_project(name, None)
 
 

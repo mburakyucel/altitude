@@ -7,12 +7,12 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask, useSendNow } from "../data/api";
 import { SendNow, SendNowError } from "../components/SendNow";
 import { BusyLabel } from "../components/StatusMark";
-import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
+import type { Decision, Overview, Step, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { agoText, dayText, localTimes, when } from "../data/observed";
-import { questionPath, selections, turnLabel } from "../data/decisions";
+import { isStep, questionPath, selections, turnLabel } from "../data/decisions";
 import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
 import { Bubble, Coordination, DayDivider, MessageRow, RemoveMessage, Reply, notDone, useEntrance } from "../components/Bubbles";
@@ -30,7 +30,7 @@ import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import { ShownFiles } from "../components/Shown";
 import { ShownReader } from "./ShownReader";
-import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
+import { Question, QuestionSet, ReviewDecision, StepBody } from "../components/DecisionCard";
 import type { QuestionOrigin } from "../components/DecisionCard";
 import { TaskContext, TokenUsage } from "../components/TokenUsage";
 import { latestReviews, ReviewBoxes, ReviewCard, ReviewFeedback, useTaskReview } from "../components/TaskReview";
@@ -105,6 +105,7 @@ interface Facts {
   canReject: boolean;
   /** A held review-ready PR waiting for the operator (#419), and where the PR lives. */
   review: Decision | null;
+  steps: Step[];
   repository?: string | null;
 }
 
@@ -135,12 +136,16 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
   const reason = str(task["blocked_reason"]);
   const waitsOnL3 = state === "blocked" && !held && !faultKind && str(task["waiting_on"]) === "l3";
   const finished = state === "done" || state === "rejected";
-  const turnRows = overview?.queue.filter((row) => row.project === project && row.slug === task.slug) ?? [];
+  const turnRows = overview?.queue.filter((row): row is Decision => row.project === project && row.slug === task.slug) ?? [];
+  // An operator step L3 named this task on is the operator's turn while the task waits (SPEC.md §3.8.4).
+  const waitingHere = (state === "blocked" || state === "reported") && !held && !faultKind && !task["stop_id"];
+  const steps = waitingHere ? overview?.queue.filter((row): row is Step => isStep(row) && row.project === project
+    && row.tasks.some((waiting) => waiting.slug === task.slug)) ?? [] : [];
   // The header counts the task's own open questions, so it agrees with the chat before the overview refreshes.
   const handedBack = str(task["handed_back"]);
   const asked = state === "blocked" || state === "reported" ? (task.question_group?.questions ?? []).filter((question) =>
     question.status === "open" && !question.response && question.audience !== "l3" && (question.asked ?? "") > handedBack) : [];
-  const turn = turnLabel([...asked, ...turnRows.filter((row) => row.kind === "review")]);
+  const turn = turnLabel([...asked, ...steps, ...turnRows.filter((row) => row.kind === "review")]);
   const replying = Boolean(task["handed_back"]) && (state === "running" || held);
 
   const engineId = str(task["l2_engine"]) || str(task["engine"]);
@@ -182,7 +187,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     .join(" · ");
 
   const wait = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug);
-  const explanation = taskExplanation(task, turnRows.find((row) => row.kind === "review"));
+  const explanation = taskExplanation(task, turnRows.find((row) => row.kind === "review") ?? steps[0]);
   const waiting = state === "queued" || held
     ? planned ? explanation : sentence(holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))) : null;
 
@@ -206,6 +211,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     resumeHeld: Boolean(task.transfer?.resume_hold),
     canReject: ["queued", "running", "blocked", "reported"].includes(state),
     review: turnRows.find((row) => row.kind === "review") ?? null,
+    steps,
     repository,
   };
 }
@@ -255,7 +261,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const turn = open.filter((question) => question.audience !== "l3" && (!handedBack || (question.asked ?? "") > handedBack));
   const count = `Your turn · ${turn.length} question${turn.length === 1 ? "" : "s"}`;
   const turnText = turn.some((question) => question.asked_again) ? `${count} · asked again` : count;
-  const answering = live && !turn.length && !(handedBack || group?.questions.some((q) => q.response));
+  // An operator step naming this task is the next move, so the owner's note to L3 waits out of sight (SPEC.md §3.8.4).
+  const answering = live && !turn.length && !facts.steps.length && !(handedBack || group?.questions.some((q) => q.response));
   const scroller = useRef<HTMLDivElement>(null);
   const viewportHeight = useRef(0);
   const anchors = useRef(new Map<string, HTMLDivElement>());
@@ -592,7 +599,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             {turn.length || answering ? <>
               <p className="conversation-turn">{turn.length ? turnText : "L3 is answering"}</p>
               <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} deliveries={deliveries} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
-            </> : <p className="sr-only" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
+            </> : facts.steps.length ? null : <p className="sr-only" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
           </div> : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="sr-only" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p>
           : handedBack && !facts.finished && !facts.review ? <p className="sr-only" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p> : null}
           {facts.review ? <div className="conversation-question" data-turn="operator" tabIndex={-1} ref={(node) => {
@@ -601,6 +608,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             <p className="conversation-turn">Your turn · review before merge</p>
             <ReviewDecision key={`${facts.review.pr}:${facts.review.review_hold_id ?? ""}`} decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
           </div> : null}
+          {facts.steps.map((step) => <div key={step.id} className="conversation-question" data-turn="operator">
+            <p className="conversation-turn">Your turn · a command from L3</p>
+            <StepBody step={step} tasks={false} />
+          </div>)}
           {/* What the task waits on ends the chat, after any card, under the header's state; L3's open question already says it (SPEC.md §3.10). */}
           {facts.explanation && !(transfer.engineOffer && !readOnly && !denied) && !(answering && !task["fault"]) ? <p className="conversation-status" data-tone={task["fault"] ? "danger" : undefined} role="status">
             <span className="dot" data-state={facts.dot} aria-hidden />{facts.explanation}

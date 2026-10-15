@@ -836,15 +836,17 @@ an owner sends for its own task (`alt task run`, `validate`, `terminal`, `review
 its records), which altd admits from that owner's worker job instead. No Altitude sandbox can read the store. See
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
-`alt sign-in claude` (operator only) gives Altitude's Claude runs a sign-in of their own. It runs
-`claude setup-token`, which signs in to the operator's subscription in a browser and prints a token valid
-for a year, then reads that token at a hidden prompt, joining the lines a copy wrapped onto up to an empty
-line, and keeps it in the private access store as `claude.token`. Workers, reviewers and coordinator turns receive it in their launch input, never on a
-command line or in a log, and the operator's own Claude sign-in stays untouched. Saving it ends the
+`alt sign-in claude` (operator only) gives Altitude's Claude runs a sign-in of their own, the same one
+**Sign in** makes on Settings › Prerequisites. It asks the running service, with the machine key, to start
+the sign-in, prints the link to open, reads the code Claude's page then shows at a `Code:` prompt and hands
+it to the service; Ctrl+C or the end of input cancels it, and without a running service it refuses. The
+service runs `claude setup-token` and keeps the year-long token it prints in the private access store as
+`claude.token` ([Altitude's own engine sign-in](ARCHITECTURE.md#isolation-and-landing)); the token never
+reaches the terminal. Workers, reviewers and coordinator turns receive it in their launch input, never on
+a command line or in a log, and the operator's own Claude sign-in stays untouched. Saving it ends the
 engine's [sign-in lapse](OPERATIONS.md#engine-sign-in-recovery), and each project's chat reminds the
-operator to run it again two weeks before the year ends, counted from when it was saved. Usage
-readings and improvement reviews still read the operator's own sign-in. The token appears on the screen, so the operator runs it in a
-terminal of their own: an Altitude terminal's output reaches its reader, the task's owner or the coordinator.
+operator to sign in again two weeks before the year ends, counted from when it was saved. Usage
+readings and improvement reviews still read the operator's own sign-in.
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
 from the record the service wrote when it started, and checks over HTTPS that the
@@ -1162,6 +1164,7 @@ alt task grant <slug> --revoke --reason <why>
 alt task run <slug> <command>
 alt task terminal [<slug>] [--json]
 alt project terminal [--json]  # the coordinator, through its project socket
+alt project step - [--task <slug>]... | --withdraw <id> --reason <why>  # the coordinator, through its project socket
 alt task offer <title>  # the coordinator, through its project socket, during a chat turn
 alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
@@ -1447,8 +1450,8 @@ synopsis brings it to Needs you. It is Altitude's task UI, separate from the eng
 display. [Architecture and transport flow](ARCHITECTURE.md#from-model-judgment-to-a-task-question)
 explains the owner CLI and coordinator MCP/broker paths.
 
-A wait on an action only the operator can take, such as a command for their task terminal or a step posted
-in project chat, is their turn rather than L3's. The owner records it as a plain operator question whose first
+A wait on an action only the operator can take, such as a command for their task terminal, is their turn
+rather than L3's. The owner records it as a plain operator question whose first
 line names the step, which the operator's wait label and task card then show; a terminal step carries its
 `run` block, so the question card opens the terminal:
 
@@ -1462,6 +1465,10 @@ example-tool sign-in
 
 Their reply, the Terminal notice or L3's message wakes the owner, who verifies the step and resolves the
 question: `answered` citing their reply, or `withdrawn` with what it verified when no reply came.
+
+A wait on the coordinator's project recovery step stays a plain block: the coordinator names the task on
+its [operator step](#handing-the-operator-a-project-step), so the task reads the operator's turn until the
+step clears.
 
 For up to three independent questions upfront, pass `--questions-file <file>` to `block` or
 `escalate`. Use `--questions-file -` with JSON on stdin when calling through the L3 broker; the
@@ -2361,3 +2368,29 @@ it does an owner's and queues a Terminal notice as a coordinator turn once the c
 terminal ended first. The notice is the same prompt to check, naming `alt project terminal`; a command the
 operator types without a `run` block sends none. Output the coordinator reads becomes part of its session and
 provider record.
+
+### Handing the operator a project step
+
+A command only the operator can run for the project's own recovery, with no task to ask it, goes to Needs you
+as an [operator step](ARCHITECTURE.md#operator-steps), never to project chat alone. The coordinator publishes
+it through its project socket with the plain question on stdin: the first line names the step, and it holds
+exactly one `run` block of one command line. `--task` names each task waiting on it, which then reads the
+operator's turn:
+
+````sh
+alt project step - --task fixture-harness <<'EOF'
+Restore the service checkout so merged changes can activate again.
+
+One file there differs from main; this puts it back.
+
+```run
+example-tool repair-checkout
+```
+EOF
+````
+
+The card's **Open in terminal** opens the project terminal with the command typed. The Terminal notice that it
+looks finished clears the step and tells the coordinator, which reads the output with `alt project terminal`,
+verifies it, then messages the tasks the step named or publishes it again; a terminal that ended first leaves
+the step open. Publishing the same command again revises the step in place and adds the tasks it names. `alt project step --withdraw <id> --reason '…'` clears a step settled another way; the reason is
+required. A step whose output an owner must verify goes on that owner's task as its question instead.

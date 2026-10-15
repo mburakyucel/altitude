@@ -244,6 +244,10 @@ class TestProjectMessages(AltitudeCase):
                               "--request-id", "probe", env={"ALTITUDE_ACTOR": actor})
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("coordinator socket", result.stderr)
+            # Only the coordinator hands the operator a project step.
+            result = self.alt("project", "step", "--withdraw", "000000000000", "--reason", "Probe", env={"ALTITUDE_ACTOR": actor})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("coordinator socket", result.stderr)
         args = ["project", "message", self.peer, "Diagnostic", "--summary", "Probe", "--request-id", "probe"]
         for extra in (["--sender", self.other], ["--project", self.other], ["--file", "private"], ["--summ", "Extra"]):
             with self.assertRaises(ValueError):

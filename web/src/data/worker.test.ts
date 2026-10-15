@@ -267,6 +267,19 @@ describe("the service worker's push", () => {
     expect(running.showing()).toEqual([again.alert_key]);
   });
 
+  it("names an operator step only as a command to run, and opens Needs you, which shows it", async () => {
+    const running = worker();
+    const step = { project: "atlas", slug: null, kind: "step", id: "s1", question: "Restore the checkout.\n\n```run\nexample-tool repair\n```",
+      asked_by: "l3", asked: "2026-10-15T09:00:00Z", alert_key: "atlas:step:s1", tasks: [] };
+    running.fetched.mockImplementation(queue([step]));
+    await running.push();
+    expect(running.shown).toEqual([{
+      title: "atlas needs a decision",
+      options: { body: "A command to run", tag: "atlas:step:s1", data: { url: "/" }, silent: false },
+    }]);
+    expect(JSON.stringify(running.shown)).not.toContain("example-tool");
+  });
+
   it("shows one banner for a question group, linking its first question", async () => {
     const running = worker();
     running.fetched.mockImplementation(queue([question, { ...question, id: "q-drill-day", revision: 1 }]));

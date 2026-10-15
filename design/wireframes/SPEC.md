@@ -307,9 +307,10 @@ project folder's terminal from project chat — and types the command at its pro
 end. It never presses Enter: the operator runs, edits or clears the line. The command reaches the terminal
 only through page memory, never the URL or history, so a link, reload, Back or Forward types nothing.
 Every other fence (`sh`, bare) is code with **Copy** at its top right and is never an action; a command
-for another machine uses one. Inline code is unchanged. Only conversation replies and question cards in
-a task or project conversation offer Open in terminal; elsewhere (Live session, Needs you, reports) a
-`run` block has Copy only. The file reader's documents keep plain code with no controls.
+for another machine uses one. Inline code is unchanged. Conversation replies and question cards in a
+task or project conversation offer Open in terminal, and so do Needs you cards: a task question's opens the
+task's terminal, an operator step's (§3.8.4) the project's. Elsewhere (Live session, reports) a `run` block has
+Copy only. The file reader's documents keep plain code with no controls.
 
 | State | What appears and what actions do |
 | --- | --- |
@@ -594,7 +595,8 @@ hold; see [concurrency](../../docs/ARCHITECTURE.md#task-lifecycle)); running ("R
 on L3 ("Waiting for the coordinator: <short prerequisite>.", the running dot: L3's answer is Altitude's own work, and the dot turns amber
 only when L3 escalates to the operator; the rail's §3.1 dot follows the same rule); blocked on the
 operator ("Your turn · <first line>" for a lone freeform question, so a wait on the operator's step names the step,
-otherwise "Your turn · N questions", "Your turn · review PR #N", or both, plus a sentence explaining the answer or review wait,
+otherwise "Your turn · N questions", "Your turn · review PR #N", or both, and each operator step naming the waiting task by its
+first line (§3.8.4), plus a sentence explaining the answer or review wait,
 amber dot; the first line is the question's own, at most 120 characters, ending in "…" at a word when cut, the same in the
 CLI, and wraps on phone; a question with choices, a stopped, faulted or resuming task, and the task page, whose question card
 shows the question and a step's **Open in terminal**, keep the count); replying to the operator ("L2 replying to you", running dot); running ("L2 working");
@@ -866,7 +868,8 @@ consequence does not satisfy concise presentation. Long questions still remain f
 phone and desktop, with the same answer and revision semantics.
 Question and review-card text renders like a reply (§3.3): a one-line question stays one bold line,
 and line breaks bring separate paragraphs, lists, inline code and a fenced command in a distinct
-mono code block the operator can copy. The first paragraph keeps the headline weight. Recommendations,
+mono code block the operator can copy; a `run` block also offers **Open in terminal**, which opens the task's
+terminal with the command typed, as in its chat (§3.3). The first paragraph keeps the headline weight. Recommendations,
 receipts, folded summaries, list rows, toasts and labels keep their one-line form.
 `conversation-decisions.pw.ts` walks a multi-paragraph question with a command block in Needs you
 and the owning chat at both viewports.
@@ -1025,6 +1028,42 @@ conversation's link named an older one, and a
 card that has left Needs you, or a merge card that has gone, leaves the page where it was. Modified clicks open the review without recording a return.
 `web/e2e/review-status.pw.ts` walks Needs you and the conversation at both widths: resolved, open,
 the longest state, no review, a skip by the owner and no box, each review and Back, and Back after a revision.
+
+#### 3.8.4 Operator steps
+
+A command only the operator can run for the project's own recovery, such as restoring the service checkout
+after a project fault that blocks no task, is an operator step: L3 hands it over with `alt project step` and it
+waits in Needs you until it has run. A step an owner must verify is that owner's question instead (§3.8, a
+`run` block in a plain question), so one command never shows twice.
+
+The step's card sits in its project's section in queue order, with the decision card's frame: the source line
+**L3 brought this to you** and the age; no task title. Its body is L3's text, rendered as a question (§3.8): the
+first line bold and naming the step, then why it is needed, then its one `run` block with **Copy** and **Open in
+terminal**. **Open in terminal** opens the project terminal (`/projects/:name/terminal`) with the command typed
+and Enter not pressed, as the same block in project chat does (§3.3). When tasks wait on the step, one line
+follows: "Waiting on this: <task title> · <task title>", each title an underlined link to its task; with none
+the line is absent. Then the muted line "This leaves Needs you once the command finishes in the project terminal." and the
+link **Open project chat**, which the card background also opens. The card has no answer field: a reply goes in
+project chat, where L3 asked. Text wraps on phone and desktop; the command wraps inside its block.
+
+The project terminal's Terminal notice that exactly that command looks finished (§3.10 Terminal) removes the
+card and tells L3, which reads the output, verifies the outcome and messages the waiting tasks; a failed step
+returns as L3 hands it over again. A terminal that ends before the command finished leaves the card in place.
+L3 also removes it after verifying another way, such as a command the operator ran in a desktop terminal.
+Handing over the same command again revises the one card in place and adds any task it names.
+
+The count in the Needs you subtitle, a collapsed section and the project header names steps on their own
+("1 step", "1 question · 1 step"). A step alerts like a question (§3.8.1); its banner names the project and
+"A command to run", never the step's text, and opens Needs you, the only page that shows the card; while Needs
+you is open it shows the card instead of alerting. On a saved Needs you read after a failed refresh, the card's
+**Open in terminal** is unavailable with "Refresh Needs you before running this.", leaving Copy. While a task the step names waits, its Work
+row reads "Your turn · <the step's first line>" with the amber dot and "Needs you" (§3.5), and its task page
+shows "Your turn · 1 step" in the header and, after the conversation, the same body under the turn line "Your
+turn · a command from L3", without the waiting-tasks line and with **Open project chat**. The owner's open note
+to L3 ("L3 is answering") stays out of sight meanwhile, so the page names only the operator's turn. A task the
+step does not name keeps its own wait.
+`web/e2e/project-step.pw.ts` walks Needs you, the Work rows, the task page, Open in terminal, and the card and
+the row after the notice at both widths.
 
 ### 3.9 Open the owning L2 question
 
@@ -1632,8 +1671,21 @@ wherever none is known.
   and, under it, each agent's label and install command with **Copy**. A missing sandbox reads "Altitude
   runs agents inside bubblewrap on Linux." with the package manager's command (`sudo apt install
   bubblewrap` on Ubuntu), or adds "Install it with this computer's package manager." without one.
-  An unmet row explains itself and shows the terminal command with **Copy** (then Copied); no field
-  asks for a password or token. **Check again** reads again (Checking…). The primary action reads
+  An unmet row explains itself and shows the terminal command with **Copy** (then Copied); an installed
+  agent that is not signed in reads "<Agent> not signed in". The row of an agent Altitude signs in itself
+  (Claude) shows **Sign in** instead of a command, and a secondary **Sign in again** once signed in. The
+  service runs the agent's setup: "Opening Claude sign-in…", then the numbered steps "Approve Altitude on
+  Claude's page." with **Open Claude sign-in ↗** (new tab) and the field "Paste the code Claude shows"
+  (placeholder "Code from Claude"), the note "The code works once, for this sign-in only.", a ghost
+  **Cancel** and a primary **Finish sign-in** (disabled while empty; Enter finishes; "Signing in…" while
+  the agent answers; returning to the tab focuses the empty field). Success reads "Signed in. Altitude's
+  Claude runs use this sign-in for a year." A failure is one sentence ("Claude didn't accept that code.",
+  "The sign-in expired after ten minutes.", "The sign-in was interrupted." or "Altitude couldn't follow
+  Claude's sign-in. If this repeats, Altitude needs an update for this Claude version."), followed by
+  "Your earlier sign-in still works." when one is saved, with **Try again**. The sign-in lives in the
+  service: a reload or another paired browser finds it open, and Cancel stops it. The block is at most
+  32rem wide, with full-width buttons on phone. No field asks for a password, and the token never reaches
+  the page. Walkthroughs: `web/e2e/sign-in.pw.ts`. **Check again** reads again (Checking…). The primary action reads
   **Continue** when nothing is unmet, else a secondary **Continue anyway**. States: checking, read
   failed (one sentence).
 - **Add your projects**: a **Projects folder** card with **Change…**, which opens the folder browser

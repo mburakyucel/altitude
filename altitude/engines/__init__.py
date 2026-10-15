@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .. import config
-from . import common, claude, codex
+from . import common, claude, codex, token_setup
 from .invocation import InvocationRefused, replaced_after_projection
 
 from .common import (
@@ -15,7 +15,6 @@ from .common import (
     installation,
     install_command,
     sign_in,
-    save_sign_in,
     session_timeout,
     ImageInputError,
     image_capability,

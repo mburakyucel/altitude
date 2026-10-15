@@ -4,9 +4,9 @@ import { useLocation, useMatch, useNavigate, useParams, useSearchParams } from "
 import type { UseQueryResult } from "@tanstack/react-query";
 import { BusyLabel } from "../components/StatusMark";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useWaitsForTool } from "../data/api";
-import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
+import type { Attention, ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
 import { agoText } from "../data/observed";
-import { attentionSummary } from "../data/decisions";
+import { attentionSummary, isStep } from "../data/decisions";
 import { TaskCard } from "../components/TaskCard";
 import { RoleModelButton } from "../components/ModelMenu";
 import { handling } from "../components/SystemLine";
@@ -49,7 +49,7 @@ export function WorkPanel({
 }) {
   const overview = useOverview();
   const { phone } = useViewport();
-  const decisions = decisionsFor(overview.data, name);
+  const decisions = decisionsFor(overview.data, name).filter((row): row is Decision => !isStep(row));
   const tasks = project.data?.tasks ?? [];
   // Overview and project reads can arrive in either order; retain newly published waiting tasks.
   const current = [...new Map([...tasks, ...decisions.filter((d) => !tasks.some((t) => t.slug === d.slug)
@@ -132,7 +132,7 @@ export function WorkPanel({
 export function statusParts(
   chat: ChatView | undefined,
   project: ProjectView | undefined,
-  decisions: Decision[],
+  decisions: Attention[],
   engines: EngineReadout[],
 ): string[] {
   const parts: string[] = [];
@@ -303,7 +303,7 @@ function ProjectHeader({
   name: string;
   project: UseQueryResult<ProjectView>;
   chat: UseQueryResult<ChatView>;
-  decisions: Decision[];
+  decisions: Attention[];
   engines: EngineReadout[];
   showName: boolean;
   panelToggle: boolean;

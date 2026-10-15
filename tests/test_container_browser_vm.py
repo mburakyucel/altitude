@@ -20,7 +20,10 @@ class ContainerBrowserControllerTests(AltitudeCase):
 
     def test_failed_lane_keeps_guest_journal_before_guest_goes(self):
         results = self.tmp / 'results'
+        # The lane replaces the guest's package list for its one process; restored here, so a later test in the
+        # same worker reads the installation VM's own list (it failed test_installation_lifecycle_harness).
         with mock.patch.object(container_vm.host, 'validation_in_container', return_value=False), \
+                mock.patch.object(container_vm.vm, 'user_data', container_vm.vm.user_data), \
                 mock.patch.object(container_vm.vm, 'missing_prerequisites', return_value=[]), \
                 mock.patch.object(container_vm.vm, 'base_image', return_value={}), \
                 mock.patch.object(container_vm.subprocess, 'run'), \
