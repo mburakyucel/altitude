@@ -1108,10 +1108,10 @@ review before any merge. A refusal once the merge command has run first asks Git
 merged at the candidate head; if it did, landing records that merge instead of publishing again. A PR
 it created is read back by its URL, never created twice. A refusal with a minute or less left in the
 bound ends the landing. A Git command that reaches origin and fails on the network is tried again after
-15 seconds, doubling to once a minute, for up to five minutes, the time the line keeps a silent head's
-turn, so a flaky connection neither ends a landing nor costs its place; refusals are not retried. Polls
-hold the task review lock only for local review reads; network reads and sleeps leave review requests
-available. A notice names every stale review and subject with the assessed/current values of its
+15 seconds, doubling to once a minute, within five minutes of its first failure, the time the line keeps a
+silent head's turn, so a flaky connection neither ends a landing nor costs its place; refusals are not
+retried. Polls hold the task review lock only for local review reads; network reads and sleeps leave
+review requests available. A notice names every stale review and subject with the assessed/current values of its
 changed evidence, so the owner posts explanations together before assessing each request.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
 Final candidate, checks, ownership and hold validation repeats after assessment.

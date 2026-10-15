@@ -1075,11 +1075,36 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
                         "error: 403", "remote: Repository not found.", "fatal: Authentication failed for "
                         "'https://github.com/team/demo.git/'", "error: failed to push some refs (stale info)"):
             self.assertIsNone(land._NETWORK_FAILURE.search(refusal))
+        for refusal in ("git@github.com: Permission denied (publickey).\nfatal: Could not read from remote "
+                        "repository.", "fatal: couldn't find remote ref refs/heads/no-such-branch"):
+            self.assertIsNone(land._NETWORK_FAILURE.search(refusal))
         for failure in ("fatal: unable to access 'https://github.com/team/demo.git/': Could not resolve host: github.com",
                         "error: RPC failed; curl 56 Recv failure: Connection reset by peer",
                         "fatal: unable to access 'https://github.com/team/demo.git/': The requested URL returned "
-                        "error: 502"):
+                        "error: 502", "ssh: Could not resolve hostname github.com: Temporary failure in name resolution",
+                        "ssh: connect to host github.com port 22: Operation timed out",
+                        "kex_exchange_identification: Connection closed by remote host"):
             self.assertIsNotNone(land._NETWORK_FAILURE.search(failure))
+
+    def test_a_line_write_whose_reply_was_lost_is_read_again(self):
+        # The push lands at origin but its reply never arrives: the repeated push is stale, so the line is read again.
+        worktree, real, lost = self.owners['first'][0], land._execute, []
+
+        def reply_lost_once(args, cwd, timeout):
+            result = real(args, cwd, timeout)
+            if args[1] == 'push' and not lost:
+                lost.append(result.returncode)
+                return subprocess.CompletedProcess(args, 128, '', 'error: RPC failed; curl 56 Recv failure: '
+                                                                  'Connection reset by peer')
+            return result
+
+        with mock.patch.object(land, '_execute', reply_lost_once), mock.patch.object(land, 'CHECK_POLL_SECONDS', .01), \
+                mock.patch.object(land, '_note'):
+            line = land._Line(worktree, 101)
+            line.join()
+        self.assertEqual(lost, [0])
+        self.assertEqual(self.line(entries=True)[0]['token'], line.token)
+        self.assertEqual(self.line(), [101])
 
     def test_line_write_retries_a_compare_and_swap_lost_at_the_remote(self):
         worktree, real_git, refused = self.owners['first'][0], land._git, []
