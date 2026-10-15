@@ -2317,7 +2317,7 @@ Every API reply is `no-store`. The app keeps what it has read in memory only (Ta
 project and task), re-reads a view on each open and on every change event, and drops it all on
 re-pairing; nothing is prefetched or stored on the device. On a slow link the wait is therefore the
 download of the view itself. The task view carries the task record, its decisions, review, messages,
-documents and report, the newest 20 events, and the repository link for pull request links, so the
+documents and report, and the repository link for pull request links, so the
 task page reads no project view. The record's review, decision and message-delivery ledgers, which
 the view already presents, stay on the server. The overview, project, task and live-session views travel gzip-encoded
 (`Vary: Accept-Encoding`) to browsers that accept it, four to five times smaller; a running task's
@@ -3076,8 +3076,8 @@ readable under **Earlier question**, opened automatically by an old-version link
 cannot act on a replacement. A compact, muted **Question withdrawn** row expands to the original
 question, owner's reason and former recommendation without answer controls. Following the bottom resumes ordinary chat
 scrolling. Pending questions poll every two seconds, and new replies offer **Latest messages**
-without moving a reader away from the question. Technical activity and reference links stay behind
-**Activity & evidence** and the existing live session view. A saved decision URL redirects into this
+without moving a reader away from the question. Technical activity stays in the live session view.
+A saved decision URL redirects into this
 conversation; no separate form, recipient selector or mirrored follow-up thread exists.
 
 An FYI (`tasks.fyi`, exposed by `alt fyi [slug] "text"`) is a chat row

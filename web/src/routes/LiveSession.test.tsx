@@ -24,7 +24,6 @@ const task = {
   session_id: "0123456789abcdef",
   l2_engine: "claude",
   files: {},
-  events: [],
   messages: [],
   activity: { generation: "w1", state: "available", commentary: null, observation: { at: new Date().toISOString(), label: "Recorded output changed" } },
 };

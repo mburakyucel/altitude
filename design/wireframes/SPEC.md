@@ -1032,8 +1032,8 @@ the longest state, no review, a skip by the owner and no box, each review and Ba
 that durable question's group. The open group is the last thing in the conversation, right above
 the composer, and scrolls with the messages; it is never pinned. When the owner writes after asking,
 the group moves to the end again. Every member link focuses it; closed groups stay at their original
-message. L3 escalation text stays attributed to L3 and contains the actual dilemma and recommendation. The live session starts closed when entering a question; **Activity & evidence** reveals
-technical event summaries and the link to the existing live view.
+message. L3 escalation text stays attributed to L3 and contains the actual dilemma and recommendation.
+The live session, which keeps the technical activity, starts closed when entering a question.
 
 The question field and normal composer accept a follow-up, a simple answer such as “21 days”, or a nuanced decision.
 There is no recipient selector, note form or extra confirmation. A follow-up hands the turn back and
@@ -1304,8 +1304,8 @@ redaction, clamped to two lines, with its source time in the §3.4 format, inclu
 **Expand** reveals it; **Collapse** folds it. Each newer update replaces the preview without
 duplicating Conversation. Activity never proves useful progress. Generation changes clear previous
 words. Live session retains quiet, missing, untimed and unavailable activity status. Phone tabs and
-the desktop panel toggle open older output under existing retention; Activity & evidence also keeps
-its contextual live link. Conversation has no separate live-session/action row above the composer.
+the desktop panel toggle open older output under existing retention. Conversation has no separate
+live-session/action row above the composer.
 Questions, decisions and results stay durable;
 there is no copied preview archive, duplicate reply, summarizer call or hidden reasoning.
 
@@ -1352,8 +1352,8 @@ is red (**Work interrupted**, rejected) the phone state label is red and the des
 danger tone, on every view and at any scroll position.
 
 What the task waits on ends the conversation: one line after the last message and every card that
-ends the chat (review cards, the question card, **Your turn · review before merge**), immediately
-before the collapsed **Activity & evidence**, so at the latest messages it is the last content line.
+ends the chat (review cards, the question card, **Your turn · review before merge**), so at the
+latest messages it is the last content line.
 It reads the state dot, 8px gap, then the reason in the 13px meta size and secondary colour (danger red
 on a fault), wrapping in full; the text is the shared excerpt of at most 120 characters. Because the
 header names the state, the line gives only the reason: an L3 wait or pause reads its recorded reason
@@ -1489,8 +1489,7 @@ readable with the activity area, composer and Stop gone.
 
 The live transcript has tinted prompt blocks, the worker's prose, compact tool rows with folded
 output, and the lifecycle boundaries the record supplies (state transitions, stops, holds). Every
-row shows its recorded time in the §3.4 format, or **time unavailable**. The **Activity & evidence**
-list prefixes each task event with its time the same way. A shell command's tool label is "$"; other rows use the recorded tool name, including
+row shows its recorded time in the §3.4 format, or **time unavailable**. A shell command's tool label is "$"; other rows use the recorded tool name, including
 Edit for a file change. Short tool names share a fixed label column; the "$" takes only its own
 width, so the command starts right after it. The hint reads "N lines", "running · 4 min" (time since the call while the
 worker runs; "running…" when the call is untimed), "error", or "no output"; write rows

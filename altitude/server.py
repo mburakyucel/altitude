@@ -3767,7 +3767,6 @@ def project_repository(name: str) -> str | None:
 # The record's own ledgers behind the view's review, decisions and message deliveries stay on the
 # server: they made a long task's reply several times larger, re-sent on every change.
 TASK_VIEW_OMITTED = ("reviews", "question_groups", "message_deliveries")
-TASK_VIEW_EVENTS = 20      # the newest events, as many as the task page shows
 
 
 def task_transfer_view(project: str, task: dict) -> dict:
@@ -3883,7 +3882,7 @@ def task_view(project: str, slug: str) -> dict:
             "question_group": T.question_group_view(project, t),
             "files": files, "messages": [{**row, "text": row.get("display_text", row["text"])}
                                          for row in T.message_views(project, slug, activity["delivered"])],
-            "events": events[-TASK_VIEW_EVENTS:], "activity": activity, "review": reviews.view(project, slug),
+            "activity": activity, "review": reviews.view(project, slug),
             "steering": T.steering_view(t, events, job_root=d / "l2-engine"),
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 

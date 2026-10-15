@@ -21,7 +21,6 @@ import Composer, { markSubmitted, recoveryHoldsDraft, releaseSubmitted, returnTo
 import { dropTaskOutgoing, startTaskOutgoing, updateTaskOutgoing, useTaskOutbox, type SendTarget } from "../data/outbox";
 import type { TaskOutgoing } from "../data/outbox";
 import { TaskActivity } from "../components/TaskActivity";
-import { Stamp } from "../components/Stamp";
 import { SteeringControls, SteeringNotice, useTaskSteering } from "../components/TaskSteering";
 import type { Steering } from "../components/TaskSteering";
 import { TransferCard, TransferDialog, useTaskTransfer } from "../components/TaskTransfer";
@@ -607,10 +606,6 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             <span className="dot" data-state={facts.dot} aria-hidden />{facts.explanation}
           </p> : null}
           <TransferCard transfer={transfer} />
-          {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
-            <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
-            {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><Stamp at={event["at"]} className="event-time" /> · <InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
-          </details> : null}
           {facts.canMessage && steering.state === "running" && !(task.state === "blocked" && current) ? <TaskActivity activity={task.activity} /> : null}
         </div>
       </div>

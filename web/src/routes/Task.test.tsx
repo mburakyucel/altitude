@@ -44,7 +44,6 @@ const running = {
   updated: ago(1),
   live: { state: "running", context_percent: 34 },
   files: {},
-  events: [],
   report_json: null,
   messages: [
     { id: "m-1", at: "2026-08-29T12:01:00Z", role: "operator", text: "Keep the change focused." },
