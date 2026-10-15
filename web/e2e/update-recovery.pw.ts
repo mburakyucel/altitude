@@ -29,7 +29,7 @@ test("generated cache failure removes the spinner, preserves automatic history, 
   await page.reload();
   await walk.state("update-02-failed-actionable", {
     visible: [notice.getByText(/The update to v0.5.0 did not finish/), notice.getByRole("button", { name: "Try again" })],
-    hidden: [spinner, notice.getByText(/will install automatically/)],
+    hidden: [spinner, notice.getByText(/installs automatically/)],
   });
 
   // Calls the same public recovery operation as the hosting terminal; it does not overwrite receipt states.

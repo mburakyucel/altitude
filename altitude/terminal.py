@@ -14,6 +14,7 @@ its task finishes, its project is removed or altd stops.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import fcntl
 import ipaddress
 import os
@@ -469,6 +470,15 @@ def any_open() -> bool:
     """Whether a terminal is running; a service restart would end it, so an automatic update waits."""
     with _lock:
         return any(not term.ended for term in _terminals.values())
+
+
+@contextmanager
+def held_open():
+    """Where running terminals are open (`project/task`, or the project), holding registration: none opens until the
+    caller's update request, which refuses new terminals, is recorded."""
+    with _lock:
+        yield sorted(f"{term.project}/{term.slug}" if term.slug else term.project
+                     for term in _terminals.values() if not term.ended)
 
 
 def close_all() -> None:

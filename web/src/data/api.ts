@@ -421,7 +421,8 @@ export type NewTasks = z.infer<typeof NewTasksSchema>;
 
 /**
  * An installed copy's version and the newer release it follows that its daemon last found (null for a source
- * deployment). `attempt` is an automatic or requested update that has not reached its version yet.
+ * deployment). `attempt` is an automatic or requested update that has not reached its version yet; `waiting_for`
+ * names the work a pending automatic update waits for, as the daemon's last quiet-point check found it.
  */
 export const UpdateSchema = z.object({
   automatic_pending: z.boolean(),
@@ -435,6 +436,7 @@ export const UpdateSchema = z.object({
   reason: z.string().optional(),
   checked: z.string().nullish(),
   attempt: z.object({ version: z.string(), state: z.enum(["running", "failed"]), error: z.string().nullish() }).passthrough().nullish(),
+  waiting_for: z.array(z.string()),
 });
 
 const ContainerLifecycleSchema = z.object({
