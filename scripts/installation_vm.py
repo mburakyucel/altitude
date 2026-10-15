@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the installation lifecycle harness in a throwaway local Ubuntu 24.04 KVM VM.
 
-    python3 scripts/installation_vm.py RESULTS_DIR [--source REF] [--baseline-release TAG [--recovery | --public]] [--capture]
+    python3 scripts/installation_vm.py RESULTS_DIR [--source REF] [--baseline-release TAG [--recovery | --public] | --trust] [--capture]
 
 Builds two synthetic release versions from one committed revision (default HEAD) and runs the
 harness from this checkout against them; RESULTS_DIR/vm.json records the outcome. With
@@ -21,6 +21,9 @@ recovery phase: the published baseline's installation must fail, and after the d
 candidate installed over it must start and keep its settings, TLS identity and data.
 --public instead builds nothing: the candidate is the release GitHub's releases/latest names, the guest keeps
 the internet with this host blocked, and the public-install and public-update phases install from GitHub itself.
+--trust instead runs only the trust phase: while still online the guest gets Playwright's Chromium and Firefox, and the
+built install.sh, answered yes in a terminal, must trust Altitude's certificate so that its private link opens First
+run in both without a certificate warning.
 --capture also keeps an accelerated replay of the lane's progress and harness output as
 RESULTS_DIR/captures/installation-vm.gif (docs/DEVELOPMENT.md#validation-captures).
 Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write access to /dev/kvm.
@@ -28,11 +31,13 @@ Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write acces
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -48,7 +53,7 @@ IMAGES = "https://cloud-images.ubuntu.com/noble/current/"
 IMAGE = "noble-server-cloudimg-amd64.img"
 KEYRING = Path("/usr/share/keyrings/ubuntu-cloudimage-keyring.gpg")
 TOOLS = ("qemu-system-x86_64", "qemu-img", "cloud-localds", "gpgv", "ssh", "ssh-keygen", "scp")
-HARNESS = ("test_installation_lifecycle.sh", "installation_lifecycle.py")
+HARNESS = ("test_installation_lifecycle.sh", "installation_lifecycle.py", "installation_browsers.mjs")
 # Fixed guest addresses let the network configuration name each card.
 OFFLINE_MAC, ONLINE_MAC = "52:54:00:a1:70:01", "52:54:00:a1:70:02"
 # What a public guest must still not reach besides this host's own addresses: private, shared and link-local networks.
@@ -313,6 +318,34 @@ def reachable(machine: Machine) -> dict:
         return {name: reached(machine.ssh(command, check=False).returncode) for name, command in probes.items()}
 
 
+def browsers(machine: Machine, work: Path, log: Path) -> dict:
+    """Playwright's Chromium and Firefox with their system libraries, and NSS's certutil, installed in the guest while
+    it is still online, from this runner's Node and the playwright-core package web/pnpm-lock.yaml pins, checked
+    against the lock's integrity. Chromium's command goes on PATH, as an installed Chromium's does."""
+    lock = (Path(__file__).resolve().parent.parent / "web/pnpm-lock.yaml").read_text()
+    version, integrity = re.search(r"^  playwright-core@([0-9.]+):\n    resolution: \{integrity: (sha512-\S+)\}$", lock, re.M).groups()
+    package = work / "playwright-core.tgz"
+    download(f"https://registry.npmjs.org/playwright-core/-/playwright-core-{version}.tgz", package)
+    if "sha512-" + base64.b64encode(hashlib.sha512(package.read_bytes()).digest()).decode() != integrity:
+        raise SystemExit(f"playwright-core {version} does not match the integrity web/pnpm-lock.yaml records")
+    node = shutil.which("node")
+    if not node:
+        raise SystemExit("--trust copies this host's Node.js into the guest; install Node.js 20 or newer")
+    machine.copy(os.path.realpath(node), "ubuntu@127.0.0.1:node")
+    machine.copy(str(package), "ubuntu@127.0.0.1:playwright-core.tgz")
+    installed = machine.ssh(
+        "sudo env DEBIAN_FRONTEND=noninteractive PLAYWRIGHT_BROWSERS_PATH=/opt/playwright sh -ec '"
+        "install -m 755 node /usr/local/bin/node; mkdir /opt/playwright-core; "
+        "tar -xzf playwright-core.tgz -C /opt/playwright-core --strip-components=1; apt-get install -y libnss3-tools; "
+        "node /opt/playwright-core/cli.js install --with-deps chromium firefox; chmod -R a+rX /opt/playwright /opt/playwright-core; "
+        "ln -s /opt/playwright/chromium-*/chrome-linux*/chrome /usr/bin/chromium; node --version'",
+        timeout=1800, check=False)
+    log.write_text(installed.stdout + installed.stderr)
+    if installed.returncode:
+        raise SystemExit(f"Installing the browsers in the guest failed; see {log.name}")
+    return {"node": installed.stdout.split()[-1], "playwright_core": version, "integrity": integrity}
+
+
 def harness(machine: Machine, commit: str, phase: str, log: Path) -> int:
     # Output is written as it runs, so a stopped run still shows how far it got.
     with log.open("w") as stream:
@@ -421,14 +454,14 @@ def build(commit: str, work: Path, results: Path, versions: tuple) -> None:
 
 
 def run(results: Path, commit: str, cache: Path, baseline_release: str | None = None, recovery: bool = False,
-        capture: bool = False, public: bool = False) -> int:
+        capture: bool = False, public: bool = False, trust: bool = False) -> int:
     global REPLAY
     results.mkdir(parents=True, exist_ok=True)
     checkout = Path(__file__).resolve().parent.parent
     git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout.strip()
     record = {"source_commit": commit, "harness": {"commit": git("rev-parse", "HEAD"),
               "modified": bool(git("status", "--porcelain", "--", "scripts"))}, "host": {"kernel": platform.release(), "machine": platform.machine()},
-              "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "recovery": recovery, "public": public,
+              "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "recovery": recovery, "public": public, "trust": trust,
               "passed": False}
     record["qemu"] = subprocess.run(["qemu-system-x86_64", "--version"], capture_output=True,
                                     text=True).stdout.splitlines()[0]
@@ -467,6 +500,9 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
         if record["reachable"]["online"] != {"internet": True, "host-through-online-card": True,
                                              "host-through-network": True, "host-through-offline-card": False}:
             raise SystemExit(f"Unexpected guest network before isolation: {record['reachable']}")
+        if trust:
+            note("installing Playwright's Chromium and Firefox in the guest")
+            record["browsers"] = browsers(machine, work, results / "guest-browsers.log")
         if public:
             # The public phases reach GitHub through the online card, whose gateway address is this host's loopback.
             # The card's own network stays connected, so the guest keeps its gateway and name server.
@@ -491,8 +527,8 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
         # Each phase creates, uses and deletes its own disposable account inside the guest.
         exits = record["harness_exit"] = {}
         try:
-            if recovery or public:
-                for phase in ("recovery",) if recovery else ("public-install", "public-update"):
+            if recovery or public or trust:
+                for phase in ("recovery",) if recovery else ("trust",) if trust else ("public-install", "public-update"):
                     note(f"running the {phase} phase")
                     exits[phase] = harness(machine, commits, phase, results / f"harness-{phase}.log")
                     if exits[phase]:
@@ -505,7 +541,7 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
                 machine.copy("ubuntu@127.0.0.1:results/.", str(results))
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 record["uncopied_results"] = str(error)
-        phases = 1 if recovery else 2 if public else 5
+        phases = 1 if recovery or trust else 2 if public else 5
         record["passed"] = list(exits.values()) == [0] * phases and "uncopied_results" not in record
     finally:
         try:
@@ -537,6 +573,8 @@ def main() -> int:
                         help="install the candidate over the published baseline's failed installation instead")
     parser.add_argument("--public", action="store_true",
                         help="install releases/latest and update from the baseline with the guest's own GitHub downloads")
+    parser.add_argument("--trust", action="store_true",
+                        help="run only the trust phase: the installer's offer, then the private link in Chromium and Firefox")
     parser.add_argument("--capture", action="store_true",
                         help="keep an accelerated replay of the run as RESULTS/captures/installation-vm.gif")
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache/altitude-installation-vm",
@@ -546,6 +584,8 @@ def main() -> int:
         parser.error("--recovery and --public need --baseline-release")
     if args.recovery and args.public:
         parser.error("--recovery and --public are separate runs")
+    if args.trust and args.baseline_release:
+        parser.error("--trust builds both versions from --source and is a separate run")
     # A stop request still deletes the VM and writes the record.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     missing = missing_prerequisites()
@@ -559,7 +599,7 @@ def main() -> int:
         print(f"{args.source} is not a commit in this repository.", file=sys.stderr)
         return 2
     return run(args.results.resolve(), resolved.stdout.strip(), args.cache, args.baseline_release, args.recovery,
-               args.capture, args.public)
+               args.capture, args.public, args.trust)
 
 
 if __name__ == "__main__":

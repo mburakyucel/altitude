@@ -34,7 +34,8 @@ class InstallScript(unittest.TestCase):
             print(json.dumps({{"version": "v0.1.0", "service": "running", "url": "https://localhost:8443", "lingering": lingering,
                               "pairing": {{"url": "https://localhost:8443/projects#pair=ABCD-2345", "minutes": 10}},
                               "network": {{"listener_scope": "local"}}, "lifecycle": "Fictional login service lifecycle.",
-                              "trust": {{"ca_cert": {str(self.tmp / 'home/.altitude/tls/ca.crt')!r}, "ca_name": "Altitude CA DEMO", "ca_sha256": {FINGERPRINT!r}}}}}))
+                              "trust": {{"ca_cert": {str(self.tmp / 'home/.altitude/tls/ca.crt')!r}, "ca_name": "Altitude CA DEMO", "ca_sha256": {FINGERPRINT!r},
+                                         "managed": not pathlib.Path({str(self.tmp / 'external')!r}).exists()}}}}))
             """))
         (self.tmp / "lingering.json").write_text("")
         digest = {name: hashlib.sha256((self.release / name).read_bytes()).hexdigest()
@@ -61,6 +62,12 @@ class InstallScript(unittest.TestCase):
                              'while [ "$1" != -o ]; do shift; done\n'
                              f'cp "{self.release}/${{last##*/}}" "$2"')
         self.env = {"PATH": str(self.bin), "HOME": str(self.tmp / "home"), "TMPDIR": str(self.tmp)}
+        # The installed alt: `alt trust` answers as told and records whether it had a terminal to ask in.
+        launcher = self.tmp / "home/.local/bin/alt"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text(f'#!/bin/sh\n{{ echo "$@"; [ -t 0 ] && echo stdin; : </dev/tty && echo terminal; }} >> {self.tmp}/alt-calls 2>/dev/null\n'
+                            'echo "Trust it? [y/N] (fixture)"\nexit "${FIXTURE_TRUST:-0}"\n')
+        launcher.chmod(0o755)
 
     def fixture(self, name, body):
         path = self.bin / name
@@ -71,6 +78,31 @@ class InstallScript(unittest.TestCase):
         # The documented form: the script arrives on standard input.
         return subprocess.run(["sh"], input=self.script.read_text(), env={**self.env, **env},
                               capture_output=True, text=True)
+
+    def run_in_terminal(self, **env) -> tuple[int, str]:
+        """`curl … | sh` typed in a terminal: the script arrives on standard input while the terminal stays the
+        session's own."""
+        import pty
+        pid, terminal = pty.fork()
+        if pid == 0:
+            script = os.open(self.script, os.O_RDONLY)
+            os.dup2(script, 0)
+            os.execve("/bin/sh", ["sh"], {**self.env, **env})
+        output = b""
+        while True:
+            try:
+                chunk = os.read(terminal, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output += chunk
+        os.close(terminal)
+        return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]), output.decode().replace("\r\n", "\n")
+
+    def alt_calls(self):
+        path = self.tmp / "alt-calls"
+        return path.read_text().splitlines() if path.exists() else []
 
     def downloads(self):
         path = self.tmp / "downloads"
@@ -95,7 +127,9 @@ class InstallScript(unittest.TestCase):
         self.assertIn("SHA-256: " + FINGERPRINT.split("=", 1)[1], out)
         self.assertIn("Certificate file: ~/.altitude/tls/ca.crt", out)
         self.assertNotIn(str(self.tmp / "home"), out)
-        self.assertIn("1. Trust Altitude's certificate in your browser", out)
+        self.assertIn("1. Trust Altitude's certificate: run ~/.local/bin/alt trust on this computer,\n"
+                      "     or follow the steps the page shows on another computer. Check it shows:", out)
+        self.assertEqual(self.alt_calls(), [], "with no terminal to ask in, nothing is offered")
         self.assertIn("2. Open Altitude with this private link", out)
         self.assertIn("https://localhost:8443/projects#pair=ABCD-2345", out)
         self.assertIn("Works once, for 10 minutes. Keep it private.", out)
@@ -115,6 +149,35 @@ class InstallScript(unittest.TestCase):
         on_path = self.run_script(PATH=f"{self.bin}:{self.tmp}/home/.local/bin")
         self.assertNotIn("To use alt by name", on_path.stdout)
         self.assertIn("alt doctor shows where Altitude runs", on_path.stdout)
+
+    def test_the_hosting_computer_is_asked_to_trust_the_certificate_in_its_terminal(self):
+        status, out = self.run_in_terminal()
+        self.assertEqual(status, 0, out)
+        self.assertEqual(self.alt_calls(), ["trust", "terminal"], "alt trust asks in the terminal, not the piped script")
+        self.assertLess(out.index("Fictional login service lifecycle."), out.index("Trust it? [y/N]"))
+        self.assertLess(out.index("Trust it? [y/N]"), out.index("Next:"))
+        self.assertIn("1. Restart your browser if it is open, then open Altitude with this private link. "
+                      "It pairs this browser and opens First run:\n       https://localhost:8443/projects#pair=ABCD-2345", out)
+        self.assertNotIn("Trust Altitude's certificate", out)
+        self.assertNotIn("SHA-256", out)
+        self.assertNotIn("2. Open", out)
+
+        (self.tmp / "alt-calls").unlink()
+        status, out = self.run_in_terminal(FIXTURE_TRUST="1")  # declined, or the trust step failed
+        self.assertEqual((status, self.alt_calls()), (0, ["trust", "terminal"]), out)
+        self.assertIn("1. Trust Altitude's certificate: run ~/.local/bin/alt trust on this computer,", out)
+        self.assertIn("SHA-256: " + FINGERPRINT.split("=", 1)[1], out)
+        self.assertIn("2. Open Altitude with this private link", out)
+
+        (self.tmp / "alt-calls").unlink()
+        status, out = self.run_in_terminal(SSH_CONNECTION="192.0.2.10 50000 192.0.2.20 22")
+        self.assertEqual((status, self.alt_calls()), (0, []), "over SSH the browser runs on another computer")
+        self.assertIn("1. Trust Altitude's certificate: run ~/.local/bin/alt trust on this computer,", out)
+
+        (self.tmp / "external").touch()
+        status, out = self.run_in_terminal()
+        self.assertEqual((status, self.alt_calls()), (0, []), "alt trust trusts only a certificate Altitude created")
+        self.assertIn("1. Trust Altitude's certificate in your browser. Before trusting it, check it shows:", out)
 
     def test_no_link_output_has_one_clear_recovery_path(self):
         script = (REPO / "scripts/install.sh").read_text()

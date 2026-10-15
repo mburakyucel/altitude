@@ -8,8 +8,8 @@ import { walkthrough } from "./walkthrough";
 test.use({ paired: false });
 
 type Trust = { local: boolean; https: boolean; check: boolean; certificate: { name: string } | null };
-const LOCAL: Trust = { local: true, https: true, check: true, certificate: { name: "Altitude CA DEMO" } };
-const REMOTE: Trust = { local: false, https: true, check: true, certificate: { name: "Altitude CA DEMO" } };
+const LOCAL: Trust = { local: true, https: true, check: true, command: true, certificate: { name: "Altitude CA DEMO" } };
+const REMOTE: Trust = { local: false, https: true, check: true, command: false, certificate: { name: "Altitude CA DEMO" } };
 const RECOVERY = "Run ~/.local/bin/alt pair on the computer running Altitude for a new code.";
 
 function held() {

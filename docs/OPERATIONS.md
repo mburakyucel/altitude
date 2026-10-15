@@ -852,10 +852,16 @@ browser fixtures do not establish it.
 
 ### Desktop certificate trust
 
-Use the [Linux and macOS trust guide](SETUP.md#trust-https-on-each-device) for each desktop browser,
-including on the computer hosting Altitude. `alt doctor` reports the public `ca.crt` path and its
-identity; use that local file when the service listens only on loopback. For another desktop at an
-already-configured network address, **Settings → Devices → Set up a device** or `alt tls-share`
+On the computer hosting Altitude, `alt trust` adds its own CA to this account's browser stores,
+the login keychain on a Mac or the Chrome and Firefox NSS databases on Linux, for websites only,
+after showing its name, full SHA-256 and scope and asking in the terminal; it prints one undo
+command per store. `alt doctor` names which stores trust it and offers `alt trust` until a browser
+is paired. A store it cannot write (no `certutil`, a remote Mac terminal, a Flatpak Chrome, a Firefox
+Primary Password) stays a step by hand from the
+[Linux and macOS trust guide](SETUP.md#trust-https-on-each-device), which also covers every other
+desktop; the pair page shows the same steps for the visitor's system and browser. Uninstalling
+leaves this trust; a new CA needs it again. For another desktop at an already-configured network
+address, **Settings → Devices → Set up a device** or `alt tls-share`
 offers the public certificate for ten minutes. Open the link on that computer; no camera is needed.
 Compare the downloaded certificate's full SHA-256 with the trusted terminal or Settings screen,
 then deliberately import it in the browser or macOS Keychain as the guide describes. Restart the
