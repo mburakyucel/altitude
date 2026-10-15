@@ -551,6 +551,11 @@ def _load(project: str) -> dict:
     return S.read_json(_path(project), None) or {"runs": []}
 
 
+def reading(project: str) -> bool:
+    """Whether this project's improvement review call is in flight; an automatic update waits for it."""
+    return any(run["state"] == "reading" for run in _load(project)["runs"])
+
+
 def _find(record: dict, run_id: str) -> dict:
     run = next((r for r in record["runs"] if r["id"] == run_id), None)
     if not run:
@@ -629,7 +634,7 @@ def start(project: str, source: str, *, now: datetime | None = None, week: str |
                if any(r["state"] in ACTIVE for r in record["runs"])
                else "Another review just ended; ask again." if _window_start(record, now) != begin
                else route.improvement_reserve()
-               or ("Altitude restarts soon to activate a change; ask again after it." if config.activation_pending()
+               or ("Altitude restarts soon to apply an update; ask again after it." if config.activation_pending()
                    else None)
                or (f"{len(items)} tasks finished since {_day(begin.isoformat())}; a review needs at least {MIN_TASKS}."
                    if len(items) < MIN_TASKS else None))

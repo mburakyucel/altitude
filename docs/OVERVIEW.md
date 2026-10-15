@@ -80,6 +80,7 @@ image still under validation.
   [message delivery and voice](ARCHITECTURE.md#message-delivery-and-voice) (chat queue, Send now,
   Composer, voice capture),
   [work and attention](ARCHITECTURE.md#work-and-attention) (task cards, work panel, Needs you),
+  [operator steps](ARCHITECTURE.md#operator-steps) (a project command for the operator in Needs you),
   [from model judgment to a task question](ARCHITECTURE.md#from-model-judgment-to-a-task-question)
   (questions, decisions, review cards, FYIs),
   [voice backend](ARCHITECTURE.md#voice-backend) with its

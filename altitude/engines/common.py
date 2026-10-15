@@ -122,42 +122,6 @@ def sign_in(engine: str) -> dict:
     return {"signed_in": signed_in, "command": command}
 
 
-def read_hidden(prompt: str, tty: str = "/dev/tty") -> str:
-    """The lines typed or pasted at a prompt that shows nothing, up to an empty one, joined without their spaces:
-    a token copied from the screen carries the line breaks it wrapped at. Input typed before the prompt or pasted
-    after the empty line is discarded, so none of it reaches the shell once the terminal shows typing again."""
-    import io
-    import termios
-    with io.TextIOWrapper(io.FileIO(os.open(tty, os.O_RDWR | os.O_NOCTTY), "r+")) as terminal:
-        old = termios.tcgetattr(terminal)
-        hidden = termios.tcgetattr(terminal)
-        hidden[3] &= ~termios.ECHO
-        termios.tcsetattr(terminal, termios.TCSAFLUSH, hidden)
-        try:
-            terminal.write(prompt)
-            terminal.flush()
-            lines = []
-            while line := terminal.readline().strip():
-                lines.append(line)
-            return "".join(lines)
-        finally:
-            termios.tcsetattr(terminal, termios.TCSAFLUSH, old)
-            terminal.write("\n")
-
-
-def save_sign_in(engine: str) -> None:
-    """`alt sign-in`: the engine's CLI prints a long-lived sign-in for the operator's account, which the operator
-    pastes at a hidden prompt. Altitude's runs of the engine use it from then on; the operator's own is unchanged."""
-    from .. import access, route
-    if subprocess.run([implementation(engine).binary(), *implementation(engine).TOKEN_SETUP], env=clean_env()).returncode:
-        raise RuntimeError(f"{config.ENGINE_LABELS[engine]} did not create a sign-in; nothing was saved")
-    token = read_hidden("Paste the token it printed, then press Enter on an empty line (it stays hidden): ")
-    if not re.fullmatch(r"[A-Za-z0-9._~+/=-]+", token):  # what a copied screen adds: borders, prompts, spaces
-        raise ValueError("That is not a token; nothing was saved")
-    access.save_engine_token(engine, token)
-    route.signed_in(engine)
-
-
 def session_timeout(engine: str) -> int:
     return implementation(engine).session_timeout()
 

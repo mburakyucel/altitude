@@ -897,7 +897,19 @@ def worker_events(path):
 
 INSTALL_COMMAND = 'curl -fsSL https://claude.ai/install.sh | bash'
 SIGN_IN = (None, 'alt sign-in claude')  # Altitude's runs sign in with a token of their own
-TOKEN_SETUP = ('setup-token',)  # prints a long-lived sign-in for the operator's subscription
+TOKEN_SETUP = ('setup-token',)  # shows a sign-in link, takes the code Claude's page shows, prints a year's token
+#: What Altitude reads on that screen (`token_setup`): the sign-in link, and the token alone on its line.
+SETUP_LINK = re.compile(r"https://(?:[\w-]+\.)*claude\.(?:com|ai)/\S*oauth/authorize\?\S+")
+SETUP_TOKEN = re.compile(r"sk-ant-oat01-[A-Za-z0-9_-]{40,}")
+
+
+def token_setup_env(env: dict, home: Path) -> dict:
+    """The setup command's environment: a settings folder of its own, no sign-in it could use instead, and no
+    browser opened on the computer, since the link goes to the operator's browser."""
+    env = {key: value for key, value in env.items() if key not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    return {**env, "CLAUDE_CONFIG_DIR": str(home), "BROWSER": "true"}
+
+
 IMAGE_READER = 'Read'
 EFFORT_ENV = "CLAUDE_CODE_EFFORT_LEVEL"
 NATIVE_SEND = True
