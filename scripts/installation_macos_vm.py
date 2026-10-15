@@ -921,17 +921,22 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
               f"health reports {answer}")
         return answer
 
-    def browser(name: str, path: str, code: str | None = None, jar: str = f"{SHARED}/browser-cookies") -> tuple[int, dict]:
+    def browser(name: str, path: str, body: dict | None = None, jar: str = f"{SHARED}/browser-cookies") -> tuple[int, dict]:
         """The page's own request at the printed origin, from a browser that trusts the generated authority."""
         command = (f"curl -sS --max-time 10 --cacert ~/.config/altitude/tls/ca.crt --connect-to ::127.0.0.1: "
                    f"-b {jar} -c {jar} -A 'Mozilla/5.0 (Macintosh) macOS VM lane' -w '\\n%{{http_code}}' ")
-        if code is not None:
-            command += f"-H 'Origin: {origin}' -H 'Content-Type: application/json' --data {quote(json.dumps({'code': code}))} "
-        body, _, status = step(name, command + quote(origin + path)).stdout.rpartition("\n")
-        return int(status), json.loads(body) if body.startswith("{") else {}
+        if body is not None:
+            command += f"-H 'Origin: {origin}' -H 'Content-Type: application/json' --data {quote(json.dumps(body))} "
+        answer, _, status = step(name, command + quote(origin + path)).stdout.rpartition("\n")
+        return int(status), json.loads(answer) if answer.startswith("{") else {}
 
     def paired() -> bool:
         return browser("access", "/api/access")[1].get("paired") is True
+
+    def doctor(name: str) -> dict:
+        report = step(name, f"{alt} doctor --json")
+        check(report.returncode == 0, "doctor failed")
+        return json.loads(report.stdout)
 
     installed = step("install", public_command(repository), timeout=300)
     check(installed.returncode == 0 and f"Altitude {version} is installed" in installed.stdout, "the installer failed")
@@ -942,13 +947,19 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     check(link is not None and link.group(1) == origin, "the installer printed no private pairing link for its address")
     code = link.group(2)
     running()
+    printed = step("version", f"{alt} --version")
+    check(printed.returncode == 0 and printed.stdout.strip() == f"alt {version}", "alt --version does not print the release")
+    # Doctor's one next step follows real state: the installer's private link while it still works...
+    hint = doctor("doctor-link")["next"]
+    check(hint[0].startswith("Next: open the private link the installer printed. It works once, until "), f"next: {hint}")
     # Opening the printed link: the page at its origin, then the page's pairing request with the fragment's code.
     check(browser("page", "/projects")[0] == 200 and not paired(), "the link's page is not served to an unpaired browser")
-    status, answer = browser("pair", "/api/pair", code)
+    status, answer = browser("pair", "/api/pair", {"code": code})
     check(status == 200 and "device" in answer and paired(), f"the printed link did not pair: {status} {answer}")
+    device = answer["device"]["id"]
     # The link works once; another browser, or a well-formed unknown code, is told to make a new one.
     for name, tried in (("pair-again", code), ("pair-unknown", "2345-6789")):
-        status, answer = browser(name, "/api/pair", tried, jar=f"{SHARED}/other-browser-cookies")
+        status, answer = browser(name, "/api/pair", {"code": tried}, jar=f"{SHARED}/other-browser-cookies")
         check(status == 410 and "expired or was already used" in answer.get("error", ""), f"{name}: {status} {answer}")
     def identity(name: str) -> str:
         """The digests of the certificate authority, server key and certificate, all four present."""
@@ -966,13 +977,23 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     before = running()
     check(identity("identity-again") == certificate and paired(),
           "the second installation changed the certificate or lost the paired browser")
-    help_text = step("doctor-help", f"{alt} doctor --help").stdout
-    doctor = step("doctor", f"{alt} doctor" + (" --json" if "--json" in help_text.split() else ""))
-    report = json.loads(doctor.stdout)
+    report = doctor("doctor")
     checks = {item["name"]: item["state"] for item in report["checks"]}
     record["doctor"] = checks
-    check(doctor.returncode == 0 and report["version"] == version and checks["Python"] == checks["user service"] == "tested"
+    check(report["version"] == version and checks["Python"] == checks["user service"] == "tested"
           and all(checks[name] == "configured" for name in ("git", "gh", "openssl")), f"doctor reports {checks}")
+    # ...then, with a browser paired, the first missing tool: the GitHub CLI copied in is not signed in.
+    check(report["next"] == ["Next: Sign in to the GitHub CLI.", "  gh auth login"], f"next: {report['next']}")
+    # macOS has no agent sandbox to install; with no coding agent, one requirement names every agent's install command.
+    coding = next(item for item in report["checks"] if item["name"] == "coding agent")
+    check("agent sandbox" not in checks and coding["state"] == "unavailable"
+          and coding["detail"].startswith("Install at least one coding agent: ")
+          and all(f"; {seat['name']}: " in coding["detail"] for seat in report["engines"]), f"doctor reports {report['checks']}")
+    status, answer = browser("prerequisites", "/api/prerequisites")
+    items = answer.get("items", [])
+    check(status == 200 and [item["key"] for item in items] == ["github", "agents", "git"]
+          and all(option["command"] for option in items[1]["options"])
+          and len(items[1]["options"]) == len(report["engines"]), f"prerequisites: {status} {answer}")
     booted = guest.ssh("sysctl -n kern.boottime").stdout.strip()
     note("login: restarting the guest")
     guest.ssh("sudo -n /sbin/shutdown -r now", timeout=30, check=False)
@@ -983,6 +1004,34 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     after = running()
     check(after["pid"] != before["pid"], "the service was not started again after the restart")
     check(paired(), "the paired browser was lost after the restart")
+    # A project added before any coding agent can run waits for one, with no incident filed.
+    project = "fictional-app"
+    made = step("project", f"git init -q ~/{project} && git -C ~/{project} -c user.name=Newcomer "
+                           f"-c user.email=newcomer@example.invalid commit -q --allow-empty -m start")
+    check(made.returncode == 0, "the fictional project could not be made")
+    status, answer = browser("project-add", "/api/project/add", {"name": project, "path": f"/Users/{ACCOUNT}/{project}"})
+    check(status == 200 and answer.get("ok"), f"adding the project failed: {status} {answer}")
+    # Setup runs in the background after the add; each poll's log replaces the last, so the final answer is kept.
+    deadline = time.monotonic() + 120
+    while True:
+        status, answer = browser("project-setup", f"/api/setup/{project}")
+        coordinator = next((item for item in answer.get("steps", []) if item["id"] == "coordinator"), {})
+        if coordinator.get("status") == "waiting" or time.monotonic() > deadline:
+            break
+        steps.pop()
+        time.sleep(5)
+    record["coordinator"] = coordinator
+    check(status == 200 and coordinator.get("status") == "waiting" and coordinator.get("action") == "tools"
+          and re.fullmatch(r"Waiting for a coding tool\. Install \w+ \(Coding tools\), and setup continues by itself\.",
+                           coordinator.get("detail", "")), f"setup: {status} {answer}")
+    status, answer = browser("project-view", f"/api/project/{project}")
+    check(status == 200 and answer.get("incidents") == [], f"the waiting project filed an incident: {answer.get('incidents')}")
+    # ...and, with no browser paired and the installer's link used, certificate trust and pairing come next.
+    status, answer = browser("revoke", "/api/devices/revoke", {"id": device})
+    check(status == 200 and not paired(), f"the browser could not be unpaired: {status} {answer}")
+    hint = doctor("doctor-trust")["next"]
+    check(hint == ["Next: compare the certificate below with what your browser shows, trust it, then run alt pair."],
+          f"next: {hint}")
     removed = step("uninstall", f"{alt} uninstall")
     check(removed.returncode == 0 and json.loads(removed.stdout)["uninstalled"], "uninstall failed")
     gone = step("removed", f"test ! -e {agent} && ! launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} >/dev/null 2>&1 && "

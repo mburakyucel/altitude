@@ -277,7 +277,7 @@ class TestEffortCommand(AltitudeCase):
                     event = {"type": "result", "session_id": "conversation", "result": "done"}
                     process = PrintProcess(json.dumps(event) + "\n")
                     with mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as launch:
-                        result = engines.claude_print("request", unit="altitude-coordinator-fixture.service", cwd=self.repo, effort=effort, resume=resume,
+                        result = engines.claude_print("request", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home", cwd=self.repo, effort=effort, resume=resume,
                                                       settings=self.tmp / "settings.json")
                     self.assertIsNone(result["error"])
                     self.assertEqual(launch.call_args.args[0][-len(engines.common._driver_command()):],

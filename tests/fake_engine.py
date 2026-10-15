@@ -1,8 +1,8 @@
 """A deterministic stand-in for both engines' streaming interfaces, run by the engine driver as its child.
 
 `fake_engine.py` speaks Claude's stream-json print mode; `fake_engine.py app-server` speaks Codex's app-server
-protocol. FAKE_ENGINE_LOG receives its arguments and GitHub token variable, then every line it reads. FAKE_ENGINE_SESSION,
-FAKE_ENGINE_MODEL and FAKE_ENGINE_TEXT replace the session or thread identity, model and reply. With FAKE_ENGINE_TOOL set,
+protocol. FAKE_ENGINE_LOG receives its arguments, GitHub token variable, Claude folder and sign-in, then every line it
+reads. FAKE_ENGINE_SESSION, FAKE_ENGINE_MODEL and FAKE_ENGINE_TEXT replace the session or thread identity, model and reply. With FAKE_ENGINE_TOOL set,
 the first turn starts a long command and writes "running" to that path; the command finishes only once a Send now
 message reaches the turn (for Claude, its input line and the `background_tasks` request). With FAKE_ENGINE_ASK set,
 the Codex server asks the client for an approval first and records the answer. With FAKE_ENGINE_REFUSE_STEER set, the
@@ -43,7 +43,9 @@ def out(event: dict) -> None:
 def read():
     if os.environ.get("FAKE_ENGINE_LOG"):
         with open(os.environ["FAKE_ENGINE_LOG"], "a") as log:
-            log.write(json.dumps({"environment": {"GH_TOKEN": os.environ.get("GH_TOKEN")}, "argv": sys.argv[1:]}) + "\n")
+            log.write(json.dumps({"environment": {"GH_TOKEN": os.environ.get("GH_TOKEN")}, "argv": sys.argv[1:],
+                                  "claude": {key: os.environ.get(key) for key in ("CLAUDE_CONFIG_DIR",
+                                                                                  "CLAUDE_CODE_OAUTH_TOKEN")}}) + "\n")
     for raw in sys.stdin:
         message = json.loads(raw)
         if os.environ.get("FAKE_ENGINE_LOG"):

@@ -134,7 +134,7 @@ class TestCodexTranscript(_CodexTranscriptCase):
                 self._view(**changed)
 
     def test_no_browser_path_and_redaction_policy(self):
-        self.assertIsNone(engines.claude._claude_path("../../etc/passwd"))
+        self.assertIsNone(engines.claude._claude_path("../../etc/passwd", self.tmp))
         for project, slug in (("../etc", self.slug), (self.project, "../status"), ("unmanaged", "task")):
             with self.assertRaises(transcript.TranscriptAccessError):
                 transcript.view(project, slug, engine="codex", session_id="x", attempt=1)

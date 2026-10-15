@@ -81,7 +81,7 @@ def main():
 
     engines.activity_source = activity_source
     engines.transcript_sources = transcript_sources
-    engines.session_context_source = lambda _task: None
+    engines.session_context_source = lambda _project, _slug, _task: None
 
     def task(title, engine, records):
         row = T.new(project, title, "Fictional background work acceptance.")

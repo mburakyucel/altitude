@@ -153,7 +153,7 @@ class TestRefreshRouting(QuotaFixture):
     def choice(self, task=None):
         return route.pick_task(self.project_config, task or {})
 
-    def test_a_usage_check_failing_on_sign_in_starts_a_lapse_and_a_current_reading_ends_it(self):
+    def test_a_usage_check_failing_on_sign_in_starts_a_lapse_only_where_runs_share_its_sign_in(self):
         revoked = "\n".join(json.dumps(event) for event in (
             {"type": "assistant", "error": "authentication_failed",
              "message": {"model": "<synthetic>", "content": [{"type": "text", "text": "Failed to authenticate"}]}},
@@ -165,14 +165,14 @@ class TestRefreshRouting(QuotaFixture):
                 else:
                     self.output = revoked
                 self.refresh()
-                self.assertTrue(route.signed_out("claude"))
+                # Claude's reading uses the operator's own sign-in, not the one Altitude's Claude runs use.
+                self.assertFalse(route.signed_out("claude"))
                 self.assertNotIn("rejection", state.read_json(config.MONITOR_DIR / route.QUOTA_CLAUDE))
-                self.assertEqual(self.choice()["engine"], "codex")
-                self.assertEqual(self.choice()["signed_out"], ["claude"])
+                route.note_rejection({"engine": "claude"}, engines.rejection("claude", {"error": "authentication_failed"}))
                 self.failure, self.output = None, usage(limit("weekly_all", 5), limit("session", 1))
                 self.refresh()
-                self.assertFalse(route.signed_out("claude"))
-                self.assertFalse(route._rejection_path({"engine": "claude"}, "sign-in").exists())
+                self.assertTrue(route.signed_out("claude"))
+                route.signed_in("claude")
         for error in ({"code": -32000, "message": "Your access token could not be refreshed because your refresh "
                                                   "token was revoked."},
                       {"code": -32000, "message": "Not logged in"},

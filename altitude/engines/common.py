@@ -40,8 +40,9 @@ _last_quota_refresh: float | None = None
 
 
 def refresh_quotas(min_interval: float = 300) -> None:
-    """Refresh both seats without an interactive session or a model turn. Each read uses the CLI's sign-in, so a
-    current reading ends a sign-in lapse and a sign-in rejection starts one before any turn fails on it."""
+    """Refresh both seats without an interactive session or a model turn. Each read uses the CLI's sign-in, so where
+    Altitude's runs share it a current reading ends a sign-in lapse and a sign-in rejection starts one before any
+    turn fails on it."""
     from .. import route
     global _last_quota_refresh
     now = time.monotonic()
@@ -52,6 +53,8 @@ def refresh_quotas(min_interval: float = 300) -> None:
         reading = implementation(engine).read_quota()
         rejected = reading.pop("rejection", None) or rejection(engine, {"error": reading.pop("error", None)})
         S.write_json(config.MONITOR_DIR / route.quota_file(engine), reading)
+        if implementation(engine).SIGN_IN[0] is None:
+            continue  # the reading proves nothing about the sign-in Altitude's own runs use
         if reading.get("known"):
             route.signed_in(engine)
         elif rejected and rejected.get("sign_in"):
@@ -109,11 +112,50 @@ def sign_in(engine: str) -> dict:
     None when the status command itself could not run or answer, which says nothing about the account."""
     binary = implementation(engine).binary()
     status, command = implementation(engine).SIGN_IN
+    if status is None:  # Altitude's runs use a sign-in of their own (`alt sign-in`)
+        from .. import access
+        return {"signed_in": access.engine_token(engine) is not None, "command": command}
     try:
         signed_in = subprocess.run([binary, *status], capture_output=True, timeout=15, env=clean_env()).returncode == 0
     except (OSError, subprocess.SubprocessError):
         signed_in = None
     return {"signed_in": signed_in, "command": command}
+
+
+def read_hidden(prompt: str, tty: str = "/dev/tty") -> str:
+    """The lines typed or pasted at a prompt that shows nothing, up to an empty one, joined without their spaces:
+    a token copied from the screen carries the line breaks it wrapped at. Input typed before the prompt or pasted
+    after the empty line is discarded, so none of it reaches the shell once the terminal shows typing again."""
+    import io
+    import termios
+    with io.TextIOWrapper(io.FileIO(os.open(tty, os.O_RDWR | os.O_NOCTTY), "r+")) as terminal:
+        old = termios.tcgetattr(terminal)
+        hidden = termios.tcgetattr(terminal)
+        hidden[3] &= ~termios.ECHO
+        termios.tcsetattr(terminal, termios.TCSAFLUSH, hidden)
+        try:
+            terminal.write(prompt)
+            terminal.flush()
+            lines = []
+            while line := terminal.readline().strip():
+                lines.append(line)
+            return "".join(lines)
+        finally:
+            termios.tcsetattr(terminal, termios.TCSAFLUSH, old)
+            terminal.write("\n")
+
+
+def save_sign_in(engine: str) -> None:
+    """`alt sign-in`: the engine's CLI prints a long-lived sign-in for the operator's account, which the operator
+    pastes at a hidden prompt. Altitude's runs of the engine use it from then on; the operator's own is unchanged."""
+    from .. import access, route
+    if subprocess.run([implementation(engine).binary(), *implementation(engine).TOKEN_SETUP], env=clean_env()).returncode:
+        raise RuntimeError(f"{config.ENGINE_LABELS[engine]} did not create a sign-in; nothing was saved")
+    token = read_hidden("Paste the token it printed, then press Enter on an empty line (it stays hidden): ")
+    if not re.fullmatch(r"[A-Za-z0-9._~+/=-]+", token):  # what a copied screen adds: borders, prompts, spaces
+        raise ValueError("That is not a token; nothing was saved")
+    access.save_engine_token(engine, token)
+    route.signed_in(engine)
 
 
 def session_timeout(engine: str) -> int:
@@ -565,16 +607,25 @@ class _Driver:
 
 def engine_driver() -> None:
     """Entry point of every engine job (see `_Driver`). Its input is one JSON line from the launcher: the engine
-    command, its first user turn, the Send now folder, the task it settles and the worker's GitHub token."""
+    command, its first user turn, the Send now folder, the task it settles and the job's own environment (`env`:
+    the worker's GitHub token and what the engine adds, such as a sign-in), which never rides on a command line."""
     spec = json.loads(sys.stdin.readline() or "null")
     if not isinstance(spec, dict) or spec.get("engine") not in config.ENGINES:
         print("altitude-driver: no launch input; the engine was not started", file=sys.stderr, flush=True)
         sys.exit(125)
     env = {key: value for key, value in os.environ.items() if key not in GITHUB_TOKEN_VARIABLES}
-    if spec.get("github_token"):
-        env["GH_TOKEN"] = spec["github_token"]
+    env.update(spec.get("env") or {})
     driver = implementation(spec["engine"]).Driver(spec, env)
     sys.exit(driver.run())
+
+
+def with_launch_env(command: list[str]) -> list[str]:
+    """`command` started with the environment in the first line of its input, read byte by byte so the rest of the
+    input stays the command's own; for a job launched without the driver, such as a review."""
+    adapter = ("import json, os, sys\nline = b''\nwhile not line.endswith(b'\\n'):\n    byte = os.read(0, 1)\n"
+               "    if not byte:\n        sys.exit(125)\n    line += byte\n"
+               "os.environ.update(json.loads(line))\nos.execvp(sys.argv[1], sys.argv[1:])")
+    return [sys.executable, "-I", "-c", adapter, *command]
 
 
 def github_token(env: dict) -> str:
@@ -847,7 +898,7 @@ def transcript_sources(project: str, slug: str, task: dict):
             info = os.fstat(job) if job is not None else None
             yield invocation.RuntimeSources(items, (info.st_dev, info.st_ino) if info else None)
     else:
-        yield native.transcript_sources(task) if native else []
+        yield native.transcript_sources(task, job_root=S.task_dir(project, slug) / "l2-engine") if native else []
 
 
 def transcript_rows(engine: str, record: dict, worktree: str) -> list[dict]:
@@ -896,11 +947,12 @@ def activity_source(project: str, slug: str, task: dict):
         yield source
 
 
-def session_context_source(task: dict) -> Path | None:
+def session_context_source(project: str, slug: str, task: dict) -> Path | None:
     """The selected native session can corroborate source time and inbox-hook attachments."""
     engine = transcript_engine(task)
     native = _configured(engine)
-    return native.session_context_source(str(task.get("session_id") or "")) if native else None
+    return native.session_context_source(str(task.get("session_id") or ""),
+                                         S.task_dir(project, slug) / "l2-engine") if native else None
 
 
 def delivered_context(engine: str, record: dict) -> list[str]:
@@ -983,13 +1035,14 @@ def _token_legacy_segments(row: dict) -> list[dict]:
 
 def _token_read(path: Path, file: dict, budget: list[int]):
     """Yield complete new JSONL records; retain offsets through restarts and retried partial writes."""
-    stat = path.stat()
+    stream = os.fdopen(storage.read_open(path), "rb")
+    stat = os.fstat(stream.fileno())
     identity = [stat.st_dev, stat.st_ino]
     if file.get("identity") != identity or file.get("missing") or stat.st_size < file.get("offset", 0):
         if file.get("identity"):
             file["lost"] = True
         file.update(identity=identity, offset=0)
-    with path.open("rb") as stream:
+    with stream:
         stream.seek(file["offset"])
         while budget[0] > 0:
             start = stream.tell()
@@ -1051,7 +1104,7 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
     native = _configured(engine)
     try:
         if native:
-            sources, pending = native.token_sources(home, state["owners"], register)
+            sources, pending = native.token_sources(home, state["owners"], register, job_root)
         else:
             notes.append("This engine has no local token accounting adapter.")
         # Owned stdout survives archive and supplies a provider aggregate if transcript/rollout
@@ -1255,12 +1308,12 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     prompt = owner_prompt(cwd, persona, resume=bool(resume)) + prompt
     native = implementation(engine)
     scratch = task_scratch(extra_env)
-    cmd, content, writable, read_only = native.prepare_worker(name, prompt, cwd=cwd, scratch=scratch, persona=persona,
-                                                              model=model, settings=settings, effort=effort,
-                                                              resume=resume, images=images)
+    root = Path(job_root)
+    cmd, content, writable, read_only, own_env = native.prepare_worker(
+        name, prompt, cwd=cwd, scratch=scratch, job_root=root, persona=persona, model=model, settings=settings,
+        effort=effort, resume=resume, images=images)
     worker_id = uuid.uuid4().hex
     unit = native.worker_unit_name(worker_id)
-    root = Path(job_root)
     root.mkdir(parents=True, exist_ok=True)
     paths = _worker_paths(root, worker_id)
     record = {"id": worker_id, "name": name, "pid": None, "unit": unit, "engine": engine,
@@ -1283,9 +1336,11 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         try:
             task = ({"project": extra_env["ALTITUDE_PROJECT"], "slug": extra_env["ALTITUDE_TASK"]}
                     if extra_env and extra_env.get("ALTITUDE_PROJECT") and extra_env.get("ALTITUDE_TASK") else None)
+            token = github_token(worker_env)
             data = _driver_input({"engine": engine, "command": cmd, "input": content, "cwd": str(cwd),
                                   "model": model, "resume": resume, "worker_id": worker_id, "task": task,
-                                  "sends": str(paths["sends"]), "github_token": github_token(worker_env)}).encode()
+                                  "sends": str(paths["sends"]),
+                                  "env": {**({"GH_TOKEN": token} if token else {}), **own_env}}).encode()
             written = proc.stdin.write(data)
             proc.stdin.close()
             input_written = written == len(data)
@@ -1794,6 +1849,9 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
         attached = [(image["title"], snapshot / image["file"]) for image in images]
         command = _review_command(engine, snapshot, runtime, model, attached, effort)
         prompt = _review_input(engine, prompt, attached)
+        own_env = implementation(engine).review_launch_env(runtime)
+        if own_env:
+            command, prompt = with_launch_env(command), json.dumps(own_env) + "\n" + prompt
         if on_start and on_start(worker) is False:
             return {**out, "error": "Review cancelled before launch."}
         proc = subprocess.Popen(platform.job_command(unit, command, _review_env(),

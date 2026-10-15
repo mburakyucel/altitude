@@ -26,7 +26,8 @@ class TestEngineDriver(AltitudeCase):
               refuse=False):
         command = [sys.executable, str(FAKE), *(["app-server"] if engine == "codex" else [])]
         spec = {"engine": engine, "command": command, "input": engines.common._engine_input(engine, "Start the work.", ()),
-                "cwd": str(self.repo), "sends": str(self.sends), "worker_id": "worker", "task": task}
+                "cwd": str(self.repo), "sends": str(self.sends), "worker_id": "worker", "task": task,
+                "env": {"CLAUDE_CONFIG_DIR": str(self.tmp / "claude")} if engine == "claude" else {}}
         env = {**os.environ, "FAKE_ENGINE_LOG": str(self.log), **({"FAKE_ENGINE_TOOL": str(self.tool)} if tool else {}),
                **({"FAKE_ENGINE_ASK": "1"} if ask else {}),
                **({"FAKE_ENGINE_HELPERS": str(helpers)} if helpers else {}), "FAKE_ENGINE_END": end,
@@ -428,7 +429,7 @@ class TestChatTurns(AltitudeCase):
                 engines.send_into_turn(sends, "m1", TEXT)
             threading.Thread(target=send, daemon=True).start()
 
-        result = engines.claude_print("Start the work.", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=60, sends=sends, on_send=on_send,
+        result = engines.claude_print("Start the work.", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home", cwd=self.repo, timeout=60, sends=sends, on_send=on_send,
                                      on_start=started)
         self.assertIsNone(result["error"], result)
         self.assertEqual(calls[0][:2], ("m1", "delivered"))
@@ -451,4 +452,4 @@ class TestChatTurns(AltitudeCase):
                           "print(json.dumps({'type': 'result', 'result': 'whole', 'session_id': 's'}))\n")
         script.chmod(0o755)
         with mock.patch.object(config, "CLAUDE_BIN", str(script)):
-            self.assertEqual(engines.claude_print("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=30)["text"], "whole")
+            self.assertEqual(engines.claude_print("hello", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home", cwd=self.repo, timeout=30)["text"], "whole")

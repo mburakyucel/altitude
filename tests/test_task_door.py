@@ -99,6 +99,9 @@ class TaskDoor(AltitudeCase):
         message = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Use the staging copy.")
         with S.project_lock(self.project):
             T.claim_send_now(self.project, S.load_task(self.project, self.slug), [message], sends)
+        # Another message in the folder is still not the one handed over.
+        self.assertEqual(self.post(kind="claim", args=None, message="notes"), (200, {"message": None}))
+        self.assertTrue((sends / "notes.json").exists())
         # The ownership record names another folder: altd keeps to the layout's own.
         elsewhere = self.tmp / "elsewhere"
         elsewhere.mkdir()

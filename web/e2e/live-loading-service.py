@@ -45,7 +45,7 @@ def main():
 
     engines.transcript_sources = transcript_sources
     engines.activity_source = activity_source
-    engines.session_context_source = lambda _task: None
+    engines.session_context_source = lambda _project, _slug, _task: None
     engines.transcript_rows = lambda _engine, value, _worktree: [dict(value["row"])]
     engines.public_message_identity = lambda _engine, _value: None
 
