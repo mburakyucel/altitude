@@ -1800,7 +1800,7 @@ class TestLand(AltitudeCase):
         pull["mergeCommit"]["oid"] = self.git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "elsewhere").strip()
         S.write_json(self.ghdir / "pr.json", pull)
         recorded = S.load_task("demo", "fix-x")["delivery"]
-        with self.assertRaisesRegex(land.LandError, "is not on current main"):
+        with self.assertRaisesRegex(land.LandError, "cannot reconcile PR #101: its merge [0-9a-f]+ is not on current main"):
             land.land("fix: first", cwd=self.repo, wait=0)
         self.assertEqual(S.load_task("demo", "fix-x")["delivery"], recorded)
 

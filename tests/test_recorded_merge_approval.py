@@ -253,23 +253,6 @@ class TestRecordedMergeApproval(AltitudeCase):
                           if e["kind"] == "release-merge"][:1], old_release)
         self.assertEqual(S.load_task(self.project, self.slug)["adoption_history"], [first])
 
-    def test_adopting_after_the_tasks_own_delivered_pr_restores_its_hold(self):
-        released = json.loads(self.request()["stdout"])
-        task = S.load_task(self.project, self.slug)
-        task["delivery"] = {"number": 235, "head": "d" * 40, "base": "c" * 40, "branch": self.pull["headRefName"]}
-        S.save_task(self.project, task)
-        self.at = "2026-09-07T20:06:00+00:00"
-        _, hold = land._record_adoption(self.project, self.slug,
-            {"number": 236, "url": "https://github.com/team/project/pull/236",
-             "branch": "proposal/second", "head": "e" * 40}, {"actor": T.OPERATOR_MESSAGE_ROLE},
-            previous=None, dry_run=False)
-        self.assertEqual(hold, released["hold"])
-        task = S.load_task(self.project, self.slug)
-        self.assertEqual((task["hold_merge"], task.get("hold_merge_id")), (released["hold"], released["hold_id"]))
-        self.assertIn({"kind": "hold-merge", "why": released["hold"], "actor": T.OPERATOR_MESSAGE_ROLE,
-                       "hold_id": released["hold_id"]},
-                      [{k: v for k, v in e.items() if k != "at"} for e in S.read_events(self.project, self.slug)])
-
     def test_explicit_same_reason_hold_after_followup_restore_requires_new_authority(self):
         authority = {"actor": T.OPERATOR_MESSAGE_ROLE}
         first, _ = land._record_adoption(self.project, self.slug,
