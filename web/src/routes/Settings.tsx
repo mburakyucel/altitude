@@ -13,7 +13,7 @@ import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { INVALID_SERVICE, updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
-import { automaticText } from "../shell/UpdateNotice";
+import { waitingText } from "../shell/UpdateNotice";
 import VoiceDiagnostics from "../components/VoiceDiagnostics";
 import { UnavailableAction } from "../components/UnavailableAction";
 import { dateText } from "../data/observed";
@@ -682,7 +682,7 @@ function VersionRows({ update }: { update: Update }) {
   </div>;
   return <>
     <div className="settings-row settings-version">
-      <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {update.automatic_pending && !failed ? automaticText(available.version, update.waiting_for) : `${available.version} is available`} · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : ""}</small></span>
+      <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {update.automatic_pending && !failed ? `${available.version} ${update.waiting_for.length ? `waits for ${waitingText(update.waiting_for)}` : "installs automatically"}` : `${available.version} is available`} · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : ""}</small></span>
       {available && update.command ? <Command text={update.command} /> : null}
     </div>
     {failed ? <div className="settings-row">
@@ -700,7 +700,7 @@ function VersionRows({ update }: { update: Update }) {
     <div className="settings-row settings-switch-row">
       <label htmlFor="update-automatic-switch">
         <strong>Automatic updates</strong>{" "}
-        <small>Install new versions once current work finishes. Meanwhile new validation and review runs wait, and an open browser terminal holds the update. Turn this off to be asked before installing.</small>
+        <small>Install new versions at the next quiet moment. Turn this off to be asked before installing.</small>
       </label>
       <input id="update-automatic-switch" type="checkbox" role="switch" className="settings-switch" checked={update.automatic}
         disabled={!update.check || save.status === "saving"} onChange={(event) => void change(event.target.checked, true)} />

@@ -2985,22 +2985,18 @@ def restart_status() -> dict | None:
     return {**pending, "waiting_for": restart_waiting_for()}
 
 
-ACTIVITY_IN_FLIGHT = "a dispatch, L3 turn or report verification in flight"
-
-
 def restart_waiting_for(*, check_activity: bool = True) -> list[str]:
-    """The work holding the quiet point a source activation or an automatic update waits for, by name."""
     projects = list(config.load_projects())
-    waiting = [f"the launch of {p}/{t['slug']}" for p in projects for t in S.list_tasks(p)
+    waiting = [f"{p}/{t['slug']}" for p in projects for t in S.list_tasks(p)
                if t.get("dispatching") or t.get("resume_claim")]
-    waiting += [f"the {p} L3 turn" for p in projects if l3.busy(p)]
-    waiting += [f"the adversarial review of {task}" for task in reviews.running()]
+    waiting += [f"{p} L3" for p in projects if l3.busy(p)]
+    waiting += [f"adversarial review for {task}" for task in reviews.running()]
     if held := validation.holder():
-        waiting.append(f"the validation run of {held}")
+        waiting.append(f"validation run for {held}")
     if check_activity and not waiting:
         with config.restart_lock(exclusive=True) as quiet:
             if not quiet:
-                waiting.append(ACTIVITY_IN_FLIGHT)
+                waiting.append("dispatch, L3 turn or report verification in flight")
     return waiting
 
 
@@ -3051,20 +3047,23 @@ class RestartBusy(RuntimeError):
 
 
 def auto_update() -> None:
-    """Install the offered release at the quiet point when automatic updates are on (operator, 2026-10-09: a fix
-    should not wait for every installation to update by hand). While it is offered, new long runs wait
-    (`config.activation_pending`), so in-flight work drains to that point. The restart that activation causes ends an
-    open terminal, so one defers it; detached workers survive it. Each version is tried once."""
+    """Install the offered release when automatic updates are on (operator, 2026-10-09: a fix should not wait for
+    every installation to update by hand). While it is offered, new validation, review and improvement runs wait
+    (`config.activation_pending`), so those in flight drain; then the request fences dispatch, resume, L3 and report
+    work, and the detached update activates once what runs has finished (#1003: waiting for an instant with nothing
+    in flight lost to back-to-back work). The restart ends an open terminal, so one defers it; detached workers
+    survive it. Each version is tried once."""
     if platform.containerized() or config.RELEASE is None:
         return
     version = installation.automatic_update()
     if not version:
         return
-    with config.restart_lock(exclusive=True) as quiet:
-        # Recorded under the gate, so no dispatch, L3 turn or review can start between this check and the fence.
-        waiting = (["an open browser terminal"] if terminal.any_open() else []) + restart_waiting_for(check_activity=False)
-        if not waiting and not quiet:
-            waiting = [ACTIVITY_IN_FLIGHT]
+    with terminal.held_open() as terminals:
+        waiting = [f"the browser terminal open in {where}" for where in terminals]
+        waiting += [f"the adversarial review of {task}" for task in reviews.running()]
+        waiting += [f"the improvement review of {project}" for project in config.load_projects() if improve.reading(project)]
+        if held := validation.holder():
+            waiting.append(f"the validation run of {held}")
         if not waiting:
             try:
                 installation.request_update(version, automatic=True)
@@ -3072,7 +3071,7 @@ def auto_update() -> None:
                 return   # `alt update`, recovery or activation already runs
     installation.record_update_wait(version, waiting)
     if not waiting:
-        log(f"quiet point: installing Altitude {version} automatically")
+        log(f"installing Altitude {version} automatically once work in flight finishes")
 
 
 def restart_service() -> dict:

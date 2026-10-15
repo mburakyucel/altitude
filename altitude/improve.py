@@ -551,6 +551,11 @@ def _load(project: str) -> dict:
     return S.read_json(_path(project), None) or {"runs": []}
 
 
+def reading(project: str) -> bool:
+    """Whether this project's improvement review call is in flight; an automatic update waits for it."""
+    return any(run["state"] == "reading" for run in _load(project)["runs"])
+
+
 def _find(record: dict, run_id: str) -> dict:
     run = next((r for r in record["runs"] if r["id"] == run_id), None)
     if not run:

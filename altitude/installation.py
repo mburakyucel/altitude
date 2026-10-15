@@ -169,6 +169,9 @@ def latest_release(repository: str, current: str) -> dict | None:
 UPDATE_CHECK_SECONDS = 12 * 3600
 UPDATE_RETRY_SECONDS = 3600
 UPDATE_STALE_SECONDS = 1800
+# How long a detached update waits for work in flight once its request fences new work: an L3 turn's own limit and
+# margin (#1003). `alt update` in a terminal waits a minute.
+UPDATE_DRAIN_SECONDS = 1500
 # The page shows only this next step; the cause stays in the terminal or the update unit's log.
 UPDATE_FAILED = "Run alt update in a terminal to see why."
 UPDATE_VERIFICATION_FAILED = "The installed application failed its release check. Run alt update in a terminal to see why."
@@ -442,7 +445,9 @@ def _update(version: str | None, ident: str) -> dict:
         archive.write_bytes(_get(base, ARCHIVE_LIMIT))
         checksum = _get(base + ".sha256", 1024).decode(errors="replace").split()[:1]
         with _prepare_install(archive, checksum[0] if checksum else "", _prefix(), newer=version) as prepared:
-            result = _activate(*prepared, newer=version)
+            # The detached update's request already fences new work; what runs finishes first.
+            result = _activate(*prepared, newer=version,
+                               wait=UPDATE_DRAIN_SECONDS if os.environ.get("ALTITUDE_UPDATE_ATTEMPT") else 60)
     _finish_attempt(ident, "succeeded")
     # Devices already trust this installation, so the summary leaves out its paths and trust steps.
     return {"version": version, "updated": True, "service": result["service"], "url": result["url"],
@@ -718,8 +723,9 @@ def describe_update(update: dict | None) -> list[str]:
     version, waiting = update["available"]["version"], update["waiting_for"]
     if not update["automatic_pending"]:
         return [f"Update: Altitude {version} is available; alt update installs it."]
-    return [f"Update: Altitude {version} installs automatically once current work finishes"
-            + (f"; waiting for {', '.join(waiting)}." if waiting else ".")]
+    listed = ", ".join(waiting[:-1]) + " and " + waiting[-1] if len(waiting) > 1 else "".join(waiting)
+    return [f"Update: Altitude {version} installs automatically at the next quiet moment"
+            + (f"; waiting for {listed}." if waiting else ".")]
 
 
 def describe_doctor(report: dict) -> str:
@@ -1132,7 +1138,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
             return _activate(*prepared, newer=newer)
 
 
-def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer: str | None) -> dict:
+def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer: str | None, wait: float = 60) -> dict:
     """Activate verified contents while the caller owns install.lock, including download for an update."""
     from . import config, platform, tls
     if (prefix / "pending.json").exists():
@@ -1184,7 +1190,7 @@ def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer
         atomic(path, content, 0o755)
     tls.initialize()
     # This is the same narrow gate used by dispatch, resume, L3 and report verification.
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + wait
     while True:
         with config.restart_lock(exclusive=True) as quiet:
             if quiet:
@@ -1212,7 +1218,8 @@ def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer
                 (prefix / "pending.json").unlink()
                 break
         if time.monotonic() >= deadline:
-            raise RuntimeError("Update staged; activation waits for dispatch, L3 or report verification. Retry this version.")
+            raise RuntimeError("Update staged; activation waits for a dispatch, L3 turn, review, validation run or report "
+                               "verification in flight. Retry this version.")
         time.sleep(0.25)
     result = {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
             "network": tls.address_view(config.network(saved["environment"])), "lifecycle": platform.installation_lifecycle(),

@@ -152,10 +152,10 @@ test("Settings shows the version, the command that installs a newer one and the 
   await expect(toggle).toBeChecked();
 
   const waiting = "the validation run of atlas/check-the-lane";
-  state.update = { ...available, automatic, automatic_pending: automatic, waiting_for: [waiting, "an open browser terminal"] };
+  state.update = { ...available, automatic, automatic_pending: automatic, waiting_for: [waiting] };
   await page.reload();
   await walk.state("13-settings-available", {
-    visible: [version.getByText(`v0.1.0 · Altitude v0.2.0 installs automatically once current work finishes. Waiting for ${waiting}, an open browser terminal. ·`), version.getByRole("link", { name: "What’s new" }), version.getByText("alt update", { exact: true }),
+    visible: [version.getByText(`v0.1.0 · v0.2.0 waits for ${waiting} ·`), version.getByRole("link", { name: "What’s new" }), version.getByText("alt update", { exact: true }),
       version.getByRole("button", { name: "Copy" }), page.getByRole("status", { name: "New version" })],
     hidden: [],
   });
@@ -164,10 +164,30 @@ test("Settings shows the version, the command that installs a newer one and the 
   const notice = page.getByRole("status", { name: "New version" });
   await walk.state("13a-automatic-pending", {
     action: () => autoToggle.scrollIntoViewIfNeeded(),
-    visible: [notice.getByText(`Altitude v0.2.0 installs automatically once current work finishes. Waiting for ${waiting}, an open browser terminal.`), autoToggle],
+    visible: [notice.getByText(`Altitude v0.2.0 installs automatically at the next quiet moment. Waiting for ${waiting}.`), autoToggle],
     hidden: [notice.getByRole("button", { name: "Update", exact: true })],
   });
   await expect(autoToggle).toBeChecked();
+
+  // Only a browser terminal is in the way, with Terminal on, as it is whenever one is open.
+  const terminal = "the browser terminal open in atlas/check-the-lane";
+  const machine = async (route: import("@playwright/test").Route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...((await response.json()) as Json), terminal: true } });
+  };
+  await page.route("**/api/machine", machine);
+  state.update = { ...state.update, waiting_for: [terminal] };
+  await page.reload();
+  await walk.state("13a2-automatic-waits-for-a-terminal", {
+    action: () => autoToggle.scrollIntoViewIfNeeded(),
+    visible: [notice.getByText(`Altitude v0.2.0 installs automatically at the next quiet moment. Waiting for ${terminal}.`),
+      version.getByText(`v0.2.0 waits for ${terminal} ·`)],
+    hidden: [],
+  });
+  await expect(page.getByRole("switch", { name: /Terminal/ })).toBeChecked();
+  await page.unroute("**/api/machine", machine);
+  state.update = { ...state.update, waiting_for: [waiting] };
+  await page.reload();
   refuseAutomatic = true;
   await walk.state("13b-automatic-change-denied", {
     action: () => autoToggle.click(), visible: [page.getByRole("alert").getByText("Change refused.")], hidden: [],

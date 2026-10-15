@@ -37,6 +37,16 @@ function fixture(initial: Update | null = available) {
 }
 
 describe("Installed release updates", () => {
+  it("names what a pending automatic update waits for, joining the last with and", async () => {
+    fixture({ ...available, waiting_for: ["the browser terminal open in atlas", "the adversarial review of atlas/a", "the validation run of atlas/b"] });
+    renderApp({ route: "/" });
+    expect(await screen.findByText("Altitude v0.2.0 installs automatically at the next quiet moment. Waiting for the browser terminal open in atlas, the adversarial review of atlas/a and the validation run of atlas/b.")).toBeVisible();
+  });
+  it("says only that it installs at the next quiet moment when nothing is in the way", async () => {
+    fixture({ ...available, waiting_for: [] });
+    renderApp({ route: "/" });
+    expect(await screen.findByText("Altitude v0.2.0 installs automatically at the next quiet moment.")).toBeVisible();
+  });
   it("offers manual installation when a previously attempted version is offered again", async () => {
     fixture({ ...available, automatic_pending: false,
       attempt: { version: "v0.3.0", state: "failed", error: "Run alt update in a terminal to see why." } });
@@ -47,8 +57,8 @@ describe("Installed release updates", () => {
   it("waits automatically, switches to a prompt, and preserves the preference with checking off", async () => {
     const state = fixture();
     const { user } = renderApp({ route: "/settings" });
-    const pending = "Altitude v0.2.0 installs automatically once current work finishes. Waiting for the validation run of atlas/check-the-lane.";
-    expect(await screen.findByText(pending)).toBeVisible();
+    expect(await screen.findByText("Altitude v0.2.0 installs automatically at the next quiet moment. Waiting for the validation run of atlas/check-the-lane.")).toBeVisible();
+    expect(screen.getByText(/v0\.2\.0 waits for the validation run of atlas\/check-the-lane/)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
     const automatic = screen.getByRole("switch", { name: /Automatic updates/ });
     expect(automatic).toBeChecked();
@@ -123,7 +133,7 @@ describe("Installed release updates", () => {
     await user.click(screen.getByRole("button", { name: "Dismiss new version notice" }));
     expect(localStorage.getItem("altitude.update.dismissed")).toBe("v0.2.0:installed");
     set({ ...available, available: { version: "v0.3.0", notes } });
-    expect(await screen.findByText(/Altitude v0.3.0 installs automatically/)).toBeVisible();
+    expect(await screen.findByText(/Altitude v0.3.0 installs automatically at the next quiet moment/)).toBeVisible();
   });
 
   it.each([null, { ...available, available: null, automatic: false, managed: "image" as const, reason: "Managed by its container image." }])(

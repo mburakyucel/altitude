@@ -663,7 +663,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         wait_for(lambda: validation.LINE._queue, "the next run to wait its turn")
         S.write_json(flag, {"since": S.now(), "head": "merged", "files": ["altitude/dispatch.py"]})
         with mock.patch.object(server, "_request_restart_unit", return_value={"ok": True, "unit": "restart"}) as restart:
-            self.assertEqual(server.restart_status()["waiting_for"], [f"the validation run of {self.project}/{self.slug}"])
+            self.assertEqual(server.restart_status()["waiting_for"], [f"validation run for {self.project}/{self.slug}"])
             server.auto_restart()
             restart.assert_not_called()
             release.touch()
@@ -681,7 +681,8 @@ class TestValidationRunner(ClientStop, RunnerCase):
         """#1003: an offered release installs only at a quiet point, and on a packaged install nothing fenced new runs
         until the update was requested, which needed that quiet point: the next validation run or review always took
         it first. While a release waits for its automatic attempt, new long runs now wait; work in flight finishes and
-        the next tick installs it, and the page and `alt doctor` name what it waits for."""
+        the next tick requests it even while short work holds the gate, and the page and `alt doctor` name what it
+        waits for."""
         from altitude import installation, reviews
         prefix = self.tmp / "installed"
         prefix.mkdir()
@@ -700,8 +701,9 @@ class TestValidationRunner(ClientStop, RunnerCase):
                 server.auto_update()
                 waiting = [f"the adversarial review of {review}", f"the validation run of {self.project}/{self.slug}"]
                 self.assertEqual(installation.update_status()["waiting_for"], waiting)
-                self.assertIn("Update: Altitude v0.2.0 installs automatically once current work finishes; waiting for "
-                              + ", ".join(waiting) + ".", installation.describe_update(installation.update_status()))
+                self.assertEqual(installation.describe_update(installation.update_status()),
+                                 ["Update: Altitude v0.2.0 installs automatically at the next quiet moment; waiting for "
+                                  + " and ".join(waiting) + "."])
             install.assert_not_called()
             release.touch()
             holder.join()
@@ -711,7 +713,8 @@ class TestValidationRunner(ClientStop, RunnerCase):
             self.assertEqual(json.loads(response.read())["error"], validation.RESTARTING)
             self.assertEqual((len(self.rows()), self.ledger(other).exists()), (1, False), "the waiting run never ran")
             self.assertEqual(self.validate(["true"], status=400)["error"], validation.RESTARTING, "nor does a new one")
-            server.auto_update()
+            with config.restart_lock():   # an L3 turn in flight: the request fences new ones and the update waits for it
+                server.auto_update()
             install.assert_called_once_with("v0.2.0", automatic=True)
 
     def test_only_the_tasks_own_worker_may_run_its_validation(self):

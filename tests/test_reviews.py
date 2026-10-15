@@ -229,7 +229,7 @@ class TestReviews(AltitudeCase):
         for fail in (False, True):
             with self.subTest(fail=fail):
                 def during_run(prompt, **kwargs):
-                    self.assertIn(f"the adversarial review of {self.project}/{self.slug}",
+                    self.assertIn(f"adversarial review for {self.project}/{self.slug}",
                                   server.restart_waiting_for(check_activity=False))
                     with mock.patch.object(server, "_request_restart_unit") as restart:
                         with self.assertRaises(server.RestartBusy):
