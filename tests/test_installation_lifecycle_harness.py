@@ -1016,6 +1016,39 @@ class TestInstallationMacosVm(AltitudeCase):
         for rows, code in ((every[1:], 0), ([*every[:-1], {**every[-1], "state": "fail"}], 1), (every, 1)):
             self.assertFalse(judged(rows, code)[1], rows)
 
+    def test_read_only_home_passes_only_when_every_case_runs_and_passes(self):
+        from scripts import installation_macos_vm as vm
+        ran = ("test_owner_verbs_change_records_through_altd (tests.test_worker_writes.ReadOnlyHome."
+               "test_owner_verbs_change_records_through_altd) ... {}\n"
+               "test_the_owner_lands_with_altitudes_home_read_only (tests.test_land.TestLand."
+               "test_the_owner_lands_with_altitudes_home_read_only)\nA held landing merges under the operator's ... {}\n")
+
+        class Guest:
+            def __init__(self, outcomes, code=0):
+                self.output, self.code, self.commands = ran.format(*outcomes), code, []
+
+            def copy(self, source, target):
+                pass
+
+            def ssh(self, command, timeout=120, check=True):
+                self.commands.append(command)
+                return subprocess.CompletedProcess(command, self.code, "", self.output)
+
+        def judged(outcomes, code=0):
+            guest, record = Guest(outcomes, code), {}
+            vm.phase_read_only_home(guest, None, self.tmp, record, self.tmp, "c" * 40)
+            return guest, record["cases"]["read-only-home"]
+
+        guest, case = judged(("ok", "ok"))
+        self.assertTrue(case["passed"])
+        self.assertEqual(case["tests"]["tests.test_land.TestLand.test_the_owner_lands_with_altitudes_home_read_only"], "ok")
+        self.assertIn("-m unittest -v " + " ".join(vm.READ_ONLY_HOME), guest.commands[0])
+        self.assertNotIn("sudo", guest.commands[0])  # the logged-in account itself, outside any sandbox
+        self.assertTrue((self.tmp / "read-only-home.log").is_file())
+        skipped = "skipped 'this process is already confined, and macOS applies no second Seatbelt profile'"
+        for outcomes, code in ((("ok", skipped), 0), (("ok", "FAIL"), 1), (("ok", "ok"), 1)):
+            self.assertFalse(judged(outcomes, code)[1]["passed"], outcomes)
+
     def test_published_names_two_release_tags_and_runs_alone(self):
         from scripts import installation_macos_vm as vm
         for argv, error in ((["--published", "v0.3.0"], "is not a release version"),

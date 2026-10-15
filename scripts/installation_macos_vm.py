@@ -21,9 +21,11 @@ OpenSSL installed, installation and service startup must succeed while stock Lib
 Each refused attempt must leave the account's files and launchd jobs as they were. `privacy` runs the revision's own
 platform_probe.py confinement rows as the logged-in account in a guest whose Python was never asked for access to a
 private place; `jobs` runs its launchd job rows, Stop of every descendant and the time limits among them, which no
-worker sandbox can. `--published` downloads two published releases on this Mac, checked against their SHA256SUMS and tags,
-and runs only `published`: the baseline's own daemon must install the candidate and keep the state made through the
-app. The clone is deleted afterwards, also after a failure or a stop. RESULTS_DIR/macos-vm.json records the outcome.
+worker sandbox can; `read-only-home` runs the revision's suite cases that confine a child with Seatbelt, which no
+validation run or worker can start. `--published` downloads two published releases on this Mac, checked against their
+SHA256SUMS and tags, and runs only `published`: the baseline's own daemon must install the candidate and keep the
+state made through the app. The clone is deleted afterwards, also after a failure or a stop. RESULTS_DIR/macos-vm.json
+records the outcome.
 
 The host reaches a guest only through the Virtualization framework's host-guest socket, relayed to the guest's sshd.
 Everything lives in ~/.cache/altitude-installation-vm/macos; nothing runs as root on this Mac. One guest runs at a
@@ -996,16 +998,25 @@ PRIVACY_ROWS, REFUSED = ("confinement", "validation-confinement"), \
 # The rows that run fixture commands as launchd jobs: output, Stop of every descendant, cleanup and time limits.
 JOB_ROWS = ("job-pipe", "job-file-output", "exit-cleanup", "stop-descendants", "time-limit", "limit-after-owner-exit",
             "logged-job", "detached-job")
+# The suite's read-only-home cases, which confine a child with a second Seatbelt profile and so skip in a validation
+# run or a confined worker (docs/DEVELOPMENT.md#macos-validation-runs).
+READ_ONLY_HOME = ("tests.test_worker_writes", "tests.test_worker_roots",
+                  "tests.test_land.TestLand.test_the_owner_lands_with_altitudes_home_read_only")
+
+
+def in_source(guest: Guest, inputs: Path, command: str, timeout: int) -> subprocess.CompletedProcess:
+    """`command` run by the logged-in account, outside any sandbox, in the revision's files unpacked in the guest."""
+    guest.copy(inputs / "source.tar", f"{SHARED}/source.tar")
+    return guest.ssh(f"mkdir {SHARED}/source && tar -xf {SHARED}/source.tar -C {SHARED}/source && cd {SHARED}/source && "
+                     f"{command}", timeout=timeout, check=False)
 
 
 def probe_rows(guest: Guest, results: Path, record: dict, inputs: Path, case: str, rows: tuple[str, ...],
                detail: str = "") -> None:
     """platform_probe.py's `rows` from the revision's own files, run by the logged-in account outside any sandbox;
     the case passes when every row passes and its detail says `detail`."""
-    guest.copy(inputs / "source.tar", f"{SHARED}/source.tar")
-    command = (f"mkdir {SHARED}/source && tar -xf {SHARED}/source.tar -C {SHARED}/source && cd {SHARED}/source && "
-               f"/opt/homebrew/bin/python3.12 -B scripts/platform_probe.py --only {' '.join(rows)}")
-    result = guest.ssh(command, timeout=300, check=False)
+    command = f"/opt/homebrew/bin/python3.12 -B scripts/platform_probe.py --only {' '.join(rows)}"
+    result = in_source(guest, inputs, command, 300)
     (results / f"{case}.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
     try:
         found = json.loads(result.stdout)["rows"]
@@ -1031,9 +1042,22 @@ def phase_jobs(guest: Guest, repository: str, results: Path, record: dict, input
     probe_rows(guest, results, record, inputs, "jobs", JOB_ROWS)
 
 
+def phase_read_only_home(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """The suite's read-only-home cases, which no validation run or worker can start: each must run and pass, none
+    skipped, its child confined by a Seatbelt profile that keeps Altitude's home read-only."""
+    command = f"/opt/homebrew/bin/python3.12 -B -m unittest -v {' '.join(READ_ONLY_HOME)}"
+    result = in_source(guest, inputs, command, 900)
+    (results / "read-only-home.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
+    # unittest's verbose lines: `name (id) ... outcome`, with a docstring's first line before the dots when there is one.
+    found = dict(re.findall(r"^test\w+ \(([\w.]+)\)(?:\n.*)? \.\.\. (.*)$", result.stderr, re.MULTILINE))
+    record["python"] = guest.ssh("/opt/homebrew/bin/python3.12 --version").stdout.strip()
+    record["cases"] = {"read-only-home": {"exit": result.returncode, "tests": found, "passed": result.returncode == 0
+                                          and bool(found) and all(outcome == "ok" for outcome in found.values())}}
+
+
 # `fresh` starts from the fresh image, every other phase from prerequisites; `published` runs only with --published.
 PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login,
-          "privacy": phase_privacy, "jobs": phase_jobs, "published": phase_published}
+          "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home, "published": phase_published}
 BUILT = ("fresh", "prerequisites", "lifecycle", "login")  # the phases that install the release built from the source
 
 
@@ -1127,8 +1151,8 @@ def lane(results: Path, commit: str | None, phases: list[str], releases: tuple[s
         if set(phases) & set(BUILT):
             note(f"building the release from {commit[:12]}")
             build(commit, work, results / "build.log")
-        if set(phases) & {"privacy", "jobs"}:
-            run("git", "archive", "-o", work / "source.tar", commit, "altitude", "scripts", cwd=SCRIPTS.parent)
+        if set(phases) & {"privacy", "jobs", "read-only-home"}:
+            run("git", "archive", "-o", work / "source.tar", commit, cwd=SCRIPTS.parent)
         for name in phases:
             run_phase(name, work, results, record, commits)
         record["passed"] = all(record["phases"][name]["passed"] for name in phases)
