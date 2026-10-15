@@ -658,6 +658,14 @@ validation run: browsers that keep their own sandbox (see [browser verification]
 Altitude's own worker confinement, and launchd jobs. Candidate application journeys there use the
 suites' local-process job fixtures, and suite cases replace worker confinement at the platform seam,
 so the full suite has the same result in a validation run, inside a confined worker and on Linux.
+The exception is the read-only-home cases (`tests/test_worker_writes.py`, `tests/test_worker_roots.py`
+and the read-only landing case), which confine a child with a stand-in for the worker's sandbox:
+Landlock on Linux, a second Seatbelt profile on macOS. They skip, naming the reason, where the stand-in
+cannot start: on a Linux kernel without Landlock, and in a macOS validation run or confined worker. On
+the Mac they run only from an unconfined shell, such as the operator's terminal.
+Each suite process keeps its fictional home in a numbered folder of the run's `TMPDIR`
+(`/private/tmp/av-<id>/<n>/home`), short enough for the coordinator sockets beneath it, which take
+68 bytes after the home against macOS's 104-byte limit.
 A macOS run establishes the candidate's behavior on this Mac under those fixtures; it does not
 establish native launchd/Seatbelt worker behavior, installation or provider compatibility.
 The approved fictional browser lane below establishes only the journeys actually run.

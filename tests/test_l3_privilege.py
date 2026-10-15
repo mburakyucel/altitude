@@ -273,7 +273,6 @@ class TestIssueVerbs(AltitudeCase):
             client.connect(str(l3.verb_socket_path(self.project)))
             client.sendall((json.dumps({"kind": "alt", "args": ["issue", "comment", "42", "-"],
                                        "stdin": "Follow-up", "actor": "burak"}) + "\n").encode())
-            client.shutdown(socket.SHUT_WR)
             result = json.loads(b"".join(iter(lambda: client.recv(65536), b"")))
         self.assertEqual(result["stdout"].strip(), self.url)
         self.assertEqual(S.read_project_log(self.project)[1]["actor"], "l3")
@@ -678,7 +677,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         def raw(request):
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.connect(str(l3.verb_socket_path(self.project)))
-                client.sendall((json.dumps(request) + "\n").encode()); client.shutdown(socket.SHUT_WR)
+                client.sendall((json.dumps(request) + "\n").encode())
                 return json.loads(b"".join(iter(lambda: client.recv(65536), b"")))
 
         response = raw({"kind": "alt", "project": other,

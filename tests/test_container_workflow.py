@@ -6,7 +6,7 @@ import os
 import signal
 from unittest import mock
 
-from tests.support import AltitudeCase
+from tests.support import NATIVE_PLATFORM, AltitudeCase
 from tests import container_workflow_probe as probe
 from altitude import config, dispatch, engines, platform, state as S
 
@@ -49,6 +49,19 @@ class ContainerWorkflow(AltitudeCase):
                 if process.pid == int(path.read_text()):
                     process.wait(timeout=5)
 
+    def in_container(self):
+        """The Linux container image on any kernel, whose instance identity the returned fixture answers."""
+        self.patch(platform.sys, "platform", "linux")
+        if NATIVE_PLATFORM != "linux":
+            self.linux_process_facts()
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(platform, "CONTAINER_PROJECTS", self.tmp)
+        self.patch(config, "HOME", self.tmp / "image-home")
+        identity = self.patch(platform, "_container_instance", return_value="a" * 32)
+        self.patch(platform, "container_ready")
+        platform._lifecycle_write("a" * 32, False)
+        return identity
+
     def cleanup_units(self):
         for unit in self.units:
             self.stop(unit)
@@ -63,12 +76,7 @@ class ContainerWorkflow(AltitudeCase):
         self.assertFalse(any(self.active(unit) for unit in self.units))
 
     def test_replacement_preserves_task_and_message_until_global_continue(self):
-        self.patch(platform, "containerized", return_value=True)
-        self.patch(platform, "CONTAINER_PROJECTS", self.tmp)
-        self.patch(config, "HOME", self.tmp / "image-home")
-        identity = self.patch(platform, "_container_instance", return_value="a" * 32)
-        self.patch(platform, "container_ready")
-        platform._lifecycle_write("a" * 32, False)
+        identity = self.in_container()
         with probe.fixture_engine(self.tmp):
             saved = probe.prepare(self.project, self.tmp / "workflow")
             identity.return_value = "b" * 32
@@ -87,12 +95,7 @@ class ContainerWorkflow(AltitudeCase):
         self.assertFalse(any(self.active(unit) for unit in self.units))
 
     def interruption(self, *, launching):
-        self.patch(platform, "containerized", return_value=True)
-        self.patch(platform, "CONTAINER_PROJECTS", self.tmp)
-        self.patch(config, "HOME", self.tmp / "image-home")
-        identity = self.patch(platform, "_container_instance", return_value="a" * 32)
-        self.patch(platform, "container_ready")
-        platform._lifecycle_write("a" * 32, False)
+        identity = self.in_container()
         with probe.fixture_engine(self.tmp):
             saved = probe.prepare(self.project, self.tmp / "workflow")
             probe.claim_interruption(self.project, saved, launching=launching)

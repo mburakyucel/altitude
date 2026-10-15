@@ -27,7 +27,7 @@ from unittest import TestCase, mock, skipIf
 
 from tests.support import AltitudeCase, add_worktree, make_repo
 from tests.test_grant import SHIM, wait_for
-from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal, tls, validation
+from altitude import config, dispatch, engines, l3, platform, server, state as S, tasks as T, terminal, tls, validation
 
 RUNNER_HOME = validation.home
 
@@ -1273,11 +1273,11 @@ class TestMacValidationRunner(ClientStop, MacRunnerCase):
 class TestValidationProfile(TestCase):
     def test_a_socket_nested_in_the_temporary_folder_accepts_connections(self):
         """In a macOS validation run the suite's folder is in the run's TMPDIR, a later root of its profile, where
-        the coordinator's verb broker binds under the suite's own home (#695)."""
-        with tempfile.TemporaryDirectory() as folder, socket.socket(socket.AF_UNIX) as server_socket, \
-                socket.socket(socket.AF_UNIX) as client:
-            path = Path(folder) / "at-x" / "case-y" / "home" / ".config" / "altitude" / "coordinator-0123456789ab" / "a.sock"
-            path.parent.mkdir(parents=True)
+        a coordinator's verb broker binds under the suite's own home (#695)."""
+        path = l3.verb_socket_path("validation-profile-fixture")
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.addCleanup(path.unlink, missing_ok=True)
+        with socket.socket(socket.AF_UNIX) as server_socket, socket.socket(socket.AF_UNIX) as client:
             server_socket.bind(str(path))
             server_socket.listen()
             client.connect(str(path))

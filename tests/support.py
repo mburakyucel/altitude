@@ -44,11 +44,26 @@ def container_namespace_metadata(root: Path):
 REPO = Path(__file__).resolve().parent.parent
 _NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))
 _native_sandbox_command = None
-# Resolved, so symlinked temporary roots (macOS /var -> /private/var) compare equal to resolved paths, and short,
-# so Unix sockets under a case directory stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes). A
-# validation run's own temporary folder is as short, and the only one its macOS profile admits.
-SUITE = Path(tempfile.mkdtemp(prefix="at-", dir=os.environ.get("ALTITUDE_VALIDATION") and
-                              os.environ.get("TMPDIR") or "/tmp")).resolve()
+
+
+def _suite_folder() -> Path:
+    """Resolved, so symlinked temporary roots (macOS /var -> /private/var) compare equal to resolved paths, and short,
+    so Unix sockets stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes): the macOS coordinator sockets
+    take 68 bytes beneath HOME. A validation run's own temporary folder, the only one its macOS profile admits, is
+    12 bytes longer than /tmp's, so each test process there takes the next free number instead of an `at-` name."""
+    temp = os.environ.get("ALTITUDE_VALIDATION") and os.environ.get("TMPDIR")
+    if not temp:
+        return Path(tempfile.mkdtemp(prefix="at-", dir="/tmp")).resolve()
+    number = 0
+    while True:
+        try:
+            (folder := Path(temp) / str(number)).mkdir(mode=0o700)
+            return folder.resolve()
+        except FileExistsError:
+            number += 1
+
+
+SUITE = _suite_folder()
 tempfile.tempdir = str(SUITE)
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
 OFFLINE_BIN = SUITE / "bin"
@@ -177,6 +192,21 @@ def read_only_home(command: list[str], writable: tuple[Path, ...]) -> list[str]:
         return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile([str(root) for root in writable], [str(config.ROOT)]),
                 *command]
     return [sys.executable, "-c", LANDLOCK_LAUNCHER, json.dumps([str(path) for path in (*writable, "/dev")]), *command]
+
+
+def require_read_only_home(case: unittest.TestCase) -> None:
+    """Skip where the stand-in cannot start: a Linux kernel without Landlock, or a macOS process already under a
+    Seatbelt profile (a validation run or a confined worker), where macOS refuses to apply a second one. Fail when the
+    confinement leaves Altitude's home writable, so a case never passes without it."""
+    probe = config.ROOT / f"probe-{case.tmp.name}"
+    done = subprocess.run(read_only_home([sys.executable, "-c", f"open({str(probe)!r}, 'w')"], (case.tmp,)),
+                          capture_output=True, text=True, timeout=60)
+    if done.returncode == 125:
+        case.skipTest("this kernel offers no Landlock")
+    if NATIVE_PLATFORM == "darwin" and "sandbox_apply: Operation not permitted" in done.stderr:
+        case.skipTest("this process is already confined, and macOS applies no second Seatbelt profile")
+    case.assertFalse(probe.exists(), "the confined process wrote Altitude's home")
+    case.assertIn("PermissionError", done.stderr)
 
 
 #: Fake gh: every call is logged; the answers come from files the test writes into $FAKE_GH_DIR.
