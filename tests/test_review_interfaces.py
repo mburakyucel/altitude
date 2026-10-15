@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase
-from altitude import config, reviews, server, state as S, tasks as T
+from altitude import config, door, reviews, server, state as S, tasks as T
 
 
 class TestReviewInterfaces(AltitudeCase):
@@ -125,6 +125,10 @@ class TestReviewInterfaces(AltitudeCase):
             self.cli("task", "review", "run", "--review-id", "review", "--proposal-message", "proposal",
                      "--show", "docs/spec.md", door=False)
             self.assertEqual(json.loads(transport.call_args.args[0].data)["show"], {"docs/spec.md": "IyBTcGVjCg=="})
+        with mock.patch.object(door, "MAX_REQUEST", 64), mock.patch("urllib.request.urlopen") as transport:
+            with self.assertRaisesRegex(SystemExit, "^alt task review: this request is .+ send fewer or smaller files$"):
+                self.cli("task", "review", "run", "--review-id", "review", "--show", "docs/spec.md", door=False)
+            transport.assert_not_called()
 
     def test_streamed_execution_error_is_not_a_success_receipt(self):
         self.serving(8890)  # the transport is replaced; nothing listens

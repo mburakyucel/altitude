@@ -13,8 +13,8 @@ the harness prerequisites and is then unplugged; the other is restricted to the 
 forward, so during the tests the guest reaches neither the internet nor this host's services.
 After the lifecycle passes, another disposable account installs through the built install.sh from a
 release server inside the guest. A third installs the baseline while that server answers for GitHub's
-release lookup and downloads: the baseline's own daemon installs the candidate automatically, then an
-explicit opt-out and app Update request install a newer synthetic release. Another logs in over SSH to an account
+release lookup and downloads: the baseline's own daemon tries a release whose startup fails once and restores
+itself, then installs the candidate automatically, then an explicit opt-out and app Update request install a newer synthetic release. Another logs in over SSH to an account
 that does not linger and installs the candidate there; once that login has closed the service must still run with
 nobody logged in, and after the VM restarts it must come back on its own before the harness removes it. --recovery instead runs only the
 recovery phase: the published baseline's installation must fail, and after the documented cleanup the
@@ -406,11 +406,12 @@ def published(repository: str, tag: str, folder: Path) -> dict:
 
 
 def next_minor(version: str) -> str:
-    """A synthetic candidate label newer than the published VERSION and on its channel, so the installed VERSION follows it."""
+    """A synthetic candidate label newer than VERSION and on its channel, so the installed VERSION follows it, leaving
+    VERSION's next patch or release candidate free for the update phase's failing release."""
     return f"v0.{int(version.split('.')[1]) + 1}.0" + ("-rc.1" if "-rc." in version else "")
 
 
-def build(commit: str, work: Path, results: Path, versions: tuple = (("baseline", "v0.0.0-rc.1"), ("candidate", "v0.0.0-rc.2"))) -> None:
+def build(commit: str, work: Path, results: Path, versions: tuple) -> None:
     """Release versions built from the one source commit into the throwaway work directory."""
     for name, version in versions:
         with (results / f"build-{name}.log").open("w") as log:
@@ -449,7 +450,7 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
             commits = f"{record['baseline']['commit']}..{commit}"
         else:
             note(f"building both release versions from {commit[:12]}")
-            build(commit, work, results)
+            build(commit, work, results, (("baseline", "v0.0.0-rc.1"), ("candidate", next_minor("v0.0.0-rc.1"))))
             commits = commit
         note("verifying the Ubuntu cloud image")
         record["image"] = base_image(cache)

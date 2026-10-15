@@ -955,7 +955,7 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself, on Ubuntu 24.04 x86_64 | Desktop login/logout, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop ends every descendant and whose time limits hold; the suite's read-only-home cases, each confining a child with Seatbelt; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop ends every descendant and whose time limits hold; the suite's read-only-home cases, each confining a child with Seatbelt or Codex's own sandbox; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
@@ -1360,11 +1360,15 @@ then uninstalled. The `update` phase installs the baseline while the account's s
 GitHub's release lookup and release downloads: the release host and its `api.` host resolve to the
 guest's loopback, and the account's user manager gives the service and its update job the throwaway
 authority as `SSL_CERT_FILE`. A release-candidate baseline reads a listing that initially names the
-baseline and an ignored draft; a stable baseline reads GitHub's latest release. The server then
-publishes the candidate. The baseline's daemon must install it automatically with no browser terminal open,
+baseline and an ignored draft; a stable baseline reads GitHub's latest release. The server first
+publishes the baseline's next patch or release candidate, a copy of the candidate whose startup exits. The
+baseline's daemon must try it automatically, record the attempt failed and automatic, and restore itself to a
+healthy baseline with fictional data, settings and TLS identity unchanged; two more forced release checks must
+keep that same failed attempt and download nothing. The server then publishes the candidate. The baseline's
+daemon must install it automatically with no browser terminal open,
 record success and serve the candidate's healthy version with a new PID. The harness then turns
 automatic updates off and publishes a newer synthetic release; a paired app **Update** request
-installs it explicitly. Each update downloads only its archive and checksum. The baseline must have
+installs it explicitly. Each update, the failed one included, downloads only its archive and checksum, once. The baseline must have
 automatic updates (`v0.1.2` or later). The hosts
 entries and unprivileged-port setting these phases need are restored afterwards. The `public-install`
 and `public-update` phases need a guest that reaches GitHub and two published releases, the candidate
@@ -1384,7 +1388,7 @@ evidence is partial acceptance toward #226 and does not close it or establish pu
 `scripts/installation_vm.py` runs the same harness on a Linux x86_64 host with KVM, at no cost and
 without GitHub runners. It needs `qemu-system-x86`, `qemu-utils` and `cloud-image-utils` (installed
 once by the machine's administrator) and read/write access to `/dev/kvm`. One command builds both
-synthetic versions from a committed revision (default: HEAD, which refuses uncommitted edits to tracked
+synthetic versions, `v0.0.0-rc.1` and `v0.1.0-rc.1`, from a committed revision (default: HEAD, which refuses uncommitted edits to tracked
 files), runs every phase
 and leaves the evidence in the results directory. The release builds and the published-release
 downloads take the GitHub repository from the checkout's `origin` remote, which the validation
@@ -1400,7 +1404,7 @@ version and commit against the tag on GitHub, and builds only the candidate from
 under the next minor version on the baseline's release channel, so the update is never a downgrade
 and the baseline follows it. Every phase then installs the published files, `install.sh` included,
 and updates from them to the candidate; in the `update` phase the published release's own daemon
-installs the candidate automatically. The guest stays
+tries the failing release, restores itself and then installs the candidate automatically. The guest stays
 offline, so the published files run exactly, but its own anonymous download from GitHub does not:
 
 ```sh
@@ -1442,8 +1446,7 @@ is restricted to the SSH forward. The online card has no IPv6. Before the harnes
 probes the internet and listeners it opens on the host's loopback and on its network address (the one
 its default route leaves from). Through the online card all three must answer and through the
 restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
-probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap`, `update`
-(not with `BASELINE`, whose published code makes its own lookup) and `reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
+probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap`, `update` and `reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
 commit, published baseline release with its commit and checksums when used, whether it was a recovery or public run, with
 `PUBLIC` the release `latest` named with its commit and checksums and the networks the guest refuses, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
 and QEMU logs; `harness.log` and the `harness-*.log` files are written as the phases run. The runner prints each stage with its
@@ -1604,7 +1607,12 @@ shell trusts, with `github.com` resolving to the loopback.
   read-only-home suite cases (`tests.test_worker_writes`, `tests.test_worker_roots` and the read-only
   landing case) with Homebrew's Python 3.12. Every case must run and pass, none skipped: each confines
   a child with a Seatbelt profile that keeps Altitude's home read-only, the roots case with the roots
-  each engine's worker launch names.
+  each engine's worker launch names. A Codex worker runs under Codex's own sandbox rather than
+  Altitude's profile, so the runner copies this Mac's Codex CLI into the guest with an empty settings
+  folder and no sign-in, and the opt-in `ALTITUDE_TEST_CODEX_SANDBOX=1` case runs that sandbox with a
+  task's permissions and the job's environment, asking no model; only the scratch folder may be
+  written. The suite's home lies outside the temporary folders that sandbox admits, as in a
+  validation run. A Mac without the Codex CLI stops the phase.
 
 `PUBLISHED=<baseline>..<candidate>` names two published release tags instead of `SOURCE` and runs only
 the `published` phase. Its isolated environment puts Homebrew OpenSSL first for baselines whose

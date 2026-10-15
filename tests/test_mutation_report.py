@@ -1,11 +1,7 @@
 """The mutation run: its report groups mutmut's verdicts by module and function, on fictional `mutmut results`
-output, and it stops only the processes naming its scratch folder that lost their place below mutmut, on real ones."""
+output, and it stops only the processes naming its scratch folder that lost their place below mutmut, on a
+fictional process listing."""
 from pathlib import Path
-import shutil
-import subprocess
-import sys
-import tempfile
-import time
 import unittest
 
 from scripts import mutation
@@ -59,46 +55,30 @@ class TestMutationReport(unittest.TestCase):
         self.assertIn("## `altitude/state.py`\n\nNo mutants.", report)
 
 
-@unittest.skipIf(shutil.which("ps") is None, "the mutation run lists processes with ps")
+# Fictional `processes()` output in ps's layout: right-aligned ids, then the command with its spaces.
+LISTING = """\
+    1     0 /sbin/init
+  500   480 python3 -m mutmut run
+  501   500 python3 /tmp/scratch/bin/alt task status
+  502   501 python3 /tmp/scratch/hooks/guard.py
+  600     1 python3 /tmp/scratch/bin/alt task reply
+  601   600 python3 /tmp/scratch/hooks/guard.py
+  700     1 python3 -c import time; time.sleep(60)
+  701   500 python3 -c import time; time.sleep(60)
+  900     1
+"""
+
+
 class TestStrays(unittest.TestCase):
     def test_only_orphans_naming_the_scratch_folder_are_strays(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            # A test's child runs a script in the scratch folder, as hooks and `bin/alt` do.
-            script = Path(scratch) / "child.py"
-            script.write_text("import time; time.sleep(60)\n")
-            spawn = ("import subprocess, sys; print(subprocess.Popen([sys.executable, sys.argv[1]], "
-                     "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid, flush=True)")
-            started, waited = [], []
-            try:
-                # mutmut's stand-in keeps one child below it; another child's parent exits and leaves it orphaned.
-                root = subprocess.Popen([sys.executable, "-c", f"{spawn}; import time; time.sleep(60)", script],
-                                        stdout=subprocess.PIPE, text=True)
-                waited.append(root)
-                started.append(root.pid)
-                started.append(int(root.stdout.readline()))
-                orphan = int(subprocess.run([sys.executable, "-c", spawn, script], check=True, capture_output=True,
-                                            text=True).stdout)
-                started.append(orphan)
-                # The same interpreter running something else is not the run's.
-                elsewhere = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-                waited.append(elsewhere)
-                started.append(elsewhere.pid)
-                deadline = time.monotonic() + 10
-                while mutation.strays(root.pid, Path(scratch)) != {orphan} and time.monotonic() < deadline:
-                    time.sleep(0.1)
-                self.assertEqual(mutation.strays(root.pid, Path(scratch)), {orphan})
-                mutation.stop({orphan})
-                deadline = time.monotonic() + 10
-                while mutation.strays(root.pid, Path(scratch)) and time.monotonic() < deadline:
-                    time.sleep(0.1)
-                self.assertEqual(mutation.strays(root.pid, Path(scratch)), set())
-                self.assertIsNone(elsewhere.poll())
-            finally:
-                mutation.stop(started)
-                for process in waited:
-                    process.wait()
-                    if process.stdout:
-                        process.stdout.close()
+        # mutmut's descendants stay; an orphan naming the scratch folder and its own child are strays, while an
+        # orphan running something else is not the run's.
+        self.assertEqual(mutation.strays(500, Path("/tmp/scratch"), LISTING), {600, 601})
+
+    def test_once_mutmut_ends_its_descendants_are_strays_too(self):
+        # mutmut's children pass to init when it ends, as the run's final sweep finds them.
+        ended = LISTING.replace("  500   480 python3 -m mutmut run\n", "").replace("  501   500", "  501     1")
+        self.assertEqual(mutation.strays(500, Path("/tmp/scratch"), ended), {501, 502, 600, 601})
 
 
 if __name__ == "__main__":

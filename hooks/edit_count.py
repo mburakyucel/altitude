@@ -11,6 +11,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import door  # noqa: E402
 
+door.follow_activation(__file__)
+
 inp = json.load(sys.stdin) if not sys.stdin.isatty() else {}
 if not os.environ.get("ALTITUDE_TASK"):
     sys.exit(0)

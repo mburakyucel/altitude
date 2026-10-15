@@ -2183,8 +2183,9 @@ resolves the operator's answer with `alt task resolve`. Whoever records the gran
 message after judging that the answer is a yes: the running owner for its own current attempt from a
 task-chat answer, as it applies a merge approval, or L3 or the operator from either chat (`--source
 project` for project chat, after which L3 resumes the owner). The rest is mechanical: the cited message must be the operator's own and must have answered the current
-revision of that operator question with no remainder. The grant binds to the task's current
-attempt; the owner, L3 or the operator may revoke it. Success stores `grant` (id, purpose,
+revision of that operator question with no remainder. Citing the operator's answer while the question
+is still open is refused with the missing step: resolve it from that answer first. The grant binds to
+the task's current attempt; the owner, L3 or the operator may revoke it. Success stores `grant` (id, purpose,
 answer, approval, question/revision, attempt, actor, time) and a `grant` event; refusals
 record `grant-refused` and change nothing. Each command's row names the grant id it ran under;
 recording the same answer again keeps that id. Revocation records `grant-revoke` and refuses every

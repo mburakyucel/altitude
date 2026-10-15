@@ -412,7 +412,8 @@ class TestInstallationVm(AltitudeCase):
         with self.assertRaisesRegex(SystemExit, "no SHA256SUMS"):
             attempt("unlisted")
 
-    def test_published_baseline_run_updates_to_a_candidate_on_its_channel_through_every_phase(self):
+    def lane(self, baseline: str | None):
+        """A lane run whose VM, downloads, builds and harness are fixtures: the builds, phases and vm.json it made."""
         from scripts import installation_vm as vm
         phases, builds = [], []
         native = subprocess.run
@@ -443,13 +444,31 @@ class TestInstallationVm(AltitudeCase):
                 mock.patch.object(vm, "base_image", return_value={"image": "fixture"}), mock.patch.object(vm, "Machine", Machine), \
                 mock.patch.object(vm, "harness", side_effect=harness), \
                 mock.patch.object(vm, "reachable", side_effect=lambda machine: next(reachable)), mock.patch("sys.stdout"):
-            code = vm.run(results, "c" * 40, self.tmp / "cache", "v0.1.2")
+            code = vm.run(results, "c" * 40, self.tmp / "cache", baseline)
         record = json.loads((results / "vm.json").read_text())
         self.assertEqual((code, record["passed"]), (0, True))
+        self.assertEqual([phase for _, phase in phases], ["all", "bootstrap", "update", "reboot-install", "reboot-verify"])
+        return builds, {commits for commits, _ in phases}
+
+    def test_published_baseline_run_updates_to_a_candidate_on_its_channel_through_every_phase(self):
+        builds, commits = self.lane("v0.1.2")
         # A stable baseline follows only stable releases, so its own daemon can install the candidate automatically.
         self.assertEqual(builds, [(("candidate", "v0.2.0"),)])
-        self.assertEqual([phase for _, phase in phases], ["all", "bootstrap", "update", "reboot-install", "reboot-verify"])
-        self.assertEqual({commits for commits, _ in phases}, {f"{'b' * 40}..{'c' * 40}"})
+        self.assertEqual(commits, {f"{'b' * 40}..{'c' * 40}"})
+
+    def test_same_source_run_builds_both_versions_from_the_one_commit(self):
+        builds, commits = self.lane(None)
+        self.assertEqual(builds, [(("baseline", "v0.0.0-rc.1"), ("candidate", "v0.1.0-rc.1"))])
+        self.assertEqual(commits, {"c" * 40})
+
+    def test_the_update_phases_failing_release_sorts_between_baseline_and_candidate(self):
+        from scripts import installation_vm as vm
+        # The baseline's daemon tries the failing release first and then still follows the candidate.
+        for baseline in ("v0.0.0-rc.1", "v0.1.0-rc.2", "v0.7.0"):
+            with self.subTest(baseline):
+                versions = (baseline, following(baseline), vm.next_minor(baseline))
+                self.assertEqual(sorted(versions, key=installation.version_key), list(versions))
+                self.assertEqual(len({"-rc." in version for version in versions}), 1)
 
     def test_public_run_downloads_both_releases_keeps_only_the_internet_and_runs_both_public_phases(self):
         from scripts import installation_vm as vm
@@ -1025,10 +1044,10 @@ class TestInstallationMacosVm(AltitudeCase):
 
         class Guest:
             def __init__(self, outcomes, code=0):
-                self.output, self.code, self.commands = ran.format(*outcomes), code, []
+                self.output, self.code, self.commands, self.copied = ran.format(*outcomes), code, [], []
 
-            def copy(self, source, target):
-                pass
+            def copy(self, source, target, timeout=300):
+                self.copied.append((Path(source).name, target))
 
             def ssh(self, command, timeout=120, check=True):
                 self.commands.append(command)
@@ -1039,15 +1058,27 @@ class TestInstallationMacosVm(AltitudeCase):
             vm.phase_read_only_home(guest, None, self.tmp, record, self.tmp, "c" * 40)
             return guest, record["cases"]["read-only-home"]
 
-        guest, case = judged(("ok", "ok"))
-        self.assertTrue(case["passed"])
-        self.assertEqual(case["tests"]["tests.test_land.TestLand.test_the_owner_lands_with_altitudes_home_read_only"], "ok")
-        self.assertIn("-m unittest -v " + " ".join(vm.READ_ONLY_HOME), guest.commands[0])
-        self.assertNotIn("sudo", guest.commands[0])  # the logged-in account itself, outside any sandbox
-        self.assertTrue((self.tmp / "read-only-home.log").is_file())
-        skipped = "skipped 'this process is already confined, and macOS applies no second Seatbelt profile'"
-        for outcomes, code in ((("ok", skipped), 0), (("ok", "FAIL"), 1), (("ok", "ok"), 1)):
-            self.assertFalse(judged(outcomes, code)[1]["passed"], outcomes)
+        codex = self.tmp / "codex"
+        codex.write_text("fixture")
+        codex.chmod(0o755)
+        with mock.patch.dict(vm.os.environ, {"CODEX_BIN": str(codex)}):
+            guest, case = judged(("ok", "ok"))
+            self.assertTrue(case["passed"])
+            self.assertEqual(case["tests"]["tests.test_land.TestLand.test_the_owner_lands_with_altitudes_home_read_only"],
+                             "ok")
+            self.assertEqual(guest.copied[0], ("codex", f"{vm.SHARED}/codex"))  # this Mac's CLI, its sandbox only
+            unittest_run = next(command for command in guest.commands if "-m unittest" in command)
+            self.assertIn("-m unittest -v " + " ".join(vm.READ_ONLY_HOME), unittest_run)
+            self.assertIn("ALTITUDE_TEST_CODEX_SANDBOX=1", unittest_run)
+            self.assertIn(f"CODEX_HOME={vm.SHARED}/codex-home", unittest_run)  # empty: no settings, no sign-in
+            self.assertNotIn("sudo", unittest_run)  # the logged-in account itself, outside any sandbox
+            self.assertTrue((self.tmp / "read-only-home.log").is_file())
+            skipped = "skipped 'this process is already confined, and macOS applies no second Seatbelt profile'"
+            for outcomes, code in ((("ok", skipped), 0), (("ok", "FAIL"), 1), (("ok", "ok"), 1)):
+                self.assertFalse(judged(outcomes, code)[1]["passed"], outcomes)
+        with mock.patch.dict(vm.os.environ, {"CODEX_BIN": str(self.tmp / "absent")}), \
+                self.assertRaisesRegex(vm.Stop, "needs the Codex CLI"):
+            judged(("ok", "ok"))
 
     def test_published_names_two_release_tags_and_runs_alone(self):
         from scripts import installation_macos_vm as vm

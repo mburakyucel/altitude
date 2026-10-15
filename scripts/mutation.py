@@ -76,10 +76,14 @@ def configure(source: Path, modules: dict) -> None:
         "process_isolation = forkserver\nforkserver_warmup = none\n")
 
 
-def strays(root: int, scratch: Path) -> set[int]:
-    """Processes whose command names the scratch folder and that are no longer below mutmut's process `root`."""
-    listed = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,command="], check=True, capture_output=True,
-                            text=True).stdout
+def processes() -> str:
+    return subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,command="], check=True, capture_output=True,
+                          text=True).stdout
+
+
+def strays(root: int, scratch: Path, listed: str) -> set[int]:
+    """Processes in the `processes()` listing whose command names the scratch folder and that are no longer
+    below mutmut's process `root`."""
     table = [(int(pid), int(ppid), rest[0] if rest else "") for pid, ppid, *rest in
              (line.split(None, 2) for line in listed.splitlines())]
     below, grown = {root}, True
@@ -111,13 +115,13 @@ def run_mutmut(command: list[str], source: Path, env: dict, scratch: Path, log) 
             try:
                 return process.wait(timeout=60)
             except subprocess.TimeoutExpired:
-                current = strays(process.pid, scratch)
+                current = strays(process.pid, scratch, processes())
                 stop(current & seen)
                 seen = current
     finally:
         process.kill()
         process.wait()
-        stop(strays(process.pid, scratch))
+        stop(strays(process.pid, scratch, processes()))
 
 
 def function_of(mutant: str) -> str:

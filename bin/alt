@@ -12,6 +12,8 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from altitude import door  # noqa: E402
+door.follow_activation(__file__)
 from altitude import config, engines, l3, project_setup, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
@@ -72,7 +74,6 @@ def _sent_show(args, command: str) -> dict[str, str] | None:
     """The content of the worktree files `--show` names, with the document's own images, read here in the worker."""
     if not getattr(args, "show", None):
         return None
-    from altitude import door
     project, slug = _project(args), os.environ.get("ALTITUDE_TASK")
     try:
         return {path: door.encode(data)
@@ -85,7 +86,6 @@ def _forward(args, raw: list[str], command: str) -> None:
     """Send this L2 verb to altd through the task door: its arguments, the stdin it reads, the content of each input
     file and of each file it shows. altd runs it as this task's L2 and changes the records; this process changes
     none."""
-    from altitude import door
     inputs = [path for path in (getattr(args, "file", None), getattr(args, "questions_file", None))
               if path and path != "-"]
     try:
@@ -662,8 +662,13 @@ def main(argv=None) -> None:
             ap.error("project setup --repair requires --reason; reads accept no reason")
         from altitude import access, tls, validation
         from urllib.parse import quote
-        door = review_run or terminal_read or machine_run or validation_run  # admitted by the owner's job, not the key
+        owned = review_run or terminal_read or machine_run or validation_run  # admitted by the owner's job, not the key
         endpoint = "task/review/run" if review_run else "task/terminal" if terminal_read else "task/run" if machine_run else "task/validate" if validation_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
+        try:
+            data = (None if setup_command and not args.repair else door.request_body(payload) if owned
+                    else json.dumps(payload).encode())
+        except door.DoorError as exc:
+            sys.exit(f"alt task {args.tcmd}: {exc}")
         import http.client
         import time
         # A restart can end a machine command's connection while its unit runs on; asking again with the same
@@ -698,9 +703,9 @@ def main(argv=None) -> None:
             from altitude import platform
             service_url = f"https://localhost:{found['port']}" if platform.containerized() else found["url"]
             request = urllib.request.Request(f"{service_url}/api/{endpoint}",
-                                             data=None if setup_command and not args.repair else json.dumps(payload).encode(),
+                                             data=data,
                                              headers={"Content-Type": "application/json",
-                                                      **({} if door else {access.KEY_HEADER: access.machine_key() or ""}),
+                                                      **({} if owned else {access.KEY_HEADER: access.machine_key() or ""}),
                                                       **({"Accept": "application/x-ndjson"} if machine_run or validation_run else {})})
             context = ssl.create_default_context(cadata=found["ca"]) if found["tls"] else None
             try:
