@@ -1105,6 +1105,8 @@ class MacLifecycle(Lifecycle):
 
             self.wait_check(before["version"])
             self.pair()
+            # Renewal needs no registered project, so it precedes the registration and its broker.
+            self.native_renewal(before)
             # Registration is fixture data; no task is launched and every engine executable remains a refusing fixture.
             registry = self.home / ".altitude/projects.json"
             original_registry = registry.read_bytes()
@@ -1122,8 +1124,7 @@ class MacLifecycle(Lifecycle):
             self.run("registered-project-broker-preflight", sys.executable, "-B", "-c", preflight,
                      self.prefix / "current")
             self.native_address_recovery(before)
-            self.native_renewal(before)
-            # Address changes and renewal intentionally reissue the leaf under the same retained CA and server key.
+            # Renewal and address changes intentionally reissue the leaf under the same retained CA and server key.
             retained[self.tls / "server.crt"] = digest(self.tls / "server.crt")
             initial = self.healthy("address-baseline-before-update", before)
             status = self.offered("current", None)

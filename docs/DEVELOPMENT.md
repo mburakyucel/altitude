@@ -1422,15 +1422,16 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   byte is refused with nothing installed, and the unaltered one installs the LaunchAgent and a
   service whose HTTPS health on the generated CA reports the release's version and commit, with
   `alt doctor` passing apart from its expected findings;
+- pairs a fixture device, then gives the stopped service a leaf certificate one day from expiry,
+  issued by the release under the retained CA and server key; with stock LibreSSL still first on the
+  saved service PATH, the service's own startup renews it with the OpenSSL 3 it discovers, keeping
+  the CA, key and pairing;
 - binds a finite throwaway coordinator socket before address transactions; the disposable Mac VM
   home stays in the launcher's guest-owned shared tree so macOS's Unix socket pathname limit is met;
-- pairs a fixture device and records one fictional project without task dispatch; previews and
+- records one fictional project without task dispatch; previews and
   applies IPv4/IPv6 loopback changes while running and stopped, verifies actual HTTPS/native PID,
   later-start loading and preserved CA/keys/pairing/registration; process loss after the durable
   settings write leaves a receipt that `alt recover` restores;
-- gives the stopped service a leaf certificate one day from expiry, issued by the release under the
-  retained CA and server key; with stock LibreSSL still first on the saved service PATH, the
-  service's own startup renews it with the OpenSSL 3 it discovers, keeping the CA, key and pairing;
 - publishes `v0.0.2`; the daemon installs it automatically with no browser terminal open, and
   the overview reports its successful automatic installation;
 - turns automatic updates off, publishes `v0.0.3`, checks its overview, terminal notice and
