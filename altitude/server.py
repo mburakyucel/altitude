@@ -1703,14 +1703,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _body(self, *, max_bytes: int | None = None, owned: bool = False) -> dict:
-        """The request's JSON body. An `owned` request, a task's own, may carry the files it shows when a process in a
+    def _body(self, *, max_bytes: int | None = None) -> dict:
+        """The request's JSON body. A request to a task's own routes may carry the files it shows when a process in a
         task's worker job holds its connection; every other client keeps the ordinary bound."""
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             raise images.ImageError("Invalid message size.", 400)
-        limit = (door.MAX_REQUEST if owned and BODY_LIMIT < n <= door.MAX_REQUEST
+        limit = (door.MAX_REQUEST if BODY_LIMIT < n <= door.MAX_REQUEST
+                 and [p for p in urlparse(self.path).path.split("/") if p] in TASK_DOOR
                  and worker_connection(self.client_address, self.connection.getsockname()) else BODY_LIMIT)
         if n < 0 or n > (max_bytes or limit):
             self.close_connection = True
@@ -2526,7 +2527,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._service_voice()
             if api == "voice" and len(parts) > 2:
                 return self._host_voice(parts, parse_qs(u.query))
-            o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None, owned=owned)
+            o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
             if owned and not self._task_owner(o, running=parts != ["api", "task", "door"]):
                 return self._json({"error": TASK_DOOR_REFUSED}, 403)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
