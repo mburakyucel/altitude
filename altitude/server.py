@@ -2159,8 +2159,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _in_line(self, call) -> None:
         """`alt task validate` and `alt task run`: `call(waiting, gone)` answered as JSON. A client that accepts NDJSON
-        hears what a busy machine makes its request wait for, one line at a time, then gets the answer as the last
-        line. Once its request is read, the client sends nothing more: a connection at its end, or failed, means the
+        hears what a busy machine makes its request wait for and when it is admitted, one line at a time, then gets
+        the answer as the last line. Once its request is read, the client sends nothing more: a connection at its end, or failed, means the
         client closed it or went away, which takes a waiting request out of the line and stops an admitted run
         (docs/DEVELOPMENT.md#validation-runner)."""
         streaming, started = "application/x-ndjson" in (self.headers.get("Accept") or ""), False

@@ -103,9 +103,12 @@ def engine_token_saved(engine: str) -> float | None:
         return None
 
 
-def save_engine_token(engine: str, token: str) -> None:
+def save_engine_token(engine: str, token: str, saved: float | None = None) -> None:
+    """Store that sign-in; `saved` keeps the time a copied one was first saved, from which its year still runs."""
     with _locked():
         S.atomic_write(DIR / f"{engine}.token", token + "\n")  # mkstemp: 0600
+        if saved is not None:
+            os.utime(DIR / f"{engine}.token", (saved, saved))
 
 
 def prepare() -> None:

@@ -214,13 +214,34 @@ def owned(instance: str) -> dict:
     return platform.container_owned(name(instance))
 
 
-def execute(instance: str, command: list[str], *, interactive: bool = False) -> str:
+def execute(instance: str, command: list[str], *, interactive: bool = False, input: str | None = None) -> str:
     value = owned(instance)
-    return platform.container_command(["exec", *(["-it"] if interactive else []), "--user", "1000:1000",
+    return platform.container_command(["exec", *(["-it"] if interactive else ["-i"] if input is not None else []),
+                                       "--user", "1000:1000",
                                        "--workdir", "/home/altitude",
                                        "--env", "HOME=/home/altitude", "--env", "XDG_RUNTIME_DIR=/run/user/1000",
                                        "--env", "PATH=" + platform.CONTAINER_USER_PATH,
-                                       value["Id"], *command], timeout=3600 if interactive else 30, interactive=interactive)
+                                       value["Id"], *command], timeout=3600 if interactive else 30, interactive=interactive,
+                                      input=input)
+
+
+def sign_in(instance: str, engine: str) -> str:
+    """Give a running container the sign-in Altitude's runs on this computer use for the engine (`alt sign-in`), so a
+    fresh container starts its jobs without a sign-in of its own. It is a fixed long-lived sign-in, so copies do not
+    sign each other out; the copy keeps its saved time, from which its year runs. It travels only on the command's
+    input, never on a command line or in output. The operator's own engine login is never read."""
+    from altitude import access, config, engines
+    if engine not in engines.TOKEN_SETUP:
+        raise ValueError(f"Altitude keeps no sign-in of its own for {engine}; sign in inside the container")
+    label = config.ENGINE_LABELS[engine]
+    token, saved = access.engine_token(engine), access.engine_token_saved(engine)
+    if token is None:
+        raise ValueError(f"Altitude has no {label} sign-in on this computer; run alt sign-in {engine} here first")
+    execute(instance, ["python3", "-I", "-c", "import sys; sys.path.insert(0,'/opt/altitude'); "
+                       "from altitude import access, route; "
+                       "access.save_engine_token(sys.argv[1], sys.stdin.read().strip(), saved=float(sys.argv[2])); "
+                       "route.signed_in(sys.argv[1])", engine, repr(saved)], input=token)
+    return f"{instance} now uses this computer's Altitude sign-in for {label}."
 
 
 def lifecycle(instance: str, action: str = "status", *, expected: str | None = None) -> dict:
@@ -556,6 +577,9 @@ def main() -> None:
     sub.add_parser('transfers',help='inspect active or unfinished private backup/restore records')
     recover=sub.add_parser('recover-transfer',help='clean one inactive interrupted transfer, preserving completed backups')
     recover.add_argument('--id',required=True)
+    signing = sub.add_parser("sign-in", help="give a running container this computer's Altitude sign-in (alt sign-in)")
+    signing.add_argument("engine")
+    signing.add_argument("--name", default="altitude")
     for action in ("status", "pause", "continue", "stop", "restart", "recreate", "remove", "pair", "shell", "certificate"):
         command = sub.add_parser(action)
         command.add_argument("--name", default="altitude")
@@ -575,6 +599,8 @@ def main() -> None:
             print(json.dumps(recover_transfer(args.id),indent=2))
         elif args.action == "start":
             print(start(args.image, args.name, args.home_volume, args.projects_volume, args.bind, args.public_host, args.port,new_volumes=args.new_volumes))
+        elif args.action == "sign-in":
+            print(sign_in(args.name, args.engine))
         elif args.action=='backup':
             print(json.dumps(backup(args.name,args.output),indent=2))
         elif args.action=='restore':

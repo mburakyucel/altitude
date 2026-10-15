@@ -39,9 +39,10 @@ class Line:
         """Hold a place for `what` (as the line describes it), whose limit ends `limit` seconds from admission.
         A request that finds every place taken waits in arrival order for up to `wait` seconds, telling
         `waiting(text)` what it waits for when that changes and at least every minute, and checking every `watch`
-        seconds that `gone()` does not say its client stopped (True) or give another reason it leaves. `force` takes a
-        place at once even beyond the line's places, for work already running. Yields the place, whose limit `ends`
-        can move."""
+        seconds that `gone()` does not say its client stopped (True) or give another reason it leaves. A request that
+        was told it waits is told once more when it is admitted, so its last line never reads as waiting while it runs.
+        `force` takes a place at once even beyond the line's places, for work already running. Yields the place, whose
+        limit `ends` can move."""
         ticket, deadline, told, last = object(), time.monotonic() + wait, None, 0.0
         with self.lock:
             self._queue.append(ticket)
@@ -68,6 +69,9 @@ class Line:
                 self._queue.remove(ticket)
                 self.lock.notify_all()
         try:
+            if told is not None:
+                waiting(f"admitted to {self.name}" + (f" until its limit at {place['ends'].isoformat(timespec='seconds')}"
+                                                       if place["ends"] else ""))
             yield place
         finally:
             with self.lock:

@@ -847,6 +847,8 @@ a command line or in a log, and the operator's own Claude sign-in stays untouche
 engine's [sign-in lapse](OPERATIONS.md#engine-sign-in-recovery), and each project's chat reminds the
 operator to sign in again two weeks before the year ends, counted from when it was saved. Usage
 readings and improvement reviews still read the operator's own sign-in.
+A container deployment on the same computer takes this sign-in from the host with the launcher's
+`sign-in` command ([first use](CONTAINERS.md#first-use)).
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
 from the record the service wrote when it started, and checks over HTTPS that the

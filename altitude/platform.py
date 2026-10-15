@@ -1112,8 +1112,10 @@ def container_arguments(arguments: list[str]) -> list[str]:
 
 
 def container_command(arguments: list[str], *, timeout: int = 30, interactive: bool = False,
-                      runtime_dir: Path | None = None, storage_conf: Path | None = None) -> str:
-    """Only the local rootless controller; callers select exact task/image/volume resources."""
+                      runtime_dir: Path | None = None, storage_conf: Path | None = None,
+                      input: str | None = None) -> str:
+    """Only the local rootless controller; callers select exact task/image/volume resources. `input` is the command's
+    standard input, which a failure's message never repeats."""
     if os.getuid() == 0:
         raise RuntimeError("Run Podman as your ordinary Linux account")
     if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
@@ -1121,7 +1123,7 @@ def container_command(arguments: list[str], *, timeout: int = 30, interactive: b
     environment = container_user_environment(runtime_dir) if runtime_dir else container_user_environment()
     if storage_conf is not None:
         environment['CONTAINERS_STORAGE_CONF'] = str(storage_conf)
-    result = subprocess.run(container_arguments(arguments), text=True,
+    result = subprocess.run(container_arguments(arguments), text=True, input=input,
                             capture_output=not interactive, timeout=timeout, env=environment)
     if result.returncode:
         error = RuntimeError(f"Podman {arguments[0]} failed ({result.returncode}): "

@@ -462,6 +462,9 @@ class AltitudeCase(unittest.TestCase):
         if self.host:
             self.patch(platform.sys, "platform", self.host)
         config.ensure_root()
+        # The machine's update record sits in the runtime home that outlives a case; an offered release left there
+        # fences later cases' validation and review runs.
+        self.addCleanup((config.ROOT / "update.json").unlink, missing_ok=True)
         if not self.gated:
             self.patch(access, "is_machine", return_value=True)
         if not self.github:

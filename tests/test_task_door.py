@@ -58,6 +58,17 @@ class TaskDoor(AltitudeCase):
         self.assertEqual((status, answer["returncode"]), (200, 0), answer)
         self.assertEqual(self.replies()[-1], "Waiting for the answer.")
 
+    def test_a_worker_reaches_altd_past_its_proxy(self):
+        """A worker's network settings can name a proxy; the door still reaches altd on this machine directly."""
+        proxy = "http://127.0.0.1:9"
+        with mock.patch.dict(os.environ, {"ALTITUDE_PROJECT": self.project, "ALTITUDE_TASK": self.slug,
+                                          "ALTITUDE_ATTEMPT": "2", "http_proxy": proxy, "https_proxy": proxy}):
+            for name in ("no_proxy", "NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY"):
+                os.environ.pop(name, None)
+            answer = door.call("alt", {"args": ["task", "reply", "Progress."], "stdin": ""}, wait=0)
+        self.assertEqual(answer["returncode"], 0, answer)
+        self.assertEqual(self.replies(), ["Progress."])
+
     def test_a_verb_acts_only_on_the_admitted_task(self):
         other = T.new(self.project, "Another task", "Not the owner's.")
         other.update(state="running", attempt=2)
