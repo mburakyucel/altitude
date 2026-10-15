@@ -529,11 +529,12 @@ test("the L3 dilemma ends the chat; a follow-up hands the turn back until it is 
   await walk.state("05-back-to-needs-you-cleared", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [listCard] });
   await page.goForward();
   await recorded(card);
-  const activity = conversation.locator("details").filter({ has: page.getByText("Activity & evidence", { exact: true }) });
-  await activity.locator("summary").click();
-  await walk.state("06-technical-activity-on-demand", { visible: [activity.getByRole("link", { name: "Open live session", exact: true })], hidden: [] });
-  await activity.locator("summary").click();
-  await expect(activity.getByRole("link", { name: "Open live session", exact: true })).toBeHidden();
+  // At the latest messages the chat ends on its own content; technical activity stays in Live session.
+  await page.locator(".convo-scroll").evaluate((node) => { node.scrollTop = node.scrollHeight; });
+  await walk.state("06-chat-ends-on-latest-content", {
+    visible: [conversation.getByText("Work resumed", { exact: true })],
+    hidden: [conversation.getByText("Activity & evidence", { exact: true }), conversation.getByRole("link", { name: "Open live session", exact: true })],
+  });
 });
 
 test("partial answers retain only the relevant remainder; a changed direction closes the obsolete dilemma", async ({ page, request }, info) => {

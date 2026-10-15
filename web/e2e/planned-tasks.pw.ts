@@ -15,6 +15,7 @@ const readTask = async (request: APIRequestContext, name = slug) => {
   expect(response.ok()).toBe(true);
   return response.json();
 };
+const readEvents = async (request: APIRequestContext, name = slug) => (await (await request.get("/fixture/status")).json()).events[name];
 const control = async (request: APIRequestContext, action: string) => {
   expect((await request.post("/fixture/control", { data: { action } })).ok()).toBe(true);
 };
@@ -64,7 +65,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   const released = await readTask(request);
   expect(released.state).toBe("queued");
   expect(released.planned_wait).toBeFalsy();
-  expect(released.events.find((row: { kind: string }) => row.kind === "released")).toMatchObject({ by: "l3", reason: "The operator verified both prerequisites." });
+  expect((await readEvents(request)).find((row: { kind: string }) => row.kind === "released")).toMatchObject({ by: "l3", reason: "The operator verified both prerequisites." });
 
   await control(request, "complete-dependency");
   await walk.open(workPath);
@@ -75,7 +76,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   expect((await readTask(request)).state).toBe("running");
   const automaticallyReleased = await readTask(request, dependent);
   expect(automaticallyReleased.planned_wait).toBeFalsy();
-  expect(automaticallyReleased.events.find((row: { kind: string }) => row.kind === "released")).toMatchObject({ by: "altd", reason: `${dependency} archived done` });
+  expect((await readEvents(request, dependent)).find((row: { kind: string }) => row.kind === "released")).toMatchObject({ by: "altd", reason: `${dependency} archived done` });
   evidence = await (await request.get("/fixture/status")).json();
   expect(evidence.calls).toHaveLength(2);
   expect(evidence.calls[1].prompt).toContain(update);

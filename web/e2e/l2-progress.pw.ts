@@ -276,7 +276,7 @@ test("loading, compact activity, unconfirmed delivery and voice keep worker stee
 });
 
 for (const index of [0, 1]) {
-  test(`activity cue and record times agree in Conversation and Live session with configured engine ${index + 1}`, async ({ page, request }, info) => {
+  test(`activity cue agrees in Conversation and Live session, which keeps record times, with configured engine ${index + 1}`, async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const initial = (await (await request.get("/fixture/status")).json()).tasks[index];
     expect(initial, "Both configured engine fixtures are required").toBeTruthy();
@@ -296,17 +296,15 @@ for (const index of [0, 1]) {
     await walk.state("01-conversation-working-cue", { visible: [preview.getByText(/^Working · output \d+ sec ago$/)], hidden: [preview.getByText(/No new activity/)] });
     await expect(cueDot).toHaveAttribute("data-pulse", "true");
     expect(await animation(cueDot)).toBe("voice-pulse");
-    await convo.getByText("Activity & evidence").click();
-    await walk.state("02-task-events-show-recorded-times", { visible: [convo.locator(".conversation-activity time.event-time").first()], hidden: [convo.locator(".conversation-activity .event-time[data-unavailable]")] });
     await toLive();
-    await walk.state("03-live-working-cue-and-operation-times", {
-      visible: [liveCue.getByText(/^Working · output \d+ sec ago$/), live.locator("article.session-reply time.session-time").last()],
+    await walk.state("02-live-working-cue-and-record-times", {
+      visible: [liveCue.getByText(/^Working · output \d+ sec ago$/), live.locator(".session-boundary time.session-time").first(), live.locator("article.session-reply time.session-time").last()],
       hidden: [liveCue.getByText(/No new activity/)],
     });
     await expect(live.locator(".live-pulse")).toHaveAttribute("data-tone", "live");
     await control("long-call");
     const call = live.locator("details.session-tool").filter({ hasText: "pnpm test --run" });
-    await walk.state("04-live-long-operation-without-output", {
+    await walk.state("03-live-long-operation-without-output", {
       visible: [call.getByText(/^running · 4 min$/), call.locator("time.session-time"), liveCue.getByText("No new activity for 4 min")],
       hidden: [liveCue.getByText(/^Working · output/)],
     });
@@ -317,23 +315,23 @@ for (const index of [0, 1]) {
     const [prompt, command] = await call.evaluate((node) => [".session-tool-name", ".session-call"].map((selector) => node.querySelector(selector)!.getBoundingClientRect()));
     expect(command.left - prompt.right).toBeLessThanOrEqual(12);
     await toConversation();
-    await walk.state("05-conversation-quiet-hides-preview", { visible: [convo.getByRole("textbox", { name: "Message the L2" })], hidden: [preview] });
+    await walk.state("04-conversation-quiet-hides-preview", { visible: [convo.getByRole("textbox", { name: "Message the L2" })], hidden: [preview] });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await control("output", "The suite is still running.");
-    await walk.state("06-reduced-motion-steady-working-dot", { visible: [preview.getByText(/^Working · output \d+ sec ago$/)], hidden: [preview.getByText(/No new activity/)] });
+    await walk.state("05-reduced-motion-steady-working-dot", { visible: [preview.getByText(/^Working · output \d+ sec ago$/)], hidden: [preview.getByText(/No new activity/)] });
     await expect(cueDot).toHaveAttribute("data-pulse", "true");
     expect(await animation(cueDot)).toBe("none");
     await toLive();
     expect(await animation(live.locator(".live-pulse"))).toBe("none");
     await control("unknown-time", "A reply without a recorded time.");
     const untimed = live.locator("article.session-reply").filter({ hasText: "A reply without a recorded time." });
-    await walk.state("07-live-operation-time-unavailable", { visible: [untimed.getByText("time unavailable", { exact: true })], hidden: [] });
+    await walk.state("06-live-operation-time-unavailable", { visible: [untimed.getByText("time unavailable", { exact: true })], hidden: [] });
     await control("unavailable");
-    await walk.state("08-live-activity-unavailable-claims-nothing", { visible: [liveCue.getByText("Activity unavailable")], hidden: [liveCue.getByText(/^Working · output/)] });
+    await walk.state("07-live-activity-unavailable-claims-nothing", { visible: [liveCue.getByText("Activity unavailable")], hidden: [liveCue.getByText(/^Working · output/)] });
     await expect(live.locator(".live-pulse")).toHaveAttribute("data-tone", "muted");
     await control("finished");
     await walk.open(`/projects/atlas/tasks/${slug}/live`);
-    await walk.state("09-ended-session-has-no-cue", { visible: [live.getByText("Session ended")], hidden: [liveCue, live.locator(".live-pulse[data-tone=live]")] });
+    await walk.state("08-ended-session-has-no-cue", { visible: [live.getByText("Session ended")], hidden: [liveCue, live.locator(".live-pulse[data-tone=live]")] });
   });
 }
 

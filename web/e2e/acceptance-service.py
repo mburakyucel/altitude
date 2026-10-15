@@ -166,7 +166,9 @@ def main():
                 return self._json({"calls": [{key: row.get(key) for key in ("engine", "session_id", "prompt")}
                                              for row in fake.calls], "workers": fake.workers,
                                    "pending": {row["slug"]: T.pending(project, row["slug"])
-                                               for row in S.list_tasks(project)}})
+                                               for row in S.list_tasks(project)},
+                                   "events": {row["slug"]: S.read_events(project, row["slug"])
+                                              for row in S.list_tasks(project)}})
             return super().do_GET()
 
     serve(Handler)

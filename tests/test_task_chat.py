@@ -68,8 +68,6 @@ class TestTaskConversation(ChatCase):
         task = S.load_task(self.project, self.slug)
         task.update({"message_deliveries": {"m" * 32: {"state": "delivered", "at": "y" * 5000}}, "paths": ["web/src/"]})
         S.save_task(self.project, task)
-        for n in range(25):
-            S.append_event(self.project, self.slug, "note", text=f"event {n}")
         (S.task_dir(self.project, self.slug) / "progress.md").write_text("Goal: small\n")
 
         with mock.patch.object(server.monitor, "sessions", return_value=[]):
@@ -80,8 +78,6 @@ class TestTaskConversation(ChatCase):
                          (self.slug, "running", str(self.worktree), "session-old"))
         self.assertEqual(view["paths"], ["web/src/"])
         self.assertFalse(set(server.TASK_VIEW_OMITTED) & set(view))
-        self.assertEqual([e["text"] for e in view["events"]][-2:], ["event 23", "event 24"])
-        self.assertEqual(len(view["events"]), server.TASK_VIEW_EVENTS)
         self.assertEqual(view["files"]["progress"], "Goal: small\n")
         self.assertEqual([m["text"] for m in view["messages"]], ["Keep it small."])
 

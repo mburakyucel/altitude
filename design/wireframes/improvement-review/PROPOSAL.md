@@ -175,7 +175,7 @@ how agents work.
 Suggestions cite anchors the code placed in the prompt (a question revision, a message, an event),
 never quoted text; citations not in the prompt are dropped. In the card each citation opens its exact
 place: a question opens the task conversation at that question revision, a message at that message,
-an event at the task's Activity & evidence. Anything published later (an issue, a PR, a commit)
+an event opens its task. Anything published later (an issue, a PR, a commit)
 describes the pattern in general terms and names the source only as "improvement review of <date>,
 suggestion <n>"; quotes and private details stay in the run's private record, under the existing
 publication rules.

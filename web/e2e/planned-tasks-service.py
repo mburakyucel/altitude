@@ -35,7 +35,8 @@ def main():
             if self.path == "/fixture/status":
                 return self._json({"calls": [{"prompt": row["prompt"]} for row in fake.calls],
                     "pending": T.pending(project, planned["slug"]),
-                    "request": (S.task_dir(project, planned["slug"]) / "request.md").read_text()})
+                    "request": (S.task_dir(project, planned["slug"]) / "request.md").read_text(),
+                    "events": {row["slug"]: S.read_events(project, row["slug"]) for row in S.list_tasks(project)}})
             return super().do_GET()
 
         def do_POST(self):

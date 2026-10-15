@@ -13,7 +13,7 @@ Needs you is a compact list of unanswered questions, grouped by dilemma/task. Op
 to the relevant L2 discussion, including the question, recommendation and context brought through
 L3. It never guesses that the last technical event is the question. The list and conversation use
 the same question component. User bubbles and assistant messages remain prominent; technical
-activity and evidence are available through the existing disclosure and live session.
+activity stays in the live session.
 
 The default question shows the task's purpose and actual choice with only the context and material
 consequences needed to decide. Owners write concise plain-language questions and actionable

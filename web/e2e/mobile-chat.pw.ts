@@ -211,7 +211,6 @@ test("phone text controls keep their line and answer taps across a 44px target @
     { path: project.path, control: page.locator(".sys-line").getByRole("button", { name: "Show", exact: true }).first() },
     { path: "/", control: page.getByRole("button", { name: "Alert me about new decisions", exact: true }) },
     { path: `${project.path}?tab=work`, control: page.locator(".wp-fold-summary").first() },
-    { path: `${project.path}/tasks/prepare-index-migration`, control: page.locator(".conversation-activity summary") },
     { path: `${project.path}/tasks/document-search-contract/report`, control: page.locator(".report-page > .text-meta > a") },
   ];
   for (const [index, { path, control }] of targets.entries()) {

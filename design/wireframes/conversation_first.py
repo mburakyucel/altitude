@@ -28,8 +28,6 @@ CSS = r"""
 .cf-system{font-size:13px;color:var(--text-muted);display:flex;align-items:center;gap:8px;line-height:1.5}.cf-system.success{color:var(--success-text)}
 .cf-summary{border-left:2px solid var(--border);padding:4px 0 4px 14px;color:var(--text-secondary);font-size:14px}
 .cf-details{font-size:13px;color:var(--text-muted)}.cf-details summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:8px}.cf-details summary::before{content:'›';font-size:20px}.cf-details[open] summary::before{content:'⌄'}
-.cf-evidence{border:1px solid var(--border);background:var(--page);border-radius:10px;padding:14px;color:var(--text-secondary)}
-.cf-evidence a{text-decoration:underline;text-underline-offset:2px}
 .cf-compose-wrap{flex-shrink:0;padding:12px 32px 24px}.cf-compose{max-width:700px;margin:auto;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:12px 12px 10px 18px;box-shadow:var(--shadow)}
 .cf-compose textarea{display:block;width:100%;border:0;outline:0;background:transparent;color:var(--text-primary);resize:none;font-size:15px;line-height:1.5;min-height:44px;max-height:140px;padding:0}.cf-compose textarea::placeholder{color:var(--text-muted)}
 .cf-compose-row{display:flex;align-items:center;justify-content:flex-end;gap:8px}.cf-icon{width:44px;height:44px;border:0;border-radius:50%;background:transparent;color:var(--text-secondary);display:inline-flex;align-items:center;justify-content:center}
@@ -100,8 +98,6 @@ def generate(out, board, icon):
         return f'<div class="cf-user"><div class="cf-author">You</div><span>{text}</span></div>'
     def assistant(text):
         return f'<div class="cf-assistant"><div class="cf-author">L2 · Index rollout</div>{text}</div>'
-    def evidence():
-        return '<details class="cf-details"><summary>Activity &amp; evidence</summary><div class="cf-evidence"><p>10:38 · Rollback coverage checked.</p><p>10:47 · Later technical output does not replace the question.</p><a href="https://example.com/atlas/pull/42" target="_blank" rel="noopener noreferrer">PR #42</a></div></details>'
     def answer_field(key, label, hidden=False, disabled=False):
         return f'<textarea class="cf-answer" data-answer-field="{key}" aria-label="{label}" placeholder="Your answer or a follow-up question…" rows="2" {"hidden" if hidden else ""} {"disabled" if disabled else ""}></textarea>'
     def footer(disabled=False):
@@ -157,11 +153,11 @@ def generate(out, board, icon):
         if listing and state.startswith('list-'):
             status = 'Saved attention · refresh needed' if state == 'list-offline' else 'Attention unavailable' if state == 'list-error' else 'Loading attention…'
         if scene == 'NeedsYou': content = group(mobile, True)
-        elif scene == 'Question': content = assistant('The new index is ready. The old one is only needed if we roll back.') + single(mobile) + evidence()
-        elif scene == 'Group': content = group(mobile) + '<p class="cf-note">All three questions are here. Pick any quick answers and send once, or reply normally below.</p>' + evidence()
-        elif scene == 'Followup': content = '<div class="cf-summary">3 questions still open · ' + link('View questions', 'Group', mobile) + '</div>' + user('Could we roll back after day seven?') + assistant('We can rebuild from a snapshot in two hours. Keeping the old index for 14 days preserves instant rollback for another week.') + '<p class="cf-system">Sent · the L2 has your reply.</p>' + evidence()
+        elif scene == 'Question': content = assistant('The new index is ready. The old one is only needed if we roll back.') + single(mobile)
+        elif scene == 'Group': content = group(mobile) + '<p class="cf-note">All three questions are here. Pick any quick answers and send once, or reply normally below.</p>'
+        elif scene == 'Followup': content = '<div class="cf-summary">3 questions still open · ' + link('View questions', 'Group', mobile) + '</div>' + user('Could we roll back after day seven?') + assistant('We can rebuild from a snapshot in two hours. Keeping the old index for 14 days preserves instant rollback for another week.') + '<p class="cf-system">Sent · the L2 has your reply.</p>'
         elif scene == 'Partial': content = '<div class="cf-closed" data-closed><b>Recorded</b><p>Retention: 14 days.</p><p>Backup region: closed — snapshots replace the regional backup.</p></div>' + '<div data-remaining>' + group(mobile) + '</div>'
-        elif scene == 'Accepted': content = '<div class="cf-summary" data-outcome>All three questions resolved.</div>' + user('<span data-answer>Keep it for 14 days. Use snapshots instead of the regional backup. Send the report to the release team.</span>') + '<p class="cf-system success" role="status">Decision recorded</p>' + assistant('<span data-ack>I’ll keep the index for 14 days, use snapshots, and send the report to the release team.</span>') + '<p class="cf-system">Work resumed</p>' + evidence()
+        elif scene == 'Accepted': content = '<div class="cf-summary" data-outcome>All three questions resolved.</div>' + user('<span data-answer>Keep it for 14 days. Use snapshots instead of the regional backup. Send the report to the release team.</span>') + '<p class="cf-system success" role="status">Decision recorded</p>' + assistant('<span data-ack>I’ll keep the index for 14 days, use snapshots, and send the report to the release team.</span>') + '<p class="cf-system">Work resumed</p>'
         else:
             text = state_text[state]
             content = f'<p class="cf-notice" role="{"alert" if state in ("list-error","read-error","accept-error","denied","cached-error") else "status"}">{text}</p>'

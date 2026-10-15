@@ -70,11 +70,6 @@ function dilemma(name: string, task: Row) {
       fault: null,
       prs: [140],
       messages: [],
-      events: [
-        ...((task.events as Row[] | undefined) ?? []).filter((e) => typeof e.at === "string" && (e.at as string) < minutesAgo(30)),
-        { at: minutesAgo(26), kind: "state", from: "running", to: "blocked", by: "l2", reason: "Dispatch found the deployment checkout two commits behind origin/main. The brief says fail closed. Should I fast-forward instead?" },
-        { at: minutesAgo(25), kind: "escalated", by: "l3", question: `${question} Option A: Fast-forward it. Option B: Keep failing closed. I recommend A.` },
-      ],
     } as Row,
   };
 }
