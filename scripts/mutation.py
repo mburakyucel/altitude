@@ -76,8 +76,8 @@ def configure(source: Path, modules: dict) -> None:
         "process_isolation = forkserver\nforkserver_warmup = none\n")
 
 
-def strays(root: int, venv: Path) -> set[int]:
-    """Processes of the scratch environment's Python that are no longer below mutmut's process `root`."""
+def strays(root: int, scratch: Path) -> set[int]:
+    """Processes whose command names the scratch folder and that are no longer below mutmut's process `root`."""
     listed = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,command="], check=True, capture_output=True,
                             text=True).stdout
     table = [(int(pid), int(ppid), rest[0] if rest else "") for pid, ppid, *rest in
@@ -89,7 +89,7 @@ def strays(root: int, venv: Path) -> set[int]:
             if ppid in below and pid not in below:
                 below.add(pid)
                 grown = True
-    return {pid for pid, _, command in table if command.startswith(str(venv)) and pid not in below}
+    return {pid for pid, _, command in table if str(scratch) in command and pid not in below}
 
 
 def stop(pids) -> None:
@@ -100,22 +100,24 @@ def stop(pids) -> None:
             pass
 
 
-def run_mutmut(command: list[str], source: Path, env: dict, venv: Path, log) -> int:
+def run_mutmut(command: list[str], source: Path, env: dict, scratch: Path, log) -> int:
     """mutmut stops a worker that runs too long but not the processes its tests started; those wait forever
-    for the worker and pile up. Each minute this stops the ones already orphaned a minute before, and at the
-    end the rest."""
+    for the worker and pile up. Each minute this stops the ones already orphaned a minute before, and when
+    mutmut ends or the run is interrupted, mutmut and the rest."""
     process = subprocess.Popen(command, cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT)
-    seen = set()
-    while True:
-        try:
-            returncode = process.wait(timeout=60)
-            break
-        except subprocess.TimeoutExpired:
-            current = strays(process.pid, venv)
-            stop(current & seen)
-            seen = current
-    stop(strays(process.pid, venv))
-    return returncode
+    try:
+        seen = set()
+        while True:
+            try:
+                return process.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                current = strays(process.pid, scratch)
+                stop(current & seen)
+                seen = current
+    finally:
+        process.kill()
+        process.wait()
+        stop(strays(process.pid, scratch))
 
 
 def function_of(mutant: str) -> str:
@@ -199,12 +201,17 @@ def main() -> int:
                               check=True, capture_output=True, text=True).stdout.strip()
         Path(site, "altitude_mutation.pth").write_text('import os; os.environ.pop("MUTANT_UNDER_TEST", None)\n')
         mutmut = str(venv / "bin" / "mutmut")
-        # Git hooks and `bin/alt` start `python3` from PATH, and the mutated modules import mutmut.
+        # Git hooks and `bin/alt` start `python3` from PATH, and the mutated modules import mutmut. The tests'
+        # temporary folders sit in the scratch folder, because a worker mutmut stops never removes its own. With
+        # the scratch Python, hooks, `bin/alt` and the tests' fake tools all there, a process the tests leave
+        # behind names the scratch folder in its command, which is how strays are told apart.
         env = {k: v for k, v in os.environ.items() if k != "ALTITUDE_ACTOR"}
         env["PATH"] = f"{venv / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+        env["TMPDIR"] = str(scratch / "tmp")
+        (scratch / "tmp").mkdir()
         patterns = [pattern for module in modules.values() for pattern in module]
         with open(args.results / "mutmut.log", "wb") as log:
-            returncode = run_mutmut([mutmut, "run", *patterns], source, env, venv, log)
+            returncode = run_mutmut([mutmut, "run", *patterns], source, env, scratch, log)
         if returncode:
             print(f"mutmut run failed ({returncode}); see {args.results / 'mutmut.log'}", file=sys.stderr)
             return returncode

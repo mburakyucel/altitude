@@ -1,7 +1,7 @@
 """The mutation run: its report groups mutmut's verdicts by module and function, on fictional `mutmut results`
-output, and it stops only the processes of its own Python that lost their place below mutmut, on real ones."""
-import os
+output, and it stops only the processes naming its scratch folder that lost their place below mutmut, on real ones."""
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -59,39 +59,46 @@ class TestMutationReport(unittest.TestCase):
         self.assertIn("## `altitude/state.py`\n\nNo mutants.", report)
 
 
+@unittest.skipIf(shutil.which("ps") is None, "the mutation run lists processes with ps")
 class TestStrays(unittest.TestCase):
-    def test_only_orphans_of_the_scratch_python_are_strays(self):
-        with tempfile.TemporaryDirectory() as folder:
-            venv = Path(folder) / "venv"
-            (venv / "bin").mkdir(parents=True)
-            python = venv / "bin" / "python"
-            python.symlink_to(sys.executable)
-            sleep = "import time; time.sleep(60)"
-            spawn = (f"import subprocess, sys; print(subprocess.Popen([sys.argv[1], '-c', {sleep!r}], "
+    def test_only_orphans_naming_the_scratch_folder_are_strays(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            # A test's child runs a script in the scratch folder, as hooks and `bin/alt` do.
+            script = Path(scratch) / "child.py"
+            script.write_text("import time; time.sleep(60)\n")
+            spawn = ("import subprocess, sys; print(subprocess.Popen([sys.executable, sys.argv[1]], "
                      "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid, flush=True)")
-            # mutmut's stand-in keeps one child below it; another child's parent exits and leaves it orphaned.
-            root = subprocess.Popen([python, "-c", f"{spawn}; import time; time.sleep(60)", python],
-                                    stdout=subprocess.PIPE, text=True)
-            below = int(root.stdout.readline())
-            orphan = int(subprocess.run([python, "-c", spawn, python], check=True, capture_output=True,
-                                        text=True).stdout)
-            # The same interpreter started from elsewhere is not the scratch environment's.
-            elsewhere = subprocess.Popen([sys.executable, "-c", sleep])
+            started, waited = [], []
             try:
+                # mutmut's stand-in keeps one child below it; another child's parent exits and leaves it orphaned.
+                root = subprocess.Popen([sys.executable, "-c", f"{spawn}; import time; time.sleep(60)", script],
+                                        stdout=subprocess.PIPE, text=True)
+                waited.append(root)
+                started.append(root.pid)
+                started.append(int(root.stdout.readline()))
+                orphan = int(subprocess.run([sys.executable, "-c", spawn, script], check=True, capture_output=True,
+                                            text=True).stdout)
+                started.append(orphan)
+                # The same interpreter running something else is not the run's.
+                elsewhere = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+                waited.append(elsewhere)
+                started.append(elsewhere.pid)
                 deadline = time.monotonic() + 10
-                while mutation.strays(root.pid, venv) != {orphan} and time.monotonic() < deadline:
+                while mutation.strays(root.pid, Path(scratch)) != {orphan} and time.monotonic() < deadline:
                     time.sleep(0.1)
-                self.assertEqual(mutation.strays(root.pid, venv), {orphan})
+                self.assertEqual(mutation.strays(root.pid, Path(scratch)), {orphan})
                 mutation.stop({orphan})
                 deadline = time.monotonic() + 10
-                while mutation.strays(root.pid, venv) and time.monotonic() < deadline:
+                while mutation.strays(root.pid, Path(scratch)) and time.monotonic() < deadline:
                     time.sleep(0.1)
-                self.assertEqual(mutation.strays(root.pid, venv), set())
+                self.assertEqual(mutation.strays(root.pid, Path(scratch)), set())
                 self.assertIsNone(elsewhere.poll())
             finally:
-                mutation.stop({below, orphan, root.pid, elsewhere.pid})
-                root.wait()
-                elsewhere.wait()
+                mutation.stop(started)
+                for process in waited:
+                    process.wait()
+                    if process.stdout:
+                        process.stdout.close()
 
 
 if __name__ == "__main__":
