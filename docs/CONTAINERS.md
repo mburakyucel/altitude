@@ -28,7 +28,8 @@ Task machine commands, when explicitly authorized through the existing grant wor
 the application user inside this container. They do not grant host access; no host runtime socket
 or command bridge is mounted. On this project's machine, the
 [standing container approval](../AGENTS.md#container-operations-on-this-machine) covers host launcher
-operations, rootless Podman, launcher-created containers/images/volumes and execution inside them.
+operations, rootless Podman, launcher-created containers/images/volumes and execution inside them,
+and the launcher's `sign-in` copy of Altitude's own Claude sign-in into a throwaway test container.
 The owner requests that exact policy scope from L3, which records an operator grant citing
 the standing approval without another operator question; see [operator grant](CLI.md#operator-grant).
 Native Altitude installation/service, host trust/network configuration, host credential directories
@@ -54,7 +55,11 @@ fails closed. Container workers edit with bundled `python3` through confined exe
 instructions replace the host-only patch command without changing writable roots.
 
 Two local named volumes hold `/home/altitude` and `/home/altitude/Projects`. No host home, credential
-directory, device, runtime socket or source checkout is mounted. Clone/import projects inside the
+directory, device, runtime socket or source checkout is mounted. The launcher's `sign-in` command is the one
+way a host credential enters: it copies the sign-in Altitude's own runs use on this computer (`alt sign-in`) into
+the container's private access store over the copy command's standard input. From then on, anything that runs
+commands in that container as its user can read that sign-in, as Altitude's Claude runs on the host already
+receive it. The operator's own engine and GitHub logins are never read, copied or mounted. Clone/import projects inside the
 project volume. Provider/Git credentials, machine credentials and TLS private keys remain accessible
 to same-UID software where the engine's confinement permits; the image does not isolate mutually
 hostile tasks or engines. Each task worker receives the container's GitHub CLI token from its
@@ -182,7 +187,8 @@ Add `--name` for a different container. Compare the certificate fingerprint and 
 [device trust guide](SETUP.md#trust-https-on-each-device); never copy private keys. Export refuses an
 existing output. Container `alt tls-share` explains this path instead of opening another HTTP port.
 
-Run sign-in, engine installation and Git commands **inside the container shell**. First run and
+Run sign-in, engine installation and Git commands **inside the container shell**; Claude's **Sign in**
+on First run and Settings › Prerequisites signs Altitude in inside the container from any paired browser. First run and
 Settings show inside-container checks and the host shell command. Missing engine tools install in
 the persistent home. The operator shell explicitly includes `~/.local/bin` and skips login/startup
 profiles, so a fresh volume needs no shell-profile edit. That user PATH is not given to container root.
@@ -196,7 +202,22 @@ checksums verified before installation. Its JSON PR fields satisfy Altitude's la
 the distribution's older CLI can authenticate but lacks a required field. The image gate checks
 that capability without credentials or a GitHub request.
 
-For phone-only sign-in, use the installed engine's device-code flow when it offers one, and
+Each engine signs in once per deployment, and the sign-in lives in the home volume, so it survives
+restarts, recreation, image replacement and backup/restore. Claude runs use Altitude's own sign-in:
+use **Sign in** on Settings › Prerequisites or `alt sign-in claude` in the container shell, as on a host
+([CLI](CLI.md#device-pairing)). When Altitude already has that sign-in on the same computer, hand it to
+the container from the host instead, with no browser step:
+
+```sh
+python3 scripts/container.py sign-in claude --name altitude
+```
+
+The copy keeps the date the sign-in was first saved, so the renewal reminder a year on is right in both
+places; after renewing it on the host, run the command again. That sign-in is fixed for its year,
+so copies do not sign each other out. Codex runs use the Codex CLI's own sign-in, a login that renews
+itself, so it is made inside the container (`codex login`) and never copied in.
+
+For phone-only sign-in, Claude's **Sign in** needs no terminal; otherwise use the installed engine's device-code flow when it offers one, and
 enable device-code login in the account's security settings if required. Complete the displayed
 URL and short-lived code in the phone browser; the waiting CLI stays inside the container.
 GitHub CLI supports this flow with `gh auth login --hostname github.com --git-protocol https --web`.
@@ -209,7 +230,7 @@ gh auth setup-git --hostname github.com
 Verify `gh auth status` and, from the selected repository, `git fetch origin main` before starting
 a task. A successful GitHub CLI sign-in alone does not prove Git can authenticate: the live
 phone-login run left the HTTPS credential helper unset until `gh auth setup-git` configured it.
-These commands run inside the container; do not mount or copy host credentials as a shortcut.
+These commands run inside the container; do not mount or copy your own logins as a shortcut.
 
 Clone/import under `/home/altitude/Projects`, then follow First run: name, prerequisites, incident
 preference, voice and project selection. Registration retains repository/instructions checks, custom-hook
@@ -497,6 +518,8 @@ unverified on the Mac, along with provider sessions inside the container.
 host launcher and image in a disposable Ubuntu 24.04 amd64 KVM VM. Inside an owner task, the target
 uses `alt task validate --kvm` and returns results to the task. It checks image creation, startup,
 graceful Stop, same-container identity/admission, replacement pause, the displayed Continue command,
+a fictional Altitude sign-in handed over with `sign-in` and still signed in after replacement with its
+saved date (absent from every recorded command and unit log),
 supervisor death, an unaffected neighboring container and private-store/VM cleanup. The guest gets
 no host credentials or repositories beyond the committed candidate, and downloads public distribution
 and image prerequisites. This is Linux fixture evidence, not Mac or provider acceptance.

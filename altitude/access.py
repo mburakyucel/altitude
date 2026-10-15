@@ -7,7 +7,8 @@ it is the proof of being the operator on this machine. `devices.json` holds each
 paired browser's name, times and the SHA-256 of its random key (never the key itself), plus at most one
 pairing code, also hashed. `alt pair` writes a code here directly, so pairing and lockout recovery need no
 running browser, no particular bind address and nothing platform-specific. `<engine>.token` is the sign-in
-Altitude's runs of that engine use instead of the operator's own; `alt sign-in` stores it.
+Altitude's runs of that engine use instead of the operator's own; the service's sign-in (`engines.token_setup`)
+stores it, and `<engine>.setup.<id>` is that sign-in's throwaway settings folder while it runs.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import hmac
 import json
 import os
 import secrets
+import shutil
 import time
 import uuid
 from contextlib import contextmanager
@@ -86,7 +88,7 @@ def machine_key() -> str | None:
 
 
 def engine_token(engine: str) -> str | None:
-    """The sign-in of Altitude's own runs on an engine that takes one from the operator (`alt sign-in`)."""
+    """The sign-in of Altitude's own runs on an engine that takes one from the operator (`engines.token_setup`)."""
     try:
         return (DIR / f"{engine}.token").read_text().strip() or None
     except OSError:
@@ -101,15 +103,19 @@ def engine_token_saved(engine: str) -> float | None:
         return None
 
 
-def save_engine_token(engine: str, token: str) -> None:
+def save_engine_token(engine: str, token: str, saved: float | None = None) -> None:
+    """Store that sign-in; `saved` keeps the time a copied one was first saved, from which its year still runs."""
     with _locked():
         S.atomic_write(DIR / f"{engine}.token", token + "\n")  # mkstemp: 0600
+        if saved is not None:
+            os.utime(DIR / f"{engine}.token", (saved, saved))
 
 
 def prepare() -> None:
     """Create the private folder and the machine key when altd starts. A key of an earlier generation is replaced,
     with any pairing code in flight, and the jobs running now are noted: they started under sandboxes that could read
-    this folder, so `settle` replaces the key once more when they have all ended."""
+    this folder, so `settle` replaces the key once more when they have all ended. A sign-in's settings folder left by
+    an earlier altd is removed."""
     with _locked():
         if machine_key() is None:
             _replace_key([])
@@ -118,6 +124,8 @@ def prepare() -> None:
             record = _read()
             if record.get("code"):
                 _write({**record, "code": None})
+    for leftover in DIR.glob("*.setup.*"):  # the settings folder of a sign-in an earlier altd did not finish
+        shutil.rmtree(leftover, ignore_errors=True)
 
 
 def settle() -> None:

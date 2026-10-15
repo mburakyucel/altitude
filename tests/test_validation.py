@@ -458,8 +458,10 @@ class TestValidationRunner(ClientStop, RunnerCase):
         self.assertEqual((answer["exit"], answer["output"]), (0, "second\n"))
         *waits, answer = [json.loads(line) for line in third.read().splitlines()]
         self.assertEqual((answer["exit"], answer["output"]), (0, "third\n"))
-        self.assertIn("the validation run of", waits[-1]["waiting"], "the line moved up behind the second run")
-        self.assertNotIn("ahead", waits[-1]["waiting"])
+        self.assertIn("the validation run of", waits[-2]["waiting"], "the line moved up behind the second run")
+        self.assertNotIn("ahead", waits[-2]["waiting"])
+        self.assertRegex(waits[-1]["waiting"], r"^admitted to the validation slot until its limit at \S+\+00:00$",
+                         "a run's last line before its answer never reads as waiting")
         self.assertEqual(json.loads(silent.getresponse().read())["output"], "silent\n")
         self.assertEqual([(row["command"], row["ended"]) for slug in (self.slug, tasks["second"], tasks["third"],
                                                                       tasks["silent"]) for row in self.rows(slug)],
@@ -531,7 +533,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         waiting.readline()
         T.block(self.project, other, "Waiting", actor="l2", expected_state="running", expected_attempt=1)
         release.touch()
-        self.assertEqual(json.loads(waiting.read()), {
+        self.assertEqual(json.loads(waiting.read().splitlines()[-1]), {
             "error": "alt task validate: only the running owner's current attempt may run validation"})
         self.assertEqual((len(self.rows()), self.ledger(other).exists()), (1, False))
 
@@ -642,10 +644,10 @@ class TestValidationRunner(ClientStop, RunnerCase):
 
     def test_restart_request_fences_validation_admission_without_leaving_a_run(self):
         with config.restart_lock(exclusive=True):
-            self.assertIn("activating merged changes", self.validate(["true"], status=400)["error"])
+            self.assertIn("restarts soon to apply an update", self.validate(["true"], status=400)["error"])
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         S.write_json(flag, {"requested_at": S.now(), "unit": "restart"})
-        self.assertIn("activating merged changes", self.validate(["true"], status=400)["error"])
+        self.assertIn("restarts soon to apply an update", self.validate(["true"], status=400)["error"])
         self.assertFalse(self.runner.exists())
         S.write_json(flag, {"requested_at": S.now(), "unit": "restart", "failed": S.now()})
         self.assertEqual(self.validate(["true"])["exit"], 0, "a failed activation lifts the fence")
@@ -671,11 +673,75 @@ class TestValidationRunner(ClientStop, RunnerCase):
             self.assertEqual(answers[0]["exit"], 0)
             response = queued.getresponse()
             self.assertEqual(response.status, 400)
-            self.assertIn("activating merged changes", json.loads(response.read())["error"])
+            self.assertIn("restarts soon to apply an update", json.loads(response.read())["error"])
             self.assertEqual((len(self.rows()), self.ledger(other).exists()), (1, False), "the waiting request never ran")
             self.assertEqual(server.restart_status()["waiting_for"], [])
             server.auto_restart()
             restart.assert_called_once()
+
+    def test_back_to_back_runs_and_reviews_cannot_starve_an_offered_automatic_update(self):
+        """#1003: an offered release installs only at a quiet point, and on a packaged install nothing fenced new runs
+        until the update was requested, which needed that quiet point: the next validation run or review always took
+        it first. While a release waits for its automatic attempt, new long runs now wait; work in flight finishes and
+        the next tick requests it even while short work holds the gate, and the page and `alt doctor` name what it
+        waits for."""
+        from altitude import installation, reviews
+        prefix = self.tmp / "installed"
+        prefix.mkdir()
+        self.patch(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"})
+        self.patch(config, "INSTALL_PREFIX", prefix)
+        self.patch(installation, "_prefix", return_value=prefix)
+        release, holder, answers = self.holding()
+        other = self.task("Check another lane", agent="other")
+        queued = self.send(["true"], lines=False, slug=other)
+        wait_for(lambda: validation.LINE._queue, "the next run to wait its turn")
+        self.assertFalse(config.activation_pending())
+        S.write_json(config.ROOT / "update.json", {"latest": {"version": "v0.2.0", "notes": "https://example.test/notes"}})
+        review = f"{self.project}/{other}"
+        with mock.patch.object(installation, "request_update") as install:
+            with mock.patch.object(reviews, "running", return_value=[review]):
+                server.auto_update()
+                waiting = [f"the adversarial review of {review}", f"the validation run of {self.project}/{self.slug}"]
+                self.assertEqual(installation.update_status()["waiting_for"], waiting)
+                self.assertEqual(installation.describe_update(installation.update_status()),
+                                 ["Update: Altitude v0.2.0 installs automatically at the next quiet moment; waiting for "
+                                  + " and ".join(waiting) + "."])
+            install.assert_not_called()
+            release.touch()
+            holder.join()
+            self.assertEqual(answers[0]["exit"], 0)
+            response = queued.getresponse()
+            self.assertEqual(response.status, 400)
+            self.assertEqual(json.loads(response.read())["error"], validation.RESTARTING)
+            self.assertEqual((len(self.rows()), self.ledger(other).exists()), (1, False), "the waiting run never ran")
+            self.assertEqual(self.validate(["true"], status=400)["error"], validation.RESTARTING, "nor does a new one")
+            with config.restart_lock():   # an L3 turn in flight: the request fences new ones and the update waits for it
+                server.auto_update()
+            install.assert_called_once_with("v0.2.0", automatic=True)
+
+    def test_an_update_offered_during_admission_waits_for_the_admitted_run(self):
+        """A run is visible to the automatic update from before its fence check, so a release found mid-admission
+        cannot be requested under it."""
+        from altitude import installation
+        prefix = self.tmp / "installed"
+        prefix.mkdir()
+        check, requests, checks = validation._check, [], []
+
+        def offered_mid_check(*args, **kwargs):
+            task = check(*args, **kwargs)
+            checks.append(task)
+            if len(checks) == 1:  # the check before the request joins the machine's line admits nothing yet
+                return task
+            with mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"}), \
+                    mock.patch.object(config, "INSTALL_PREFIX", prefix), \
+                    mock.patch.object(installation, "request_update", side_effect=lambda *a, **k: requests.append(a)):
+                S.write_json(config.ROOT / "update.json", {"latest": {"version": "v0.2.0", "notes": "https://example.test/n"}})
+                server.auto_update()
+                waiting = installation.update_status()["waiting_for"]
+            self.assertEqual((requests, waiting), ([], [f"the validation run of {self.project}/{self.slug}"]))
+            return task
+        with mock.patch.object(validation, "_check", side_effect=offered_mid_check):
+            self.assertEqual(self.validate(["true"])["exit"], 0)
 
     def test_only_the_tasks_own_worker_may_run_its_validation(self):
         self.owner.return_value = False
@@ -781,8 +847,11 @@ class TestValidationRunner(ClientStop, RunnerCase):
         [result] = done
         self.assertEqual(result.returncode, 0, result.stderr)
         # The terminal reads the limit in local time; the stream itself carries ISO with offset.
-        self.assertEqual(result.stderr, "[altitude] waiting for the validation slot: the validation run of other/task "
-                                        f"holds this machine until its limit at {S.local('2026-10-08T02:08:48+00:00')}\n")
+        waited, admitted = result.stderr.splitlines()
+        self.assertEqual(waited, "[altitude] waiting for the validation slot: the validation run of other/task "
+                                 f"holds this machine until its limit at {S.local('2026-10-08T02:08:48+00:00')}")
+        self.assertRegex(admitted, r"^\[altitude\] admitted to the validation slot until its limit at \S")
+        self.assertNotIn("+00:00", admitted)
         self.assertIn("after\n", result.stdout)
 
     def test_a_request_activation_turns_away_waits_through_the_restart_and_runs(self):
@@ -812,7 +881,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         client.join(60)
         [result] = done
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("activating merged changes; this request asks again once it has restarted", result.stderr)
+        self.assertIn("restarts soon to apply an update; this request asks again once it has restarted", result.stderr)
         self.assertIn("after\n", result.stdout)
         self.assertEqual(answers[0]["exit"], 0)
         self.assertEqual([row["exit"] for row in self.rows()], [0, 0], "the turned-away request ran once")

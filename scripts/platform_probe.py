@@ -25,6 +25,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from altitude import platform  # noqa: E402
+from altitude.engines import common  # noqa: E402
 
 DARWIN = sys.platform == "darwin"
 NONCE = uuid.uuid4().hex[:8]
@@ -70,9 +71,10 @@ def until(condition, timeout: float) -> bool:
 
 
 # A tree that tries every way out: an ordinary child, a double-forked setsid daemon, one that also clears its
-# environment, and children that keep forking while Stop runs. Every process carries the marker in its command line.
+# environment, a pseudo-terminal's child (a session of its own, as a test's forkpty makes), and children that keep forking
+# while Stop runs. Every process carries the marker in its command line.
 TREE = r"""
-import os, sys, time
+import os, pty, sys, time
 marker = sys.argv[1]
 def daemon(clear):
     if os.fork(): return
@@ -82,6 +84,8 @@ def daemon(clear):
 if os.fork() == 0:
     os.execv(sys.executable, [sys.executable, "-c", "import time; time.sleep(120)", marker])
 daemon(False); daemon(True)
+if pty.fork()[0] == 0:
+    os.execv(sys.executable, [sys.executable, "-c", "import time; time.sleep(120)", marker])
 for _ in range(3):
     if os.fork() == 0:
         while True:
@@ -148,20 +152,24 @@ def stop_descendants():
     finally:
         proc.kill()
         proc.wait()
-    return f"{before} processes (ordinary, setsid double fork, cleared environment, forking) stopped in {elapsed:.1f}s"
+    return (f"{before} processes (ordinary, setsid double fork, cleared environment, pseudo-terminal, forking) stopped "
+            f"in {elapsed:.1f}s")
 
 
 @row
 def time_limit():
+    marker = f"probe-limit-{NONCE}"
     job = name("limit")
     started = time.monotonic()
-    result = subprocess.run(platform.job_command(job, ["/bin/sleep", "60"], env(), runtime_max=2),
-                            stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
+    result = subprocess.run(platform.job_command(job, [sys.executable, "-c", TREE, marker], env(), runtime_max=3),
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
     elapsed = time.monotonic() - started
-    # A job that never starts also fails at once; only one stopped at its limit has run for two seconds.
-    check(result.returncode != 0 and 2 <= elapsed < 15, f"status {result.returncode} after {elapsed:.1f}s")
+    # A job that never starts also fails at once; only one stopped at its limit has run for three seconds.
+    check(result.returncode != 0 and 3 <= elapsed < 20, f"status {result.returncode} after {elapsed:.1f}s")
+    check(result.stdout.strip() == "tree up", f"tree did not start: {result.stdout!r}")
     check(not platform.job_active(job, env()), "job active after its limit")
-    return f"stopped at the 2s limit after {elapsed:.1f}s (status {result.returncode})"
+    check(until(lambda: not marked(marker), 5), f"survivors after the limit: {marked(marker)}")
+    return f"the whole tree stopped at the 3s limit after {elapsed:.1f}s (status {result.returncode})"
 
 
 @row
@@ -203,6 +211,57 @@ def detached_job():
     if DARWIN:
         Path(platform.job_logs_hint(job)).unlink(missing_ok=True)
     return "the command ran outside the caller and its job ended"
+
+
+@row
+def launch_input():
+    """A confined job launched as Altitude launches a review: its own folder and a fictional sign-in arrive in the first
+    line of its input, the operator's settings are linked into that folder, and another job's saved launch input waits
+    in the launcher's job folders as it does before that job's supervisor takes it."""
+    if not DARWIN:
+        return None  # Linux hands the input over systemd-run's pipe, with no job folder to read
+    job, marker = name("input"), f"fixture-{NONCE}"
+    jobs = Path(os.path.realpath(platform._jobs()))
+    pending = jobs / f"altitude-probe-pending-{NONCE}"
+    settings = Path.home() / f".altitude-probe-{NONCE}-settings"
+    with tempfile.TemporaryDirectory() as folder:
+        own = Path(folder).resolve() / "engine"
+        own.mkdir()
+        try:
+            pending.mkdir(mode=0o700, parents=True)
+            (pending / "stdin").write_text(json.dumps({"PROBE_SIGN_IN": marker}) + "\n")
+            settings.mkdir()
+            (settings / "settings.json").write_text("{}")
+            script = (f'read rest; [ "$rest" = own-input ] && echo input; '
+                      f'[ "$PROBE_FOLDER" = \'{own}\' ] && printf %s "$PROBE_SIGN_IN" > "$PROBE_FOLDER/sign-in" '
+                      '&& echo sign-in; '
+                      f'ln -s \'{settings}/settings.json\' "$PROBE_FOLDER/settings.json" && echo link; '
+                      'grep -q . "$PROBE_FOLDER/settings.json" && echo read-linked; '
+                      'echo x >> "$PROBE_FOLDER/settings.json" 2>/dev/null && echo write-linked; '
+                      f"echo x > '{settings}/new' 2>/dev/null && echo write-home; "
+                      'echo x > "$PROBE_FOLDER/state" && echo write-own; '
+                      f"ls '{jobs}' >/dev/null 2>&1 && echo list-jobs; "
+                      f"cat '{jobs}/{platform._label(job)}/spec.json' >/dev/null 2>&1 && echo read-own-job; "
+                      f"cat '{pending}/stdin' >/dev/null 2>&1 && echo read-pending; "
+                      f"echo x >> '{pending}/stdin' 2>/dev/null && echo write-pending")
+            launch = platform.job_command(job, common.with_launch_env(["/bin/sh", "-c", script]), env(),
+                                          writable=(own,), runtime_max=60)
+            result = subprocess.run(launch, input=json.dumps({"PROBE_FOLDER": str(own), "PROBE_SIGN_IN": marker})
+                                    + "\nown-input\n", capture_output=True, text=True, timeout=90)
+            signed_in = (own / "sign-in").read_text() == marker
+            untouched = (os.listdir(settings) == ["settings.json"] and (settings / "settings.json").read_text() == "{}"
+                         and (pending / "stdin").read_text() == json.dumps({"PROBE_SIGN_IN": marker}) + "\n")
+        finally:
+            shutil.rmtree(pending, ignore_errors=True)
+            shutil.rmtree(settings, ignore_errors=True)
+    check(result.stdout.split() == ["input", "sign-in", "link", "read-linked", "write-own"] and signed_in and untouched
+          and marker not in json.dumps(launch), f"launch input: {result.stdout.split()} {result.stderr.strip()[-300:]!r} "
+                                               f"sign-in received: {signed_in}; untouched: {untouched}; "
+                                               f"sign-in on the command line: {marker in json.dumps(launch)}")
+    check(not platform.job_active(job, env()), "job still active after it ended")
+    return ("the job takes its folder and sign-in from its input's first line, not its command line, writes its own "
+            "folder and reads but cannot write the home settings linked into it, and can neither list the launcher's "
+            "job folders nor read its own job folder or another job's saved launch input there")
 
 
 LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/"

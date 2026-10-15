@@ -14,6 +14,7 @@ its task finishes, its project is removed or altd stops.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import fcntl
 import ipaddress
 import os
@@ -337,7 +338,7 @@ def _follow(term: Terminal) -> None:
     now = time.monotonic()
     if now - command.setdefault("shell", now) >= COMMAND_SETTLE_SECONDS and not any(
             map(_alive, command.get("groups", ()))):
-        _notice(term, f"the command you handed the operator looks finished in the {term.place} terminal")
+        _notice(term, f"the command you handed the operator looks finished in the {term.place} terminal", finished=True)
 
 
 def _alive(group: int) -> bool:
@@ -350,10 +351,11 @@ def _alive(group: int) -> bool:
     return True
 
 
-def _notice(term: Terminal, what: str) -> None:
+def _notice(term: Terminal, what: str, finished: bool = False) -> None:
     """Tell the terminal's reader: the task's owner, waking it when it waits, or the project's coordinator, as a
-    queued turn. Altitude sees the shell, not the command's exit status. The notice waits for the project lock on
-    its own thread, so the reader keeps draining output meanwhile."""
+    queued turn. Altitude sees the shell, not the command's exit status. A command that looks finished clears the
+    operator step it ran; a terminal that ended first leaves the step for the operator. The notice waits for the
+    project lock on its own thread, so the reader keeps draining output meanwhile."""
     with term.cond:
         command, term.command = term.command, None
     if not command:
@@ -370,7 +372,15 @@ def _notice(term: Terminal, what: str) -> None:
             elif config.is_managed(term.project):
                 with config.project_activity(term.project) as ready:  # removal waits for the notice, or it for removal
                     if ready and config.is_managed(term.project):
-                        l3.queue_message(term.project, text, trigger="terminal")
+                        ran = T.steps_for(term.project, command["text"]) if finished else []
+                        tasks = sorted({slug for step in ran for slug in step["tasks"]})
+                        cleared = (" It cleared that operator step from Needs you; once verified, tell the tasks it named "
+                                   f"({', '.join(tasks)}) with `alt task message`" if tasks else
+                                   " It cleared that operator step from Needs you") + ", or publish the step again if it failed."
+                        # Queued first, so a failed notice leaves the step in Needs you rather than clearing it unseen.
+                        l3.queue_message(term.project, text + (cleared if ran else ""), trigger="terminal")
+                        if ran:
+                            T.step_ran(term.project, command["text"])
         except (OSError, ValueError, KeyError, T.TransitionError) as exc:
             print(f"terminal: the notice for {term.project}/{term.slug or ''} failed: {exc}", file=sys.stderr, flush=True)
     threading.Thread(target=send, name=f"terminal-notice:{term.project}:{term.slug or ''}").start()
@@ -469,6 +479,15 @@ def any_open() -> bool:
     """Whether a terminal is running; a service restart would end it, so an automatic update waits."""
     with _lock:
         return any(not term.ended for term in _terminals.values())
+
+
+@contextmanager
+def held_open():
+    """Where running terminals are open (`project/task`, or the project), holding registration: none opens until the
+    caller's update request, which refuses new terminals, is recorded."""
+    with _lock:
+        yield sorted(f"{term.project}/{term.slug}" if term.slug else term.project
+                     for term in _terminals.values() if not term.ended)
 
 
 def close_all() -> None:

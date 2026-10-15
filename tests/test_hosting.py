@@ -20,6 +20,7 @@ class Hosting(ProbeCase):
         self.patch(platform, "service_unit", return_value={"Environment": shlex.join(
             [f"{key}={value}" for key, value in environment.items()])})
         self.patch(platform, "computer_name", return_value="Atlas host")
+        self.patch(platform, "trust_stores", return_value=[])  # A computer without browsers, whatever the runner has.
         self.patch(tls, "record", return_value=self.tmp / "service.json")
         tls.publish({"host": "127.0.0.1", "port": config.PORT, "tls": True, "tls_dir": config.TLS_DIR})
 

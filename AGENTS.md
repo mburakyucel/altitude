@@ -226,7 +226,9 @@ Altitude restarts itself at the next narrow quiet point after a merged change to
 dispatch or resume claim, adversarial review, validation run, report verification, or L3 turn in flight;
 validation holds through its bounded execution and evidence recording; running workers themselves do not hold it).
 New dispatches continue while activation is pending and wait only during the requested restart window;
-new validation and review runs wait from the moment activation is pending.
+new validation and review runs wait from the moment activation is pending. On an installed release, an
+offered automatic update is pending activation in the same sense; once those runs have drained, its request
+fences dispatch and L3 work too, and it activates when the turns in flight end.
 Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle action by hand requires
 separate explicit authorization and post-change health verification; a recorded operator grant whose purpose
 names the service is that authorization for its owner, and every command under it is recorded on the task.
@@ -237,9 +239,13 @@ The operator's project-chat approval of 2026-10-06 18:24 UTC (`c6f1ba6f5929`) st
 operator revokes it: L3 records a container-scoped operator grant on an owner's request without
 another operator question. Its scope is the Linux container deployment on this machine:
 `scripts/container.py` operations, rootless Podman, the volumes, images and containers the launcher
-creates, and anything executed inside those containers. It excludes the operator's native Altitude
-installation and service, host trust stores and network configuration, host credential directories,
-and every other host resource the launcher did not create. It grants nothing for other projects.
+creates, and anything executed inside those containers. By the operator's decision of 2026-10-15
+(`7ea8634a92bd`), it also covers the launcher's `sign-in` command copying Altitude's own Claude
+sign-in, and only that, from this computer into a throwaway test container the launcher created;
+anything running in that container can read it. It excludes the operator's native Altitude
+installation and service, host trust stores and network configuration, host credential directories
+apart from that one copy, including the operator's personal engine and GitHub logins, and every other
+host resource the launcher did not create. It grants nothing for other projects.
 
 ### VM lane runs on this Mac
 

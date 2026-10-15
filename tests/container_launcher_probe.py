@@ -14,8 +14,13 @@ import time
 from unittest import mock
 
 SOURCE = Path(__file__).resolve().parents[1]
+SIGN_IN = 'fictional-altitude-sign-in-5521'
+SIGNED = ("import sys,json;sys.path.insert(0,'/opt/altitude');from altitude import access,engines;token=sys.stdin.read();"
+          "print(json.dumps({e:{'signed_in':engines.sign_in(e)['signed_in'],'same':access.engine_token(e)==token,"
+          "'saved':access.engine_token_saved(e)} for e in engines.TOKEN_SETUP}))")
 sys.path.insert(0, str(SOURCE))
-from altitude import platform
+os.environ.setdefault('ALTITUDE_HOME', tempfile.mkdtemp(prefix='acp-state-'))  # the sign-in check imports config
+from altitude import access, engines, platform
 from scripts import container, container_acceptance
 
 
@@ -95,6 +100,13 @@ def main():
                     "'attrs':{k:base64.b64encode(os.getxattr(p,k)).decode() for k in os.listxattr(p)}}"
                     "\nprint(json.dumps(r))"]))
             original_metadata=metadata(instances[0])
+            for engine in engines.TOKEN_SETUP:  # this guest's own Altitude sign-in, handed over on input
+                access.save_engine_token(engine, SIGN_IN, saved=1_700_000_000.0)
+                container.sign_in(instances[0], engine)
+            expected_sign_in = {engine: {'signed_in': True, 'same': True, 'saved': 1_700_000_000.0}
+                                for engine in engines.TOKEN_SETUP}
+            if json.loads(container.execute(instances[0], ['python3','-I','-c',SIGNED], input=SIGN_IN)) != expected_sign_in:
+                raise RuntimeError('The container did not take the handed-over sign-in with its saved time')
             addresses = json.loads(subprocess.check_output(['ip','-j','-4','address'],text=True))
             private_ip = next(info['local'] for row in addresses for info in row['addr_info']
                               if info.get('scope')=='global')
@@ -227,6 +239,9 @@ def main():
             record['replacement_continued'] = json.JSONDecoder().raw_decode(continued.stdout)[0]
             if not record['replacement_continued']['ready']:
                 raise RuntimeError('Explicit Continue did not release the replacement')
+            if json.loads(container.execute(instances[2], ['python3','-I','-c',SIGNED], input=SIGN_IN)) != expected_sign_in:
+                raise RuntimeError('Image replacement lost the sign-in kept in the home volume')
+            record['sign_in_survives_replacement'] = sorted(expected_sign_in)
             # Only this fictional guest's exact owned user unit. Parent death must
             # eventually retire the container, without touching the neighbor.
             subprocess.run(['systemctl','--user','kill','--kill-whom=main','--signal=KILL',
@@ -430,6 +445,8 @@ def main():
                 record['cleanup'] = {'units_inactive':True,'runtime_removed':not root.exists()}
             except Exception as error:
                 record.update(passed=False,cleanup_error=repr(error))
+    if any(SIGN_IN in path.read_text(errors='replace') for path in evidence.iterdir() if path.is_file()):
+        record.update(passed=False, sign_in_in_commands_or_logs=True)
     (evidence/'result.json').write_text(json.dumps(record,indent=2)+'\n')
     return 0 if record['passed'] else 1
 

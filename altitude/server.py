@@ -355,6 +355,9 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                 raise ValueError("alt improve takes its arguments, not stdin")
             result = improvement_verb(project, improve.parser().parse_args(args[1:]))
             return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
+        if args[:2] == ["project", "step"]:
+            result = l3.step_verb(project, args[2:], stdin)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         if args[:2] == ["project", "terminal"]:
             if stdin or args[2:] not in ([], ["--json"]):
                 raise ValueError("alt project terminal: the only option is --json")
@@ -1974,8 +1977,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _trust_view(self) -> dict:
         """What the pairing screen needs to walk a device through trusting this installation's certificate."""
-        return {"local": self._local(), "https": isinstance(self.connection, ssl.SSLSocket),
+        local = self._local()
+        return {"local": local, "https": isinstance(self.connection, ssl.SSLSocket),
                 "check": TRUST is not None and isinstance(self.connection, ssl.SSLSocket),
+                # alt trust on the hosting computer trusts only Altitude's own CA, outside a container.
+                "command": local and TRUST is not None and not platform.containerized(),
                 "guide": tls.setup_guide(),
                 "certificate": {"name": TRUST.name} if TRUST else None}
 
@@ -2012,6 +2018,28 @@ class Handler(BaseHTTPRequestHandler):
         log(f"paired a device: {name}")
         self._set_cookie = self._device_cookie(key)
         return self._json({"device": {k: device[k] for k in ("id", "name", "paired", "used")}})
+
+    def _sign_in(self, engine: str, body: dict | None) -> None:
+        """Altitude's own sign-in on an engine (`engines.token_setup`), for a paired browser or this computer's `alt`.
+        Every outcome is the sign-in's own view or a fixed sentence: nothing read from the engine's screen, and no
+        exception's text, reaches the response or the log."""
+        setup = engines.token_setup
+        try:
+            if body is None:
+                return self._json(setup.view(engine))
+            action = body.get("action") if isinstance(body, dict) else None
+            if action == "start" and body.keys() == {"action"}:
+                return self._json(setup.start(engine))
+            if action == "finish" and body.keys() == {"action", "attempt", "code"} and isinstance(body["attempt"], str):
+                return self._json(setup.finish(engine, body["attempt"], body["code"]))
+            if action == "cancel" and body.keys() <= {"action", "attempt"}:
+                return self._json(setup.cancel(engine, body.get("attempt")))
+            return self._json({"error": "Unknown sign-in request."}, 400)
+        except setup.SignInError as exc:
+            return self._json({"error": str(exc)}, 409)
+        except Exception as exc:  # noqa: BLE001 - the type alone: its text could carry what the screen showed
+            log(f"sign-in request failed: {type(exc).__name__}")
+            return self._json({"error": "The sign-in failed. Try again."}, 500)
 
     def _devices_post(self, action: str, body: dict) -> None:
         if action == "code":
@@ -2131,8 +2159,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _in_line(self, call) -> None:
         """`alt task validate` and `alt task run`: `call(waiting, gone)` answered as JSON. A client that accepts NDJSON
-        hears what a busy machine makes its request wait for, one line at a time, then gets the answer as the last
-        line. Once its request is read, the client sends nothing more: a connection at its end, or failed, means the
+        hears what a busy machine makes its request wait for and when it is admitted, one line at a time, then gets
+        the answer as the last line. Once its request is read, the client sends nothing more: a connection at its end, or failed, means the
         client closed it or went away, which takes a waiting request out of the line and stops an admitted run
         (docs/DEVELOPMENT.md#validation-runner)."""
         streaming, started = "application/x-ndjson" in (self.headers.get("Accept") or ""), False
@@ -2393,6 +2421,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(machine_view())
             if api == "prerequisites":
                 return self._json({"items": installation.prerequisites()})
+            if api == "sign-in" and len(parts) == 3:
+                return self._sign_in(parts[2], None)
             if api == "folders":
                 try:
                     return self._json(folders((q.get("path") or [None])[0]))
@@ -2541,6 +2571,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"challenge": TRUST.arm(self.client_address[0])})
             if api == "devices" and len(parts) == 3:
                 return self._devices_post(parts[2], o)
+            if api == "sign-in" and len(parts) == 3:
+                return self._sign_in(parts[2], o)
             if api in ("update", "update-check", "update-automatic"):
                 return self._update_post(parts, o)
             if parts == ["api", "validation-access"]:
@@ -3047,23 +3079,31 @@ class RestartBusy(RuntimeError):
 
 
 def auto_update() -> None:
-    """Install the offered release at the quiet point when automatic updates are on (operator, 2026-10-09: a fix
-    should not wait for every installation to update by hand). The restart that activation causes ends an open
-    terminal, so one defers it; detached workers survive it. Each version is tried once."""
+    """Install the offered release when automatic updates are on (operator, 2026-10-09: a fix should not wait for
+    every installation to update by hand). While it is offered, new validation, review and improvement runs wait
+    (`config.activation_pending`), so those in flight drain; then the request fences dispatch, resume, L3 and report
+    work, and the detached update activates once what runs has finished (#1003: waiting for an instant with nothing
+    in flight lost to back-to-back work). The restart ends an open terminal, so one defers it; detached workers
+    survive it. Each version is tried once."""
     if platform.containerized() or config.RELEASE is None:
         return
     version = installation.automatic_update()
     if not version:
         return
-    with config.restart_lock(exclusive=True) as quiet:
-        # Recorded under the gate, so no dispatch, L3 turn or review can start between this check and the fence.
-        if not quiet or terminal.any_open() or restart_waiting_for(check_activity=False):
-            return
-        try:
-            installation.request_update(version, automatic=True)
-        except installation.UpdateRefused:
-            return   # `alt update`, recovery or activation already runs
-    log(f"quiet point: installing Altitude {version} automatically")
+    with terminal.held_open() as terminals:
+        waiting = [f"the browser terminal open in {where}" for where in terminals]
+        waiting += [f"the adversarial review of {task}" for task in reviews.running()]
+        waiting += [f"the improvement review of {project}" for project in config.load_projects() if improve.reading(project)]
+        if held := validation.holder():
+            waiting.append(f"the validation run of {held}")
+        if not waiting:
+            try:
+                installation.request_update(version, automatic=True)
+            except installation.UpdateRefused:
+                return   # `alt update`, recovery or activation already runs
+    installation.record_update_wait(version, waiting)
+    if not waiting:
+        log(f"installing Altitude {version} automatically once work in flight finishes")
 
 
 def restart_service() -> dict:

@@ -4,7 +4,8 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import { DecisionSchema } from "../data/api";
 import { ToastProvider } from "../data/Toast";
-import { QuestionSet, ReviewDecision } from "./DecisionCard";
+import { QuestionSet, ReviewDecision, StepCard } from "./DecisionCard";
+import type { Step } from "../data/api";
 import { ImageViewerHost } from "./MessageImages";
 import { ProseScope } from "./Prose";
 
@@ -79,6 +80,23 @@ describe("question and review text", () => {
     mount(<QuestionSet decisions={[closed]} chat />);
     expect(screen.getByText(/^You · /)).toBeVisible();
     expect(screen.queryByText(/operator · /)).toBeNull();
+  });
+});
+
+describe("an operator step (SPEC.md §3.8.4)", () => {
+  const step: Step = { project: "atlas", slug: null, kind: "step", id: "s1", asked_by: "l3", asked: "2026-10-15T09:00:00Z",
+    alert_key: "atlas:step:s1", question: "Restore the checkout.\n\n```run\nexample-tool repair\n```", tasks: [{ slug: "gate", title: "Gate merges" }] };
+  it("offers its command for the project terminal, and only Copy on a saved read", () => {
+    const fresh = mount(<StepCard step={step} />);
+    expect(screen.getByRole("button", { name: "Open in terminal" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: "Gate merges" })).toHaveAttribute("href", "/projects/atlas/tasks/gate");
+    expect(screen.getByRole("link", { name: "Open project chat" })).toHaveAttribute("href", "/projects/atlas");
+    fresh.unmount();
+    mount(<StepCard step={step} disabled />);
+    expect(screen.getByRole("button", { name: "Copy" })).toBeEnabled();
+    const open = screen.getByRole("button", { name: "Open in terminal" });
+    expect(open).toHaveAttribute("aria-disabled", "true");
+    expect(open).toHaveAccessibleDescription("Refresh Needs you before running this.");
   });
 });
 

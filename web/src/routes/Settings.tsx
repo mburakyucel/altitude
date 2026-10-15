@@ -13,6 +13,7 @@ import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { INVALID_SERVICE, updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
+import { waitingText } from "../shell/UpdateNotice";
 import VoiceDiagnostics from "../components/VoiceDiagnostics";
 import { UnavailableAction } from "../components/UnavailableAction";
 import { dateText } from "../data/observed";
@@ -681,7 +682,7 @@ function VersionRows({ update }: { update: Update }) {
   </div>;
   return <>
     <div className="settings-row settings-version">
-      <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {available.version} is available · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : ""}</small></span>
+      <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {update.automatic_pending && !failed ? `${available.version} ${update.waiting_for.length ? `waits for ${waitingText(update.waiting_for)}` : "installs automatically"}` : `${available.version} is available`} · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : ""}</small></span>
       {available && update.command ? <Command text={update.command} /> : null}
     </div>
     {failed ? <div className="settings-row">
@@ -699,7 +700,7 @@ function VersionRows({ update }: { update: Update }) {
     <div className="settings-row settings-switch-row">
       <label htmlFor="update-automatic-switch">
         <strong>Automatic updates</strong>{" "}
-        <small>Install new versions at the next quiet point, when no browser terminal is open. Turn this off to be asked before installing.</small>
+        <small>Install new versions at the next quiet moment. Turn this off to be asked before installing.</small>
       </label>
       <input id="update-automatic-switch" type="checkbox" role="switch" className="settings-switch" checked={update.automatic}
         disabled={!update.check || save.status === "saving"} onChange={(event) => void change(event.target.checked, true)} />
@@ -729,7 +730,7 @@ function MachinePage({ page }: { page: "name" | "prerequisites" | "incident-repo
     <IncidentReportsForm save="Save" onSaved={() => setSaved(true)} actions={submitRow} />
   </>;
   return <>
-    <p className="text-meta text-muted">{inContainer ? "These checks run inside the container. Open its shell from a host terminal and run the commands below there, then check again. Host tools and sign-ins do not count." : "What the agents need on the computer running Altitude. Run any missing command in a terminal there, then check again."} Altitude never asks for a password or token in the browser.</p>
+    <p className="text-meta text-muted">{inContainer ? "These checks run inside the container. Open its shell from a host terminal and run the commands below there or use Sign in, then check again. Host tools and sign-ins do not count." : "What the agents need on the computer running Altitude. Run any missing command in a terminal there, or use Sign in, then check again."} Altitude never asks for your password or a token.</p>
     <PrerequisiteList actions={(check) => <div className="onboarding-nav">{check}</div>} />
   </>;
 }

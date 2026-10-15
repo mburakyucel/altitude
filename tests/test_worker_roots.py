@@ -1,9 +1,10 @@
 """A task worker on either engine writes its worktree, the Git parts it needs and its own scratch folder, and a Claude
 worker its own Claude folder, never the rest of Altitude's home: a process confined to the roots each engine's launch
-names is refused every record there, its own task's included, and every other task's Claude folder
-(docs/ARCHITECTURE.md#task-door)."""
+names is refused every record there, its own task's included, and every other task's Claude folder, and on macOS
+the launcher's job folders, where a job's input waits with its tokens (docs/ARCHITECTURE.md#task-door)."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -11,7 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.support import AltitudeCase, add_worktree, make_repo, read_only_home, require_read_only_home
+from tests.support import (NATIVE_PLATFORM, AltitudeCase, add_worktree, make_repo, read_only_home,
+                           require_read_only_home)
 from altitude import config, dispatch, engines, l3, platform, state as S, tasks as T
 
 CHILD = r'''
@@ -21,6 +23,9 @@ for name, (kind, path) in json.loads(sys.argv[1]).items():
     try:
         if kind == "file":  # an existing record, opened for appending and left unchanged
             os.close(os.open(path, os.O_WRONLY | os.O_APPEND))
+        elif kind == "read":  # an existing file, read
+            with open(path) as f:
+                f.read()
         else:  # a folder: a new file in it
             target = os.path.join(path, "probe")
             with open(target, "x") as f:
@@ -68,6 +73,13 @@ class WorkerRoots(AltitudeCase):
             "reviews folder": ("folder", folder / "reviews"), "image staging": ("folder", images),
             "home": ("folder", config.ROOT), "scratch": ("folder", self.scratch),
             "own Claude folder": ("folder", self.own_claude), "other task's Claude folder": ("folder", other_claude)}
+        if NATIVE_PLATFORM == "darwin":  # the launcher's job folders, where a job's input waits until it is read
+            saved = platform._jobs() / "dev.altitude.job.fixture" / "stdin"
+            saved.parent.mkdir(parents=True)
+            self.addCleanup(shutil.rmtree, saved.parent)
+            saved.write_text('{"FIXTURE": "input"}\n')
+            self.targets.update({"job folders": ("folder", platform._jobs()), "saved input": ("file", saved),
+                                 "saved input, read": ("read", saved)})
         self.assertTrue(all(Path(path).exists() for _, path in self.targets.values()))
 
     def roots(self, engine: str) -> tuple[list[Path], tuple]:

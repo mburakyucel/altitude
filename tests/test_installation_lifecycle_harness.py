@@ -316,7 +316,8 @@ class TestInstallationVm(AltitudeCase):
 
     def test_recovery_and_public_runs_need_a_published_baseline_and_are_separate(self):
         for flags, refusal in ((["--recovery"], "need --baseline-release"), (["--public"], "need --baseline-release"),
-                               (["--baseline-release", "v0.1.0-rc.2", "--recovery", "--public"], "separate runs")):
+                               (["--baseline-release", "v0.1.0-rc.2", "--recovery", "--public"], "separate runs"),
+                               (["--baseline-release", "v0.1.2", "--trust"], "separate run")):
             with self.subTest(flags=flags):
                 result = subprocess.run([sys.executable, "-B", str(REPO / "scripts/installation_vm.py"),
                                          str(self.tmp / "results"), *flags], capture_output=True, text=True, timeout=30)
@@ -469,6 +470,45 @@ class TestInstallationVm(AltitudeCase):
                 versions = (baseline, following(baseline), vm.next_minor(baseline))
                 self.assertEqual(sorted(versions, key=installation.version_key), list(versions))
                 self.assertEqual(len({"-rc." in version for version in versions}), 1)
+
+    def test_trust_run_installs_the_browsers_while_online_then_runs_only_the_trust_phase_isolated(self):
+        from scripts import installation_vm as vm
+        events = []
+        native = subprocess.run
+
+        class Machine:
+            def __init__(self, work, image):
+                pass
+            start = wait_ready = stop = copy = lambda self, *args, **kwargs: None
+            ssh = lambda self, *args, **kwargs: subprocess.CompletedProcess(args, 0, "Ubuntu 24.04 fixture\n", "")
+            unplug_online_card = lambda self: events.append("unplugged")
+
+        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False}, {"internet": False}])
+        results = self.tmp / "results"
+        with mock.patch.object(vm.subprocess, "run", side_effect=lambda command, **kw: subprocess.CompletedProcess(
+                    command, 0, "QEMU emulator version 9.0 fixture\n", "") if command[0] == "qemu-system-x86_64"
+                    else native(command, **kw)), \
+                mock.patch.object(vm, "build", side_effect=lambda commit, work, results, versions: events.append("built")), \
+                mock.patch.object(vm, "base_image", return_value={"image": "fixture"}), mock.patch.object(vm, "Machine", Machine), \
+                mock.patch.object(vm, "browsers", side_effect=lambda machine, work, log: events.append("browsers") or {"node": "v22"}), \
+                mock.patch.object(vm, "harness", side_effect=lambda machine, commits, phase, log: events.append(phase) or 0), \
+                mock.patch.object(vm, "reachable", side_effect=lambda machine: next(reachable)), mock.patch("sys.stdout"):
+            code = vm.run(results, "c" * 40, self.tmp / "cache", trust=True)
+        record = json.loads((results / "vm.json").read_text())
+        self.assertEqual((code, record["passed"], record["trust"], record["browsers"]), (0, True, True, {"node": "v22"}))
+        self.assertEqual(events, ["built", "browsers", "unplugged", "trust"])
+        self.assertIn("installation_browsers.mjs", vm.HARNESS)
+
+    def test_the_guests_playwright_core_must_match_the_lockfile(self):
+        from scripts import installation_vm as vm
+        machine = mock.MagicMock()
+        with mock.patch.object(vm, "download", side_effect=lambda url, path: path.write_bytes(b"substituted")) as fetched:
+            with self.assertRaisesRegex(SystemExit, "does not match the integrity web/pnpm-lock.yaml records"):
+                vm.browsers(machine, self.tmp, self.tmp / "guest-browsers.log")
+        self.assertRegex(fetched.call_args.args[0], r"^https://registry.npmjs.org/playwright-core/-/playwright-core-[0-9.]+\.tgz$")
+        machine.copy.assert_not_called()
+        machine.ssh.assert_not_called()
 
     def test_public_run_downloads_both_releases_keeps_only_the_internet_and_runs_both_public_phases(self):
         from scripts import installation_vm as vm
@@ -1079,6 +1119,120 @@ class TestInstallationMacosVm(AltitudeCase):
         with mock.patch.dict(vm.os.environ, {"CODEX_BIN": str(self.tmp / "absent")}), \
                 self.assertRaisesRegex(vm.Stop, "needs the Codex CLI"):
             judged(("ok", "ok"))
+
+    def test_node_brings_every_homebrew_keg_its_libraries_load_its_own_first(self):
+        from scripts import installation_macos_vm as vm
+        cellar = self.tmp / "Cellar"
+        for item in ("node@24/24.1/bin/node", "node@24/24.1/lib/libnode.dylib", "icu4c@78/78.3/lib/libicu.dylib",
+                     "libuv/1.5/lib/libuv.dylib"):
+            (cellar / item).parent.mkdir(parents=True, exist_ok=True)
+            (cellar / item).write_text("")
+        (self.tmp / "opt").mkdir()
+        for name, keg in (("icu4c@78", "icu4c@78/78.3"), ("libuv", "libuv/1.5")):
+            (self.tmp / "opt" / name).symlink_to(f"../Cellar/{keg}")
+        links = {"node": ["@rpath/libnode.dylib", "/usr/lib/libz.1.dylib"],
+                 "libnode.dylib": [f"{self.tmp}/opt/icu4c@78/lib/libicu.dylib"],
+                 "libicu.dylib": [f"{self.tmp}/opt/libuv/lib/libuv.dylib"], "libuv.dylib": []}
+
+        def otool(command, **kwargs):
+            listed = [f"{command[-1]}:"] + [f"\t{path} (compatibility version 1.0.0)" for path in links[Path(command[-1]).name]]
+            return subprocess.CompletedProcess(command, 0, "\n".join(listed) + "\n", "")
+
+        with mock.patch.object(vm, "HOMEBREW", self.tmp.resolve()), mock.patch.object(vm.subprocess, "run", otool):
+            kegs = vm.homebrew_kegs(cellar / "node@24/24.1/bin/node")
+        self.assertEqual([keg.relative_to(self.tmp.resolve()) for keg in kegs],
+                         [Path("Cellar/node@24/24.1"), Path("Cellar/icu4c@78/78.3"), Path("Cellar/libuv/1.5")])
+        with mock.patch.object(vm, "HOMEBREW", self.tmp.resolve()), mock.patch.object(vm.subprocess, "run", otool):
+            self.assertEqual(vm.homebrew_kegs(self.tmp / "elsewhere/node"), [])
+
+    def test_source_passes_only_when_the_service_restarts_into_the_newer_main_through_its_copy(self):
+        from scripts import installation_macos_vm as vm
+        first, newer = "a" * 40, "b" * 40
+        (self.tmp / "kegs.txt").write_text("Cellar/node@24/24.1\nCellar/libuv/1.5\n")
+        (self.tmp / "pnpm-version").write_text("10.34.5")
+
+        class Guest:
+            def __init__(self, restarts=True, copied=True, rebuilt=True):
+                self.restarts, self.copied, self.rebuilt = restarts, copied, rebuilt
+                self.pushed, self.commands, self.fetched = False, [], []
+
+            def copy(self, source, target):
+                pass
+
+            def fetch(self, source, target):
+                self.fetched.append(source)
+
+            def ssh(self, command, timeout=120, check=True):
+                self.commands.append(command)
+                deployed = self.pushed and self.restarts
+                head = newer if deployed else first
+                answer = lambda stdout, code=0: subprocess.CompletedProcess(command, code, stdout, "")
+                if "corepack enable pnpm" in command:
+                    return answer("present libuv\nadded node@24\nv24.1.0\n")
+                if "git clone -q --bare" in command:
+                    return answer(f"{first}\n10.34.5\n/Users/newcomer/Library/pnpm/store/v10\n")
+                if "make install-service" in command:
+                    return answer(f"{vm.SERVICE_LABEL} on main: active (pid 101); log: ~/Library/Logs/altitude/altd.log\n")
+                if "git push" in command:
+                    self.pushed = True
+                    return answer(newer + "\n")
+                if "readlink" in command and "restart-pending" in command:
+                    return answer("", 0 if deployed else 1)
+                if "launchctl print" in command and "api/health" in command:
+                    pid = 202 if deployed else 101
+                    return answer(f"\tpath = /Users/newcomer/Library/LaunchAgents/{vm.SERVICE_LABEL}.plist\n"
+                                  f"\tstate = running\n\tpid = {pid}\n"
+                                  + json.dumps({"version": None, "commit": None, "pid": pid}) + "\n")
+                if command.endswith("https://127.0.0.1:8890/'"):
+                    mark = vm.PAGE_MARK if deployed and self.rebuilt else ""
+                    return answer(f"<!doctype html><html><head>{mark}</head></html>")
+                if "rev-parse --is-bare-repository" in command:
+                    exported = head if self.copied else first
+                    return answer(f"{head}\ntrue\n{head}\n{vm.SHARED}/origin.git\n{exported}\n")
+                return answer("")
+
+        def judged(guest):
+            record = {}
+            clock = iter(range(0, 100000, 50))
+            with mock.patch.object(vm, "add_github_cli"), mock.patch.object(vm, "prerequisites", return_value={}), \
+                    mock.patch.object(vm.time, "sleep"), mock.patch.object(vm.time, "monotonic", lambda: next(clock)):
+                try:
+                    vm.phase_source(guest, None, self.tmp, record, self.tmp, first)
+                except vm.Stop as error:
+                    return record, str(error)
+            return record, None
+
+        guest = Guest()
+        record, error = judged(guest)
+        self.assertIsNone(error)
+        self.assertEqual(record["cases"]["source"], {"passed": True, "commits": [first, newer], "pids": [101, 202]})
+        self.assertEqual(record["commits"], {"first": first, "newer": newer})
+        names = [step["step"] for step in record["steps"]]
+        self.assertLess(names.index("no-copy-yet"), names.index("install-service"))
+        self.assertLess(names.index("register"), names.index("newer-main"))
+        self.assertTrue(all(step["passed"] for step in record["steps"] if "passed" in step))
+        steps = [command for command in guest.commands if command.startswith("zsh -lc")]
+        self.assertTrue(all("export PATH=/opt/homebrew/opt/python@3.12/libexec/bin:/opt/homebrew/opt/node@24/bin:" in
+                            command for command in steps))
+        self.assertTrue(any("make web" in command for command in steps))
+        self.assertTrue(any("bin/alt project add altitude --path " + vm.CHECKOUT in command for command in steps))
+        self.assertTrue(any(vm.DEPLOYED in command and "web/index.html" in command for command in steps))
+        self.assertLess(names.index("first-start-page"), names.index("newer-main"))
+        self.assertEqual(names[-1], "deployed-page")
+        self.assertEqual(guest.fetched, [f"{vm.SHARED}/logs"])
+        self.assertTrue((self.tmp / "01-toolchain.log").is_file())
+        for log in self.tmp.glob("*.log"):
+            log.unlink()
+
+        record, error = judged(Guest(restarts=False))
+        self.assertIn("did not restart into the newer main", error)
+        self.assertNotIn("cases", record)
+        record, error = judged(Guest(copied=False))
+        self.assertIn("deployed-source", error)
+        self.assertNotIn("cases", record)
+        record, error = judged(Guest(rebuilt=False))
+        self.assertIn("still serves the web app built before the newer main", error)
+        self.assertNotIn("cases", record)
 
     def test_published_names_two_release_tags_and_runs_alone(self):
         from scripts import installation_macos_vm as vm

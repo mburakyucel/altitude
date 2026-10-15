@@ -92,8 +92,12 @@ def call(kind: str, fields: dict, *, wait: float = WAIT, timeout: float = TIMEOU
             url = f"https://localhost:{found['port']}" if platform.containerized() else found["url"]
             request = urllib.request.Request(f"{url}/api/{ENDPOINT}", data=data,
                                              headers={"Content-Type": "application/json"})
-            context = ssl.create_default_context(cadata=found["ca"]) if found["tls"] else None
-            with urllib.request.urlopen(request, context=context, timeout=timeout) as response:
+            # altd is on this machine, so the door bypasses every proxy. Skipping the lookup also keeps macOS's
+            # system proxy reader out of a forked process, where it aborts.
+            handlers = [urllib.request.ProxyHandler({})]
+            if found["tls"]:
+                handlers.append(urllib.request.HTTPSHandler(context=ssl.create_default_context(cadata=found["ca"])))
+            with urllib.request.build_opener(*handlers).open(request, timeout=timeout) as response:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             try:
@@ -254,12 +258,13 @@ def _change(project: str, slug: str, attempt: int, kind: object, fields: dict):
 
         def settle() -> dict:
             task = S.load_task(project, slug)
-            if _handed(task, message):
-                with _sends_folder(project, task) as folder:
-                    try:
-                        os.rename(f"{message}.writing", f"{message}.{outcome}", src_dir_fd=folder, dst_dir_fd=folder)
-                    except FileNotFoundError:
-                        pass  # settled already, by `recover_send`
+            if not _handed(task, message):
+                return {}
+            with _sends_folder(project, task) as folder:
+                try:
+                    os.rename(f"{message}.writing", f"{message}.{outcome}", src_dir_fd=folder, dst_dir_fd=folder)
+                except FileNotFoundError:
+                    pass  # settled already, by `recover_send`
             T.settle_send_now(project, slug, message, outcome, agent_id=task["agent_id"], session_id=session)
             return {}
         return settle
@@ -350,6 +355,6 @@ def _verb_env(project: str, slug: str, attempt: int) -> dict[str, str]:
 
 
 def _bounded(text: str) -> str:
-    data = (text or "").encode()
+    data = text.encode()
     return text if len(data) <= MAX_OUTPUT else data[:MAX_OUTPUT].decode(errors="ignore") + "\n[output truncated]\n"
 

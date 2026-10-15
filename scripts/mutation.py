@@ -37,7 +37,8 @@ MODULES = {
 }
 # The fast unit tests that exercise those modules; browser, container and VM lanes stay out.
 TESTS = [f"tests/test_{name}.py" for name in (
-    "lifecycle", "runtime_storage", "edit_count", "concurrency", "clean_close", "resume_hold", "task_status",
+    "lifecycle", "task_transitions", "runtime_storage", "edit_count", "concurrency", "clean_close", "resume_hold",
+    "task_status",
     "faults", "worker_end", "decisions", "question_groups", "conversation_decisions", "reported_continuation",
     "continuation_journey",
     "git_policy", "git_policy_integration", "worker_git_folders", "checkout_preservation",
