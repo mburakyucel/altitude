@@ -262,7 +262,7 @@ class TestClaudeFolders(AltitudeCase):
         self.assertEqual(access.engine_token("claude"), TOKEN)
         self.assertEqual((access.DIR / "claude.token").stat().st_mode & 0o777, 0o600)
         self.assertFalse(route.signed_out("claude"))
-        for answer, failed in (("two words", 0), (TOKEN + "-new", 1)):
+        for answer, failed in (("two words", 0), ("\u2502" + TOKEN, 0), ("$" + TOKEN, 0), ("", 0), (TOKEN + "-new", 1)):
             ran.return_value = subprocess.CompletedProcess([], failed)
             with self.subTest(answer=answer), mock.patch.object(engines.common, "read_hidden", return_value=answer), \
                     self.assertRaises((ValueError, RuntimeError)):
@@ -282,7 +282,8 @@ class TestClaudeFolders(AltitudeCase):
         shown = b""
         while b"Paste: " not in shown and select.select([main], [], [], 5)[0]:
             shown += os.read(main, 1024)
-        os.write(main, b"fixture-claude-\r  token  \r\r")  # a copy that wrapped, then Enter on an empty line
+        # A copy that wrapped, Enter on an empty line, then more of the copied screen
+        os.write(main, b"fixture-claude-\r  token  \r\rfixture-leftover\r")
         reader.join(5)
         while select.select([main], [], [], 0.2)[0]:
             shown += os.read(main, 1024)
@@ -290,6 +291,27 @@ class TestClaudeFolders(AltitudeCase):
         self.assertNotIn(b"fixture", shown)
         import termios
         self.assertTrue(termios.tcgetattr(terminal)[3] & termios.ECHO, "the terminal shows typing again")
+        self.assertFalse(select.select([terminal], [], [], 0.2)[0], "nothing pasted after the empty line is left")
+
+    def test_ctrl_c_at_the_hidden_prompt_shows_typing_again(self):
+        import pty
+        import select
+        child, main = pty.fork()
+        if child == 0:  # the prompt's own terminal is this one, whose Ctrl+C interrupts it
+            import termios
+            try:
+                engines.common.read_hidden("Paste: ")
+            except KeyboardInterrupt:
+                os._exit(3 if termios.tcgetattr(0)[3] & termios.ECHO else 4)
+            finally:
+                os._exit(5)
+        self.addCleanup(os.close, main)
+        shown = b""
+        while b"Paste: " not in shown and select.select([main], [], [], 5)[0]:
+            shown += os.read(main, 1024)
+        os.write(main, b"fixture-partial\x03")
+        _, status = os.waitpid(child, 0)
+        self.assertEqual(os.waitstatus_to_exitcode(status), 3, "interrupted, with typing shown again")
 
     def test_a_review_reads_its_sign_in_from_its_input_not_its_command(self):
         self.save_token()

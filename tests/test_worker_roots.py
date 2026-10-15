@@ -90,13 +90,15 @@ class WorkerRoots(AltitudeCase):
 
     def test_no_engines_roots_reach_the_coordinator_folder_on_either_platform(self):
         """A worker that could write the coordinators' folder or any folder above it could plant, replace or redirect
-        a socket or a turn's commands (#973 moved its name on macOS)."""
-        for darwin in (False, True):
+        a socket or a turn's commands (#973 moved its name on macOS), or a coordinator's Claude settings in its
+        persistent folder."""
+        for darwin, persistent in ((False, False), (False, True), (True, False)):
             with mock.patch.object(platform, "_darwin", return_value=darwin):
-                folder = platform.coordinator_directory().resolve()
-                self.assertEqual(l3.verb_socket_path(self.project).parent.resolve(), folder)
+                folder = platform.coordinator_directory(persistent=persistent).resolve()
+                if not persistent:
+                    self.assertEqual(l3.verb_socket_path(self.project).parent.resolve(), folder)
             for engine in ("claude", "codex"):
-                with self.subTest(darwin=darwin, engine=engine):
+                with self.subTest(darwin=darwin, persistent=persistent, engine=engine):
                     writable, _ = self.roots(engine)
                     # A root ending in * admits every path that starts with it (Claude's account file family).
                     patterns = [os.path.realpath(str(root)[:-1]) for root in writable if str(root).endswith("*")]
