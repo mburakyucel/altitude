@@ -428,7 +428,6 @@
      "asked": "2026-11-02T11:42:00+00:00",
      "audience": "operator",
      "text": "Should customers be able to reserve books that are on order but not yet in the shop?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-02T12:00:00+00:00",
@@ -442,7 +441,6 @@
      "asked": "2026-11-03T02:11:00+00:00",
      "audience": "l3",
      "text": "The till team asked whether a reservation should be visible on the till before the book is on the hold shelf.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-03T02:28:00+00:00",
@@ -949,7 +947,6 @@
      "asked": "2026-11-02T11:15:00+00:00",
      "audience": "operator",
      "text": "Should customers pay a deposit for special orders, or nothing until they collect?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-02T11:22:00+00:00",
@@ -963,7 +960,6 @@
      "asked": "2026-11-02T13:32:00+00:00",
      "audience": "l3",
      "text": "Is another task changing the hold shelf list? Special orders add to it.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-02T13:46:00+00:00",
@@ -1430,7 +1426,6 @@
      "asked": "2026-11-02T14:32:00+00:00",
      "audience": "operator",
      "text": "Free events: should people still 'book' a free ticket so we know numbers?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-02T14:46:00+00:00",
@@ -2070,7 +2065,6 @@
      "asked": "2026-11-03T09:27:00+00:00",
      "audience": "operator",
      "text": "What day of the month should the cut-off and charge be?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-03T09:39:00+00:00",
@@ -2084,7 +2078,6 @@
      "asked": "2026-11-03T10:11:00+00:00",
      "audience": "operator",
      "text": "If a payment fails, should the subscriber still get that month's book?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-03T10:32:00+00:00",
@@ -2098,7 +2091,6 @@
      "asked": "2026-11-04T08:48:00+00:00",
      "audience": "l3",
      "text": "Is any other task changing the payment provider integration this week?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-04T09:00:00+00:00",
@@ -2788,7 +2780,6 @@
      "asked": "2026-11-03T15:48:00+00:00",
      "audience": "operator",
      "text": "What share do authors get on consignment sales?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-03T16:13:00+00:00",
@@ -2802,7 +2793,6 @@
      "asked": "2026-11-03T18:58:00+00:00",
      "audience": "operator",
      "text": "Do authors get their statement by email, or do they collect it in the shop?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-03T19:20:00+00:00",
@@ -2816,7 +2806,6 @@
      "asked": "2026-11-03T19:37:00+00:00",
      "audience": "operator",
      "text": "For the two without email: should the shop print their statements automatically each quarter, or only when they come in?",
-     "asked_again": true,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-03T19:51:00+00:00",
@@ -3491,7 +3480,6 @@
      "asked": "2026-11-04T14:14:00+00:00",
      "audience": "operator",
      "text": "Should gift cards expire?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-04T15:01:00+00:00",
@@ -3505,7 +3493,6 @@
      "asked": "2026-11-06T17:37:00+00:00",
      "audience": "operator",
      "text": "The payment provider's test window passed with all redemptions matching. May I merge gift cards now?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-06T18:31:00+00:00",
@@ -3805,7 +3792,6 @@
      "asked": "2026-11-04T11:30:00+00:00",
      "audience": "l3",
      "text": "How long should a pick stay on the shelf?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-04T11:48:00+00:00",
@@ -4040,7 +4026,6 @@
      "asked": "2026-11-04T14:44:00+00:00",
      "audience": "operator",
      "text": "How many copies of one title should the shop hold before declining more?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-04T15:05:00+00:00",
@@ -4343,7 +4328,6 @@
      "asked": "2026-11-05T10:00:00+00:00",
      "audience": "operator",
      "text": "What discount do schools get?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-05T10:20:00+00:00",
@@ -4357,7 +4341,6 @@
      "asked": "2026-11-05T15:47:00+00:00",
      "audience": "operator",
      "text": "Should school accounts be approved by staff, or can any email ending in a school domain sign up?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-05T15:57:00+00:00",
@@ -4640,7 +4623,6 @@
      "asked": "2026-11-05T14:14:00+00:00",
      "audience": "l3",
      "text": "Should the feed add new titles to the catalogue, or only update titles the shop already lists?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-05T14:24:00+00:00",
@@ -4867,7 +4849,6 @@
      "asked": "2026-11-06T10:36:00+00:00",
      "audience": "l3",
      "text": "Should the lookup overwrite fields staff already typed?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-06T10:58:00+00:00",
@@ -5116,7 +5097,6 @@
      "asked": "2026-11-06T14:19:00+00:00",
      "audience": "l3",
      "text": "Signed preorders from an upcoming event: should they be a separate preorder line?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-06T14:31:00+00:00",
@@ -5423,7 +5403,6 @@
      "asked": "2026-11-06T15:16:00+00:00",
      "audience": "l3",
      "text": "Which zones do you post to? The courier's price list has five.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-06T15:34:00+00:00",
@@ -5437,7 +5416,6 @@
      "asked": "2026-11-06T16:25:00+00:00",
      "audience": "l3",
      "text": "Default weights by format: are paperback 300 g and hardback 700 g acceptable until the feed fills them?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-06T16:48:00+00:00",
@@ -6038,7 +6016,6 @@
      "asked": "2026-11-07T13:38:00+00:00",
      "audience": "operator",
      "text": "Do gift card purchases earn stamps?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-07T13:52:00+00:00",
@@ -6052,7 +6029,6 @@
      "asked": "2026-11-07T14:32:00+00:00",
      "audience": "operator",
      "text": "And do purchases paid with a gift card earn stamps?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-07T14:39:00+00:00",
@@ -6244,7 +6220,6 @@
      "asked": "2026-11-07T15:51:00+00:00",
      "audience": "l3",
      "text": "Should existing spreadsheet subscribers be imported as confirmed?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-07T16:07:00+00:00",
@@ -6393,7 +6368,6 @@
      "asked": "2026-11-08T12:01:00+00:00",
      "audience": "l3",
      "text": "Should staff-only fields like the shelf location be searchable on the public site?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-08T12:24:00+00:00",
@@ -6653,7 +6627,6 @@
      "asked": "2026-11-08T14:51:00+00:00",
      "audience": "l3",
      "text": "Should gift card and book club subscription appear in the guide?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-08T15:07:00+00:00",
@@ -6844,7 +6817,6 @@
      "asked": "2026-11-09T12:22:00+00:00",
      "audience": "l3",
      "text": "Should categories with only out-of-stock books still appear?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-09T12:47:00+00:00",
@@ -6998,7 +6970,6 @@
      "asked": "2026-11-09T14:10:00+00:00",
      "audience": "l3",
      "text": "Should the waiting list have a limit?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-09T14:24:00+00:00",
@@ -7154,7 +7125,6 @@
      "asked": "2026-11-09T15:40:00+00:00",
      "audience": "l3",
      "text": "Should past months' questions stay visible after the meeting?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-09T15:50:00+00:00",
@@ -7168,7 +7138,6 @@
      "asked": "2026-11-09T16:12:00+00:00",
      "audience": "l3",
      "text": "Can the leader edit the questions after publishing?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-09T16:24:00+00:00",
@@ -7317,7 +7286,6 @@
      "asked": "2026-11-10T11:00:00+00:00",
      "audience": "l3",
      "text": "Should the receipt include the loyalty stamp count?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-10T11:12:00+00:00",
@@ -7510,7 +7478,6 @@
      "asked": "2026-11-10T12:02:00+00:00",
      "audience": "l3",
      "text": "Should I add the accessibility lint to CI so regressions are caught?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-10T12:15:00+00:00",
@@ -7524,7 +7491,6 @@
      "asked": "2026-11-10T13:03:00+00:00",
      "audience": "l3",
      "text": "The audit also mentions the payment provider's card form. That's their iframe; should I report it to them rather than change anything?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-10T13:27:00+00:00",
@@ -7807,7 +7773,6 @@
      "asked": "2026-11-10T16:20:00+00:00",
      "audience": "l3",
      "text": "Upgrade straight to the next major version or the latest minor first?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-10T16:29:00+00:00",
@@ -7970,7 +7935,6 @@
      "asked": "2026-11-10T15:31:00+00:00",
      "audience": "l3",
      "text": "Is it fine to email the eleven users, given they never opted into marketing?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-10T15:45:00+00:00",
@@ -8083,7 +8047,6 @@
      "asked": "2026-11-11T09:59:00+00:00",
      "audience": "l3",
      "text": "Should series pages get structured data too, or only single books?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-11T10:11:00+00:00",
@@ -8258,7 +8221,6 @@
      "asked": "2026-11-11T12:05:00+00:00",
      "audience": "l3",
      "text": "What should hire cost, and is it per hour or per session?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-11T12:25:00+00:00",
@@ -8447,7 +8409,6 @@
      "asked": "2026-11-11T10:45:00+00:00",
      "audience": "l3",
      "text": "Should write-offs over a certain value need a manager's approval?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-11T11:09:00+00:00",
@@ -8594,7 +8555,6 @@
      "asked": "2026-11-11T14:14:00+00:00",
      "audience": "l3",
      "text": "Should the six months be configurable per publisher? Some have shorter windows.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-11T14:27:00+00:00",
@@ -8773,7 +8733,6 @@
      "asked": "2026-11-12T09:18:00+00:00",
      "audience": "l3",
      "text": "Should signed copies be excluded from discount codes?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-12T09:28:00+00:00",
@@ -8787,7 +8746,6 @@
      "asked": "2026-11-12T09:37:00+00:00",
      "audience": "l3",
      "text": "Should signed copies count toward loyalty stamps at their higher price?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-12T09:50:00+00:00",
@@ -8920,7 +8878,6 @@
      "asked": "2026-11-12T10:56:00+00:00",
      "audience": "l3",
      "text": "Should the banner be dismissible?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-12T11:15:00+00:00",
@@ -9624,7 +9581,6 @@
      "asked": "2026-11-13T09:27:00+00:00",
      "audience": "operator",
      "text": "Two staff often count the same big section from opposite ends. Should their scans add up?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-13T09:40:00+00:00",
@@ -9638,7 +9594,6 @@
      "asked": "2026-11-13T21:23:00+00:00",
      "audience": "operator",
      "text": "During the count, should the website stop selling books from sections not yet counted?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-13T21:41:00+00:00",
@@ -9652,7 +9607,6 @@
      "asked": "2026-11-13T21:57:00+00:00",
      "audience": "operator",
      "text": "Understood. Then should a sale during the count reduce the count target for that section, or be reconciled at the end?",
-     "asked_again": true,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-13T22:12:00+00:00",
@@ -9666,7 +9620,6 @@
      "asked": "2026-11-13T22:27:00+00:00",
      "audience": "operator",
      "text": "At the end, if a sale happened after the book was scanned, should the scan stand or the sale win?",
-     "asked_again": true,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-13T22:40:00+00:00",
@@ -9996,7 +9949,6 @@
      "asked": "2026-11-13T11:24:00+00:00",
      "audience": "l3",
      "text": "The samples are hosted by the distributor. Should we copy them to our storage or play them from their link?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-13T11:51:00+00:00",
@@ -10147,7 +10099,6 @@
      "asked": "2026-11-13T13:51:00+00:00",
      "audience": "l3",
      "text": "Do e-book vouchers count as standard rated?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-13T14:10:00+00:00",
@@ -10345,7 +10296,6 @@
      "asked": "2026-11-14T11:16:00+00:00",
      "audience": "l3",
      "text": "Can the import run earlier now it's fast, say at 3am?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-14T11:41:00+00:00",
@@ -10502,7 +10452,6 @@
      "asked": "2026-11-14T10:57:00+00:00",
      "audience": "l3",
      "text": "Where should the weekly check's email go?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-14T11:15:00+00:00",
@@ -10516,7 +10465,6 @@
      "asked": "2026-11-14T11:57:00+00:00",
      "audience": "l3",
      "text": "Should the weekly check also restore the uploaded covers, or only the database?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-14T12:15:00+00:00",
@@ -10830,7 +10778,6 @@
      "asked": "2026-11-14T17:51:00+00:00",
      "audience": "operator",
      "text": "Which shops count? Online giants too, or only bookshops?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-14T18:02:00+00:00",

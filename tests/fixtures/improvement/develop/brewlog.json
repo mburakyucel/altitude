@@ -116,7 +116,6 @@
      "asked": "2026-10-26T10:35:00+00:00",
      "audience": "operator",
      "text": "Should a planned addition deduct stock when it's planned, or only when the brewer marks it done?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-26T10:57:00+00:00",
@@ -130,7 +129,6 @@
      "asked": "2026-10-26T13:18:00+00:00",
      "audience": "l3",
      "text": "Should the tank board show dry-hop days on the batch card?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-26T13:32:00+00:00",
@@ -689,7 +687,6 @@
      "asked": "2026-10-26T11:23:00+00:00",
      "audience": "operator",
      "text": "Some kegs were never registered. Should the first scan of an unknown keg number register it automatically?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-26T11:55:00+00:00",
@@ -703,7 +700,6 @@
      "asked": "2026-10-27T08:41:00+00:00",
      "audience": "operator",
      "text": "Ready to merge keg tracking (PR #524): it changes the dispatch screen used in the taproom. Merge now?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-27T09:42:00+00:00",
@@ -716,7 +712,6 @@
      "asked": "2026-10-27T09:42:00+00:00",
      "audience": "operator",
      "text": "Re-asking after the rebase: keg tracking is ready to merge, checks green on the new head. OK to merge?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-27T10:36:00+00:00",
@@ -729,7 +724,6 @@
      "asked": "2026-10-27T10:36:00+00:00",
      "audience": "operator",
      "text": "Still ready to merge after a lint fix: may I merge keg tracking now?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-27T10:59:00+00:00",
@@ -1084,7 +1078,6 @@
      "asked": "2026-10-26T13:44:00+00:00",
      "audience": "operator",
      "text": "Should scaling round grain weights to the nearest 100 g, or keep exact grams?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-26T14:09:00+00:00",
@@ -1272,7 +1265,6 @@
      "asked": "2026-10-27T09:21:00+00:00",
      "audience": "l3",
      "text": "Should brix be offered too? The refractometer reads brix.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-27T09:40:00+00:00",
@@ -1463,7 +1455,6 @@
      "asked": "2026-10-27T13:18:00+00:00",
      "audience": "l3",
      "text": "Two hydrometers are labelled with old tank names. Should I map them by device id and ignore the labels?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-27T13:45:00+00:00",
@@ -1778,7 +1769,6 @@
      "asked": "2026-10-27T15:24:00+00:00",
      "audience": "operator",
      "text": "Should a brewer be able to override the 'dirty tank' block in an emergency, with a note?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-27T15:40:00+00:00",
@@ -1792,7 +1782,6 @@
      "asked": "2026-10-27T17:06:00+00:00",
      "audience": "l3",
      "text": "Do cleans of the hoses and the heat exchanger need logging too, or tanks only?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-27T17:20:00+00:00",
@@ -2113,7 +2102,6 @@
      "asked": "2026-10-28T09:40:00+00:00",
      "audience": "operator",
      "text": "Which salts does the brewery stock? The calculator should only suggest those.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-28T10:01:00+00:00",
@@ -2374,7 +2362,6 @@
      "asked": "2026-10-28T09:47:00+00:00",
      "audience": "operator",
      "text": "Should the count adjust stock immediately, or wait for a manager to approve the variance?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-28T10:02:00+00:00",
@@ -2388,7 +2375,6 @@
      "asked": "2026-10-28T11:37:00+00:00",
      "audience": "l3",
      "text": "Is any other task changing stock tables this week?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-28T11:54:00+00:00",
@@ -2647,7 +2633,6 @@
      "asked": "2026-10-28T15:58:00+00:00",
      "audience": "operator",
      "text": "Is there a preferred supplier when two stock the same malt?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-28T16:09:00+00:00",
@@ -2949,7 +2934,6 @@
      "asked": "2026-10-29T11:08:00+00:00",
      "audience": "operator",
      "text": "Can the person who brewed the batch be one of the two tasters?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-29T11:25:00+00:00",
@@ -3322,7 +3306,6 @@
      "asked": "2026-10-30T04:08:00+00:00",
      "audience": "operator",
      "text": "The tab split is ready and green. It changes the till, so may I merge it now, outside opening hours?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-30T05:27:00+00:00",
@@ -3335,7 +3318,6 @@
      "asked": "2026-10-30T05:27:00+00:00",
      "audience": "operator",
      "text": "Asking again after the rebase: tab split ready to merge, may I go ahead?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-30T06:27:00+00:00",
@@ -3348,7 +3330,6 @@
      "asked": "2026-10-30T06:27:00+00:00",
      "audience": "operator",
      "text": "Ready to merge the tab split after a test rename, still waiting for your go.",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-30T07:33:00+00:00",
@@ -3361,7 +3342,6 @@
      "asked": "2026-10-30T07:33:00+00:00",
      "audience": "operator",
      "text": "The tab split is still ready: rebased on main this morning. Can I merge?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-30T07:55:00+00:00",
@@ -4287,7 +4267,6 @@
      "asked": "2026-10-30T16:32:00+00:00",
      "audience": "operator",
      "text": "Should happy hour apply to halves and thirds as well as pints?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-30T16:45:00+00:00",
@@ -4482,7 +4461,6 @@
      "asked": "2026-10-31T08:55:00+00:00",
      "audience": "l3",
      "text": "Should beers with oats show 'gluten' as well as 'oats'?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-31T09:04:00+00:00",
@@ -4691,7 +4669,6 @@
      "asked": "2026-10-31T11:24:00+00:00",
      "audience": "operator",
      "text": "Should strains bought fresh start at generation 0 or 1?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-31T11:45:00+00:00",
@@ -4980,7 +4957,6 @@
      "asked": "2026-10-31T13:51:00+00:00",
      "audience": "operator",
      "text": "Should energy and water be estimated in the cost, or ingredients only?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-31T14:08:00+00:00",
@@ -5261,7 +5237,6 @@
      "asked": "2026-11-01T09:07:00+00:00",
      "audience": "l3",
      "text": "Should the timer start automatically when the boil reaches 100\u00b0C, or by hand?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-01T09:25:00+00:00",
@@ -5483,7 +5458,6 @@
      "asked": "2026-11-01T12:30:00+00:00",
      "audience": "l3",
      "text": "Should the alert also include hops for pilot batches?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-01T12:39:00+00:00",
@@ -5738,7 +5712,6 @@
      "asked": "2026-11-02T22:04:00+00:00",
      "audience": "l3",
      "text": "The label printer accepts only its own command language over the network. Is a small dependency for that language acceptable?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-02T22:57:00+00:00",
@@ -5752,7 +5725,6 @@
      "asked": "2026-11-03T02:46:00+00:00",
      "audience": "operator",
      "text": "Label printing is ready and green. May I merge it, given packaging is running today?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-11-03T04:48:00+00:00",
@@ -5765,7 +5737,6 @@
      "asked": "2026-11-03T04:48:00+00:00",
      "audience": "operator",
      "text": "Re-posting since main moved: label printing is ready to merge, OK to go?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-11-03T07:12:00+00:00",
@@ -5778,7 +5749,6 @@
      "asked": "2026-11-03T07:12:00+00:00",
      "audience": "operator",
      "text": "Ready to merge label printing after the typo fix. Merge now?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-03T07:40:00+00:00",
@@ -6109,7 +6079,6 @@
      "asked": "2026-11-02T13:50:00+00:00",
      "audience": "operator",
      "text": "Is the deposit the same for 30-litre and 50-litre kegs?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-02T14:04:00+00:00",
@@ -6123,7 +6092,6 @@
      "asked": "2026-11-02T16:03:00+00:00",
      "audience": "l3",
      "text": "Do deposits apply to customers who collect kegs themselves from the taproom?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-02T16:25:00+00:00",
@@ -6389,7 +6357,6 @@
      "asked": "2026-11-03T09:59:00+00:00",
      "audience": "operator",
      "text": "Should the step names be free text or picked from a list (protein rest, saccharification, mash out)?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-03T10:11:00+00:00",
@@ -6884,7 +6851,6 @@
      "asked": "2026-11-03T13:33:00+00:00",
      "audience": "operator",
      "text": "Should brewers see batch costs, or only managers?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-03T13:42:00+00:00",
@@ -7601,7 +7567,6 @@
      "asked": "2026-11-04T10:29:00+00:00",
      "audience": "operator",
      "text": "Should samples poured for the tasting panel count as duty-paid or as losses?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-04T10:48:00+00:00",
@@ -7615,7 +7580,6 @@
      "asked": "2026-11-05T07:19:00+00:00",
      "audience": "operator",
      "text": "The excise report is ready and matches last month's return. It changes figures the accountant uses, so may I merge it?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-11-05T08:24:00+00:00",
@@ -7628,7 +7592,6 @@
      "asked": "2026-11-05T08:24:00+00:00",
      "audience": "operator",
      "text": "Asking again since the rebase: the excise report is ready to merge. Go ahead?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-11-05T09:25:00+00:00",
@@ -7641,7 +7604,6 @@
      "asked": "2026-11-05T09:25:00+00:00",
      "audience": "operator",
      "text": "The excise report is still waiting for your merge approval after the fixture update.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-05T09:50:00+00:00",
@@ -8060,7 +8022,6 @@
      "asked": "2026-11-04T14:40:00+00:00",
      "audience": "l3",
      "text": "Should the export include readings from tanks with no batch (cleaning, empty)?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-04T14:56:00+00:00",
@@ -8193,7 +8154,6 @@
      "asked": "2026-11-05T08:32:00+00:00",
      "audience": "l3",
      "text": "Labels already printed with 4.5%: is the batch's measured ABV 4.45 or 4.5?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-05T08:47:00+00:00",
@@ -8582,7 +8542,6 @@
      "asked": "2026-11-05T14:18:00+00:00",
      "audience": "l3",
      "text": "Should beer still in tanks count as stock, or only packaged beer?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-05T14:32:00+00:00",
@@ -8596,7 +8555,6 @@
      "asked": "2026-11-05T15:46:00+00:00",
      "audience": "l3",
      "text": "Is there a fixed date the accountant needs it by?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-05T16:07:00+00:00",
@@ -8763,7 +8721,6 @@
      "asked": "2026-11-06T10:57:00+00:00",
      "audience": "l3",
      "text": "The consultant's old script might still call v1 from outside. Should I wait a week with a deprecation notice?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-06T11:10:00+00:00",
@@ -9193,7 +9150,6 @@
      "asked": "2026-11-06T15:48:00+00:00",
      "audience": "operator",
      "text": "Where do the spec ranges come from: per beer, or one set for all?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-06T15:59:00+00:00",
@@ -9452,7 +9408,6 @@
      "asked": "2026-11-07T11:11:00+00:00",
      "audience": "operator",
      "text": "Who is on call: is there a rota in the system, or should the alarm text one fixed number?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-07T11:29:00+00:00",
@@ -9919,7 +9874,6 @@
      "asked": "2026-11-07T10:13:00+00:00",
      "audience": "operator",
      "text": "Should requests for Friday and Saturday evenings be allowed at all?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-07T10:38:00+00:00",
@@ -10446,7 +10400,6 @@
      "asked": "2026-11-08T11:47:00+00:00",
      "audience": "l3",
      "text": "Should the high-contrast theme also apply to printed brew sheets?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-11-08T11:57:00+00:00",

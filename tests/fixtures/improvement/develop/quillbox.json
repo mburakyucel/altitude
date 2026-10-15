@@ -351,7 +351,6 @@
      "asked": "2026-10-08T14:21:00+00:00",
      "audience": "operator",
      "text": "Should the alt text check live in the editor plugin or in the publish validator on the server?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-08T15:15:00+00:00",
@@ -548,7 +547,6 @@
      "asked": "2026-10-09T13:31:00+00:00",
      "audience": "operator",
      "text": "Should the import require the writer to confirm that these subscribers consented?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-09T14:56:00+00:00",
@@ -561,7 +559,6 @@
      "asked": "2026-10-09T14:56:00+00:00",
      "audience": "operator",
      "text": "Which consent wording should the import checkbox use: the free signup text or the paid one?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-09T15:50:00+00:00",
@@ -621,7 +618,6 @@
      "asked": "2026-10-10T10:21:00+00:00",
      "audience": "operator",
      "text": "Should the new table be called unsubscribe_reasons or churn_feedback?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-10T11:10:00+00:00",
@@ -853,7 +849,6 @@
      "asked": "2026-10-13T14:21:00+00:00",
      "audience": "operator",
      "text": "Should I use the existing feature flag helper for the switch, or a plain column on the issue?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-13T15:20:00+00:00",
@@ -1195,7 +1190,6 @@
      "asked": "2026-10-15T13:21:00+00:00",
      "audience": "operator",
      "text": "Should the settings migration go in this PR or a separate one first?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-15T14:30:00+00:00",
@@ -1531,7 +1525,6 @@
      "asked": "2026-10-19T09:31:00+00:00",
      "audience": "operator",
      "text": "Should readers suppressed after the first send be skipped by the resend?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-19T10:30:00+00:00",

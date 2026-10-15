@@ -345,7 +345,6 @@
      "asked": "2026-10-15T09:26:00+00:00",
      "audience": "operator",
      "text": "Should reminders be opt-in on the order form, or sent to everyone with a phone number?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-15T10:41:00+00:00",
@@ -358,7 +357,6 @@
      "asked": "2026-10-15T10:41:00+00:00",
      "audience": "operator",
      "text": "Existing customers never saw an opt-in: should they get reminders until they opt out, or none until they opt in on their next order?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-15T12:00:00+00:00",

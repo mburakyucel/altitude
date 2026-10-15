@@ -41,7 +41,7 @@ def lapsed(chip, title):
 S1 = ("How agents work", "1. Owners re-ask merge approval after a routine rebase",
       "In 3 of 14 tasks the owner re-asked you to approve a merge when only a rebase onto main had changed the PR. One sentence in the owner instructions would stop it.",
       ["Release notes for 0.4", "Tidy the settings page", "Add search to the task list", "Fix voice on Safari"],
-      "Questions re-asked without your input in 3 of 14 tasks")
+      "Questions re-asked with no reply in between in 3 of 14 tasks")
 S2 = ("altitude", "2. The phone swipe walkthrough fails the web shard about once a week",
       "Two landings waited on a rerun of the same browser walkthrough. Making its tab-switch step wait for the view to settle would remove the reruns.",
       ["Tidy the settings page", "Release notes for 0.4"],
@@ -49,7 +49,7 @@ S2 = ("altitude", "2. The phone swipe walkthrough fails the web shard about once
 S3 = ("How agents work", "3. Review rounds repeat on unchanged findings",
       "One task ran nine implementation reviews, most re-reporting findings already assessed. Passing earlier assessments to the reviewer would let it skip them.",
       ["Add search to the task list"],
-      "Review rounds beyond the first in 11 of 14 tasks")
+      "Review rounds beyond the second in 11 of 14 tasks")
 
 def card(sgs, since="", footer=True, details=False, time="Oct 12, 09:40", win="14 tasks from Oct 5–12"):
     det = ('<div class="det"><dl><dt>Read</dt><dd>14 tasks that finished Oct 5–12; their questions, reviews, landings and conversations; project chat Oct 5–12</dd>'
@@ -66,7 +66,7 @@ def st(label, note, body):
 
 RUN = '<div class="sys"><span class="ln"></span><span class="d run"></span><span>Improvement suggestions · reading 14 tasks from Oct 5–12</span><a href="#" style="text-decoration:underline">Stop</a><span class="ln"></span></div>'
 SINCE = ('<div class="since"><b>Since earlier changes</b>'
-         '<div>Questions re-asked without your input: 3 of 14 tasks before, 0 of 11 since · <a href="#">Stop re-asking merge approval after a routine rebase</a></div></div>')
+         '<div>Questions re-asked with no reply in between: 3 of 14 tasks before, 0 of 11 since · <a href="#">Stop re-asking merge approval after a routine rebase</a></div></div>')
 SEEN = '<div class="meta">Seen again after <a href="#">Pass earlier assessments to the reviewer</a></div>'
 
 # Desktop sheet
@@ -90,7 +90,7 @@ body.append(st("6 · Details open", "what was read, what was left out, when it r
 body.append(st("7 · Later run", "measured accepted changes lead the card; a recurring pattern says so",
     card([sg("How agents work", "1. Owners still re-run reviews after an unchanged rebase",
              "Two tasks requested a fresh implementation review when only main had moved. The review rules could treat a clean rebase like the approval rule does.",
-             ["Export the work list", "Fix voice on Safari"], "Review rounds beyond the first in 5 of 11 tasks", extra=SEEN)], since=SINCE, time="Oct 19, 10:02", win="11 tasks from Oct 12–19")))
+             ["Export the work list", "Fix voice on Safari"], "Review rounds beyond the second in 5 of 11 tasks", extra=SEEN)], since=SINCE, time="Oct 19, 10:02", win="11 tasks from Oct 12–19")))
 body.append(st("8 · Other endings", "system lines; Show opens the details or the reason",
     '<div style="display:flex;flex-direction:column;gap:16px;padding-top:6px">'
     + sysline("Improvement suggestions · 14 tasks from Oct 5–12 · nothing to suggest")

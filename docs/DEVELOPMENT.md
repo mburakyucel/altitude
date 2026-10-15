@@ -954,7 +954,7 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself, on Ubuntu 24.04 x86_64 | Desktop login/logout, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, the account trusting its authority and macOS opening its printed private link in Safari, which pairs once and keeps no code in its address or back and forward history, a second run of the public command keeping that browser and the certificate, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop ends every descendant and whose time limits hold; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browsers other than Safari, Safari's saved history file, device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop ends every descendant and whose time limits hold; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
@@ -1143,8 +1143,9 @@ The eval measures whether the improvement review finds recurring friction, on fi
 before any real conversation is read
 ([design](../design/wireframes/improvement-review/PROPOSAL.md#proving-it-works)). Scenarios are
 fictional projects in `tests/fixtures/improvement/` ([format](../tests/fixtures/improvement/README.md)),
-in three sets: `develop/` for writing the reviewer's instructions, `heldback/` for the reported
-numbers, and `scale/` for projects at a real project's volume (two planted, one control). Each command
+in three sets: `develop/` for writing the reviewer's instructions, including every set already run live,
+`heldback/` for the reported numbers, and `scale/` for held-back projects at a real project's volume (one
+planted, one control). Each command
 loads the scenarios into its own throwaway Altitude home and refuses the real one.
 
 The offline part runs without a model and is part of `make check`
@@ -1157,8 +1158,8 @@ ALTITUDE_HOME="$(mktemp -d)" python3 -m altitude.improve_eval offline
 It prints one line per signal: places planted in `signals.json`, how many fired, how many reached
 their own task's sheet under their alias, ordinary places that fired, and planted scenario patterns
 whose places reach their prompt. It fails when a signal misses a planted place or fires on ordinary
-work (repeated pushes, a report continued by a message, a question re-asked after the operator
-answered, a first review), when a prompt or sheet is over its bound, when a long conversation's sheet
+work (repeated pushes, a report continued by a message, a question revised after an operator or L3
+reply, a second review, a review re-run after a failed one or of new material), when a prompt or sheet is over its bound, when a long conversation's sheet
 quotes no operator message, or when a scenario's key does not fit its records.
 
 The live part calls the reviewer on the plan and runs by hand:
@@ -1519,16 +1520,11 @@ shell trusts, with `github.com` resolving to the loopback.
   an automatic update whose startup exits and uninstall. When it fails, launchd's record of the job, the guest's
   busiest processes, a sample of the service's process and its open files are kept.
 - `login`: the account installs through the public command into its own home. The printed private
-  link must name the printed address. macOS must refuse the server certificate until the account
-  trusts the generated authority for SSL in its login keychain, as [setup](SETUP.md#trust-https-on-each-device) asks; the
-  guest's trust-settings rule is set to allow, standing in for the person typing their password.
-  `open` then hands the printed link to the default browser, Safari, which must pair through it.
-  At that origin the page loads for an unpaired client, whose pairing request with a fresh code
-  pairs it, while a second use of the printed link and a well-formed unknown code are told the code
-  expired or was already used. Safari under WebDriver opens a known page and then another private
-  link: it must pair and show First run, Back must return to the known page and Forward to the
-  page's address, and none of these addresses may keep the code. macOS privacy protection keeps Safari's saved history file from the lane, which does
-  not change it, so that file is not read. Running the
+  link must name the printed address; at that origin, on the generated authority, its page loads
+  and the page's own pairing request with the link's code pairs the browser once, while a second
+  use and a well-formed unknown code are told the code expired or was already used. A real browser
+  is not driven: it opens Altitude only once the authority is trusted, and macOS asks a person to
+  confirm every trust change, even one made as root. Running the
   public command again must print no link and keep the certificate authority, server key and
   certificate and the paired browser. Its LaunchAgent
   `dev.altitude.altd` must run from `~/Library/LaunchAgents`, answer HTTPS health with the release's

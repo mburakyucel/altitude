@@ -88,7 +88,6 @@
      "asked": "2026-10-06T08:56:00+00:00",
      "audience": "operator",
      "text": "Is a fixed 2 °C threshold right for the first version, or should each plant carry its own?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-06T09:40:00+00:00",

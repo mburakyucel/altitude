@@ -29,6 +29,12 @@
      "at": "2026-10-14T11:30:00+00:00",
      "role": "l2",
      "text": "Semicolons it is; the button now downloads the filtered list."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-14T12:45:00+00:00",
+     "role": "l3",
+     "text": "The depot list is the same for every export; use it."
     }
    ],
    "questions": [
@@ -64,6 +70,30 @@
       "at": "2026-10-14T11:12:00+00:00",
       "by": "operator",
       "message": "m2"
+     }
+    },
+    {
+     "id": "q2",
+     "revision": 1,
+     "asked": "2026-10-14T12:40:00+00:00",
+     "audience": "l3",
+     "text": "Should the export use the depot list from the settings page?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-14T12:50:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q2",
+     "revision": 2,
+     "asked": "2026-10-14T12:50:00+00:00",
+     "audience": "l3",
+     "text": "Then should depots added later appear in old exports too?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-14T12:55:00+00:00",
+      "by": "l3"
      }
     }
    ],
@@ -198,6 +228,13 @@
     {
      "id": "r3",
      "subject": "changes",
+     "requested": "2026-10-17T10:30:00+00:00",
+     "state": "failed",
+     "findings": []
+    },
+    {
+     "id": "r4",
+     "subject": "changes",
      "requested": "2026-10-17T11:00:00+00:00",
      "findings": [
       {
@@ -211,6 +248,45 @@
        "finding_id": "F1",
        "disposition": "fixed",
        "reason": "Empty state shown."
+      }
+     ]
+    },
+    {
+     "id": "r5",
+     "subject": "changes",
+     "requested": "2026-10-17T11:30:00+00:00",
+     "additional": true,
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Archive export misses the depot column"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Fixed."
+      }
+     ]
+    },
+    {
+     "id": "r6",
+     "subject": "changes",
+     "requested": "2026-10-17T12:00:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Archive pages skip a row at each page boundary"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Fixed."
       }
      ]
     }
