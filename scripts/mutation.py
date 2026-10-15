@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,48 @@ def configure(source: Path) -> None:
         "process_isolation = forkserver\nforkserver_warmup = none\n")
 
 
+def strays(root: int, venv: Path) -> set[int]:
+    """Processes of the scratch environment's Python that are no longer below mutmut's process `root`."""
+    listed = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,command="], check=True, capture_output=True,
+                            text=True).stdout
+    table = [(int(pid), int(ppid), rest[0] if rest else "") for pid, ppid, *rest in
+             (line.split(None, 2) for line in listed.splitlines())]
+    below, grown = {root}, True
+    while grown:
+        grown = False
+        for pid, ppid, _ in table:
+            if ppid in below and pid not in below:
+                below.add(pid)
+                grown = True
+    return {pid for pid, _, command in table if command.startswith(str(venv)) and pid not in below}
+
+
+def stop(pids) -> None:
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def run_mutmut(command: list[str], source: Path, env: dict, venv: Path, log) -> int:
+    """mutmut stops a worker that runs too long but not the processes its tests started; those wait forever
+    for the worker and pile up. Each minute this stops the ones already orphaned a minute before, and at the
+    end the rest."""
+    process = subprocess.Popen(command, cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT)
+    seen = set()
+    while True:
+        try:
+            returncode = process.wait(timeout=60)
+            break
+        except subprocess.TimeoutExpired:
+            current = strays(process.pid, venv)
+            stop(current & seen)
+            seen = current
+    stop(strays(process.pid, venv))
+    return returncode
+
+
 def function_of(mutant: str) -> str:
     """`altitude.land.xǁLandingǁmerge__mutmut_3` names `Landing.merge`; `altitude.state.x_now__mutmut_1`, `now`."""
     name = mutant.rsplit(".", 1)[1].rsplit("__mutmut_", 1)[0]
@@ -130,6 +173,11 @@ def main() -> int:
     args = parser.parse_args()
     if args.results.exists() and any(args.results.iterdir()):
         parser.error(f"{args.results} is not empty")
+    # Read before RESULTS exists, so a results folder inside the checkout is not a local change.
+    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, check=True, capture_output=True,
+                            text=True).stdout.strip()
+    changed = subprocess.run(["git", "status", "--porcelain"], cwd=REPO, check=True, capture_output=True,
+                             text=True).stdout.strip()
     args.results.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     scratch = Path(tempfile.mkdtemp(prefix="altitude-mutation-"))
@@ -139,11 +187,11 @@ def main() -> int:
         configure(source)
         subprocess.run([sys.executable, "-m", "venv", venv], check=True)
         subprocess.run([venv / "bin" / "python", "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
-                        "--require-hashes", "--only-binary=:all:", "-r", REQUIREMENTS], check=True)
+                        "--no-cache-dir", "--require-hashes", "--only-binary=:all:", "-r", REQUIREMENTS], check=True)
         # A child Python a test starts (a Git hook, `bin/alt`) runs the original code. mutmut sees calls only in
         # the test process, and an inherited mutant or mode broke children: they looked for mutmut's settings
         # in their own folder, or waited forever and outlived the worker mutmut stopped.
-        site = subprocess.run([venv / "bin" / "python", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        site = subprocess.run([venv / "bin" / "python", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
                               check=True, capture_output=True, text=True).stdout.strip()
         Path(site, "altitude_mutation.pth").write_text('import os; os.environ.pop("MUTANT_UNDER_TEST", None)\n')
         mutmut = str(venv / "bin" / "mutmut")
@@ -152,10 +200,10 @@ def main() -> int:
         env["PATH"] = f"{venv / 'bin'}{os.pathsep}{env.get('PATH', '')}"
         patterns = [pattern for module in MODULES.values() for pattern in module]
         with open(args.results / "mutmut.log", "wb") as log:
-            run = subprocess.run([mutmut, "run", *patterns], cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT)
-        if run.returncode:
-            print(f"mutmut run failed ({run.returncode}); see {args.results / 'mutmut.log'}", file=sys.stderr)
-            return run.returncode
+            returncode = run_mutmut([mutmut, "run", *patterns], source, env, venv, log)
+        if returncode:
+            print(f"mutmut run failed ({returncode}); see {args.results / 'mutmut.log'}", file=sys.stderr)
+            return returncode
         listed = subprocess.run([mutmut, "results", "--all", "true"], cwd=source, env=env, check=True,
                                 capture_output=True, text=True).stdout
         found = classify(listed)
@@ -165,10 +213,6 @@ def main() -> int:
                                                            capture_output=True, text=True).stdout, survivors)
             # `mutmut show` prints its own "# name: status" line before the diff.
             diffs = {mutant: text.split("\n", 1)[1] for mutant, text in zip(survivors, shown)}
-        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, check=True, capture_output=True,
-                                text=True).stdout.strip()
-        changed = subprocess.run(["git", "status", "--porcelain"], cwd=REPO, check=True,
-                                 capture_output=True, text=True).stdout.strip()
         version = subprocess.run([mutmut, "--version"], cwd=source, check=True, capture_output=True,
                                  text=True).stdout.strip()
         minutes = (time.monotonic() - started) / 60

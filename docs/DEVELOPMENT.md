@@ -1156,6 +1156,8 @@ measurement, not a check: `make check` and the required CI never run it, and its
   function reached only through them counts here too.
 - **Timeout**: the edit made the tests run far longer than usual, usually a loop that no longer
   ends; read it as killed.
+- **Other**: mutmut did not settle the edit (not checked, suspicious, crashed); the report names
+  each one. A nonzero count means that module's counts are incomplete.
 
 Read each survivor and sort it:
 
