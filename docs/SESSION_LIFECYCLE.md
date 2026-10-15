@@ -78,7 +78,8 @@ launchers from the broader extensibility direction; this page describes their cu
 New and resumed workers receive the shared [noninteractive toolchain](DEVELOPMENT.md#noninteractive-toolchain)
 environment: an existing PATH-selected Node, or the installed nvm default with its package-manager
 shims when Node is absent. Engine discovery uses the same PATH. Running workers retain their
-environment and committed CLI export; updated landing code resolves tools on each invocation.
+environment, while each `alt` and checkpoint hook they start runs the activated version
+([task door](ARCHITECTURE.md#task-door)); updated landing code resolves tools on each invocation.
 Committed-source activation applies launch changes at the next ordinary launch/resume, preserving
 session identity, attempt and holds.
 
@@ -337,7 +338,8 @@ Deployment and activation errors remain visible independently of isolated task p
 An archive installation pins these inputs to its immutable application version; it needs no
 application source checkout. Updates select a verified version at the same narrow quiet point
 used by dispatch, resume, L3 and report verification. Independent worker jobs (Linux user units,
-macOS launchd jobs) survive the daemon replacement and retain their pinned resources; persisted ownership, sessions, messages and
+macOS launchd jobs) survive the daemon replacement and retain their pinned persona and driver, while their
+`alt` and checkpoint hooks run the selected version; persisted ownership, sessions, messages and
 holds remain authoritative when the daemon adopts them. Previous versions stay installed.
 New installations save the discovered toolchain PATH for native service startup; updates preserve it.
 Failed activation restores the prior version and service definition; an interrupted recovery
@@ -1514,8 +1516,9 @@ An explicitly question-blocked task remains waiting when its worker exits or dis
 completion report until a later authorized turn runs. A stale finished-worker observation cannot replace
 a newer block with a worker-death fault.
 
-A worker's PATH resolves `alt` to the deployment checkout's `bin/alt`, so each invocation uses the
-current CLI. Its record changes go through altd's [task door](ARCHITECTURE.md#task-door): while altd restarts,
+A worker's PATH resolves `alt` to its launch version's `bin/alt`, which runs the activated version's `alt`
+once Altitude has activated another, as its checkpoint hooks do, so each invocation uses the CLI of the running
+altd. Its record changes go through altd's [task door](ARCHITECTURE.md#task-door): while altd restarts,
 a verb or landing waits for it and the hooks let the worker go on, its messages waiting for the next checkpoint.
 
 ## Live transcript

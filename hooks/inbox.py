@@ -15,6 +15,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import door  # noqa: E402
 
+door.follow_activation(__file__)
+
 #: While altd cannot be reached a checkpoint holds the worker up only briefly: its messages wait in the inbox for the
 #: next one. Once altd has the request it may take the messages from the inbox, so its answer is awaited for nearly
 #: the hook's own bound (`dispatch.HOOK_TIMEOUT`), and a repeat after a dropped connection gets the same answer.

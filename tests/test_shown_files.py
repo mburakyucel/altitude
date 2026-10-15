@@ -12,7 +12,7 @@ from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
 from tests.test_design_viewer import _RecordingHTTPServer
-from altitude import config, server, state as S, tasks as T
+from altitude import config, door, server, state as S, tasks as T
 
 
 def png(red=32, width=1, height=1):
@@ -538,6 +538,27 @@ class TestShownFiles(AltitudeCase):
                          T.shown_url(self.project, self.slug, question["id"], question["revision"]))
         self.assertEqual(git("rev-parse", "HEAD", cwd=self.worktree), head)
         self.assertEqual(git("ls-files", "--stage", cwd=self.worktree), index)
+
+    def test_owner_cli_sends_megabytes_of_shown_images_and_hears_why_more_is_refused(self):
+        # I-20261015-172004: ten screenshots, past altd's ordinary request bound, ended in a closed connection.
+        def capture(size):
+            header = png()[:33]
+            data = os.urandom(size)
+            return (header + struct.pack(">I", len(data)) + b"IDAT" + data + struct.pack(">I", zlib.crc32(b"IDAT" + data))
+                    + png()[-12:])
+        for number in range(3):
+            (self.worktree / f"capture-{number}.png").write_bytes(capture(1 << 20))
+        shown = [argument for number in range(3) for argument in ("--show", f"capture-{number}.png")]
+        result = self.alt("task", "reply", *shown, "Three large captures.", env=self.owner_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(json.loads(result.stdout)["shown"]["images"]), 3)
+        for key, value in self.owner_env().items():
+            self.setenv(key, value)
+        with mock.patch.object(door, "MAX_REQUEST", 1 << 20), \
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("nothing is sent")):
+            with self.assertRaisesRegex(door.DoorError, "more than the 1 MiB altd takes from a task; send fewer or "
+                                                        "smaller files"):
+                door.call("alt", {"args": [], "stdin": "x" * (1 << 20)}, wait=0)
 
     def test_owner_cli_shows_a_groups_files_on_its_proposal(self):
         group = self.tmp / "questions.json"
