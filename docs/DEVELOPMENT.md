@@ -1147,7 +1147,7 @@ The tests' temporary folders sit inside its scratch folder, which it removes at 
 process the tests left behind. On a 24-CPU Linux machine the first full run took about seven hours,
 nearly five of them for `altitude/land.py`, whose every surviving edit reruns some two hundred
 Git-backed tests, so start a full run overnight; task records and transitions alone take about
-75 minutes.
+75 minutes, and the task door 51 minutes.
 It is a measurement, not a check: `make check` and the required CI never run it, and its counts gate
 nothing.
 
