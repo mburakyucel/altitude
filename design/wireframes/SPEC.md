@@ -1078,7 +1078,8 @@ question, in the receipt's place (a hairline above, `role=status`), one row: the
 | The command looks finished | grey clock | **Ran in the terminal** | "Waiting for the L2 to check it · <age>" | secondary, like Copy |
 | The terminal ended before the command finished, or before it ran | amber ! | **The terminal closed before this command finished** | "<age>" | primary, as before |
 
-"Waiting for the L2" stays true whether the owner wakes at once or is stopped, faulted or held; the turn line says
+Only the block holding the command that ran turns secondary when a question hands several. Reopening the terminal
+from the card and closing it without pressing Enter keeps **Ran in the terminal**. "Waiting for the L2" stays true whether the owner wakes at once or is stopped, faulted or held; the turn line says
 which. The question stays open with its id, revision, command block and answer field, so the operator can still
 reply, for example with what the command printed, or run it again; it stays in Needs you and its count, and alerts
 nothing new (§3.8.1), until the owner settles it, as any question does. A later notice for the

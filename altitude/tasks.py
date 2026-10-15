@@ -943,12 +943,13 @@ def save_owner_file(project: str, slug: str, kind: str, text: str, *, expected_a
 
 
 def notify(project: str, slug: str, text: str, *, by: str, attempt: int,
-           ran: str | None = None, finished: bool = False) -> dict | None:
+           ran: str | None = None, finished: bool = False, entered: bool = True) -> dict | None:
     """Leave an automatic notice for the owner's next checkpoint, without a conversation entry, and wake an owner
     that is blocked. Stop and a fault still hold it: the notice waits for the next resume. A task with no owner
     session, or one on a later attempt than the notice's, gets none. The task terminal's notice names the command
     it `ran`: each open question carrying that command in a `run` block records whether it looks `finished` or the
-    terminal ended first, so the operator's card shows it while the owner checks; the question stays open."""
+    terminal ended first, so the operator's card shows it while the owner checks; the question stays open. A
+    terminal closed before Enter on the command (reopened only to look) leaves that command's finished mark."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if task.get("state") not in ("running", "blocked") or task.get("attempt") != attempt:
@@ -956,9 +957,10 @@ def notify(project: str, slug: str, text: str, *, by: str, attempt: int,
         row = {"id": uuid.uuid4().hex, "at": S.now(), "text": text, "by": by}
         _append_jsonl(S.task_dir(project, slug) / "inbox.jsonl", row)
         marked = [q for q in task.get("questions", [])
-                  if ran is not None and q["status"] == "open" and ran in run_commands(q["detail"])]
+                  if ran is not None and q["status"] == "open" and ran in run_commands(q["detail"])
+                  and (entered or not (q.get("ran") or {}).get("finished") or q["ran"]["command"] != ran)]
         for question in marked:
-            question["ran"] = {"at": row["at"], "finished": finished}
+            question["ran"] = {"at": row["at"], "command": ran, "finished": finished}
         wake = task["state"] == "blocked" and not task.get("stop_id") and not task.get("fault")
         if wake:
             task["resume_request"] = row["id"]

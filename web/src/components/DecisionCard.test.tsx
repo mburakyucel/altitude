@@ -108,7 +108,7 @@ describe("a question's command run in the task terminal (SPEC.md §3.8.5)", () =
     [true, "Ran in the terminal", "Waiting for the L2 to check it · 1 min ago", "btn btn-ghost"],
     [false, "The terminal closed before this command finished", "1 min ago", "btn btn-primary"],
   ])("says how it went and keeps the question answerable (finished: %s)", (finished, headline, line, button) => {
-    mount(<ProseTerminal value={{ open: () => {} }}><QuestionSet decisions={[{ ...signIn, ran: { at, finished } }]} /></ProseTerminal>);
+    mount(<ProseTerminal value={{ open: () => {} }}><QuestionSet decisions={[{ ...signIn, ran: { at, command: "example-tool sign-in", finished } }]} /></ProseTerminal>);
     const status = screen.getByRole("status");
     expect(status.querySelector("b")?.textContent).toBe(headline);
     expect(status.querySelector("p")?.textContent).toBe(line);
@@ -117,12 +117,17 @@ describe("a question's command run in the task terminal (SPEC.md §3.8.5)", () =
     expect(screen.getByRole("button", { name: "Open in terminal" })).toHaveAttribute("class", button);
     expect(screen.getByRole("textbox", { name: /^Your answer to:/ })).toBeEnabled();
   });
+  it("quiets only the command that ran when the question hands several", () => {
+    const two = { ...signIn, question: "Sign in, then sync.\n\n```run\nexample-tool sign-in\n```\n\n```run\nexample-tool sync\n```" };
+    mount(<ProseTerminal value={{ open: () => {} }}><QuestionSet decisions={[{ ...two, ran: { at, command: "example-tool sign-in", finished: true } }]} /></ProseTerminal>);
+    expect(screen.getAllByRole("button", { name: "Open in terminal" }).map((button) => button.className)).toEqual(["btn btn-ghost", "btn btn-primary"]);
+  });
   it("has no note before the command runs, and an answer's receipt replaces it", () => {
     const { unmount } = mount(<ProseTerminal value={{ open: () => {} }}><QuestionSet decisions={[signIn]} /></ProseTerminal>);
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByRole("button", { name: "Open in terminal" })).toHaveAttribute("class", "btn btn-primary");
     unmount();
-    mount(<QuestionSet decisions={[{ ...signIn, ran: { at, finished: true },
+    mount(<QuestionSet decisions={[{ ...signIn, ran: { at, command: "example-tool sign-in", finished: true },
       response: { text: "It printed a warning.", at, message_id: "m1" } }]} />);
     expect(screen.queryByText("Ran in the terminal")).toBeNull();
     expect(screen.getByText("It printed a warning.")).toBeVisible();

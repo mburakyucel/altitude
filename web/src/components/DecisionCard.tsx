@@ -175,7 +175,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
     </>;
     const prose = <QuestionProse className="decision-question" text={question.question || question.title || question.slug} />;
     const content = <>
-      {question.ran?.finished && terminal && "open" in terminal ? <ProseTerminal value={{ ...terminal, ran: true }}>{prose}</ProseTerminal> : prose}
+      {question.ran?.finished && terminal && "open" in terminal ? <ProseTerminal value={{ ...terminal, ran: question.ran.command }}>{prose}</ProseTerminal> : prose}
       {!resolved && !question.response && question.audience === "l3" ? <p className="text-meta text-muted">L3 is handling this</p> : null}
       {resolved ? <div className="decision-receipt" role="status">
         {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}

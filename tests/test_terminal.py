@@ -512,7 +512,8 @@ class TestHandedCommand(TerminalCase):
         task = S.load_task(self.project, self.slug)
         ran = {q["detail"]: q for q in task["questions"] if q["status"] == "open"}
         self.assertEqual((ran[step]["id"], ran[step]["revision"]), (asked[step]["id"], asked[step]["revision"]))
-        self.assertEqual(ran[step]["ran"], {"at": T.pending(self.project, self.slug)[-1]["at"], "finished": True})
+        self.assertEqual(ran[step]["ran"], {"at": T.pending(self.project, self.slug)[-1]["at"],
+                                            "command": "echo signed-$((5+5))", "finished": True})
         self.assertNotIn("ran", ran["Which region should the installer use?"])
         # The card shows it wherever the question is read, and it stays the operator's question until the owner acts.
         [card] = [q for q in T.decisions(self.project) if q.get("id") == asked[step]["id"]]
@@ -542,6 +543,24 @@ class TestHandedCommand(TerminalCase):
         self.notice()
         [question] = [q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"]
         self.assertFalse(question["ran"]["finished"])
+
+    def test_reopening_the_terminal_only_to_look_keeps_the_finished_mark(self):
+        # Review finding: closing a terminal reopened from the card, without Enter, turned "ran" into "closed first".
+        self.ask("Sign in from the task terminal.\n\n```run\necho once\n```")
+        self.hand("echo once")
+        self.type("\r", self.slug)
+        self.wait(lambda: len(self.notices()) == 1)
+        term = self.current(self.slug)
+        terminal.close(self.project, self.slug)
+        self.gone(term)
+        terminal.hand(self.project, self.slug, self.open(self.slug), "echo once")
+        term = self.current(self.slug)
+        terminal.close(self.project, self.slug)
+        self.gone(term)
+        self.wait(lambda: len(self.notices()) == 2)
+        self.assertIn("before the operator ran the command", self.notices()[-1])
+        [question] = S.load_task(self.project, self.slug)["questions"]
+        self.assertTrue(question["ran"]["finished"])
 
     def test_commands_the_question_did_not_hand_leave_it_unmarked(self):
         self.ask("Sign in from the task terminal.\n\n```run\necho handed\n```")

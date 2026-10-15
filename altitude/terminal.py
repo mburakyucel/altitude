@@ -370,7 +370,7 @@ def _notice(term: Terminal, what: str, finished: bool = False) -> None:
         try:
             if term.slug is not None:
                 T.notify(term.project, term.slug, text, by="terminal", attempt=command["attempt"],
-                         ran=command["text"], finished=finished)
+                         ran=command["text"], finished=finished, entered="entered" in command)
             elif config.is_managed(term.project):
                 with config.project_activity(term.project) as ready:  # removal waits for the notice, or it for removal
                     if ready and config.is_managed(term.project):

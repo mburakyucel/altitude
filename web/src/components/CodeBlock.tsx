@@ -3,10 +3,10 @@ import "./code-block.css";
 
 /**
  * Where a conversation's `run` blocks open (SPEC.md §3.3): its terminal, or the reason it has none now.
- * Surfaces without a provider (Live session, reports) show commands with Copy only. `ran` marks a question
- * whose command already ran (§3.8.5): running it again stays offered, as a secondary action.
+ * Surfaces without a provider (Live session, reports) show commands with Copy only. `ran` names a question's
+ * command that already ran (§3.8.5): running it again stays offered, as a secondary action.
  */
-export const ProseTerminal = createContext<{ open: (command: string) => void; ran?: boolean } | { unavailable: string } | null>(null);
+export const ProseTerminal = createContext<{ open: (command: string) => void; ran?: string } | { unavailable: string } | null>(null);
 
 /**
  * A `run` block's command: exactly one line, kept byte for byte, with no control, invisible formatting
@@ -63,7 +63,7 @@ export function CodeBlock({ text, info }: { text: string; info: string }) {
     <div className="command-actions">
       <CopyButton text={text} />
       {note ? <UnavailableAction label="Open in terminal" reason={note} className="btn btn-primary" /> : null}
-      {open ? <button type="button" className={terminal && "ran" in terminal && terminal.ran ? "btn btn-ghost" : "btn btn-primary"}
+      {open ? <button type="button" className={terminal && "ran" in terminal && terminal.ran === text ? "btn btn-ghost" : "btn btn-primary"}
         onClick={() => open(text)}>{TERMINAL_ICON}Open in terminal</button> : null}
     </div>
   </div>;
