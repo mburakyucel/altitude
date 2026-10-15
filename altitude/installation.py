@@ -568,7 +568,8 @@ _GH_TOO_OLD = "Agents land pull requests with GitHub CLI 2.72 or newer; this one
 
 def prerequisites() -> list[dict]:
     """What agents need before the first task, in the order First run shows it: each item is met, unmet or optional,
-    with the step that meets it and the command the operator runs in their own terminal. Nothing here takes a password or token."""
+    with the step that meets it and the command the operator runs in their own terminal, or the engine whose sign-in the
+    page performs itself. Nothing here takes a password or token."""
     from . import config, engines, platform
     gh = shutil.which("gh")
     lacks = _gh_lacks() if gh else []
@@ -604,14 +605,15 @@ def prerequisites() -> list[dict]:
         signed = engines.sign_in(engine)
         if signed["signed_in"]:
             ready.append(engine)
-        agents.append({"key": engine, "label": f"{label} signed in" if signed["signed_in"] else f"{label} installed",
+        # `sign_in`: the page signs Altitude in itself (engines.token_setup); the command is for a terminal.
+        agents.append({"key": engine, "label": f"{label} {'signed in' if signed['signed_in'] else 'not signed in'}",
                        "step": f"Sign in to {label}", "state": "met" if signed["signed_in"] else "unmet",
-                       "detail": None if signed["signed_in"] else f"{label} is installed but not signed in.",
-                       "command": None if signed["signed_in"] else signed["command"]})
+                       "detail": None, "command": None if signed["signed_in"] else signed["command"],
+                       "sign_in": {"engine": engine, "label": label} if engine in engines.TOKEN_SETUP else None})
     if any(agent["state"] == "met" for agent in agents):
         for agent in agents:
             if agent["state"] == "unmet":
-                agent.update(state="optional", detail=f"Altitude works with any one coding agent. {agent['detail']}")
+                agent.update(state="optional", detail="Altitude works with any one coding agent.")
     items += agents
     sandbox = platform.sandbox_tool()
     if sandbox:

@@ -157,17 +157,20 @@ the folder only to a place as private as `~/.config`.
 When an engine's login expires or is revoked, Altitude recognizes it from the CLI's own sign-in
 failure, whatever its wording, and the coordinator answers on the other configured engine. Project
 chat says so once per lapse, for example "Claude's sign-in has lapsed, so Codex is answering for now.
-To sign in, run `alt sign-in claude` on the computer running Altitude." With no other engine, or with
+Sign in again from Settings › Prerequisites." With no other engine, or with
 the project set to one engine, the line says your message waits, and it sends once the engine is
 signed in again. Codex runs use the CLI's own sign-in, which the five-minute usage check also reads,
 so a lapse it sees moves the next message before any turn fails, and its next successful reading ends
-the lapse. Claude runs use Altitude's own sign-in from `alt sign-in claude`, which lasts a year and
-which the usage check does not read. Each project's chat says once, two weeks before the year ends,
+the lapse. Claude runs use Altitude's own sign-in, made with **Sign in** on the Claude row of Settings ›
+Prerequisites (or `alt sign-in claude`), which lasts a year and which the usage check does not read. Each project's chat says once, two weeks before the year ends,
 that it needs renewing; a missing or ended one shows as a lapse on the first Claude run, and saving a
-new one ends it.
+new one ends it. A sign-in that fails says why in one sentence and changes nothing, so an earlier
+sign-in keeps working; **Try again** starts afresh. "Altitude couldn't follow Claude's sign-in" means
+the Claude CLI's setup screen changed in a way this Altitude version does not read, and it needs an
+update.
 
 Task owners hold with "provider rejected authentication or account access; sign in, then Retry or
-Resume". Sign in (`alt sign-in claude` or `codex login`), then press
+Resume". Sign in (Claude's **Sign in** in Settings › Prerequisites, or `codex login`), then press
 **Resume** on a held task, or **Retry** on a coordinator turn that stopped. That attempt launches;
 once an engine call succeeds, held tasks and report turns on the engine continue on their next tick.
 While the login is still invalid, the attempt records the rejection again and automatic retries keep

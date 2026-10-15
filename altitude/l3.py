@@ -1784,15 +1784,16 @@ def _sign_in_notice(engine: str, outcome: str) -> str:
     said = {"waits": f"{lapse} and no other engine can answer, so your message waits and sends once you are "
                      "signed in again.",
             "stopped": f"{lapse}, so this turn stopped; Retry it once you are signed in again."}
-    step = f"To sign in, run `{engines.SIGN_IN[engine][1]}` on the computer running Altitude."
+    step = ("Sign in again from Settings › Prerequisites." if engine in engines.TOKEN_SETUP
+            else f"To sign in, run `{engines.SIGN_IN[engine][1]}` on the computer running Altitude.")
     return f"{said.get(outcome) or f'{lapse}, so {config.ENGINE_LABELS[outcome]} is answering for now.'} {step}"
 
 
 def _renewal_notice(engine: str, days: int) -> str:
     """That Altitude's own sign-in on an engine ends soon, and how to renew it."""
     when = "today" if days == 0 else "tomorrow" if days == 1 else f"in {days} days"
-    return (f"Altitude's {config.ENGINE_LABELS[engine]} sign-in ends {when}. To renew it, run "
-            f"`{engines.SIGN_IN[engine][1]}` on the computer running Altitude.")
+    return (f"Altitude's {config.ENGINE_LABELS[engine]} sign-in ends {when}. To renew it, sign in again from "
+            "Settings › Prerequisites.")
 
 
 def _limit_notice(project: str, choice: dict) -> str | None:

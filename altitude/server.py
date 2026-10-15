@@ -2016,6 +2016,28 @@ class Handler(BaseHTTPRequestHandler):
         self._set_cookie = self._device_cookie(key)
         return self._json({"device": {k: device[k] for k in ("id", "name", "paired", "used")}})
 
+    def _sign_in(self, engine: str, body: dict | None) -> None:
+        """Altitude's own sign-in on an engine (`engines.token_setup`), for a paired browser or this computer's `alt`.
+        Every outcome is the sign-in's own view or a fixed sentence: nothing read from the engine's screen, and no
+        exception's text, reaches the response or the log."""
+        setup = engines.token_setup
+        try:
+            if body is None:
+                return self._json(setup.view(engine))
+            action = body.get("action") if isinstance(body, dict) else None
+            if action == "start" and body.keys() == {"action"}:
+                return self._json(setup.start(engine))
+            if action == "finish" and body.keys() == {"action", "attempt", "code"} and isinstance(body["attempt"], str):
+                return self._json(setup.finish(engine, body["attempt"], body["code"]))
+            if action == "cancel" and body.keys() <= {"action", "attempt"}:
+                return self._json(setup.cancel(engine, body.get("attempt")))
+            return self._json({"error": "Unknown sign-in request."}, 400)
+        except setup.SignInError as exc:
+            return self._json({"error": str(exc)}, 409)
+        except Exception as exc:  # noqa: BLE001 - the type alone: its text could carry what the screen showed
+            log(f"sign-in request failed: {type(exc).__name__}")
+            return self._json({"error": "The sign-in failed. Try again."}, 500)
+
     def _devices_post(self, action: str, body: dict) -> None:
         if action == "code":
             return self._json({**access.issue_code(), **pairing_directions()})
@@ -2396,6 +2418,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(machine_view())
             if api == "prerequisites":
                 return self._json({"items": installation.prerequisites()})
+            if api == "sign-in" and len(parts) == 3:
+                return self._sign_in(parts[2], None)
             if api == "folders":
                 try:
                     return self._json(folders((q.get("path") or [None])[0]))
@@ -2544,6 +2568,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"challenge": TRUST.arm(self.client_address[0])})
             if api == "devices" and len(parts) == 3:
                 return self._devices_post(parts[2], o)
+            if api == "sign-in" and len(parts) == 3:
+                return self._sign_in(parts[2], o)
             if api in ("update", "update-check", "update-automatic"):
                 return self._update_post(parts, o)
             if parts == ["api", "validation-access"]:

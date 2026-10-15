@@ -1129,9 +1129,35 @@ const PrerequisitesSchema = z.object({
     detail: z.string().nullish(), command: z.string().nullish(),
     /** Alternatives that each satisfy the row, such as one coding agent of several, with their own commands. */
     options: z.array(z.object({ label: z.string(), command: z.string() })).nullish(),
+    /** The engine whose sign-in this page performs itself (`useSignIn`), with its label. */
+    sign_in: z.object({ engine: z.string(), label: z.string() }).nullish(),
   })),
 });
 export type Prerequisite = z.infer<typeof PrerequisitesSchema>["items"][number];
+
+/** Altitude's own sign-in on an engine, held by the service: every paired browser sees the same open one. `saved`
+ * is when the engine's saved sign-in was saved; `started` when the open or failed one began. */
+const SignInSchema = z.object({
+  attempt: z.string().nullable(), state: z.enum(["idle", "opening", "waiting", "finishing", "failed", "done"]),
+  link: z.string().nullable(), started: z.number().nullable(), error: z.string().nullable(), saved: z.number().nullable(),
+});
+export type SignIn = z.infer<typeof SignInSchema>;
+const signInOpen = (state?: SignIn["state"]) => state === "opening" || state === "waiting" || state === "finishing";
+
+/** The engine's sign-in, read again while one is open so a sign-in finished or cancelled elsewhere shows here. */
+export function useSignIn(engine: string) {
+  return useQuery({
+    queryKey: ["sign-in", engine], queryFn: async () => SignInSchema.parse(await api(`/api/sign-in/${engine}`)),
+    refetchInterval: (query) => (signInOpen(query.state.data?.state) ? 5000 : false), retry: false, gcTime: 0,
+  });
+}
+
+/** Start a sign-in (answering once the engine's link is ready), type its code (answering once the engine has
+ * answered), or cancel it. */
+export async function changeSignIn(engine: string, body: { action: "start" } | { action: "finish"; attempt: string; code: string }
+  | { action: "cancel"; attempt: string }): Promise<SignIn> {
+  return SignInSchema.parse(await post(`/api/sign-in/${engine}`, body));
+}
 
 /** Set up, cancel setup of, or remove host voice; answers the settings with the new host state. */
 export async function changeHostVoice(action: "setup" | "cancel" | "remove"): Promise<VoiceSettings> {
