@@ -81,6 +81,22 @@ class RuntimeStorage(AltitudeCase):
                 for thread in threads:
                     thread.join()
                 self.assertEqual(failures, [])
+        # The lost race on any kernel: the first create is refused, the name exists by then.
+        real, refused = os.open, []
+
+        def losing(name, flags, *args, **kwargs):
+            if flags & os.O_CREAT and not refused:
+                refused.append(name)
+                os.close(real(name, flags, *args, **kwargs))
+                raise FileNotFoundError(name)
+            return real(name, flags, *args, **kwargs)
+
+        for name, opened in opens.items():
+            refused.clear()
+            with mock.patch.object(storage.os, "open", side_effect=losing):
+                opened(self.runtime / "lost" / name)
+            self.assertEqual(refused, [name])
+            self.assertTrue((self.runtime / "lost" / name).is_file())
 
     def test_simulated_service_backend_keeps_native_filesystem_search_flags(self):
         """Cross-platform service fixtures still operate real storage on the runner's kernel."""
