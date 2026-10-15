@@ -215,6 +215,24 @@ class TaskDoor(AltitudeCase):
         self.assertEqual(T.pending(self.project, self.slug), [])
         self.assertTrue((current / f"{message['id']}.delivered").exists())
 
+    def test_recovery_settles_an_earlier_workers_hand_off_as_that_worker(self):
+        earlier = self.worker_sends("earlier")
+        message = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Use the staging copy.")
+        with S.project_lock(self.project):
+            task = S.load_task(self.project, self.slug)
+            task["agent_id"] = "earlier"
+            T.claim_send_now(self.project, task, [message], earlier)
+            task = S.load_task(self.project, self.slug)
+            task["agent_id"] = "worker"
+            S.save_task(self.project, task)
+        os.rename(earlier / f"{message['id']}.json", earlier / f"{message['id']}.delivered")
+        T.block(self.project, self.slug, "Which copy?")
+        T.claim_resume(self.project, self.slug)
+        task = S.load_task(self.project, self.slug)
+        self.assertNotIn("send_now", task)
+        self.assertEqual((task["message_deliveries"][message["id"]]["state"],
+                          task["message_deliveries"][message["id"]]["agent_id"]), ("delivered", "earlier"))
+
     def test_a_failed_request_is_refused_again_without_running_twice(self):
         calls = []
 
@@ -239,6 +257,9 @@ class TaskDoor(AltitudeCase):
                     door.run_alt(self.project, self.slug, 2, request["args"], request["stdin"], request["files"],
                                  request["shown"])
                 run.assert_not_called()
+        with mock.patch.object(door.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run:
+            door.run_alt(self.project, self.slug, 2, ["x"] * 128, "", {}, {})
+        run.assert_called_once()
         status, answer = self.post(args=["task", "reply", "x" * 16384])
         self.assertEqual((status, answer["returncode"]), (200, 0), answer)
 
