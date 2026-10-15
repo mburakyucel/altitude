@@ -11,7 +11,8 @@ reproducible commands and their limits.
 
 Daemon-driven onboarding and task continuation pass at phone and desktop viewports with fictional
 engines. On an Apple silicon Mac, the launcher, logout and image lanes pass inside a throwaway Ubuntu
-24.04 arm64 guest: Linux arm64 evidence on Mac hardware, with no Mac-side controller. Real provider sessions,
+24.04 arm64 guest: Linux arm64 evidence on Mac hardware, with no Mac-side controller. A Mac user runs
+the container from macOS through [Podman machine](#on-a-mac-podman-machine). Real provider sessions,
 physical-device routing/trust, Mac logout/restart and sleep/wake, Docker, other runtime versions,
 host project binds and emulation are unverified.
 The tested payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
@@ -86,7 +87,8 @@ remain available.
 
 Build the existing [release archive](RELEASING.md) from reviewed source. It includes built web assets
 and container packaging; image construction verifies its checksum and per-file manifest. It does
-not run the native installer or publish an image. From that source checkout on the Linux host:
+not run the native installer or publish an image. From that source checkout on the Linux host, or on
+a Mac with its [Podman machine](#on-a-mac-podman-machine) running:
 
 ```sh
 python3 scripts/container.py preflight
@@ -101,6 +103,55 @@ publishes port 8890 on host loopback and advertises `https://localhost:8890`. A 
 fails; select an available `--port` explicitly. Host and container ports match. The launcher limits
 the container to 4 GiB memory, two CPUs and 1024 PIDs. Failed prerequisites require correction,
 never a privileged/unconfined fallback.
+
+### On a Mac: Podman machine
+
+On macOS 15 or newer on Apple silicon, the same launcher commands drive Altitude's own rootless
+[Podman machine](https://docs.podman.io/en/latest/markdown/podman-machine.1.html), Podman's Linux VM,
+named `altitude`. Podman 6.0 or newer is required. Docker Desktop, Apple's `container` tool, other
+Podman connections and rootful machines are not used.
+
+```sh
+brew install podman
+podman machine init altitude --cpus 4 --memory 6144 --disk-size 40
+podman machine start altitude
+python3 scripts/container.py preflight
+```
+
+Then build, start and operate the container with the commands in this document; the image is built
+natively for linux/arm64 inside the machine. The machine holds the image, volumes and container, so
+`podman machine rm altitude` removes all of them. Before its first Podman call, every launcher
+command proves that the `altitude` connection reaches that running rootless arm64 machine: the
+connection's SSH port, user, key and socket match `podman machine inspect altitude`, and the machine
+has at least 4 CPUs and 6 GiB. Any mismatch, a stopped machine or a set `CONTAINER_HOST` refuses and
+names the fixing command. The launcher never creates, starts or stops the machine and adds no
+launchd job.
+
+Podman inside the machine owns the container, in place of the Linux transient user service. `start`
+creates and starts it detached, then makes the same readiness checks: effective 4 GiB, two-CPU and
+1024-PID limits read from the container's scope inside the machine, the inner HTTPS service and the
+published `127.0.0.1` endpoint on the Mac with the instance's own CA, name and service PID. A failed
+check stops the container and keeps it for diagnosis with `podman --connection altitude logs`. If
+the launching terminal exits, the container keeps running and `status` and `stop` still manage it.
+`stop` is Podman's own stop with the image's graceful signal and a 30-second grace, and it reports
+stopped only for a settled container. `recreate` also requires the container's scope in the machine
+to hold no process. The network is pasta, Podman 6's only rootless network.
+
+A build runs in the machine's store under a build lock. Before and after each build, the launcher
+removes Buildah working containers that an interrupted build left in that machine; it never prunes
+image layers. Backup and restore stream through the Podman connection: the private files stay on the
+Mac and the helper runs in the machine. The launcher's own foreground process owns a Mac transfer.
+`recover-transfer` refuses while that process lives and acts only on records of the current machine.
+`preflight` reports records left by an earlier `altitude` machine for removal by hand.
+
+The machine runs while the user is logged in. Logging out or shutting down ends it abruptly, without
+the container's graceful stop, so stop the container first. Nothing starts at login. After a login
+or restart, run `podman machine start altitude`, then `python3 scripts/container.py restart --name
+altitude`, which keeps the instance and its admission. While the machine is stopped, commands report
+that container state and cleanup are unconfirmed. During sleep the machine pauses with the Mac.
+There is no Mac counterpart to the Linux service-manager monitor; fixture tests check that the Mac
+route calls neither systemd nor launchd. [Mac evidence](#mac-podman-machine-run) records what a real
+run on this route establishes.
 
 Private LAN/VPN access uses a host-side `--bind` address and matching `--public-host` DNS name/IP.
 The container binds its own interface while certificates and pairing links name the advertised

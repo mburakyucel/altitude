@@ -480,11 +480,119 @@ def container_bootstrap() -> None:
             signals.pause()
 
 
+#: On a Mac the launcher drives one dedicated rootless Podman machine; Podman inside it owns the container (#643).
+CONTAINER_MACHINE = "altitude"
+#: The container's 2 CPUs and 4 GiB plus room for the machine's own system.
+CONTAINER_MACHINE_CPUS, CONTAINER_MACHINE_MEMORY = 4, 6144
+_machine_verified: dict | None = None
+
+
+def container_machine() -> str | None:
+    """The Podman machine the Mac launcher drives; None where Podman runs on the Linux host itself."""
+    return CONTAINER_MACHINE if _darwin() else None
+
+
+def container_network() -> str:
+    """Linux selects slirp4netns explicitly; Podman 6, the Mac floor, has only pasta."""
+    return "pasta" if _darwin() else "slirp4netns"
+
+
+def _machine_run(arguments: list[str], timeout: int = 30) -> str:
+    """The Podman client itself, for proving the machine before any container call."""
+    try:
+        result = subprocess.run(["podman", *arguments], text=True, capture_output=True, timeout=timeout,
+                                env=container_user_environment())
+    except FileNotFoundError:
+        raise RuntimeError("Install Podman 6 or newer: brew install podman") from None
+    if result.returncode:
+        raise RuntimeError(f"Podman {arguments[0]} failed ({result.returncode}): {(result.stderr or '').strip()[-2000:]}")
+    return result.stdout
+
+
+def _machine() -> dict:
+    """Prove the `altitude` connection is that running rootless arm64 machine before any container call.
+
+    A connection name is only an alias (#643 proposal review): its address must be the machine's own
+    SSH port, user, key and rootless socket. Verified once per launcher process.
+    """
+    global _machine_verified
+    if _machine_verified is not None:
+        return _machine_verified
+    require_supported()
+    name = CONTAINER_MACHINE
+    if host_platform.machine() != "arm64":
+        raise RuntimeError("The Mac container route needs Apple silicon")
+    version = re.search(r"(\d+)\.(\d+)\.(\d+)", _machine_run(["--version"]))
+    if not version or int(version[1]) < 6:
+        raise RuntimeError("Podman 6.0 or newer is required: brew upgrade podman")
+    create = (f"podman machine init {name} --cpus {CONTAINER_MACHINE_CPUS} "
+              f"--memory {CONTAINER_MACHINE_MEMORY} --disk-size 40")
+    try:
+        machine = json.loads(_machine_run(["machine", "inspect", name]))[0]
+    except RuntimeError:
+        raise RuntimeError(f"Create Altitude's own Podman machine: {create}") from None
+    if machine.get("State") != "running":
+        raise RuntimeError(f"The {name} Podman machine is not running, so container state and cleanup are "
+                           f"unconfirmed. Start it: podman machine start {name}")
+    if machine.get("Rootful"):
+        raise RuntimeError(f"The {name} machine must be rootless: podman machine set --rootful=false {name}")
+    resources = machine.get("Resources") or {}
+    if (resources.get("CPUs") or 0) < CONTAINER_MACHINE_CPUS or (resources.get("Memory") or 0) < CONTAINER_MACHINE_MEMORY:
+        raise RuntimeError(f"The {name} machine needs at least {CONTAINER_MACHINE_CPUS} CPUs and "
+                           f"{CONTAINER_MACHINE_MEMORY} MiB: podman machine stop {name}; podman machine set "
+                           f"--cpus {CONTAINER_MACHINE_CPUS} --memory {CONTAINER_MACHINE_MEMORY} {name}")
+    ssh = machine.get("SSHConfig") or {}
+    from urllib.parse import urlsplit
+    found = [item for item in json.loads(_machine_run(["system", "connection", "list", "--format", "json"]) or "[]")
+             if item.get("Name") == name]
+    address = urlsplit(found[0].get("URI", "")) if len(found) == 1 else None
+    if (address is None or address.scheme != "ssh" or address.hostname not in ("127.0.0.1", "localhost")
+            or address.port != ssh.get("Port") or address.username != ssh.get("RemoteUsername")
+            or found[0].get("Identity") != ssh.get("IdentityPath")
+            or not re.fullmatch(r"/run/user/\d+/podman/podman\.sock", address.path)):
+        raise RuntimeError(f"The {name} connection does not reach the {name} machine's rootless socket; "
+                           f"recreate it with podman machine rm {name} and {create}")
+    info = json.loads(_machine_run(["--connection", name, "info", "--format", "json"]))
+    host = info["host"]
+    if not host["security"]["rootless"] or not host["security"]["seccompEnabled"] or host["arch"] != "arm64":
+        raise RuntimeError(f"The {name} connection must reach rootless arm64 Podman with default seccomp")
+    if host["cgroupVersion"] != "v2":
+        raise RuntimeError(f"The {name} machine needs cgroup v2")
+    _machine_verified = {"machine": name, "identity": f"podman-machine:{name}:{machine.get('Created', '')}",
+                         "host": host, "version": info["version"], "store": info["store"]}
+    return _machine_verified
+
+
+def _machine_ssh(command: str, timeout: int = 15) -> str:
+    """Read the machine's own kernel view; callers pass fixed commands over validated identities."""
+    _machine()
+    return _machine_run(["machine", "ssh", CONTAINER_MACHINE, command], timeout=timeout)
+
+
+def _machine_scope(ident: str) -> str | None:
+    """The container's systemd scope inside the machine, found by its exact identity."""
+    if not re.fullmatch(r"[0-9a-f]{64}", ident):
+        raise RuntimeError("Invalid container identity")
+    found = _machine_ssh(f"find /sys/fs/cgroup -type d -name libpod-{ident}.scope 2>/dev/null; true").split()
+    if len(found) > 1:
+        raise RuntimeError("The container's cgroup is ambiguous inside the machine")
+    return found[0] if found else None
+
+
 def container_runtime() -> dict:
     """Actionable prerequisites for the tested Linux rootless-runtime family; no daemon installation."""
     require_supported()
     if _darwin():
-        raise RuntimeError("The container launcher is validated on Linux first; Mac VM/ARM64 acceptance remains pending")
+        machine = _machine()
+        transfers = container_transfer_records(machine["identity"])
+        earlier = container_transfer_records(None)
+        if transfers:
+            print('Active or unfinished private transfers retained: '+', '.join(item['id'] for item in transfers)
+                  +'. Inspect with the host launcher transfers command; recover only after its client stops.',file=sys.stderr)
+        if len(earlier) > len(transfers):
+            print(f'Transfer records from an earlier {CONTAINER_MACHINE} machine remain in {container_transfer_root()}; '
+                  'their volumes went with that machine. Inspect and delete them by hand.', file=sys.stderr)
+        return {**machine, 'transfers': transfers}
     if os.getuid() == 0:
         raise RuntimeError("Run container commands as your ordinary Linux account, not root")
     if not shutil.which("podman"):
@@ -509,6 +617,11 @@ def container_runtime() -> dict:
         raise RuntimeError(f"Cannot establish rootless container prerequisites: {exc}") from exc
 
 
+def container_store_identity(runtime: dict) -> str:
+    """What a transfer record binds to: the Linux store, or the Mac machine's incarnation (#643)."""
+    return runtime['identity'] if _darwin() else runtime['store']['graphRoot']
+
+
 def container_transfer_root(*, create=False) -> Path:
     """Persistent operator-owned recovery records, outside temporary runtime directories (#543/F3)."""
     root=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'altitude-container/transfers'
@@ -521,7 +634,8 @@ def container_transfer_root(*, create=False) -> Path:
     return root
 
 
-def container_transfer_records(store: str) -> list[dict]:
+def container_transfer_records(store: str | None) -> list[dict]:
+    """Records of this runtime store, or of every store when None."""
     result=[]
     for record in sorted(container_transfer_root().glob('*/operation.json')):
         parent,info=record.parent.lstat(),record.lstat()
@@ -529,18 +643,21 @@ def container_transfer_records(store: str) -> list[dict]:
                 not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077 or info.st_size>65536):
             raise RuntimeError('An unsafe transfer record needs local inspection')
         value=json.loads(record.read_text())
-        if value.get('store')==store:
+        if store is None or value.get('store')==store:
             if value.get('id')!=record.parent.name or not re.fullmatch('[0-9a-f]{32}',value['id']):
                 raise RuntimeError('Transfer record identity differs from its private directory')
             result.append({'id':value['id'],'action':value['action'],'directory':value['directory'],
-                'volumes':[value['identity']['home'],value['identity']['projects']], 'unit':value['unit']})
+                'volumes':[value['identity']['home'],value['identity']['projects']], 'unit':value.get('unit')})
     return result
 
 
 def container_user_environment(runtime_dir: Path | None = None) -> dict[str, str]:
     """Keep Podman and its environment-stripped OCI children on the same user bus (#543)."""
     if _darwin():
-        raise RuntimeError("The Linux container launcher cannot yet manage a Mac container VM")
+        if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
+            raise RuntimeError(f"Unset CONTAINER_HOST and CONTAINER_CONNECTION; the launcher uses only the "
+                               f"{CONTAINER_MACHINE} Podman machine")
+        return dict(os.environ)
     environment = dict(os.environ)
     canonical = Path(f"/run/user/{os.getuid()}/bus")
     runtime = runtime_dir or Path(environment.get("XDG_RUNTIME_DIR", str(canonical.parent)))
@@ -619,12 +736,27 @@ def container_lineage_lock(lineage: str):
     """Serialize this account/store's supported copy admission and stopped backups."""
     if not re.fullmatch(r"[0-9a-f]{32}", lineage):
         raise RuntimeError("Container volume lineage is missing; experimental unlabeled volumes are not adopted")
-    directory = Path(container_user_environment()["XDG_RUNTIME_DIR"]) / "altitude-container-locks"
+    with _container_lock(lineage, "Another operation is using this container lineage; wait for it to finish"):
+        yield
+
+
+@contextmanager
+def container_build_lock():
+    """One Mac build at a time, so cleanup never removes a live build's working container (#643)."""
+    with _container_lock("build", "Another container build is running; wait for it to finish"):
+        yield
+
+
+@contextmanager
+def _container_lock(name: str, busy: str):
+    # A Mac has no per-login runtime directory; the private transfer state's folder holds the locks.
+    directory = (container_transfer_root(create=True).parent / "locks" if _darwin() else
+                 Path(container_user_environment()["XDG_RUNTIME_DIR"]) / "altitude-container-locks")
     directory.mkdir(mode=0o700, exist_ok=True)
     info = directory.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise RuntimeError("Container admission needs its owned private runtime directory")
-    fd = os.open(directory / lineage, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    fd = os.open(directory / name, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1:
@@ -632,7 +764,7 @@ def container_lineage_lock(lineage: str):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise RuntimeError("Another operation is using this container lineage; wait for it to finish") from None
+            raise RuntimeError(busy) from None
         yield
     finally:
         os.close(fd)  # Persistent inode; removing it would let another process bypass an existing lock.
@@ -737,6 +869,10 @@ def container_owned(instance: str, *, timeout: int = 30) -> dict:
     unit = container_unit(instance)
     value = json.loads(container_command(["inspect", instance], timeout=timeout))[0]
     labels = value.get("Config", {}).get("Labels") or {}
+    if _darwin():
+        if labels.get("io.altitude.container") != "1" or labels.get("io.altitude.lifecycle") != "podman-machine":
+            raise RuntimeError("This instance does not belong to the Podman machine launcher; it is not adopted")
+        return value
     host = value.get("HostConfig") or {}
     parent = labels.get("io.altitude.cgroup-parent", "")
     if (labels.get("io.altitude.container") != "1" or labels.get("io.altitude.unit") != unit
@@ -744,6 +880,13 @@ def container_owned(instance: str, *, timeout: int = 30) -> dict:
             or not parent.endswith("/app.slice/" + unit)):
         raise RuntimeError("This instance does not belong to the delegated cgroupfs launcher; it is not adopted")
     return value
+
+
+def container_transfer_active(operation: dict) -> bool:
+    """Whether a transfer's owner still runs: its user service on Linux, its foreground client on a Mac."""
+    if _darwin():
+        return process_identity_live(operation.get('client'))
+    return job_active(operation['unit'], container_user_environment())
 
 
 def container_stopped(value: dict) -> bool:
@@ -755,6 +898,13 @@ def container_stopped(value: dict) -> bool:
 
 def container_recreatable(value: dict) -> None:
     """Explicit forced-record removal needs kernel-empty ownership, not stale PID guesses."""
+    if _darwin():
+        if not container_stopped(value):
+            raise RuntimeError('Stop the container before recreation')
+        scope = _machine_scope(value['Id'])
+        if scope and 'populated 1' in _machine_ssh(f'cat {scope}/cgroup.events'):
+            raise RuntimeError('Owned container processes survive in the machine; recreation refused')
+        return
     unit=value['Config']['Labels']['io.altitude.unit']
     if job_active(unit,container_user_environment()):
         raise RuntimeError('Stop the container service before recreation')
@@ -861,6 +1011,21 @@ def container_limits(value: dict) -> None:
     pid = int(value.get("State", {}).get("Pid") or 0)
     if pid <= 0:
         raise RuntimeError("Container PID is unavailable")
+    if _darwin():
+        # Podman's scope in the machine holds the limits; the PID is the machine's own view.
+        scope = _machine_scope(value["Id"])
+        if not scope:
+            raise RuntimeError("The container's cgroup is unavailable inside the machine")
+        relative = scope.removeprefix(str(CONTAINER_CGROUP_ROOT))
+        membership = next(line[3:] for line in _machine_ssh(f"cat /proc/{pid}/cgroup").splitlines()
+                          if line.startswith("0::"))
+        if membership != relative and not membership.startswith(relative + "/"):
+            raise RuntimeError("The container is outside its owned machine scope")
+        memory, pids, cpu = _machine_ssh(f"cat {scope}/memory.max {scope}/pids.max {scope}/cpu.max").splitlines()
+        quota, period = cpu.split()
+        if memory != str(4 * 1024**3) or pids != "1024" or not quota.isdigit() or int(quota) != 2 * int(period):
+            raise RuntimeError("The deployment CPU, memory or PID limit is not enforced")
+        return
     membership = next(line[3:] for line in (PROC / str(pid) / "cgroup").read_text().splitlines()
                       if line.startswith("0::"))
     parent = value["HostConfig"]["CgroupParent"]
@@ -880,9 +1045,70 @@ def container_limits(value: dict) -> None:
         raise RuntimeError("The deployment CPU, memory or PID limit is not enforced")
 
 
+def _container_published(value: dict) -> None:
+    """Prove a running container's limits, inner HTTPS and published host endpoint (#543)."""
+    container_limits(value)
+    facts = json.loads(container_command(["exec", "--user", "1000:1000", "--env", "HOME=/home/altitude",
+        "--env", "XDG_RUNTIME_DIR=/run/user/1000", value["Id"], "python3", "-c",
+        "import sys;sys.path.insert(0,'/opt/altitude');"
+        "from altitude.platform import container_ready;container_ready();"
+        "from altitude import tls;import json;f=tls.service();"
+        "print(json.dumps({'pid':f['pid'],'port':f['port'],'host':f['public_host'],"
+        "'ca':(f['tls_dir']/'ca.crt').read_text()}))"], timeout=5))
+    bindings = value["HostConfig"].get("PortBindings") or {}
+    addresses = bindings.get(f"{facts['port']}/tcp", [])
+    if len(addresses) != 1 or int(addresses[0]["HostPort"]) != facts["port"]:
+        raise RuntimeError("The HTTPS service does not match its single published port")
+    expected = dict(item.split("=",1) for item in value["Config"].get("Env",[]) if "=" in item)
+    if (facts["host"] != expected.get("ALTITUDE_PUBLIC_HOST")
+            or str(facts["port"]) != expected.get("ALTITUDE_PORT")
+            or addresses[0]["HostIp"] != value["Config"]["Labels"].get("io.altitude.bind")):
+        raise RuntimeError("Published HTTPS differs from the requested host identity or bind address")
+    container_https(addresses[0]["HostIp"], facts)
+
+
+def _machine_launch(instance: str, create: list[str] | None) -> str:
+    """Podman in the machine owns the container; the Mac client starts it detached and proves readiness."""
+    hint = f"podman --connection {CONTAINER_MACHINE} logs {instance}"
+    if create is not None:
+        container_command(["create", "--label", "io.altitude.lifecycle=podman-machine", *create], timeout=45)
+    value = container_owned(instance)
+    if value["State"]["Running"]:
+        raise RuntimeError("The container is already running")
+    lineage = (value["Config"].get("Labels") or {}).get("io.altitude.lineage", "")
+    with container_lineage_lock(lineage):
+        container_copy_available(lineage, [m["Name"] for m in value.get("Mounts", []) if m.get("Type") == "volume"],
+                                 except_id=value["Id"])
+        container_command(["start", value["Id"]], timeout=60)
+    deadline = time.monotonic() + 90
+    error = "Container startup did not finish"
+    try:
+        while time.monotonic() < deadline:
+            value = container_owned(instance)
+            if not value["State"]["Running"]:
+                raise RuntimeError("The container exited before readiness")
+            try:
+                _container_published(value)
+                return value["Id"]
+            except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+                error = str(exc)
+            time.sleep(.25)
+        raise RuntimeError(error)
+    except Exception as exc:
+        # A failed launch retains the exact stopped instance for diagnosis/restart.
+        try:
+            container_stop(instance)
+            suffix = ""
+        except RuntimeError as cleanup:
+            suffix = f"; cleanup not confirmed: {cleanup}"
+        raise RuntimeError(f"Container startup failed: {exc}; inspect with {hint}{suffix}") from exc
+
+
 def container_launch(instance: str, create: list[str] | None = None) -> str:
     """Prove identity, limits, inner HTTPS and the published host endpoint (#543)."""
     unit = container_unit(instance)
+    if _darwin():
+        return _machine_launch(instance, create)
     if create is None:
         value = container_owned(instance)
         if value["State"]["Running"]:
@@ -902,24 +1128,7 @@ def container_launch(instance: str, create: list[str] | None = None) -> str:
             try:
                 value = container_owned(instance)
                 if value["State"]["Running"]:
-                    container_limits(value)
-                    facts = json.loads(container_command(["exec", "--user", "1000:1000", "--env", "HOME=/home/altitude",
-                        "--env", "XDG_RUNTIME_DIR=/run/user/1000", value["Id"], "python3", "-c",
-                        "import sys;sys.path.insert(0,'/opt/altitude');"
-                        "from altitude.platform import container_ready;container_ready();"
-                        "from altitude import tls;import json;f=tls.service();"
-                        "print(json.dumps({'pid':f['pid'],'port':f['port'],'host':f['public_host'],"
-                        "'ca':(f['tls_dir']/'ca.crt').read_text()}))"], timeout=5))
-                    bindings = value["HostConfig"].get("PortBindings") or {}
-                    addresses = bindings.get(f"{facts['port']}/tcp", [])
-                    if len(addresses) != 1 or int(addresses[0]["HostPort"]) != facts["port"]:
-                        raise RuntimeError("The HTTPS service does not match its single published port")
-                    expected = dict(item.split("=",1) for item in value["Config"].get("Env",[]) if "=" in item)
-                    if (facts["host"] != expected.get("ALTITUDE_PUBLIC_HOST")
-                            or str(facts["port"]) != expected.get("ALTITUDE_PORT")
-                            or addresses[0]["HostIp"] != value["Config"]["Labels"].get("io.altitude.bind")):
-                        raise RuntimeError("Published HTTPS differs from the requested host identity or bind address")
-                    container_https(addresses[0]["HostIp"], facts)
+                    _container_published(value)
                     return value["Id"]
             except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
                 error = str(exc)
@@ -979,6 +1188,13 @@ def container_stop_unit(unit: str, environment: dict) -> None:
 
 def container_stop(instance: str) -> None:
     value = container_owned(instance)
+    if _darwin():
+        # Podman's own stop: the image's graceful signal, then forced termination after 30 seconds.
+        if not container_stopped(value):
+            container_command(["stop", "--time=30", value["Id"]], timeout=45)
+        if not container_stopped(container_owned(instance)):
+            raise RuntimeError("Container remains active after Stop")
+        return
     unit = container_unit(instance)
     environment = container_user_environment()
     if job_active(unit, environment):
@@ -990,6 +1206,9 @@ def container_stop(instance: str) -> None:
 
 
 def container_arguments(arguments: list[str]) -> list[str]:
+    if _darwin():
+        _machine()  # every Mac container call follows proof of the machine's identity
+        return ["podman", "--connection", CONTAINER_MACHINE, *arguments]
     return ["podman", "--remote=false", "--cgroup-manager=cgroupfs", "--runtime=/usr/bin/crun", *arguments]
 
 
@@ -998,7 +1217,7 @@ def container_command(arguments: list[str], *, timeout: int = 30, interactive: b
     """Only the local rootless controller; callers select exact task/image/volume resources."""
     if os.getuid() == 0:
         raise RuntimeError("Run Podman as your ordinary Linux account")
-    if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
+    if not _darwin() and (os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION")):
         raise RuntimeError("Remote Podman endpoints are not supported by this Linux launcher")
     environment = container_user_environment(runtime_dir) if runtime_dir else container_user_environment()
     if storage_conf is not None:

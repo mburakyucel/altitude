@@ -24,6 +24,14 @@ attachment, which does not use polkit, and fails on unexpected management attemp
 validation of the selected runtime clients, not hostile-process confinement. The
 [container evidence](CONTAINERS.md#evidence) records the tested boundaries.
 
+On a Mac the same launcher drives Altitude's own rootless Podman machine through Podman's
+connection, and Podman inside that machine owns each container's lifetime; there is no Mac
+supervisor or launchd job. Before its first Podman call a launcher process proves that the
+`altitude` connection reaches that running rootless arm64 machine. Limits and recreation emptiness
+are read from the container's scope inside the machine; a transfer's foreground client owns it and
+its record binds to the machine's incarnation. [On a Mac](CONTAINERS.md#on-a-mac-podman-machine)
+describes the route and its gaps.
+
 The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
 inside a rootless Linux image. `platform.py` reads image identity outside writable volumes and owns
 runtime/bootstrap operations. Its protected image-path check recognizes root ownership through a
