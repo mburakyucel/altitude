@@ -20,7 +20,8 @@ for missing OpenSSL 3 and, for a second account with no desktop session, for the
 OpenSSL installed, installation and service startup must succeed while stock LibreSSL remains first on PATH.
 Each refused attempt must leave the account's files and launchd jobs as they were. `privacy` runs the revision's own
 platform_probe.py confinement rows as the logged-in account in a guest whose Python was never asked for access to a
-private place. `--published` downloads two published releases on this Mac, checked against their SHA256SUMS and tags,
+private place; `jobs` runs its launchd job rows, Stop of every descendant and the time limits among them, which no
+worker sandbox can. `--published` downloads two published releases on this Mac, checked against their SHA256SUMS and tags,
 and runs only `published`: the baseline's own daemon must install the candidate and keep the state made through the
 app. The clone is deleted afterwards, also after a failure or a stop. RESULTS_DIR/macos-vm.json records the outcome.
 
@@ -986,30 +987,47 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
 # The confinement rows that must refuse private places without macOS asking, and how their details say so.
 PRIVACY_ROWS, REFUSED = ("confinement", "validation-confinement"), \
     "the Desktop and mounted volumes are refused with no consent request in the privacy log"
+# The rows that run fixture commands as launchd jobs: output, Stop of every descendant, cleanup and time limits.
+JOB_ROWS = ("job-pipe", "job-file-output", "exit-cleanup", "stop-descendants", "time-limit", "limit-after-owner-exit",
+            "logged-job", "detached-job")
+
+
+def probe_rows(guest: Guest, results: Path, record: dict, inputs: Path, case: str, rows: tuple[str, ...],
+               detail: str = "") -> None:
+    """platform_probe.py's `rows` from the revision's own files, run by the logged-in account outside any sandbox;
+    the case passes when every row passes and its detail says `detail`."""
+    guest.copy(inputs / "source.tar", f"{SHARED}/source.tar")
+    command = (f"mkdir {SHARED}/source && tar -xf {SHARED}/source.tar -C {SHARED}/source && cd {SHARED}/source && "
+               f"/opt/homebrew/bin/python3.12 -B scripts/platform_probe.py --only {' '.join(rows)}")
+    result = guest.ssh(command, timeout=300, check=False)
+    (results / f"{case}.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
+    try:
+        found = json.loads(result.stdout)["rows"]
+    except (ValueError, KeyError):
+        found = []
+    record["python"] = guest.ssh("/opt/homebrew/bin/python3.12 --version").stdout.strip()
+    record["cases"] = {case: {"exit": result.returncode, "rows": found, "passed": result.returncode == 0 and sorted(
+        row["row"] for row in found) == sorted(rows) and all(row["state"] == "pass" and detail in row["detail"]
+                                                             for row in found)}}
 
 
 def phase_privacy(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
-    """platform_probe.py's confinement rows from the revision's own files, run by the logged-in account outside any
-    sandbox in a guest whose Python was never asked for access to a private place: a worker's and a validation run's
-    profiles must refuse the Desktop and mounted volumes before macOS asks, so its privacy log shows no request."""
-    guest.copy(inputs / "source.tar", f"{SHARED}/source.tar")
-    command = (f"mkdir {SHARED}/source && tar -xf {SHARED}/source.tar -C {SHARED}/source && cd {SHARED}/source && "
-               f"/opt/homebrew/bin/python3.12 -B scripts/platform_probe.py --only {' '.join(PRIVACY_ROWS)}")
-    result = guest.ssh(command, timeout=300, check=False)
-    (results / "privacy.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
-    try:
-        rows = json.loads(result.stdout)["rows"]
-    except (ValueError, KeyError):
-        rows = []
-    record["python"] = guest.ssh("/opt/homebrew/bin/python3.12 --version").stdout.strip()
-    record["cases"] = {"privacy": {"exit": result.returncode, "rows": rows, "passed": result.returncode == 0 and sorted(
-        row["row"] for row in rows) == sorted(PRIVACY_ROWS) and all(row["state"] == "pass" and REFUSED in row["detail"]
-                                                                    for row in rows)}}
+    """The confinement rows in a guest whose Python was never asked for access to a private place: a worker's and a
+    validation run's profiles must refuse the Desktop and mounted volumes before macOS asks, so its privacy log shows
+    no request."""
+    probe_rows(guest, results, record, inputs, "privacy", PRIVACY_ROWS, REFUSED)
+
+
+def phase_jobs(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """The job rows, which a worker sandbox cannot run because launchd refuses it service control: real launchd jobs
+    in the account's own domain, whose Stop must end every descendant, however it left the session, before the job
+    reads inactive."""
+    probe_rows(guest, results, record, inputs, "jobs", JOB_ROWS)
 
 
 # `fresh` starts from the fresh image, every other phase from prerequisites; `published` runs only with --published.
 PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login,
-          "privacy": phase_privacy, "published": phase_published}
+          "privacy": phase_privacy, "jobs": phase_jobs, "published": phase_published}
 BUILT = ("fresh", "prerequisites", "lifecycle", "login")  # the phases that install the release built from the source
 
 
@@ -1103,7 +1121,7 @@ def lane(results: Path, commit: str | None, phases: list[str], releases: tuple[s
         if set(phases) & set(BUILT):
             note(f"building the release from {commit[:12]}")
             build(commit, work, results / "build.log")
-        if "privacy" in phases:
+        if set(phases) & {"privacy", "jobs"}:
             run("git", "archive", "-o", work / "source.tar", commit, "altitude", "scripts", cwd=SCRIPTS.parent)
         for name in phases:
             run_phase(name, work, results, record, commits)
