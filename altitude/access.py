@@ -18,6 +18,7 @@ import hmac
 import json
 import os
 import secrets
+import shutil
 import time
 import uuid
 from contextlib import contextmanager
@@ -110,7 +111,8 @@ def save_engine_token(engine: str, token: str) -> None:
 def prepare() -> None:
     """Create the private folder and the machine key when altd starts. A key of an earlier generation is replaced,
     with any pairing code in flight, and the jobs running now are noted: they started under sandboxes that could read
-    this folder, so `settle` replaces the key once more when they have all ended."""
+    this folder, so `settle` replaces the key once more when they have all ended. A sign-in's settings folder left by
+    an earlier altd is removed."""
     with _locked():
         if machine_key() is None:
             _replace_key([])
@@ -119,6 +121,8 @@ def prepare() -> None:
             record = _read()
             if record.get("code"):
                 _write({**record, "code": None})
+    for leftover in DIR.glob("*.setup.*"):  # the settings folder of a sign-in an earlier altd did not finish
+        shutil.rmtree(leftover, ignore_errors=True)
 
 
 def settle() -> None:

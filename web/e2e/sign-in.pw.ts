@@ -150,8 +150,19 @@ test("the operator signs Altitude in to Claude from the page without seeing a to
     hidden: [v.field],
   });
 
+  // Another browser starts a sign-in of its own while this page holds a code: the code is not sent to it.
+  await v.tryAgain.click();
+  await v.field.fill(CODE);
+  expect((await request.post(`${service}/api/sign-in/claude`, { data: { action: "start" } })).ok()).toBe(true);
+  await walk.state("06d-replaced-elsewhere", {
+    action: () => page.evaluate(() => window.dispatchEvent(new Event("focus"))),
+    visible: [v.alert("The sign-in was interrupted." + EARLIER), v.tryAgain],
+    hidden: [v.field, v.finish],
+  });
+
   await v.tryAgain.click();
   await expect(v.field).toBeVisible();
+  await expect(v.field).toHaveValue("");
   await expect(v.alert("The sign-in expired after ten minutes.")).toBeVisible({ timeout: 30_000 });
   await walk.state("06-expired", {
     visible: [v.alert("The sign-in expired after ten minutes." + EARLIER), v.tryAgain],

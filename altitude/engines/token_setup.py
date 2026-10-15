@@ -110,18 +110,19 @@ class _Screen:
                 self.x = max(0, self.x - 1)
             elif part == "\t":
                 self.x = (self.x // 8 + 1) * 8
-            elif part in ("\x1b7", "\x1b8"):
-                self.saved, (self.y, self.x) = ((self.y, self.x), self.saved) if part == "\x1b7" else (self.saved, self.saved)
+            elif part == "\x1b7":
+                self.saved = (self.y, self.x)
+            elif part == "\x1b8":
+                self.y, self.x = self.saved
             elif found.group(2):
                 self._control(found.group(1), found.group(2))
         self.pending = text[at:]
 
     def _control(self, raw: str, final: str) -> None:
-        private = raw.startswith("?")
-        numbers = [int(n) if n.isdigit() else 0 for n in raw.lstrip("?").split(";")]
+        numbers = [int(n) if n.isdigit() and len(n) < 6 else 0 for n in raw.lstrip("<=>?").split(";")]
         n = numbers[0] or 1
-        if private:
-            if final in "hl" and {47, 1047, 1049} & set(numbers):
+        if raw.startswith(("<", "=", ">", "?")):  # modes and keyboard settings; only the alternate screen draws
+            if raw.startswith("?") and final in "hl" and {47, 1047, 1049} & set(numbers):
                 self._wipe()
                 self.y = self.x = 0
             return
@@ -212,14 +213,6 @@ class _Attempt:
         self.tokens.clear()
 
 
-def _settings_folder(attempt: _Attempt) -> None:
-    """A new settings folder for the command, after removing any an earlier sign-in left behind."""
-    access.DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for earlier in access.DIR.glob(f"{attempt.engine}.setup.*"):
-        shutil.rmtree(earlier, ignore_errors=True)
-    attempt.home.mkdir(mode=0o700)
-
-
 def _run(attempt: _Attempt) -> None:
     """Read the command's screen until it ends, then decide: save the one token, or fail without saving."""
     snapshots: list[str] = []
@@ -237,6 +230,8 @@ def _run(attempt: _Attempt) -> None:
             if select.select([attempt.fd], [], [], QUIET)[0]:
                 try:
                     data = os.read(attempt.fd, 65536)
+                except BlockingIOError:
+                    continue
                 except OSError:  # the command and its children closed the terminal
                     data = b""
                 if not data:
@@ -280,7 +275,9 @@ def _run(attempt: _Attempt) -> None:
                 attempt.process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 pass
-        os.close(attempt.fd)
+        with _lock:  # closed under the lock, so `finish` never types into a closed or reused descriptor
+            os.close(attempt.fd)
+            attempt.fd = None
         shutil.rmtree(attempt.home, ignore_errors=True)
         snapshots.clear()
         screen.rows.clear()
@@ -314,8 +311,10 @@ def start(engine: str) -> dict:
         attempt = _open[engine] = _Attempt(engine)
     main = None
     try:
-        _settings_folder(attempt)
+        access.DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        attempt.home.mkdir(mode=0o700)
         main, child = os.openpty()
+        os.set_blocking(main, False)  # a command that stops reading fails the sign-in instead of stalling altd
         fcntl.ioctl(child, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLUMNS, 0, 0))
         env = native.token_setup_env(common.clean_env(), attempt.home)
         try:
@@ -341,6 +340,18 @@ def start(engine: str) -> dict:
     return view(engine)
 
 
+def _type(attempt: _Attempt, keys: bytes) -> None:
+    """Type into the open sign-in's terminal, under the lock; a command that does not take it all ends the sign-in."""
+    if attempt.state != "finishing" or attempt.fd is None:
+        return
+    try:
+        if os.write(attempt.fd, keys) == len(keys):
+            return
+    except OSError:
+        pass
+    attempt.fail("interrupted")
+
+
 def finish(engine: str, attempt_id: str, code: str) -> dict:
     """Type the code the engine's page showed into the open sign-in and wait for the outcome."""
     _check(engine)
@@ -353,12 +364,10 @@ def finish(engine: str, attempt_id: str, code: str) -> dict:
             attempt.fail("rejected")
             return {**attempt.view(), "engine": engine, "saved": access.engine_token_saved(engine)}
         attempt.state, attempt.code_sent = "finishing", True
-        try:
-            os.write(attempt.fd, code.encode())
-            time.sleep(0.2)  # typed, then Enter on its own, as a person would
-            os.write(attempt.fd, b"\r")
-        except OSError:
-            attempt.fail("interrupted")
+        _type(attempt, code.encode())
+    time.sleep(0.2)  # typed, then Enter on its own, as a person would
+    with _lock:
+        _type(attempt, b"\r")
         _changed.wait_for(lambda: attempt.state != "finishing", timeout=FINISH_WAIT)
         if attempt.state == "finishing":
             attempt.fail("unfollowed")

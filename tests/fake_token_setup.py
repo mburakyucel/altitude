@@ -1,7 +1,8 @@
 """A stand-in for Claude's `setup-token` screen, run on the pseudo-terminal Altitude gives it.
 
-It draws the way a full-screen program does: the alternate screen, colours, a hyperlinked sign-in link, and a
-differential redraw that rewrites only the cells that change, so the token is never written in one piece. The code
+It draws the way a full-screen program does: the alternate screen, a keyboard mode, colours, a hyperlinked sign-in
+link, a status line drawn from a saved cursor position, and a differential redraw that rewrites only the cells that
+change, so the token is never written in one piece. The code
 `fixture-code#fixture-state` is accepted, `fixture-mode:<mode>` is accepted and then misbehaves as FAKE_SETUP=<mode>
 would, and any other code makes it start over with a new link. FAKE_SETUP picks a misbehaviour:
 `exit` ends before any code, `silent` never shows a link, `hang` takes the code and never answers, `fail` exits 1
@@ -33,7 +34,8 @@ def waiting(n: int) -> None:
     url = link(n)
     draw("\x1b[H\x1b[2J\x1b[1m This will guide you through long-lived (1-year) auth token setup.\x1b[22m\r\n\r\n"
          " \x1b[2mBrowser didn't open? Use the url below to sign in \x1b[22m\r\n\r\n"
-         f" \x1b]8;;{url}\x07\x1b[2m{url}\x1b[22m\x1b]8;;\x07\r\n\r\n Paste code here if prompted > ")
+         f" \x1b]8;;{url}\x07\x1b[2m{url}\x1b[22m\x1b]8;;\x07\r\n\r\n Paste code here if prompted > "
+         "\x1b7\x1b[9;1H \x1b[2mesc to cancel\x1b[22m\x1b8")
 
 
 def main() -> None:
@@ -48,7 +50,7 @@ def main() -> None:
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
         with open(os.environ["FAKE_SETUP_LOG"] + ".child", "w") as out:
             out.write(str(child.pid))
-    draw("\x1b[?1049h\x1b[?25l")
+    draw("\x1b[?1049h\x1b[?25l\x1b[>1u")
     if MODE == "silent":
         time.sleep(600)
     if MODE == "exit":
@@ -86,7 +88,7 @@ def main() -> None:
     else:
         draw(f"\x1b[5;{2 + len(prefix)}H\x1b[33m{TOKEN[len(prefix):]}\x1b[39m\x1b[K")
     time.sleep(0.3)
-    draw("\x1b[?25h\x1b[?1049l")  # leaving the alternate screen wipes what it showed
+    draw("\x1b[<u\x1b[?25h\x1b[?1049l")  # leaving the alternate screen wipes what it showed
     termios.tcdrain(1)
     sys.exit(0)
 

@@ -29,16 +29,18 @@ export function SignIn({ engine, label, signedIn }: { engine: string; label: str
   const data = view.data;
   if (data !== seen && busy === null) {
     setSeen(data);
-    if (data && open(data.state) && data.attempt !== followed?.attempt) {
-      setFollowed({ attempt: data.attempt!, started: data.started! });
-      setOutcome(null);
-    } else if (data && !open(data.state) && followed) {
+    if (data && followed && data.attempt !== followed.attempt) {  // it ended elsewhere: saved since, or interrupted
+      const saved = data.saved !== null && data.saved >= followed.started;
       setFollowed(null);
-      if (data.state === "idle") {
-        const saved = data.saved !== null && data.saved >= followed.started;
-        setOutcome(saved ? { done: true } : { error: INTERRUPTED, earlier: data.saved !== null });
-        if (saved) void client.invalidateQueries({ queryKey: ["prerequisites"] });
-      }
+      setCode("");
+      setOutcome(saved ? { done: true } : { error: INTERRUPTED, earlier: data.saved !== null });
+      if (saved) void client.invalidateQueries({ queryKey: ["prerequisites"] });
+    } else if (data && followed && !open(data.state)) {
+      setFollowed(null);  // its failure shows from the service
+    } else if (data && !followed && open(data.state) && !(outcome && "error" in outcome)) {
+      setFollowed({ attempt: data.attempt!, started: data.started! });  // opened here before, or in another browser
+      setOutcome(null);
+      setCode("");
     }
   }
   const waiting = data?.state === "waiting" && busy === null;
@@ -58,14 +60,16 @@ export function SignIn({ engine, label, signedIn }: { engine: string; label: str
     setBusy(action);
     setOutcome(null);
     try {
-      const attempt = data?.attempt ?? "";
+      const attempt = followed?.attempt ?? "";  // the code goes to the sign-in whose link this page showed
       const next = await changeSignIn(engine, action === "start" ? { action } : action === "finish"
         ? { action, attempt, code } : { action, attempt });
       setCode("");
-      setFollowed(open(next.state) ? { attempt: next.attempt!, started: next.started! } : null);
+      setFollowed(action === "start" && open(next.state) ? { attempt: next.attempt!, started: next.started! } : null);
       if (next.state === "done") {
         setOutcome({ done: true });
         void client.invalidateQueries({ queryKey: ["prerequisites"] });
+      } else if (action === "finish" && next.attempt !== attempt) {
+        setOutcome({ error: INTERRUPTED, earlier: next.saved !== null });  // replaced or cancelled meanwhile
       }
       client.setQueryData(["sign-in", engine], next);
       setSeen(next);
@@ -82,7 +86,15 @@ export function SignIn({ engine, label, signedIn }: { engine: string; label: str
   if (view.isError) return <p role="alert" className="text-meta text-danger">Could not check the sign-in. <button type="button" className="link" onClick={() => void refetch()}>Retry</button></p>;
   const shown = view.data;
   const state = busy === "start" ? "opening" : shown.state;
-  const tryAgain = <div><button type="button" className="btn" onClick={() => void act("start")}>Try again</button></div>;
+  // An outcome seen only here outranks what the service shows now, until Try again.
+  const failed = outcome && "error" in outcome ? outcome
+    : state === "failed" ? { error: shown.error ?? INTERRUPTED, earlier: shown.saved !== null && shown.saved < (shown.started ?? 0) } : null;
+  if (failed) {
+    return <div className="sign-in">
+      <p role="alert" className="text-meta text-danger">{failed.error}{failed.earlier ? " Your earlier sign-in still works." : ""}</p>
+      <div><button type="button" className="btn" onClick={() => void act("start")}>Try again</button></div>
+    </div>;
+  }
   if (state === "opening") {
     return <div className="sign-in"><div><button type="button" className="btn btn-primary" disabled><Busy text={`Opening ${label} sign-in…`} /></button></div></div>;
   }
@@ -104,14 +116,6 @@ export function SignIn({ engine, label, signedIn }: { engine: string; label: str
         <button type="submit" className="btn btn-primary" disabled={finishing || !code.trim()}>{finishing ? <Busy text="Signing in…" /> : "Finish sign-in"}</button>
       </div>
     </form>;
-  }
-  const failed = state === "failed" ? { error: shown.error ?? INTERRUPTED, earlier: shown.saved !== null && shown.saved < (shown.started ?? 0) }
-    : outcome && "error" in outcome ? outcome : null;
-  if (failed) {
-    return <div className="sign-in">
-      <p role="alert" className="text-meta text-danger">{failed.error}{failed.earlier ? " Your earlier sign-in still works." : ""}</p>
-      {tryAgain}
-    </div>;
   }
   if (outcome && "done" in outcome) return <p role="status" className="sign-in-done text-meta">Signed in. Altitude's {label} runs use this sign-in for a year.</p>;
   return <div className="sign-in"><div>

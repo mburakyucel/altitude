@@ -155,7 +155,11 @@ def _sign_in_request(engine: str, body: dict) -> dict:
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
             sys.exit(f"alt sign-in: altd refused this machine's key; read access to {access.DIR / 'machine.key'} is required")
-        sys.exit(f"alt sign-in: {json.load(exc).get('error', exc.reason)}")
+        try:
+            error = json.load(exc).get("error")
+        except (ValueError, AttributeError):
+            error = None
+        sys.exit(f"alt sign-in: {error or exc.reason}")
     except (OSError, ValueError):
         sys.exit("alt sign-in: Altitude is not answering; check that it is running, then sign in again")
 
@@ -1191,14 +1195,16 @@ def main(argv=None) -> None:
         if ACTOR != config.OPERATOR_ACTOR:
             sys.exit("alt sign-in: only the operator signs Altitude in")
         label = config.ENGINE_LABELS[args.engine]
-        signing = _sign_in_request(args.engine, {"action": "start"})
+        signing = {"attempt": None}
         try:
+            signing = _sign_in_request(args.engine, {"action": "start"})
             if signing["state"] == "waiting":
                 print(f"Open this link, approve Altitude, then paste the code {label} shows:\n\n  {signing['link']}\n")
                 code = input("Code: ")
                 signing = _sign_in_request(args.engine, {"action": "finish", "attempt": signing["attempt"], "code": code})
         except (KeyboardInterrupt, EOFError):
-            _sign_in_request(args.engine, {"action": "cancel", "attempt": signing["attempt"]})
+            # Interrupted while it opened, the open sign-in is this one: starting replaced any other.
+            _sign_in_request(args.engine, {"action": "cancel", **({"attempt": signing["attempt"]} if signing["attempt"] else {})})
             sys.exit("\nalt sign-in: cancelled; nothing changed")
         if signing["state"] != "done":
             sys.exit(f"alt sign-in: {signing.get('error') or 'The sign-in did not finish.'}")

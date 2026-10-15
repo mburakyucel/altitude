@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import time
+import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -34,6 +35,28 @@ def gone(pid: int, seconds: float = 5) -> bool:
             return True
         time.sleep(0.05)
     return False
+
+
+class TestScreen(unittest.TestCase):
+    """What the sign-in reads is where a terminal would show it."""
+
+    def read(self, *parts: str) -> list[str]:
+        wiped = []
+        screen = token_setup._Screen(wiped.append)
+        for part in parts:
+            screen.feed(part)
+        return [*wiped, screen.text()]
+
+    def test_text_lands_where_a_terminal_draws_it(self):
+        self.assertEqual(self.read("ab\x1b7\r\ncd\x1b8ef")[-1], "abef\ncd", "saving the cursor does not move it")
+        self.assertEqual(self.read("ab\x1b[s\x1b[3;1Hcd\x1b[uef")[-1], "abef\n\ncd")
+        self.assertEqual(self.read("x\x1b[>1uy\x1b[<uz\x1b[=5u")[-1], "xyz", "keyboard modes draw nothing")
+        self.assertEqual(self.read("one\x1b[", "2;3Htwo")[-1], "one\n  two", "a sequence split across reads")
+        self.assertEqual(self.read("old\x1b[?1049hnew\x1b[?1049l"), ["old", "new", ""], "each screen is read before it is wiped")
+        self.assertEqual(self.read("ab\x1b]8;;https://example.invalid\x07cd\x1b]8;;\x07\x1b[1;31me\x1b[0m")[-1], "abcde")
+        self.assertEqual(self.read("abcdef\x1b[1;3H\x1b[K")[-1], "ab    ")
+        self.assertEqual(self.read("\x1b]" + "a" * 5000 + "z")[-1][-1:], "z", "an endless sequence is dropped")
+        self.assertEqual(self.read("\x1b[" + "9" * 5000 + "Hx")[-1], "x", "an absurd position is read as the first")
 
 
 class TokenSetupCase(AltitudeCase):
@@ -255,6 +278,14 @@ class TestSignInAdmission(TokenSetupCase):
                                          data=b'{"action": "start"}', headers={"Content-Type": "application/json"})
         with self.assertRaises(urllib.error.HTTPError) as refused:
             urllib.request.urlopen(request, timeout=30)
+        self.assertEqual(refused.exception.code, 401)
+        # A task worker reaches altd only through the task door, which does not lead here.
+        self.assertNotIn(["api", "sign-in", "claude"], server.TASK_DOOR)
+        worker = urllib.request.Request(request.full_url, method="POST", headers={"Content-Type": "application/json"},
+                                        data=json.dumps({"action": "start", "project": self.project, "slug": "task",
+                                                         "attempt": 1}).encode())
+        with self.assertRaises(urllib.error.HTTPError) as refused:
+            urllib.request.urlopen(worker, timeout=30)
         self.assertEqual(refused.exception.code, 401)
         self.assertNotIn("claude", token_setup._open)
         self.assertFalse(self.log.exists(), "no setup command ran")
