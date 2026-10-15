@@ -92,7 +92,6 @@
      "asked": "2026-10-12T11:46:00+00:00",
      "audience": "operator",
      "text": "If an applicant declines an offer, do they keep their place on the waiting list or go to the back?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-12T12:08:00+00:00",
@@ -585,7 +584,6 @@
      "asked": "2026-10-12T11:35:00+00:00",
      "audience": "operator",
      "text": "What number should the first generated invoice have? The settings page doesn't record the last paper one.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-12T11:42:00+00:00",
@@ -599,7 +597,6 @@
      "asked": "2026-10-12T18:50:00+00:00",
      "audience": "operator",
      "text": "Should invoices for holders who also pay for a second plot be one invoice with two lines, or two invoices?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-12T19:02:00+00:00",
@@ -613,7 +610,6 @@
      "asked": "2026-10-12T22:23:00+00:00",
      "audience": "l3",
      "text": "Is anyone else working on the settings page this week? The starting number goes there.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-12T22:34:00+00:00",
@@ -627,7 +623,6 @@
      "asked": "2026-10-12T22:44:00+00:00",
      "audience": "operator",
      "text": "Holders who joined mid-season: should their first invoice be pro-rated by month?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-12T22:56:00+00:00",
@@ -1045,7 +1040,6 @@
      "asked": "2026-10-12T14:54:00+00:00",
      "audience": "l3",
      "text": "Does the secretary want applicants to see how many plots were offered this year, as a rough guide?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-12T15:11:00+00:00",
@@ -1484,7 +1478,6 @@
      "asked": "2026-10-13T08:48:00+00:00",
      "audience": "operator",
      "text": "Which of the current admins should become chair, secretary and treasurer? I can list the accounts by plot number for you.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-13T09:00:00+00:00",
@@ -1498,7 +1491,6 @@
      "asked": "2026-10-13T14:01:00+00:00",
      "audience": "operator",
      "text": "Should the chair be able to see the audit log of their own role changes, or should that be visible to the whole committee?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-13T14:07:00+00:00",
@@ -1512,7 +1504,6 @@
      "asked": "2026-10-13T14:50:00+00:00",
      "audience": "l3",
      "text": "Should committee members see each other's roles on their profile page?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-13T15:02:00+00:00",
@@ -2396,7 +2387,6 @@
      "asked": "2026-10-14T11:28:00+00:00",
      "audience": "l3",
      "text": "When the phone has no signal at the bottom of the site, how long should unsynced ticks be kept before they're considered lost?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-14T11:39:00+00:00",
@@ -2410,7 +2400,6 @@
      "asked": "2026-10-14T12:50:00+00:00",
      "audience": "l3",
      "text": "Another task added a 'structures' list to plots last week. Should the checklist read structures from there?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-14T13:01:00+00:00",
@@ -2678,7 +2667,6 @@
      "asked": "2026-10-14T15:45:00+00:00",
      "audience": "l3",
      "text": "Is anyone else changing the reminder sender right now?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-14T16:04:00+00:00",
@@ -3102,7 +3090,6 @@
      "asked": "2026-10-15T10:44:00+00:00",
      "audience": "operator",
      "text": "When an occupied plot is split, which half does the existing holder keep, the one nearer the path or does the secretary choose?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-15T10:49:00+00:00",
@@ -3116,7 +3103,6 @@
      "asked": "2026-10-15T14:52:00+00:00",
      "audience": "l3",
      "text": "Another task is adding a hive marker to the map this week. Will its layer need redrawing after a split, or is that handled by the map?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-15T15:06:00+00:00",
@@ -3130,7 +3116,6 @@
      "asked": "2026-10-15T15:42:00+00:00",
      "audience": "l3",
      "text": "Should the split action be logged in the plot's history as one event or as two new plots created?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-15T15:49:00+00:00",
@@ -3479,7 +3464,6 @@
      "asked": "2026-10-15T19:12:00+00:00",
      "audience": "l3",
      "text": "Should the gate code also appear in the reminder emails, or only on the dashboard?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-15T19:29:00+00:00",
@@ -4037,7 +4021,6 @@
      "asked": "2026-10-16T09:10:00+00:00",
      "audience": "operator",
      "text": "Should holders who don't answer by the deadline lose their plot automatically, or should the secretary decide each one?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-16T09:30:00+00:00",
@@ -4051,7 +4034,6 @@
      "asked": "2026-10-16T14:08:00+00:00",
      "audience": "operator",
      "text": "The rules document was last changed in 2024. Do you want holders to re-accept every year anyway, or only when the rules change?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-16T14:32:00+00:00",
@@ -4065,7 +4047,6 @@
      "asked": "2026-10-17T00:37:00+00:00",
      "audience": "operator",
      "text": "Can a holder renew for a different plot size at the same time, for example give up half their plot?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-17T00:52:00+00:00",
@@ -4079,7 +4060,6 @@
      "asked": "2026-10-17T02:23:00+00:00",
      "audience": "operator",
      "text": "The invitation goes out on 1 October by default. Do you want a reminder to holders who haven't answered after three weeks?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-17T02:40:00+00:00",
@@ -4093,7 +4073,6 @@
      "asked": "2026-10-17T03:07:00+00:00",
      "audience": "l3",
      "text": "The tracker's 'decide' list: should declined holders appear there too, or only those who didn't answer?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-17T03:17:00+00:00",
@@ -4107,7 +4086,6 @@
      "asked": "2026-10-17T05:13:00+00:00",
      "audience": "l3",
      "text": "Is any other task changing the invoice template this week? Renewal adds a payment reference line to it.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-17T05:34:00+00:00",
@@ -4906,7 +4884,6 @@
      "asked": "2026-10-17T09:17:00+00:00",
      "audience": "operator",
      "text": "Is the one-booking-per-week limit per holder or per plot? Two holders share plot 31.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-17T09:33:00+00:00",
@@ -5164,7 +5141,6 @@
      "asked": "2026-10-17T12:08:00+00:00",
      "audience": "operator",
      "text": "Should final warnings go out automatically like the others, or wait for the chair to confirm each one?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-17T12:35:00+00:00",
@@ -5524,7 +5500,6 @@
      "asked": "2026-10-18T11:16:00+00:00",
      "audience": "operator",
      "text": "Should the calendar feed be public, or only for signed-in holders?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-18T11:25:00+00:00",
@@ -5538,7 +5513,6 @@
      "asked": "2026-10-18T14:44:00+00:00",
      "audience": "operator",
      "text": "Should past events stay in the archive forever, or be removed after a few years?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-18T14:59:00+00:00",
@@ -5552,7 +5526,6 @@
      "asked": "2026-10-18T15:12:00+00:00",
      "audience": "l3",
      "text": "Should the AGM event be marked specially, since it has a legal notice period?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-18T15:32:00+00:00",
@@ -5911,7 +5884,6 @@
      "asked": "2026-10-18T16:14:00+00:00",
      "audience": "l3",
      "text": "How many keys are there really? The brief says three, the shed photo shows four hooks.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-18T16:38:00+00:00",
@@ -6072,7 +6044,6 @@
      "asked": "2026-10-19T10:02:00+00:00",
      "audience": "operator",
      "text": "Trough 4 has two meters since the repair. Should usage be the sum of both?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-19T10:07:00+00:00",
@@ -6086,7 +6057,6 @@
      "asked": "2026-10-19T11:02:00+00:00",
      "audience": "l3",
      "text": "The treasurer's spreadsheet has two seasons of old readings. Import them, or start fresh?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-19T11:08:00+00:00",
@@ -6100,7 +6070,6 @@
      "asked": "2026-10-19T12:02:00+00:00",
      "audience": "operator",
      "text": "What weekly usage should count as a leak for a new trough with no average yet?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-19T12:11:00+00:00",
@@ -6472,7 +6441,6 @@
      "asked": "2026-10-19T14:24:00+00:00",
      "audience": "l3",
      "text": "Should the committee be able to hide a photo without deleting it, for example if it shows a neighbour?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-19T14:37:00+00:00",
@@ -6486,7 +6454,6 @@
      "asked": "2026-10-19T15:33:00+00:00",
      "audience": "l3",
      "text": "Is six photos per plot the right limit, or should the committee be able to change it?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-19T15:42:00+00:00",
@@ -6500,7 +6467,6 @@
      "asked": "2026-10-19T15:51:00+00:00",
      "audience": "l3",
      "text": "Should the plot page show the most recent photo first, or let holders pick a cover photo?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-19T16:04:00+00:00",
@@ -6740,7 +6706,6 @@
      "asked": "2026-10-20T09:46:00+00:00",
      "audience": "l3",
      "text": "Should search include former holders, marked as such?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-20T10:01:00+00:00",
@@ -6897,7 +6862,6 @@
      "asked": "2026-10-20T15:31:00+00:00",
      "audience": "operator",
      "text": "Should the holder's first name be announced for every plot, or only for holders who made their name public?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-20T15:45:00+00:00",
@@ -6911,7 +6875,6 @@
      "asked": "2026-10-20T15:58:00+00:00",
      "audience": "l3",
      "text": "Is the legend component from the legend task final? I need to make it focusable.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-20T16:04:00+00:00",
@@ -7125,7 +7088,6 @@
      "asked": "2026-10-20T17:42:00+00:00",
      "audience": "operator",
      "text": "Should shared entries show the holder's name to the show committee, or only the plot number?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-20T18:02:00+00:00",
@@ -7302,7 +7264,6 @@
      "asked": "2026-10-21T11:41:00+00:00",
      "audience": "l3",
      "text": "Is any other open task touching the settings module right now? I'd rather not collide with it.",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-21T11:58:00+00:00",
@@ -7605,7 +7566,6 @@
      "asked": "2026-10-21T10:29:00+00:00",
      "audience": "l3",
      "text": "Where should the export of old forum posts go: the task record or the repository?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-21T10:44:00+00:00",
@@ -7812,7 +7772,6 @@
      "asked": "2026-10-21T15:54:00+00:00",
      "audience": "l3",
      "text": "The restore steps need the hosting account's database password. Should the docs say where it is kept, or only that the hosting volunteer has it?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-21T16:03:00+00:00",
@@ -7909,7 +7868,6 @@
      "asked": "2026-10-22T10:55:00+00:00",
      "audience": "operator",
      "text": "What deposit amount should keys handed out before 2020 be recorded with?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-22T11:05:00+00:00",
@@ -8274,7 +8232,6 @@
      "asked": "2026-10-22T14:34:00+00:00",
      "audience": "operator",
      "text": "Should the secretary paste the new rules as text, or upload the PDF the AGM approved?",
-     "asked_again": false,
      "resolution": {
       "disposition": "superseded",
       "at": "2026-10-22T16:19:00+00:00",
@@ -8287,7 +8244,6 @@
      "asked": "2026-10-22T16:19:00+00:00",
      "audience": "operator",
      "text": "For the 2023 and 2024 rules that exist only as PDFs, should I convert them to text for the history, or show those two as PDF-only entries?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-22T16:38:00+00:00",
@@ -8466,7 +8422,6 @@
      "asked": "2026-10-23T15:04:00+00:00",
      "audience": "operator",
      "text": "Can a holder cancel or change their order after the cut-off date, or is it fixed once the order goes to the supplier?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-23T15:39:00+00:00",
@@ -8480,7 +8435,6 @@
      "asked": "2026-10-24T05:11:00+00:00",
      "audience": "operator",
      "text": "Ready to merge: orders add a line to each holder's next invoice. Go ahead?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-24T06:34:00+00:00",
@@ -8633,7 +8587,6 @@
      "asked": "2026-10-23T11:33:00+00:00",
      "audience": "l3",
      "text": "Should hives be visible on the public map that non-members can see?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-23T11:41:00+00:00",
@@ -8787,7 +8740,6 @@
      "asked": "2026-10-23T16:16:00+00:00",
      "audience": "l3",
      "text": "The holder list's thumbnail loading is a separate slowness. Should I file it as its own task or mention it in the report?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-23T16:30:00+00:00",
@@ -8982,7 +8934,6 @@
      "asked": "2026-10-24T10:12:00+00:00",
      "audience": "l3",
      "text": "Should the two lost numbers (0431 and 0432) be reissued, or recorded as void?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-24T10:22:00+00:00",
@@ -9143,7 +9094,6 @@
      "asked": "2026-10-24T10:25:00+00:00",
      "audience": "operator",
      "text": "Should committee members be able to go over capacity when they sign someone up at the gate?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-24T10:42:00+00:00",
@@ -9157,7 +9107,6 @@
      "asked": "2026-10-24T13:41:00+00:00",
      "audience": "l3",
      "text": "The sign-up form belongs to the events calendar task's module now. Is that task finished, so I can change the form?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-24T14:06:00+00:00",
@@ -9171,7 +9120,6 @@
      "asked": "2026-10-24T15:05:00+00:00",
      "audience": "operator",
      "text": "Should full tasks disappear from the form or stay visible but greyed out?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-24T15:31:00+00:00",
@@ -9409,7 +9357,6 @@
      "asked": "2026-10-24T16:22:00+00:00",
      "audience": "operator",
      "text": "Does a joint tenancy count as a transfer when one of the two holders leaves, or is that a separate case?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-24T17:01:00+00:00",
@@ -9423,7 +9370,6 @@
      "asked": "2026-10-24T21:43:00+00:00",
      "audience": "operator",
      "text": "Should the committee's approval need two committee members, or is one enough?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-24T22:25:00+00:00",
@@ -9437,7 +9383,6 @@
      "asked": "2026-10-24T23:28:00+00:00",
      "audience": "l3",
      "text": "The monthly committee summary is generated by another module. Is it all right to add a transfers section there in this task?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-25T00:20:00+00:00",
@@ -9991,7 +9936,6 @@
      "asked": "2026-10-25T10:21:00+00:00",
      "audience": "operator",
      "text": "Do invoices count as accounting records the association must keep with names for longer than two years?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-25T10:36:00+00:00",
@@ -10005,7 +9949,6 @@
      "asked": "2026-10-25T12:50:00+00:00",
      "audience": "operator",
      "text": "Work-day sign-ups and harvest log entries mention holders by name in free text. Should the job scrub names inside free text too, or only the structured fields?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-25T13:00:00+00:00",
@@ -10019,7 +9962,6 @@
      "asked": "2026-10-25T20:28:00+00:00",
      "audience": "operator",
      "text": "The first real run would anonymise 26 people. Run it right after merge, or leave it for the secretary to start?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-25T20:38:00+00:00",
@@ -10033,7 +9975,6 @@
      "asked": "2026-10-25T20:59:00+00:00",
      "audience": "l3",
      "text": "Should the retention job also cover the server logs, or is log rotation handled separately?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-25T21:05:00+00:00",
@@ -10465,7 +10406,6 @@
      "asked": "2026-10-25T10:15:00+00:00",
      "audience": "l3",
      "text": "The hosting provider can also rate-limit at its proxy. Is changing the proxy configuration within this task?",
-     "asked_again": false,
      "resolution": {
       "disposition": "answered",
       "at": "2026-10-25T10:29:00+00:00",

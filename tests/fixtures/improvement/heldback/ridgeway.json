@@ -1,0 +1,1056 @@
+{
+ "project": "ridgeway",
+ "now": "2026-11-16T08:00:00+00:00",
+ "tasks": [
+  {
+   "slug": "group-bookings",
+   "title": "Group bookings under one leader",
+   "state": "done",
+   "created": "2026-11-02T09:00:00+00:00",
+   "reported": "2026-11-02T16:55:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-02T17:15:00+00:00",
+   "tokens": 1800000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-02T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: walking clubs book eight to twenty beds at a time by phone. Let a group leader book several beds online in one booking."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-02T09:30:00+00:00",
+     "role": "l2",
+     "text": "Plan: a group booking with a leader, a bed count and one payment. The warden's arrivals list shows the group. Tests for a group larger than the free beds and a partial cancellation."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-02T10:30:00+00:00",
+     "role": "operator",
+     "text": "Under the leader's name, but the warden needs every guest's name before arrival for the mountain rescue list."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-02T11:50:00+00:00",
+     "role": "operator",
+     "text": "Three days before arrival. If they're missing, remind the leader. Never cancel a group for it."
+    },
+    {
+     "id": "m5",
+     "at": "2026-11-02T12:45:00+00:00",
+     "role": "operator",
+     "text": "Yes, one line with the leader's name and the head count."
+    },
+    {
+     "id": "m6",
+     "at": "2026-11-02T16:55:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #301 merged. Leaders book a group in one go; names are due three days before with one reminder; the warden's list shows a single line when names are missing."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-11-02T09:45:00+00:00",
+     "audience": "operator",
+     "text": "Should a group booking hold beds under the leader's name only, or ask for every guest's name?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-11-02T10:50:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 2,
+     "asked": "2026-11-02T10:50:00+00:00",
+     "audience": "operator",
+     "text": "Then when are guest names due, and what happens if the leader has not sent them by then?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-11-02T12:15:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 3,
+     "asked": "2026-11-02T12:15:00+00:00",
+     "audience": "operator",
+     "text": "If names are still missing on arrival day, should the warden's list show the group as one line with the head count?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-11-02T12:45:00+00:00",
+      "by": "operator",
+      "message": "m5"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-02T15:15:00+00:00",
+     "kind": "delivery",
+     "number": 301
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-02T16:15:00+00:00",
+     "kind": "delivery",
+     "number": 301
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-02T15:30:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Partial cancellation refunds the whole group"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Reminder is sent again every day after it is due"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Refunds only the cancelled beds; test added."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "One reminder only."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "hut-closures",
+   "title": "Close huts for the winter season",
+   "state": "done",
+   "created": "2026-11-03T09:00:00+00:00",
+   "reported": "2026-11-03T13:50:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-03T14:05:00+00:00",
+   "tokens": 1100000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-03T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: most huts close for winter from mid-November. Bookings should stop for closed dates, per hut."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-03T09:25:00+00:00",
+     "role": "l2",
+     "text": "Plan: a season per hut with open and closed dates; the booking calendar greys out closed dates and the search skips closed huts. Tests for a booking that spans the closing date."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-03T10:00:00+00:00",
+     "role": "l3",
+     "text": "From the operator's chat yesterday: no bookings at all, except each hut's winter room."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-03T10:30:00+00:00",
+     "role": "l3",
+     "text": "First come first served, as now. Show it on the hut page but don't make it bookable."
+    },
+    {
+     "id": "m5",
+     "at": "2026-11-03T13:50:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #303 merged. Closed dates are greyed out per hut; winter rooms show on the hut page as first come first served."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-11-03T09:40:00+00:00",
+     "audience": "l3",
+     "text": "Does 'closed for winter' mean no bookings at all, or only no catering?",
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-11-03T10:15:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 2,
+     "asked": "2026-11-03T10:15:00+00:00",
+     "audience": "l3",
+     "text": "Should the winter room be bookable online, or stay first come first served?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-11-03T10:30:00+00:00",
+      "by": "l3",
+      "message": "m4"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-03T12:30:00+00:00",
+     "kind": "delivery",
+     "number": 303
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-03T13:15:00+00:00",
+     "kind": "delivery",
+     "number": 303
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-03T12:45:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "A booking that spans the closing date is accepted"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Rejected with the closing date named."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "dog-policy",
+   "title": "Show each hut's dog policy at booking",
+   "state": "done",
+   "created": "2026-11-04T10:00:00+00:00",
+   "reported": "2026-11-04T15:45:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-04T16:00:00+00:00",
+   "tokens": 900000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-04T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: guests keep turning up with dogs. Show each hut's dog rule when booking."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-04T10:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: a dog rule per hut shown on the hut page and in the booking confirmation. I need the rule itself: the huts' notes disagree."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-04T12:30:00+00:00",
+     "role": "operator",
+     "text": "No dogs in dormitories anywhere. Private rooms at Corrie and High Fell allow one dog for a cleaning fee; everywhere else no dogs inside."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-04T12:40:00+00:00",
+     "role": "l2",
+     "text": "Thanks. Building it that way, with the cleaning fee added at booking."
+    },
+    {
+     "id": "m5",
+     "at": "2026-11-04T15:45:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #305 merged. Each hut shows its dog rule; two huts' private rooms take one dog with a cleaning fee."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-11-04T10:35:00+00:00",
+     "audience": "l3",
+     "text": "The hut notes disagree on dogs: two say dogs are welcome everywhere, the rest say no dogs inside. What is the rule for dormitories and private rooms?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-11-04T12:30:00+00:00",
+      "by": "operator",
+      "message": "m3"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-04T11:00:00+00:00",
+     "kind": "escalated",
+     "by": "l3",
+     "question": "Hut notes disagree on dogs in dormitories and private rooms. What should the dog rule be?"
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-04T14:30:00+00:00",
+     "kind": "delivery",
+     "number": 305
+    },
+    {
+     "id": "e3",
+     "at": "2026-11-04T15:15:00+00:00",
+     "kind": "delivery",
+     "number": 305
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-04T14:45:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Cleaning fee is not shown before payment"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Shown in the booking summary."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "payment-deposits",
+   "title": "Take a deposit instead of full payment",
+   "state": "done",
+   "created": "2026-11-05T09:00:00+00:00",
+   "reported": "2026-11-05T15:15:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-05T15:35:00+00:00",
+   "tokens": 2000000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-05T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: guests should pay a 30 percent deposit at booking and the rest two weeks before arrival."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-05T09:30:00+00:00",
+     "role": "l2",
+     "text": "Plan: deposit at booking, the balance charged automatically fourteen days before arrival with a reminder three days earlier. Bookings within fourteen days pay in full. Tests for each path and a failed balance charge."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-05T15:15:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #307 merged. Deposits at booking, balance fourteen days before, failed charges flagged and retried safely."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-05T12:10:00+00:00",
+     "kind": "delivery",
+     "number": 307
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-05T13:25:00+00:00",
+     "kind": "delivery",
+     "number": 307
+    },
+    {
+     "id": "e3",
+     "at": "2026-11-05T14:35:00+00:00",
+     "kind": "delivery",
+     "number": 307
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-05T12:25:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "high",
+       "title": "A failed balance charge leaves the booking confirmed with nothing flagged"
+      },
+      {
+       "id": "F2",
+       "severity": "medium",
+       "title": "Deposit is rounded down, losing a cent on odd totals"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Failed charges flag the booking for the warden and email the guest."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Rounded to the cent correctly."
+      }
+     ]
+    },
+    {
+     "id": "r2",
+     "subject": "changes",
+     "requested": "2026-11-05T13:45:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Retrying a failed balance charge can charge twice"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Warden flag does not clear after the guest pays by phone"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Retry uses the same payment intent."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Clears when the balance is recorded."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "weather-banner",
+   "title": "Mountain weather warning on hut pages",
+   "state": "done",
+   "created": "2026-11-06T09:00:00+00:00",
+   "reported": "2026-11-06T12:25:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-06T12:35:00+00:00",
+   "tokens": 700000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-06T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: when the national weather service issues a mountain warning for a hut's area, show a banner on that hut's page."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-06T09:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: read the warnings feed hourly, match warning areas to huts, and show a banner with the warning's text and a link to the service's page. Test with a recorded feed."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-06T11:15:00+00:00",
+     "role": "l2",
+     "text": "The changes review failed before it produced anything; requesting it again."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-06T12:25:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #309 merged. Hut pages show the current mountain weather warning for their area."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-06T10:50:00+00:00",
+     "kind": "delivery",
+     "number": 309
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-06T11:55:00+00:00",
+     "kind": "delivery",
+     "number": 309
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-06T11:00:00+00:00",
+     "state": "failed",
+     "findings": [],
+     "dispositions": []
+    },
+    {
+     "id": "r2",
+     "subject": "changes",
+     "requested": "2026-11-06T11:20:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Banner stays after the warning expires"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Banner uses the warning's end time."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "trail-conditions",
+   "title": "Trail condition notes from wardens",
+   "state": "done",
+   "created": "2026-11-09T09:00:00+00:00",
+   "reported": "2026-11-10T01:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-10T01:30:00+00:00",
+   "tokens": 1000000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-09T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: wardens should be able to post a short note about the approach path's conditions, shown on the hut page."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-09T09:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: a conditions note per hut, posted by its warden, with the date it was written. Notes older than a week fade with 'last updated'. Tests for the fade."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-09T22:40:00+00:00",
+     "role": "l2",
+     "text": "Picked up again after the overnight session limit. Continuing with the note form."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-10T01:20:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #313 merged. Wardens post a dated conditions note shown on the hut page; old notes fade."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-09T12:40:00+00:00",
+     "kind": "resume-failed",
+     "reason": "The engine's session limit was reached overnight; the task resumed after the limit reset in the morning."
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-10T00:10:00+00:00",
+     "kind": "delivery",
+     "number": 313
+    },
+    {
+     "id": "e3",
+     "at": "2026-11-10T00:50:00+00:00",
+     "kind": "delivery",
+     "number": 313
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-10T00:25:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Note has no length limit"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Limited to 500 characters."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "bunk-allocation",
+   "title": "Allocate bunks automatically",
+   "state": "done",
+   "created": "2026-11-09T10:00:00+00:00",
+   "reported": "2026-11-12T20:02:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-12T20:17:00+00:00",
+   "tokens": 1900000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-09T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: wardens assign bunks on paper each evening. Assign them automatically, keeping groups together and putting early leavers near the door."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-09T10:30:00+00:00",
+     "role": "operator",
+     "text": "This changes how every warden works. Don't merge it until I've shown it at the wardens' meeting on Thursday."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-09T10:40:00+00:00",
+     "role": "l2",
+     "text": "Understood: I will hold the merge until after Thursday's meeting."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-09T11:00:00+00:00",
+     "role": "l2",
+     "text": "Plan: allocate bunks per room after the day's bookings close, groups together, early departures nearest the door, and let the warden drag guests between bunks. Tests for a group bigger than a room."
+    },
+    {
+     "id": "m5",
+     "at": "2026-11-09T17:50:00+00:00",
+     "role": "operator",
+     "text": "Held as planned. Thursday."
+    },
+    {
+     "id": "m6",
+     "at": "2026-11-12T19:02:00+00:00",
+     "role": "operator",
+     "text": "The wardens liked it. Go ahead and merge."
+    },
+    {
+     "id": "m7",
+     "at": "2026-11-12T20:02:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #311 merged after the wardens' meeting. Bunks are assigned each evening, groups together, early leavers near the door; manual moves stay."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-11-09T15:50:00+00:00",
+     "audience": "operator",
+     "text": "PR #311 is green and reviewed. Do you want it merged before Thursday after all, or held as planned?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-11-09T17:50:00+00:00",
+      "by": "operator",
+      "message": "m5"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-09T14:20:00+00:00",
+     "kind": "delivery",
+     "number": 311
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-09T15:35:00+00:00",
+     "kind": "delivery",
+     "number": 311
+    },
+    {
+     "id": "e3",
+     "at": "2026-11-09T17:52:00+00:00",
+     "kind": "merge-approval-refused",
+     "reason": "Operator holds the merge until the wardens see it at Thursday's meeting."
+    },
+    {
+     "id": "e4",
+     "at": "2026-11-12T19:32:00+00:00",
+     "kind": "delivery",
+     "number": 311
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-09T14:35:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Allocation reshuffles guests already moved by hand"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Rooms with a broken bunk are filled to full count"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Manual moves are kept."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "Bunks can be marked out of use."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "arrivals-print",
+   "title": "Printable arrivals sheet for wardens",
+   "state": "done",
+   "created": "2026-11-10T09:00:00+00:00",
+   "reported": "2026-11-10T11:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-10T11:30:00+00:00",
+   "tokens": 600000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-10T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: wardens print the day's arrivals. Give them a clean printable sheet."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-10T09:15:00+00:00",
+     "role": "l2",
+     "text": "Plan: a print view of the day's arrivals with bunk, meals and dietary notes, one page per room. Test the page breaks."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-10T11:20:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #315 merged. A printable arrivals sheet, one page per room, with bunks, meals and dietary notes."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-10T10:35:00+00:00",
+     "kind": "delivery",
+     "number": 315
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-10T10:50:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Dietary notes are cut off when long"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "They wrap."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "meal-orders",
+   "title": "Pre-order evening meals",
+   "state": "done",
+   "created": "2026-11-11T09:00:00+00:00",
+   "reported": "2026-11-11T13:45:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-11T14:00:00+00:00",
+   "tokens": 1200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-11T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: let guests pre-order the evening meal and packed lunches when booking, so wardens know how much to cook."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-11T09:25:00+00:00",
+     "role": "l2",
+     "text": "Plan: meal options per hut on the booking form, editable until 48 hours before arrival; the arrivals sheet shows the counts. Tests for editing after the cutoff."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-11T10:20:00+00:00",
+     "role": "operator",
+     "text": "At the hut. Some huts take cash only."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-11T13:45:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #317 merged. Guests pre-order meals until 48 hours before; the arrivals sheet shows counts; payment stays at the hut."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-11-11T09:40:00+00:00",
+     "audience": "operator",
+     "text": "Should meals be paid with the deposit or at the hut?",
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-11-11T10:20:00+00:00",
+      "by": "operator",
+      "message": "m3"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-11T12:20:00+00:00",
+     "kind": "delivery",
+     "number": 317
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-11T13:15:00+00:00",
+     "kind": "delivery",
+     "number": 317
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-11T12:35:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Meal counts include cancelled bookings"
+      },
+      {
+       "id": "F2",
+       "severity": "low",
+       "title": "Cutoff message does not say when it passed"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Cancelled bookings are excluded."
+      },
+      {
+       "finding_id": "F2",
+       "disposition": "fixed",
+       "reason": "States the cutoff time."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "hut-photos",
+   "title": "Photo gallery per hut",
+   "state": "done",
+   "created": "2026-11-12T10:00:00+00:00",
+   "reported": "2026-11-12T13:05:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-12T13:15:00+00:00",
+   "tokens": 700000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-12T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: each hut page should have a few photos the warden can upload."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-12T10:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: up to eight photos per hut, uploaded by its warden, resized on upload, with a caption. Tests for the size limit."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-12T13:05:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #319 merged. Wardens upload up to eight captioned photos per hut."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-12T11:50:00+00:00",
+     "kind": "delivery",
+     "number": 319
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-12T12:35:00+00:00",
+     "kind": "delivery",
+     "number": 319
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-12T12:05:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Large uploads time out on slow hut connections"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Resized in the browser before upload."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "booking-search-speed",
+   "title": "Speed up the availability search",
+   "state": "done",
+   "created": "2026-11-13T09:00:00+00:00",
+   "reported": "2026-11-13T12:45:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-13T12:55:00+00:00",
+   "tokens": 1000000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-13T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: searching availability across all huts takes several seconds. Make it fast."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-13T09:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: precompute free beds per hut per night when bookings change instead of counting at search time. Test that the counts match a full recount."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-13T12:45:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #321 merged. Availability search reads precomputed free beds and returns in well under a second."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-13T11:20:00+00:00",
+     "kind": "delivery",
+     "number": 321
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-13T12:15:00+00:00",
+     "kind": "delivery",
+     "number": 321
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-11-13T11:35:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Counts drift if a booking is edited in the warden view"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Warden edits update the counts too; test added."
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "current": [
+  {
+   "slug": "warden-app-offline",
+   "title": "Let the warden view work without signal",
+   "state": "running"
+  }
+ ],
+ "chat": [
+  {
+   "id": "c1",
+   "at": "2026-11-02T19:00:00+00:00",
+   "role": "operator",
+   "text": "Most huts close for winter mid-November. No bookings when closed, but the winter rooms stay open, first come first served.",
+   "turn": "t1"
+  },
+  {
+   "id": "c2",
+   "at": "2026-11-02T19:02:00+00:00",
+   "role": "l3",
+   "text": "Noted for the closures task.",
+   "turn": "t1"
+  },
+  {
+   "id": "c3",
+   "at": "2026-11-09T08:30:00+00:00",
+   "role": "operator",
+   "text": "Bunk allocation: I want the wardens to see it before it goes live.",
+   "turn": "t2"
+  },
+  {
+   "id": "c4",
+   "at": "2026-11-09T08:32:00+00:00",
+   "role": "l3",
+   "text": "Passed on to the bunk allocation owner: hold the merge until after Thursday's meeting.",
+   "turn": "t2"
+  }
+ ],
+ "earlier": []
+}
