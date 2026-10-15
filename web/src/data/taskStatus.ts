@@ -1,4 +1,5 @@
-import type { Decision, TaskRow } from "./api";
+import type { Attention, TaskRow } from "./api";
+import { isStep } from "./decisions";
 import { localTimes } from "./observed";
 
 function text(value: unknown): string {
@@ -36,7 +37,7 @@ function questionRecords(task: TaskRow): Record<string, unknown>[] {
 }
 
 /** Read-only wording shared by task rows and pages. It creates no action, recovery or timer. */
-export function taskExplanation(task: TaskRow, decision?: Decision, includeStateLabel = false): string | null {
+export function taskExplanation(task: TaskRow, decision?: Attention, includeStateLabel = false): string | null {
   // Cards need a primary label; task pages already show the state, so they say only its reason.
   const label = (value: string) => includeStateLabel ? value : null;
   const state = task.state;
@@ -47,7 +48,7 @@ export function taskExplanation(task: TaskRow, decision?: Decision, includeState
   const questions = records.filter((q) => q["status"] === "open"
     && (q["audience"] === "l3" || !task["handed_back"] || text(q["asked"]) > text(task["handed_back"])));
   const incomingQuestion = decision?.id && !records.some((q) => q["id"] === decision.id
-    && Number(q["revision"] ?? 1) >= (decision.revision ?? 1) && text(q["asked"]) >= text(decision.asked))
+    && Number(q["revision"] ?? 1) >= ((isStep(decision) ? null : decision.revision) ?? 1) && text(q["asked"]) >= text(decision.asked))
     && (!task["handed_back"] || text(decision.asked) > text(task["handed_back"]));
   const coordinator = questions.find((q) => q["audience"] === "l3" && !q["response"]);
   const question = statusExcerpt(coordinator?.["detail"] ?? coordinator?.["question"]);

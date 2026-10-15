@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Decision } from "./api";
-import { attentionSummary, decisionKind, headline, turnLabel } from "./decisions";
+import type { Decision, Step } from "./api";
+import { attentionPath, attentionSummary, decisionKind, headline, isStep, turnLabel } from "./decisions";
 
 const question = (id: string): Decision => ({ project: "atlas", slug: "landing-window", id, kind: "asks" });
 const review: Decision = { project: "atlas", slug: "landing-window", kind: "review", pr: 12, question: "Review PR #12 before merge" };
@@ -28,6 +28,20 @@ describe("the operator's turn", () => {
     expect(turnLabel([step])).toBe("Your turn · 1 question");
     const choice = { ...step, options: [{ key: "a", label: "Approve", text: "Approve it." }] };
     expect(turnLabel([choice], true)).toBe("Your turn · 1 question");
+  });
+
+  it("names an operator step on the task it names, and counts steps apart from questions", () => {
+    const step: Step = {
+      project: "atlas", slug: null, kind: "step", id: "s1", asked_by: "l3", asked: "2026-10-15T09:00:00Z", alert_key: "atlas:step:s1",
+      question: "Restore the service checkout.\n\n```run\nexample-tool repair-checkout\n```", tasks: [{ slug: "landing-window", title: "Landing window" }],
+    };
+    expect(isStep(step)).toBe(true);
+    expect(isStep(review)).toBe(false);
+    expect(turnLabel([step], true)).toBe("Your turn · Restore the service checkout.");
+    expect(turnLabel([question("scope"), step], true)).toBe("Your turn · 1 question · Restore the service checkout.");
+    expect(turnLabel([step])).toBe("Your turn · 1 step");
+    expect(attentionSummary([question("scope"), step, review])).toBe("1 question · 1 step · 1 review");
+    expect(attentionPath(step)).toBe("/");
   });
 
   it("counts reviews apart from questions, stops and faults", () => {
