@@ -954,7 +954,7 @@ blocks automating it.
 | Environment | Entry point | Establishes | Does not establish | Status |
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
-| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself, on Ubuntu 24.04 x86_64 | Desktop login/logout, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
+| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself; with `TRUST`, the installer's consented certificate trust opening its private link in Playwright's Chromium and Firefox without a warning; on Ubuntu 24.04 x86_64 | Desktop login/logout, distribution or snap browsers, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
 | Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop ends every descendant and whose time limits hold; the suite's read-only-home cases, each confining a child with Seatbelt or Codex's own sandbox; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
@@ -1377,10 +1377,15 @@ after checking that the `install.sh` it serves is the candidate's. `public-updat
 baseline with the same command for its tag, waits for its daemon's own release lookup to offer the
 candidate in `alt doctor` and the terminal's notice, runs `alt update` and must keep settings, TLS
 identity and data; an update whose startup fails must then restore the candidate.
-Retain its results before discarding the VM. The hosted workflow
-runs none of these phases and does not prove a minimal OS install or login/logout behavior, browser/device CA trust,
-a download from GitHub's published release, native confinement or provider compatibility. There is no browser test
-in this harness. The [macOS installation lane](#macos-installation-lane) covers the Mac; this Linux
+The `trust` phase runs the built `install.sh` through its public command like `bootstrap`, but in a
+terminal of the account's own, after Firefox's first start has made its profile. The terminal answers
+yes to the installer's offer to trust Altitude's certificate, which must report trusting Chromium's
+database (created, since Chromium reads it but never creates it) and the Firefox profile's. The
+installer's private link must then open First run in Chromium and a second link from `alt pair` in
+Firefox, while both browsers with fresh stores refuse the certificate. Its browsers are Playwright's
+builds, so it does not establish distribution or snap browsers. Retain its results before discarding the VM. The hosted workflow
+runs none of these phases and does not prove a minimal OS install or login/logout behavior, device CA trust,
+a download from GitHub's published release, native confinement or provider compatibility. The [macOS installation lane](#macos-installation-lane) covers the Mac; this Linux
 evidence is partial acceptance toward #226 and does not close it or establish public readiness.
 
 ### Local VM run
@@ -1434,6 +1439,17 @@ installed daemon's release lookup then go to GitHub:
 
 ```sh
 make installation-vm RESULTS=/tmp/altitude-vm BASELINE=v0.1.0-rc.2 PUBLIC=1
+```
+
+`TRUST=1` builds both versions from `SOURCE` and runs only the `trust` phase. While the guest is still
+online, the runner downloads the `playwright-core` package `web/pnpm-lock.yaml` pins, checks it against
+the lock's integrity, and copies it into the guest with this host's Node.js. The guest then installs
+Playwright's Chromium and Firefox with their system libraries, NSS's `certutil`, and a `chromium`
+command on its PATH, as an installed Chromium has. The online card is then unplugged as usual, and
+`guest-browsers.log` keeps the installation's output:
+
+```sh
+make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main TRUST=1
 ```
 
 The runner downloads the current Ubuntu 24.04 cloud image, checks its signed checksum with the
