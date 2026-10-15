@@ -213,7 +213,7 @@ def launch_input():
     in the launcher's job folders as it does before that job's supervisor takes it."""
     if not DARWIN:
         return None  # Linux hands the input over systemd-run's pipe, with no job folder to read
-    job, secret = name("input"), f"fixture-sign-in-{NONCE}"
+    job, marker = name("input"), f"fixture-{NONCE}"
     jobs = Path(os.path.realpath(platform._jobs()))
     pending = jobs / f"altitude-probe-pending-{NONCE}"
     settings = Path.home() / f".altitude-probe-{NONCE}-settings"
@@ -222,7 +222,7 @@ def launch_input():
         own.mkdir()
         try:
             pending.mkdir(mode=0o700, parents=True)
-            (pending / "stdin").write_text(json.dumps({"SIGN_IN": secret}) + "\n")
+            (pending / "stdin").write_text(json.dumps({"PROBE_SIGN_IN": marker}) + "\n")
             settings.mkdir()
             (settings / "settings.json").write_text("{}")
             script = (f'read rest; [ "$rest" = own-input ] && echo input; '
@@ -239,18 +239,18 @@ def launch_input():
                       f"echo x >> '{pending}/stdin' 2>/dev/null && echo write-pending")
             launch = platform.job_command(job, common.with_launch_env(["/bin/sh", "-c", script]), env(),
                                           writable=(own,), runtime_max=60)
-            result = subprocess.run(launch, input=json.dumps({"PROBE_FOLDER": str(own), "PROBE_SIGN_IN": secret})
+            result = subprocess.run(launch, input=json.dumps({"PROBE_FOLDER": str(own), "PROBE_SIGN_IN": marker})
                                     + "\nown-input\n", capture_output=True, text=True, timeout=90)
-            signed_in = (own / "sign-in").read_text() == secret
+            signed_in = (own / "sign-in").read_text() == marker
             untouched = (os.listdir(settings) == ["settings.json"] and (settings / "settings.json").read_text() == "{}"
-                         and (pending / "stdin").read_text() == json.dumps({"SIGN_IN": secret}) + "\n")
+                         and (pending / "stdin").read_text() == json.dumps({"PROBE_SIGN_IN": marker}) + "\n")
         finally:
             shutil.rmtree(pending, ignore_errors=True)
             shutil.rmtree(settings, ignore_errors=True)
     check(result.stdout.split() == ["input", "sign-in", "link", "read-linked", "write-own"] and signed_in and untouched
-          and secret not in json.dumps(launch), f"launch input: {result.stdout.split()} {result.stderr.strip()[-300:]!r} "
+          and marker not in json.dumps(launch), f"launch input: {result.stdout.split()} {result.stderr.strip()[-300:]!r} "
                                                f"sign-in received: {signed_in}; untouched: {untouched}; "
-                                               f"sign-in on the command line: {secret in json.dumps(launch)}")
+                                               f"sign-in on the command line: {marker in json.dumps(launch)}")
     check(not platform.job_active(job, env()), "job still active after it ended")
     return ("the job takes its folder and sign-in from its input's first line, not its command line, writes its own "
             "folder and reads but cannot write the home settings linked into it, and can neither list the launcher's "
