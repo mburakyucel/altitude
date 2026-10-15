@@ -132,6 +132,24 @@ class ArchiveTest(unittest.TestCase):
         with self.assertRaisesRegex(backup.PolicyError,'namespace IDs'):
             backup.restore(self.altered(change))
 
+    def test_selinux_labels_stay_with_the_runtime(self):
+        # A Podman machine labels every volume file; the label is the runtime's, not the user's data (#643).
+        os.setxattr(self.home/'private', 'user.fixture', b'private-metadata')
+        listed, read = os.listxattr, os.getxattr
+        with mock.patch.object(backup.os, 'listxattr', side_effect=lambda path, **kw: [*listed(path, **kw), 'security.selinux']), \
+             mock.patch.object(backup.os, 'getxattr', side_effect=lambda path, key, **kw:
+                               self.fail('read the SELinux label') if key == 'security.selinux' else read(path, key, **kw)):
+            stream, expected = self.archive()
+        home, projects = self.output()
+        self.assertEqual(backup.restore(stream, home, projects), expected)
+        self.assertEqual(os.getxattr(home/'private', 'user.fixture'), b'private-metadata')
+        def change(member, data):
+            if member.name == 'home/private':
+                member.pax_headers[backup.XATTR] = json.dumps({'security.selinux': 'c3lzdGVtX3U='})
+            return member, data
+        with self.assertRaisesRegex(backup.PolicyError, 'security labels'):
+            backup.restore(self.altered(change))
+
     def test_policy_categories_survive_content_free_helper_exit(self):
         for code in range(80,86):
             with mock.patch.object(backup,'helper',side_effect=backup.PolicyError(code,'private filename')):

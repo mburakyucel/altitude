@@ -6,8 +6,8 @@ Linux-first rootless container support retains the full Linux/Mac/onboarding obj
 native task/coordinator sandbox, launcher lifecycle/recovery and private backup/restore gates pass
 on the recorded Linux tuple. Actual-daemon phone/desktop onboarding, task Stop/resume and queued
 continuation after replacement pass with fictional engines. On an Apple silicon Mac, the launcher
-and in-guest logout lanes pass in a throwaway Ubuntu arm64 guest; a Mac-side VM controller and Mac
-logout, restart and sleep/wake remain open.
+and in-guest logout lanes pass in a throwaway Ubuntu arm64 guest, and the launcher runs the container
+from macOS through a dedicated Podman machine. Real Mac logout and sleep/wake remain open.
 The [candidate build and bootstrap gate](CONTAINERS.md) are under validation. Containerized Linux does
 not establish native macOS, Xcode or iOS build support. No container-security advantage is assumed.
 The candidate implements host-side continuation after replacement, preserving ordinary restart
