@@ -448,7 +448,10 @@ describe("Pair this device", () => {
     expect(screen.getByText(/In Keychain Access, open “Altitude CA 4F7K”, expand Trust/)).toBeVisible();
     await user.selectOptions(chooser, "linux");
     expect(screen.getByText("chrome://certificate-manager")).toBeVisible();
-    expect(screen.getByText("openssl x509 -in ~/Downloads/altitude.crt -noout -subject -fingerprint -sha256")).toBeVisible();
+    const command = screen.getByText("openssl x509 -in ~/Downloads/altitude.crt -noout -subject -fingerprint -sha256");
+    expect(command).toBeVisible();
+    // A forged page could put a look-alike command on the clipboard, so this one is typed, not copied.
+    expect(within(command.closest("li")!).queryByRole("button", { name: "Copy" })).toBeNull();
     await user.selectOptions(chooser, "linux-firefox");
     // Firefox's import dialog shows the SHA-256 before anything is trusted.
     expect(screen.getByText(/^Click View\. Compare its name/)).toBeVisible();

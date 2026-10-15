@@ -78,7 +78,7 @@ function Instructions({ kind, name, guide, installLink, here }: { kind: Kind; na
   const steps = <ol className="pair-instructions">
     <li><a className="btn btn-primary" href={kind === "apple" ? "/api/certificate/altitude.mobileconfig" : "/api/certificate/altitude.crt"}>{kind === "apple" ? "Download the profile" : "Download the certificate"}</a></li>
     {system === "mac" ? <li>In Finder, select altitude.crt in Downloads and press Space. {compare}</li>
-      : system === "linux" ? <li>In a terminal, run: <Command text="openssl x509 -in ~/Downloads/altitude.crt -noout -subject -fingerprint -sha256" />{compare}</li>
+      : system === "linux" ? <li>In a terminal, type this command yourself: <code>openssl x509 -in ~/Downloads/altitude.crt -noout -subject -fingerprint -sha256</code>. {compare}</li>
       : system === "linux-firefox" ? null : <li>{compare}</li>}
     {system === "apple" ? <>
       <li>Open Settings › Profile Downloaded. It must list one Certificate, “{name}”. Tap More Details to compare the SHA-256, then tap Install.</li>
