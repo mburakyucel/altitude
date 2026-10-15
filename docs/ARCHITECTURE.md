@@ -1684,7 +1684,8 @@ on its own thread so the reader keeps draining output while it waits for the pro
 does and wakes a blocked owner unless it is stopped or faulted; a task no longer running or blocked, or on a later
 attempt than the one current when the page named the command, gets none. It is no conversation entry and grants
 nothing. For a project terminal, `l3.queue_message` queues it for the coordinator as a `terminal` system turn,
-which the conversation shows as a system line; a project no longer managed gets none. When naming the command
+which the conversation shows as a system line; a project no longer managed gets none. When a command that looks
+finished is an open [operator step](#operator-steps)'s, the same notice clears that step (`tasks.step_ran`) and says so. When naming the command
 fails, the page still types it and asks the operator to reply in chat instead. altd does not see the command's exit status, so the notice sends the
 reader to `alt task terminal` or `alt project terminal` to verify; a shell builtin that waits for input without a child looks finished.
 A command the operator types without a `run` block sends no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
@@ -2933,6 +2934,28 @@ refresh.
 Unknown overview reads never imply zero attention. Failed refreshes identify saved counts and
 status as stale; Work links stay available, while Needs you disables answers until a fresh read.
 App Back and browser history preserve the originating Work or Needs you view.
+
+### Operator steps
+
+A command only the operator can run for a project's own recovery, with no owning task to ask it, is an
+operator step: the project's `steps.json` under `ALTITUDE_HOME`, written by `tasks.publish_step`. The
+coordinator publishes one with `alt project step -`, which altd answers only on that project's coordinator
+socket, as it does `alt project message`. Stdin is the plain question: its first line names the step and it
+holds exactly one `run` block of one command line, split at fences as the page splits them
+(`tasks.run_commands`); `--task <slug>` names each unfinished task waiting on it. Publishing the same command
+again revises that step in place and adds the tasks it names. The step is a row in the overview queue and the project's decisions with no
+`slug`, `kind` `step`, its `id` and the tasks it names, so Needs you shows it as a card in the project's section
+with **Open in terminal** opening the project terminal (spec §3.8.4), and the badge, alerts and digest count
+it. A task it names that is blocked or reported, without a fault, Stop or pending resume, reads the operator's
+turn with the step's first line
+(`tasks.block_status`), on its Work row and task page, instead of waiting on the coordinator; the task page
+keeps the owner's open note to L3 out of sight meanwhile. The project terminal's notice that exactly that command
+looks finished clears the step (`tasks.step_ran`) and asks the coordinator to verify the output and tell the
+tasks it named; a terminal that ended first leaves the step open; `alt project step --withdraw <id> --reason '…'` clears one settled
+another way, and removing the project withdraws its steps. The notice is queued before the step clears, so a
+notice that fails leaves the step in Needs you. A stale Needs you read offers the command with Copy only. The
+project's `events.log` records `step` rows for `asked`, `revised`, `ran` and `withdrawn`.
+A step for an owner's own work stays on that task as its question, with its task terminal.
 
 ### From model judgment to a task question
 

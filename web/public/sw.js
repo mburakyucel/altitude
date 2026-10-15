@@ -138,12 +138,13 @@ async function pending() {
       if (!row.alert_key || decisions.has(row.alert_key)) continue; // reviews, faults and stops alert no one
       const query = new URLSearchParams({ question: row.id }); // the link Needs you uses for that ask
       if (row.revision !== undefined && row.revision !== null) query.set("revision", String(row.revision));
+      // An operator step has no task: it names only that it is one and opens Needs you, which shows it (decisions.ts).
       decisions.set(row.alert_key, {
         project: row.project,
-        title: row.title || row.slug,
+        title: row.slug === null ? "A command to run" : row.title || row.slug,
         held: Boolean(row.alert_held),
         tag: row.alert_key,
-        url: `/projects/${row.project}/tasks/${row.slug}?${query}`,
+        url: row.slug === null ? "/" : `/projects/${row.project}/tasks/${row.slug}?${query}`,
       });
     }
     return [...decisions.values()];

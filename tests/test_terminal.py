@@ -536,6 +536,45 @@ class TestCoordinatorCommand(TerminalCase):
         self.assertIn("handed-9", terminal.output(self.project, None)["text"])
         self.assertEqual([row for row in T.pending(self.project, self.slug) if row.get("by") == "terminal"], [])
 
+    def test_the_notice_for_an_operator_step_clears_it_from_needs_you(self):
+        step = T.publish_step(self.project, "Restore the checkout.\n\n```run\necho restored-$((2+2))\n```", [self.slug])
+        terminal.hand(self.project, None, self.ident, "echo restored-$((2+2))")
+        self.type("echo restored-$((2+2))\r")
+        text = self.notice()
+        self.assertIn(f"It cleared that operator step from Needs you; once verified, tell the tasks it named ({self.slug})", text)
+        self.assertEqual(T.operator_steps(self.project), [])
+        self.assertEqual([(row["action"], row["id"]) for row in S.read_project_log(self.project) if row["kind"] == "step"],
+                         [("asked", step["id"]), ("ran", step["id"])])
+
+    def test_an_operator_step_stays_when_its_notice_cannot_be_queued(self):
+        # Review finding: clearing before queueing let one failure empty Needs you with L3 never told.
+        step = T.publish_step(self.project, "Restore the checkout.\n\n```run\necho kept\n```", [self.slug])
+        failed = threading.Event()
+
+        def refuse(*_args, **_kwargs):
+            failed.set()
+            raise OSError("fixture queue failure")
+        self.patch(l3, "queue_message", side_effect=refuse)
+        terminal.hand(self.project, None, self.ident, "echo kept")
+        self.type("echo kept\r")
+        self.assertTrue(failed.wait(10))
+        time.sleep(.2)
+        self.assertEqual([row["id"] for row in T.operator_steps(self.project)], [step["id"]])
+
+    def test_an_operator_step_stays_when_the_terminal_ends_before_its_command_finished(self):
+        # Review finding: clearing on the ended-first notice emptied Needs you while the work was still blocked.
+        step = T.publish_step(self.project, "Restore the checkout.\n\n```run\nsleep 30\n```", [self.slug])
+        terminal.hand(self.project, None, self.ident, "sleep 30")
+        self.type("sleep 30\r")
+        time.sleep(.5)
+        term = self.current()
+        terminal.close(self.project, None)
+        self.gone(term)
+        text = self.notice()
+        self.assertIn("the project terminal ended (closed) before the command you handed the operator finished", text)
+        self.assertNotIn("cleared", text)
+        self.assertEqual([row["id"] for row in T.operator_steps(self.project)], [step["id"]])
+
     def test_a_command_the_operator_typed_themselves_sends_no_notice(self):
         self.type("echo mine\r")
         self.output(until="mine\r\n")

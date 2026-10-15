@@ -9,6 +9,7 @@ import shutil
 import stat
 import struct
 import subprocess
+import unicodedata
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -2982,6 +2983,8 @@ def block_status(project: str, task: dict) -> tuple[str, str]:
         waits.append(headline(asked[0]["question"]))
     elif asked:
         waits.append(f"{len(asked)} question{'s' if len(asked) != 1 else ''}")
+    if stopped and not task.get("resume_after"):
+        waits.extend(headline(step["text"]) for step in operator_steps(project) if task["slug"] in step["tasks"])
     if number:
         waits.append(f"review PR #{number}")
     if waits:
@@ -3041,7 +3044,8 @@ def review_row(project: str, task: dict) -> dict | None:
 
 
 def decisions(project: str) -> list[dict]:
-    """Questions and held reviews on the operator's turn, and explicit operator blocks; a pause needs no answer.
+    """Questions and held reviews on the operator's turn, explicit operator blocks and the project's open operator
+    steps (rows with no `slug`); a pause needs no answer.
 
     Each question carries `alert_key`, the one identity altd's wake, the page and the service worker alert
     on: its question group, since the operator's latest message on that task. A rewording, an escalation or
@@ -3049,8 +3053,8 @@ def decisions(project: str) -> list[dict]:
     it alerts again even when the reply and the new ask fall between two reads. The key comes from the task
     record that put the question on the operator's turn, so a reply arriving meanwhile never lends its time
     to a question it handed back."""
-    rows = []
-    for task in S.list_tasks(project):
+    rows, tasks = [], S.list_tasks(project)
+    for task in tasks:
         questions = question_views(project, task["slug"])
         turn = {(q["id"], q["revision"]) for q in operator_questions(task)}
         replied = [task["replied"]] if task.get("replied") else []
@@ -3062,7 +3066,112 @@ def decisions(project: str) -> list[dict]:
                 and (task.get("waiting_on") == OPERATOR_MESSAGE_ROLE
                      or task.get("stop_id") and stopped_by(task) != "l3")):
             rows.append(decision_row(project, task))
+    titles = {task["slug"]: task.get("title") or task["slug"] for task in tasks if task["state"] not in ("done", "rejected")}
+    rows.extend({"project": project, "slug": None, "kind": "step", "id": step["id"], "question": step["text"],
+                 "asked_by": "l3", "asked": step["asked"], "since": step["asked"], "alert_key": f"{project}:step:{step['id']}",
+                 "tasks": [{"slug": slug, "title": titles[slug]} for slug in step["tasks"] if slug in titles]}
+                for step in operator_steps(project))
     return rows
+
+
+# An operator step: a command only the operator can run, which L3 hands them for the project's own recovery
+# (a service checkout to restore, a project fault with no task). It waits in Needs you, opening the project
+# terminal, until that terminal's notice for the same command or L3 clears it; the tasks it names show it as the
+# operator's turn meanwhile. A step an owner must verify is the owner's question instead (`block --for-operator`).
+
+def _steps_path(project: str) -> Path:
+    return config.project_dir(project) / "steps.json"
+
+
+def operator_steps(project: str) -> list[dict]:
+    """The project's open operator steps, oldest first."""
+    steps = S.read_json(_steps_path(project), [])
+    return steps if isinstance(steps, list) else []
+
+
+def run_commands(text: str) -> list[str]:
+    """The `run` blocks in prose, split at fences exactly as the page's `codeBlocks` (Prose.tsx) splits them."""
+    commands, lines, fence, info = [], [], "", ""
+    for line in text.split("\n"):
+        marker = re.match(r"^\s*(`{3,}|~{3,})(.*)$", line)
+        delimiter = marker.group(1) if marker else ""
+        if marker and (not fence or delimiter[0] == fence[0] and len(delimiter) >= len(fence) and not marker.group(2).strip()):
+            if fence and info.strip() == "run":
+                commands.append("\n".join(lines))
+            lines, info, fence = [], "" if fence else marker.group(2), "" if fence else delimiter
+        else:
+            lines.append(line)
+    return [*commands, "\n".join(lines)] if fence and info.strip() == "run" else commands
+
+
+def _runnable(command: str) -> bool:
+    """The page's `runCommand` rule (CodeBlock.tsx): one non-empty line with no control or invisible character."""
+    return bool(command.strip()) and not re.search(r"[\r\n  ]", command) and not any(
+        unicodedata.category(c) in ("Cc", "Cf") for c in command)
+
+
+def publish_step(project: str, text: str, tasks: list[str] = ()) -> dict:
+    """L3 hands the operator one command. The text's first line names the step, and it carries exactly one `run`
+    block. Publishing the same command again revises that step in place, so it never shows twice, adding the tasks
+    it names to those already waiting."""
+    # Review finding: a fence line ending in a bare CR opened a `run` block here but not on the page.
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    commands = run_commands(text)
+    if len(commands) != 1 or not _runnable(commands[0]):
+        raise TransitionError("an operator step carries exactly one `run` block holding one command line")
+    command, tasks = commands[0], list(dict.fromkeys(tasks))
+    with S.project_lock(project):
+        for slug in tasks:
+            if S.load_task(project, slug).get("state") in ("done", "rejected"):
+                raise TransitionError(f"{slug} is finished; a step names only tasks still waiting")
+        steps = operator_steps(project)
+        same = next((step for step in steps if step["command"] == command), None)
+        # A revision adds the tasks it names, so a republish after a failure never drops one still waiting.
+        step = {"id": same["id"] if same else uuid.uuid4().hex[:12], "asked": same["asked"] if same else S.now(),
+                "text": text, "command": command, "tasks": list(dict.fromkeys([*(same or {}).get("tasks", []), *tasks]))}
+        S.write_json(_steps_path(project), [*(row for row in steps if row is not same), step])
+        S.project_log(project, "step", action="revised" if same else "asked", id=step["id"], command=command, tasks=step["tasks"])
+    return step
+
+
+def _close_steps(project: str, keep, action: str, **fields) -> list[dict]:
+    with S.project_lock(project):
+        return _close_steps_locked(project, keep, action, **fields)
+
+
+def _close_steps_locked(project: str, keep, action: str, **fields) -> list[dict]:
+    steps = operator_steps(project)
+    closed = [step for step in steps if not keep(step)]
+    if closed:
+        S.write_json(_steps_path(project), [step for step in steps if keep(step)])
+    for step in closed:
+        S.project_log(project, "step", action=action, id=step["id"], command=step["command"], tasks=step["tasks"], **fields)
+    return closed
+
+
+def withdraw_steps_of_removed_project(project: str) -> None:
+    """Removal, under the project lock it holds: a project added again later never brings back an old incident's
+    command."""
+    _close_steps_locked(project, lambda step: False, "withdrawn", reason="the project was removed")
+
+
+def withdraw_step(project: str, step_id: str, reason: str) -> dict:
+    """L3 clears a step it verified another way, or no longer needs."""
+    if not (reason or "").strip():
+        raise TransitionError("withdrawing a step needs the reason: what L3 verified, or why it is no longer needed")
+    closed = _close_steps(project, lambda step: step["id"] != step_id, "withdrawn", reason=reason.strip())
+    if not closed:
+        raise TransitionError(f"no open operator step {step_id}")
+    return closed[0]
+
+
+def steps_for(project: str, command: str) -> list[dict]:
+    return [step for step in operator_steps(project) if step["command"] == command]
+
+
+def step_ran(project: str, command: str) -> list[dict]:
+    """The project terminal's notice for a handed command: the operator has done their part of any step it ran."""
+    return _close_steps(project, lambda step: step["command"] != command, "ran")
 
 
 def block_question(task: dict, asks: str | None = None) -> str:

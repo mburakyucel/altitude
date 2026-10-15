@@ -324,6 +324,16 @@ export const DecisionSchema = z
   })
   .passthrough();
 
+/**
+ * An operator step (altitude/tasks.py `publish_step`): a command only the operator can run, which L3 handed them
+ * for the project. It belongs to no task and names the `tasks` waiting on it.
+ */
+export const StepSchema = z.object({
+  project: z.string(), slug: z.null(), kind: z.literal("step"), id: z.string(), question: z.string(),
+  asked_by: z.literal("l3"), asked: z.string(), alert_key: z.string(), alert_held: z.boolean().nullish(),
+  tasks: z.array(z.object({ slug: z.string(), title: z.string() })),
+});
+
 export const QuestionGroupSchema = z.object({
   id: z.string(), revision: z.number(), anchor_id: z.string().nullish(),
   questions: z.array(DecisionSchema),
@@ -332,9 +342,10 @@ export const QuestionGroupSchema = z.object({
 /**
  * /api/project's `decisions` are the same rows as the overview queue (altitude/tasks.py decisions()),
  * but the project page has always read them defensively — every field stays optional here so a
- * thin row still parses, while the card fields keep their types instead of arriving as `unknown`.
+ * thin row still parses, while the card fields keep their types instead of arriving as `unknown`. An operator step
+ * has no task, so its `slug` is null.
  */
-export const ProjectDecisionSchema = DecisionSchema.partial().passthrough();
+export const ProjectDecisionSchema = DecisionSchema.partial().passthrough().extend({ slug: z.string().nullish() });
 
 export const WipSchema = z
   .object({
@@ -479,7 +490,7 @@ export const OverviewSchema = z
     deployment: z.enum(["native", "container"]).optional(),
     lifecycle: ContainerLifecycleSchema.nullish(),
     projects: z.array(ProjectRowSchema),
-    queue: z.array(DecisionSchema),
+    queue: z.array(z.union([StepSchema, DecisionSchema])),
     /** Improvement cards waiting for a decision or a task: listed after the queue, never counted with it. */
     suggestions: z.array(ImprovementRunSchema.extend({ project: z.string() })).default([]),
     wip: WipSchema,
@@ -928,6 +939,9 @@ export const ChatViewSchema = z
 export type MonitorSeat = z.infer<typeof MonitorSeatSchema>;
 export type RoutingRow = z.infer<typeof RoutingRowSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
+export type Step = z.infer<typeof StepSchema>;
+/** One Needs you item: a task's decision or a project's operator step. */
+export type Attention = Decision | Step;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
 export type Wip = z.infer<typeof WipSchema>;
 export type ProjectRow = z.infer<typeof ProjectRowSchema>;
