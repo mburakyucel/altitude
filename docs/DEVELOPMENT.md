@@ -1151,8 +1151,8 @@ Git-backed tests, so start a full run overnight; task records and transitions al
 It is a measurement, not a check: `make check` and the required CI never run it, and its counts gate
 nothing.
 
-`RESULTS/report.md` has one row per module, then each surviving edit's diff grouped by function;
-`RESULTS/mutmut.log` keeps mutmut's own output.
+`RESULTS/report.md` has one row per module, then each surviving edit's diff, headed by its mutant's
+name, grouped by function; `RESULTS/mutmut.log` keeps mutmut's own output.
 
 - **Killed**: a test failed with the edit in place, so the tests guard that code.
 - **Survived**: every selected test that reaches the function still passed.

@@ -223,8 +223,8 @@ def main() -> int:
         with ThreadPoolExecutor(os.cpu_count()) as pool:
             shown = pool.map(lambda mutant: subprocess.run([mutmut, "show", mutant], cwd=source, env=env, check=True,
                                                            capture_output=True, text=True).stdout, survivors)
-            # `mutmut show` prints its own "# name: status" line before the diff.
-            diffs = {mutant: text.split("\n", 1)[1] for mutant, text in zip(survivors, shown)}
+            # Each diff keeps `mutmut show`'s "# name: status" line, the name to check or rerun it by.
+            diffs = dict(zip(survivors, shown))
         version = subprocess.run([mutmut, "--version"], cwd=source, check=True, capture_output=True,
                                  text=True).stdout.strip()
         minutes = (time.monotonic() - started) / 60
