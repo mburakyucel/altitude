@@ -1977,8 +1977,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _trust_view(self) -> dict:
         """What the pairing screen needs to walk a device through trusting this installation's certificate."""
-        return {"local": self._local(), "https": isinstance(self.connection, ssl.SSLSocket),
+        local = self._local()
+        return {"local": local, "https": isinstance(self.connection, ssl.SSLSocket),
                 "check": TRUST is not None and isinstance(self.connection, ssl.SSLSocket),
+                # alt trust on the hosting computer trusts only Altitude's own CA, outside a container.
+                "command": local and TRUST is not None and not platform.containerized(),
                 "guide": tls.setup_guide(),
                 "certificate": {"name": TRUST.name} if TRUST else None}
 

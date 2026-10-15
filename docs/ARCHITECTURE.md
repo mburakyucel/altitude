@@ -335,8 +335,10 @@ installation with manual recovery through `~/.local/bin/alt pair`. The successfu
 and terminal output carry the link; configuration, activation/update receipts and diagnostics do
 not retain its raw code. The shell's private result file is removed by its existing exit cleanup.
 Trust guidance and the link lead the output; PATH setup and `alt doctor` are optional follow-up.
-The installer launches no browser and changes no trust store. Terminal/OS link handlers open a
-browser on the viewing device, so an SSH link using loopback refers to that device.
+The installer launches no browser. In a terminal on the hosting computer, not over SSH, and for
+Altitude's own CA, it runs `alt trust` before printing the link, which changes trust only after a yes
+typed in that terminal. Terminal/OS link handlers open a browser on the viewing device, so an SSH link
+using loopback refers to that device.
 
 `platform.py` is the platform seam: it owns the generated per-user daemon service, the jobs that run
 workers, reviews, machine commands, updates and restarts, their status and stop, resource limits, and the
@@ -439,7 +441,7 @@ Invalid TLS refuses startup or reports renewal failure without switching to HTTP
 completes its handshake on its own request thread within ten seconds, so a stalled client drops
 only itself and never delays other requests. External
 certificates are validated without replacement. Browser/device trust stays explicitly unknown
-until the user imports the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
+until the user trusts the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
 report the CA's name, SHA-256 fingerprint, expiry and scope, read from the certificate's own name
 constraints ("No limits" when it has none), with the URL and per-platform trust steps. A desktop or phone gets
 the public CA through a share window (`tls.Share`): for ten minutes it answers plain HTTP on the
@@ -463,11 +465,26 @@ window is still opening. The page keeps the window only in component state, neve
 query cache. **Open setup page** opens that same share URL in a new tab without opener access,
 retaining the original Settings page, certificate facts and sharing timer. The link is available
 only while sharing is open and disappears during closing or after expiry. `alt pair` takes its address
-from the same discovery. Sharing refuses loopback-only addresses; a browser on the hosting computer
-imports the public `ca.crt` reported by `alt doctor` directly. Trust installation stays a deliberate
-operator action in the browser or OS. Remote binding and trust remain explicit;
-HTTPS identifies Altitude, and pairing (below) decides who may use it. See
-[setup](SETUP.md#trust-https-on-each-device).
+from the same discovery. Sharing refuses loopback-only addresses; the hosting computer uses `alt trust`.
+Remote binding and trust remain explicit; HTTPS identifies Altitude, and pairing (below) decides who
+may use it. See [setup](SETUP.md#trust-https-on-each-device).
+
+`alt trust` (`tls.trust`, operator only) is the one place Altitude changes trust, for the hosting
+computer's own account. It takes the service from its record, requires a generated (managed) CA and the
+same HTTPS proof as `alt tls-share`, and works on a temporary copy of the proven bytes. The platform seam
+lists the account's browser stores and checks and changes them without administrator rights: on macOS
+the login keychain through `security` (`add-trusted-cert -r trustRoot -p ssl`, checked with
+`verify-cert` against the server certificate, which macOS confirms in its own password window), on Linux
+each NSS database (`~/.pki/nssdb`, snap Chromium's and every Firefox profile with a `cert9.db`, in the
+classic, XDG, snap or Flatpak profile folder) through
+`certutil -t C,,` (creating the one an installed Chromium-family browser reads but never creates), found by content because NSS keeps an earlier import's nickname; a Flatpak Chrome is
+named for its own import. The CA is added as "<name> · <first eight fingerprint digits>", and each
+change is checked afterwards rather than trusted from the tool's exit status. The question and answer
+use the controlling terminal (`/dev/tty`, with earlier keystrokes discarded), so standard input, which a
+piped installer fills with itself, never answers. It prints one undo command per store. `alt doctor` runs the same checks read-only for
+`certificate_trust.this_computer` and its next step. The access view's `trust.command` tells the pairing
+screen that a browser is on the hosting computer, outside a container, with a CA `alt trust` accepts, so
+it leads with that command; the page itself never changes the computer.
 
 The pairing screen checks that a device on the network trusts the installation's CA, not just the one
 certificate a warning bypass let through (`tls.TrustCheck`). At startup and after each daily

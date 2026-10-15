@@ -6,10 +6,11 @@ Only engine executables are fixtures; service control, TLS and recovery are real
 The whole lifecycle runs in one invocation; `reboot-install`, `logout-verify` and `reboot-verify` split an install
 over an SSH login from its checks once that login has closed and after the VM restarts. `recovery` installs the candidate over a baseline whose installation
 failed, after the documented cleanup. `bootstrap` runs the built install.sh through its public curl | sh command against a release
-server on this machine's loopback, whose name the root wrapper points here. `update` installs the baseline while that server
-answers for GitHub's release list and downloads, verifies that its daemon tries a release whose startup fails once and
-restores itself, then automatically activates the candidate, then opts out and uses the app's Update request for a
-newer synthetic release.
+server on this machine's loopback, whose name the root wrapper points here; `trust` runs it in a terminal that accepts
+its offer to trust Altitude's certificate, then opens the private link in Chromium and Firefox. `update` installs the
+baseline while that server answers for GitHub's release list and downloads, verifies that its daemon tries a release
+whose startup fails once and restores itself, then automatically activates the candidate, then opts out and uses the
+app's Update request for a newer synthetic release.
 `public-install` and `public-update` run docs/SETUP.md's command against GitHub itself (see Lifecycle.public). `mac` runs the whole macOS lifecycle under the throwaway HOME installation_mac.py gives it (see
 MacLifecycle); `mac-published` updates a published release to a later published one there, keeping the state made
 through the app (see MacLifecycle.published).
@@ -30,6 +31,7 @@ import pty
 import re
 import select
 import shutil
+import signal
 import socket
 import ssl
 import subprocess
@@ -40,6 +42,8 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
 
+# Where installation_vm.py --trust puts Playwright's browsers and its playwright-core package in the guest.
+BROWSERS, PLAYWRIGHT_CORE = Path("/opt/playwright"), Path("/opt/playwright-core")
 # A managed leaf one day from expiry, issued by the release's own tls._issue under the retained CA and server key.
 NEAR_EXPIRY = ("import os,sys,tempfile; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from altitude import config,tls\n"
                "issue=tls._openssl\n"
@@ -485,9 +489,10 @@ class Lifecycle:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         return httpd, requests
 
-    def bootstrap(self):
-        """The built install.sh, fetched and run by its public command, downloads, verifies and installs."""
-        old, old_sha, _, before, *_ = self.prepare()
+    def published_install(self, old: Path, before: dict):
+        """The baseline's install.sh, install.py and archive served as its release under the release's own host name,
+        which the root wrapper points at this machine; returns setup's public command, the served archive's path and
+        request line, the server and the request lines it answered."""
         script = self.baseline / "install.sh"
         repository = re.search(r"^REPOSITORY='([^']+)'$", script.read_text(), re.M).group(1)
         address = urlsplit(repository)
@@ -503,9 +508,16 @@ class Lifecycle:
         (releases / "latest/download/install.sh").write_bytes(script.read_bytes())
         (releases / "download" / before["version"] / "install.py").write_bytes((self.baseline / "install.py").read_bytes())
         served = releases / "download" / before["version"] / old.name
+        served.write_bytes(old.read_bytes())
         httpd, requests = self.release_server(server)
         self.env["CURL_CA_BUNDLE"] = str(server / "ca.crt")
-        command = f"curl --proto '=https' --tlsv1.2 -fsSL {repository}/releases/latest/download/install.sh | sh"
+        return (f"curl --proto '=https' --tlsv1.2 -fsSL {repository}/releases/latest/download/install.sh | sh", served,
+                f"GET /{served.relative_to(root)} ", httpd, requests)
+
+    def bootstrap(self):
+        """The built install.sh, fetched and run by its public command, downloads, verifies and installs."""
+        old, old_sha, _, before, *_ = self.prepare()
+        command, served, download, httpd, requests = self.published_install(old, before)
         try:
             # A download that does not match the checksum built into install.sh runs nothing.
             tampered = bytearray(old.read_bytes())
@@ -521,12 +533,100 @@ class Lifecycle:
             httpd.shutdown()
             write_json(self.results / "bootstrap-requests.json", requests)
             del self.env["CURL_CA_BUNDLE"]
-        assert sum(f"GET /{address.path.strip('/')}/releases/download/{before['version']}/{old.name} " in line
-                   for line in requests) == 2, requests
+        assert sum(download in line for line in requests) == 2, requests
         self.healthy("bootstrapped", before)
         self.doctor("bootstrapped", before)
         self.uninstall({})
         self.result["passed"] = True
+
+    def answered(self, label: str, command: str, prompt: str, reply: str, timeout: int = 300) -> str:
+        """COMMAND run by sh in a terminal of its own, as a person runs it, typing REPLY when PROMPT appears."""
+        pid, primary = pty.fork()
+        if pid == 0:
+            os.chdir(self.home)
+            os.execve("/bin/sh", ["sh", "-c", command], self.env)
+        output, typed, deadline = b"", False, time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:
+                if not select.select([primary], [], [], 1)[0]:
+                    continue
+                try:
+                    chunk = os.read(primary, 4096)
+                except OSError:  # the terminal closed with the command's last process
+                    break
+                if not chunk:
+                    break
+                output += chunk
+                if not typed and prompt.encode() in output:
+                    os.write(primary, reply.encode() + b"\n")
+                    typed = True
+            else:
+                os.kill(pid, signal.SIGKILL)
+        finally:
+            os.close(primary)
+        status = os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
+        text = output.decode(errors="replace").replace("\r\n", "\n")
+        self.sequence += 1
+        (self.results / f"{self.sequence:02d}-{label}.log").write_text(f"argv: {command}\nexit: {status}\n{text}")
+        self.result["steps"].append({"step": label, "exit": status})
+        print(f"{label}: exit {status}", flush=True)
+        assert status == 0 and typed, f"{label}: exit {status}, answered {typed}; see the log"
+        return text
+
+    def browse(self, label: str, browser: str, profile: Path, address: str, home: Path | None = None) -> dict:
+        """One visit in the guest's Playwright browser (installation_browsers.mjs), with HOME as the account's."""
+        env = {**self.env, "HOME": str(home or self.home), "PLAYWRIGHT_BROWSERS_PATH": str(BROWSERS)}
+        command = ["/usr/local/bin/node", self.home / "installation_browsers.mjs", PLAYWRIGHT_CORE / "index.mjs", browser,
+                   profile, address]
+        visit = subprocess.run(list(map(str, command)), cwd=self.home, env=env, text=True, capture_output=True, timeout=180)
+        self.sequence += 1
+        (self.results / f"{self.sequence:02d}-{label}.log").write_text(f"exit: {visit.returncode}\n{visit.stdout}{visit.stderr}")
+        assert visit.returncode == 0, f"{label}: exit {visit.returncode}; see the log"
+        result = json.loads(visit.stdout.splitlines()[-1])
+        self.result["steps"].append({"step": label, **result})
+        print(f"{label}: {result}", flush=True)
+        return result
+
+    def trust(self):
+        """install.sh's offer to trust Altitude's certificate, answered yes in a terminal: the private link then opens
+        First run in Chromium and Firefox without a certificate warning, while both browsers with fresh stores refuse
+        the certificate. The browsers are Playwright's builds, which installation_vm.py --trust installs with Chromium's
+        command on PATH, as an installed Chromium has it."""
+        old, old_sha, _, before, *_ = self.prepare()
+        self.result["limits"][1] = ("Browser trust in Playwright's Chromium and Firefox builds, without a desktop session; "
+                                    "not distribution or snap browsers, and no other desktop or phone")
+        firefox = self.home / ".mozilla/firefox/lifecycle.default"
+        # Firefox makes its profile's store on first start; Chromium reads ~/.pki/nssdb but never creates it.
+        self.browse("firefox-first-start", "firefox", firefox, "about:blank")
+        assert (firefox / "cert9.db").is_file() and not (self.home / ".pki").exists()
+        command, _, _, httpd, requests = self.published_install(old, before)
+        try:
+            installed = self.answered("trust-install", command, "Trust it? [y/N] ", "y")
+        finally:
+            httpd.shutdown()
+            del self.env["CURL_CA_BUNDLE"]
+        assert f"Altitude {before['version']} is installed" in installed, installed
+        assert "Trusted in Chrome and Chromium and Firefox (lifecycle.default)." in installed, installed
+        link = re.search(r"Restart your browser if it is open, then open Altitude with this private link\..*\n\s+(https://\S+)",
+                         installed).group(1)
+        assert (self.home / ".pki/nssdb/cert9.db").is_file()
+        self.healthy("trusted", before)
+        stores = self.doctor("trusted", before)["certificate_trust"]["this_computer"]["stores"]
+        assert [(store["label"], store["trusted"]) for store in stores] == [
+            ("Chrome and Chromium", True), ("Firefox (lifecycle.default)", True)], stores
+        fresh = self.home / "fresh"
+        fresh.mkdir()
+        refused = {browser: self.browse(f"{browser}-fresh-store", browser, fresh / browser, self.base(), home=fresh)
+                   for browser in ("chromium", "firefox")}
+        assert not refused["chromium"]["loaded"] and "ERR_CERT_AUTHORITY_INVALID" in refused["chromium"]["error"], refused
+        assert not refused["firefox"]["loaded"] and "SEC_ERROR_UNKNOWN_ISSUER" in refused["firefox"]["error"], refused
+        chromium = self.browse("chromium-private-link", "chromium", self.home / ".config/chromium", link)
+        # The installer's link works once; Firefox opens a second one, made the same way from alt pair's code.
+        code = re.search(r"Pairing code: (\S+)", self.run("pair", self.alt, "pair")).group(1)
+        firefox_link = self.browse("firefox-private-link", "firefox", firefox, f"{self.base()}/projects#pair={code}")
+        assert chromium["loaded"] and chromium["first_run"] and firefox_link["loaded"] and firefox_link["first_run"], \
+            (chromium, firefox_link)
+        self.uninstall({})
 
     def update(self):
         """A failed automatic installation, the default automatic installation, then an explicitly manual app update,
@@ -723,7 +823,8 @@ class Lifecycle:
 
     def execute(self, phase: str = "all"):
         try:
-            {"all": self.exercise, "bootstrap": self.bootstrap, "update": self.update, "reboot-install": self.reboot_install,
+            {"all": self.exercise, "bootstrap": self.bootstrap, "trust": self.trust, "update": self.update,
+             "reboot-install": self.reboot_install,
              "logout-verify": self.logout_verify, "reboot-verify": self.reboot_verify, "recovery": self.recovery,
              "public-install": lambda: self.public(update=False), "public-update": lambda: self.public(update=True)}[phase]()
         except Exception as exc:

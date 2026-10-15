@@ -59,10 +59,11 @@ function post<T = unknown>(path: string, body: unknown): Promise<T> {
 
 // ---- pairing ---------------------------------------------------------------------------
 
-/** How this browser reaches Altitude (SPEC.md §3.16): `local` is the computer running it, and `check` whether
- * Altitude can check this browser's trust in its certificate. */
+/** How this browser reaches Altitude (SPEC.md §3.16): `local` is the computer running it, `check` whether
+ * Altitude can check this browser's trust in its certificate, and `command` whether `alt trust` on this computer
+ * can trust it. */
 const TrustSchema = z.object({
-  local: z.boolean(), https: z.boolean(), check: z.boolean(),
+  local: z.boolean(), https: z.boolean(), check: z.boolean(), command: z.boolean(),
   guide: z.string().optional(),
   certificate: z.object({ name: z.string() }).nullish(),
 });
