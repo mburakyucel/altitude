@@ -334,7 +334,7 @@ def update_notice() -> str | None:
     except (OSError, ValueError):
         return None
     version = status["available"]["version"]
-    when = "installs when Altitude is next idle; alt update installs it now" if status["automatic_pending"] else "run alt update"
+    when = "installs at the next quiet moment; alt update installs it now" if status["automatic_pending"] else "run alt update"
     return f"Altitude {version} is available: {when} (notes: {config.RELEASE['repository']}/releases/tag/{version})"
 
 

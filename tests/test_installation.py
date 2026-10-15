@@ -1162,8 +1162,8 @@ class NewVersionNotice(NoticeCase):
         self.listed("v0.2.0")
         installation.check_for_update()
         self.requests.clear()
-        self.assertEqual(installation.update_notice(), "Altitude v0.2.0 is available: installs when Altitude is next "
-                         "idle; alt update installs it now (notes: https://github.com/example/altitude/releases/tag/v0.2.0)")
+        self.assertEqual(installation.update_notice(), "Altitude v0.2.0 is available: installs at the next quiet "
+                         "moment; alt update installs it now (notes: https://github.com/example/altitude/releases/tag/v0.2.0)")
         self.assertIsNone(installation.update_notice())
         day_ago = (config.ROOT / "update-notice").stat().st_mtime - 86400
         os.utime(config.ROOT / "update-notice", (day_ago, day_ago))
