@@ -470,10 +470,16 @@ class TestTrustCheck(AltitudeCase):
     def test_the_pairing_screen_learns_how_this_device_reaches_altitude(self):
         self.patch(server.Handler, "_local", new=lambda _self: False)
         _, view = self.call(self.trusting, "GET", "/api/access")
-        self.assertEqual(view["trust"], {"local": False, "https": True,
-                                         "check": True, "certificate": {"name": "Altitude CA TEST"}, "guide": tls.setup_guide()})
+        self.assertEqual(view["trust"], {"local": False, "https": True, "check": True, "command": False,
+                                         "certificate": {"name": "Altitude CA TEST"}, "guide": tls.setup_guide()})
+        self.patch(server.Handler, "_local", new=lambda _self: True)
+        self.assertTrue(self.call(self.trusting, "GET", "/api/access")[1]["trust"]["command"], "alt trust works here")
+        with mock.patch.object(server.platform, "containerized", return_value=True):
+            self.assertFalse(self.call(self.trusting, "GET", "/api/access")[1]["trust"]["command"],
+                             "the host has no alt to run")
         self.patch(server, "TRUST", None)  # an externally supplied certificate: nothing to check with
-        self.assertFalse(self.call(self.trusting, "GET", "/api/access")[1]["trust"]["check"])
+        self.assertEqual({key: self.call(self.trusting, "GET", "/api/access")[1]["trust"][key] for key in ("check", "command")},
+                         {"check": False, "command": False})
         self.assertEqual(self.call(self.trusting, "POST", "/api/trust", {}),
                          (409, {"error": "Altitude cannot check certificate trust here."}))
 

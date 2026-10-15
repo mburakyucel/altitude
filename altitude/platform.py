@@ -28,6 +28,7 @@ import shlex
 import shutil
 import signal as signals
 import socket
+import ssl
 import stat
 import struct
 import subprocess
@@ -133,6 +134,9 @@ def install_command(tool: str) -> str | None:
     if tool == "git":
         return {"apt": "sudo apt install git", "dnf": "sudo dnf install git", "pacman": "sudo pacman -S git",
                 "zypper": "sudo zypper install git"}.get(manager)
+    if tool == "certutil":
+        return {"apt": "sudo apt install libnss3-tools", "dnf": "sudo dnf install nss-tools", "pacman": "sudo pacman -S nss",
+                "zypper": "sudo zypper install mozilla-nss-tools"}.get(manager)
     if manager == "apt":
         keyring = "/etc/apt/keyrings/githubcli-archive-keyring.gpg"
         return (f'key=$(mktemp) && curl -fsSL {_GH_PACKAGES}/githubcli-archive-keyring.gpg -o "$key" && sudo install -D '
@@ -144,6 +148,114 @@ def install_command(tool: str) -> str | None:
         return (f'repo=$(mktemp) && curl -fsSL {_GH_PACKAGES}/rpm/gh-cli.repo -o "$repo" && sudo install -D -m 644 '
                 f'"$repo" {folder}/gh-cli.repo && rm "$repo" && {install}')
     return "sudo pacman -S github-cli" if manager == "pacman" else None
+
+
+#: Where an account's browsers keep the authorities they trust, without administrator rights. macOS: the login
+#: keychain, which Safari, Chrome, Edge and Firefox read. Linux: NSS databases, Chrome's shared one and one per
+#: Firefox profile, which the system-wide store never reaches; a Flatpak Chrome keeps its own, which only its import
+#: dialog reaches. Chrome reads its database without ever creating it, so an installed Chrome's missing one is made.
+LOGIN_KEYCHAIN = "Library/Keychains/login.keychain-db"
+_CHROMIUM = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "brave-browser")
+_CHROME_NSS = ((".pki/nssdb", "Chrome and Chromium", lambda home: any(map(shutil.which, _CHROMIUM))),
+               ("snap/chromium/current/.pki/nssdb", "Chromium (snap)", lambda home: (home / "snap/chromium/current").is_dir()))
+_FIREFOX_PROFILES = (".mozilla/firefox", "snap/firefox/common/.mozilla/firefox", ".var/app/org.mozilla.firefox/.mozilla/firefox")
+_FLATPAK_CHROME = ((".var/app/com.google.Chrome", "Chrome (Flatpak)"), (".var/app/org.chromium.Chromium", "Chromium (Flatpak)"))
+
+
+def trust_stores(home: Path) -> list[dict]:
+    """This account's browsers' trust stores: each has a `label` and `path`, `asks` when changing it asks for the
+    account's password, and `manual` when only the browser's own import reaches it. A Firefox never opened has no
+    store yet."""
+    if _darwin():
+        return [{"label": "macOS login keychain (Safari, Chrome, Edge, Firefox)", "path": home / LOGIN_KEYCHAIN,
+                 "asks": "macOS will ask for your password in a window."}]
+    stores = [{"label": label, "path": home / place} for place, label, installed in _CHROME_NSS
+              if (home / place / "cert9.db").is_file() or installed(home)]
+    for place in _FIREFOX_PROFILES:
+        stores += [{"label": f"Firefox ({database.parent.name})", "path": database.parent}
+                   for database in sorted((home / place).glob("*/cert9.db"))]
+    return stores + [{"label": label, "path": home / place, "manual": "it keeps its own store; import by hand"}
+                     for place, label in _FLATPAK_CHROME if (home / place).is_dir()]
+
+
+def trust_tool() -> str:
+    """The command that checks and changes those stores: macOS's security, or NSS's certutil, which a Linux desktop
+    may lack; RuntimeError names the package that provides it, for the operator to install."""
+    found = shutil.which("security" if _darwin() else "certutil")
+    if found:
+        return found
+    if _darwin():
+        raise RuntimeError("macOS's security command is not on PATH; add /usr/bin to PATH and retry.")
+    install = install_command("certutil")
+    raise RuntimeError("Chrome and Firefox keep certificates in databases that need certutil, which is not installed. "
+                       + (f"Install it with {install}" if install else "Install your distribution's NSS tools package")
+                       + ", then run ~/.local/bin/alt trust again.")
+
+
+def _trust_run(*args) -> subprocess.CompletedProcess:
+    # A new session without a terminal: a store that needs a password (a Firefox Primary Password) fails instead of
+    # prompting, and the check that follows reports it. macOS asks for its password in a window of its own.
+    try:
+        return subprocess.run([trust_tool(), *map(str, args)], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                              start_new_session=not _darwin(), timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"The trust-store tool did not run: {exc}") from exc
+
+
+def _nss_entry(store: dict, authority: dict) -> tuple[str, str] | None:
+    """The nickname and trust flags `store` keeps the CA under. NSS keeps a certificate imported earlier under its
+    first nickname, so the CA is found by its content among the entries named like it."""
+    database = f"sql:{store['path']}"
+    wanted = ssl.PEM_cert_to_DER_cert(authority["ca"].read_text())
+    for line in _trust_run("-L", "-d", database).stdout.splitlines():
+        nickname, _, flags = line.rstrip().rpartition(" ")
+        nickname = nickname.strip()
+        if not nickname.startswith(authority["name"]):
+            continue
+        listed = _trust_run("-L", "-d", database, "-n", nickname, "-a").stdout
+        if wanted in (ssl.PEM_cert_to_DER_cert(block) for block in
+                      re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", listed, re.S)):
+            return nickname, flags
+    return None
+
+
+def store_trusts(store: dict, authority: dict) -> bool:
+    """Whether `store` trusts the CA to identify websites: macOS checks the server certificate against this account's
+    trust settings; NSS reads the CA's SSL trust flag."""
+    if _darwin():
+        return _trust_run("verify-cert", "-c", authority["server"], "-c", authority["ca"], "-p", "ssl", "-L", "-q").returncode == 0
+    if not (store["path"] / "cert9.db").is_file():
+        return False
+    entry = _nss_entry(store, authority)
+    return entry is not None and "C" in entry[1].split(",")[0]
+
+
+def add_trust(store: dict, authority: dict) -> None:
+    """Trust the CA in `store` to identify websites only, in this account's settings; RuntimeError says why not."""
+    if _darwin():
+        added = _trust_run("add-trusted-cert", "-r", "trustRoot", "-p", "ssl", "-k", store["path"], authority["ca"])
+    else:
+        database = f"sql:{store['path']}"
+        if not (store["path"] / "cert9.db").is_file():
+            store["path"].mkdir(mode=0o700, parents=True, exist_ok=True)
+            _trust_run("-N", "-d", database, "--empty-password")
+        added = _trust_run("-A", "-d", database, "-n", authority["nickname"], "-t", "C,,", "-i", authority["ca"])
+    if added.returncode != 0 or not store_trusts(store, authority):
+        reason = (added.stderr.strip().splitlines() or ["the store did not keep the trust setting"])[-1].rstrip(".")
+        raise RuntimeError(f"{reason}. macOS confirms this in a window on the Mac's own desktop, which a remote "
+                           "terminal cannot show; run alt trust there, or follow the Mac steps on the pair page."
+                           if _darwin() else f"{reason}. A Firefox profile with a Primary Password needs the "
+                           "certificate imported by hand, as the pair page shows.")
+
+
+def undo_trust(store: dict, authority: dict, home: Path) -> str:
+    """The command that removes exactly this CA, and its trust, from `store`."""
+    path = store["path"]
+    shown = f'"$HOME/{path.relative_to(home)}"' if path.is_relative_to(home) else shlex.quote(str(path))
+    if _darwin():
+        return f"security delete-certificate -Z {authority['sha1']} -t {shown}"
+    nickname = (_nss_entry(store, authority) or (authority["nickname"],))[0]
+    return f"certutil -D -d sql:{shown} -n {shlex.quote(nickname)}"
 
 # Image-owned identity, outside every persistent/writable application volume. Neither an environment
 # variable nor a forwarded connection can select the privileged native deployment paths (issue #543).

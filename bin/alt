@@ -568,6 +568,7 @@ def main(argv=None) -> None:
     service.add_argument("--json", action="store_true", dest="as_json", help="structured service-manager status")
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
     sub.add_parser("tls-share", help="offer the HTTPS certificate to a phone on this network for ten minutes")
+    sub.add_parser("trust", help="trust Altitude's certificate in this computer's browsers, after asking")
     sub.add_parser("pair", help="print a one-time code that pairs one browser with Altitude")
     sub.add_parser("sign-in", help="create the sign-in Altitude's runs of an engine use, from your own account").add_argument(
         "engine", choices=engines.TOKEN_SETUP)
@@ -1142,6 +1143,15 @@ def main(argv=None) -> None:
         except tls.TLSFailure as exc:
             sys.exit(f"alt tls-share: {exc}")
         return
+    if c == "trust":
+        if ACTOR != config.OPERATOR_ACTOR:
+            sys.exit("alt trust: only the operator changes this computer's trust")
+        from altitude import tls
+        try:
+            trusted = tls.trust()
+        except tls.TLSFailure as exc:
+            sys.exit(f"alt trust: {exc}")
+        sys.exit(0 if trusted else 1)
     if c == "voice":
         from altitude import speech
         if args.vcmd != "status" and ACTOR != config.OPERATOR_ACTOR:

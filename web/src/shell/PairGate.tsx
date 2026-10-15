@@ -249,7 +249,7 @@ function PairScreen({ trust, guide = SETUP_GUIDE, removed, onPaired, pairingLink
             <a className="link" href={guide} target="_blank" rel="noopener noreferrer">Certificate guide</a>
             <button type="button" className="btn btn-primary" onClick={confirm}>Continue</button>
           </> : <>
-            <Instructions kind={kind} name={name} guide={guide} installLink={!!linkReady} here={trust.local} />
+            <Instructions kind={kind} name={name} guide={guide} installLink={!!linkReady} here={!!trust.command} />
             {trusted.status === "untrusted" && untrusted[kind] ? <p role="status" className="text-meta">{untrusted[kind]}</p> : null}
             {trusted.status === "unknown" ? <p role="alert" className="text-meta text-danger">Couldn’t check.</p> : null}
             <button type="button" className="btn" disabled={trusted.status === "checking"} onClick={check}>Check again</button>

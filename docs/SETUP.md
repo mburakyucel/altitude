@@ -59,20 +59,22 @@ installs into your home folder and starts Altitude as a per-user service. It end
 service's state and where it runs, the certificate's name and full fingerprint, whether Altitude
 keeps running after logout, the next steps and whether other devices can reach the address. On a
 fresh installation without paired devices or an unexpired pairing code, it also prints a private
-link for the first browser after verified HTTPS readiness.
-[Trust the certificate](#trust-https-on-each-device), comparing its name and full fingerprint with
-the installer's output, then open that link: the browser pairs automatically after its trust check
-and opens [First run](#first-run-in-the-browser). The link works once, for ten minutes. Keep it
+link for the first browser after verified HTTPS readiness. Before the link, in a terminal on the
+computer running Altitude, the installer asks whether to
+[trust the certificate on this computer](#on-the-computer-running-altitude); answer yes, restart the
+browser and open the link. Otherwise [trust the certificate](#trust-https-on-each-device) by hand,
+comparing its name and full fingerprint with the installer's output, then open that link: the
+browser pairs automatically after its trust check and opens [First run](#first-run-in-the-browser). The link works once, for ten minutes. Keep it
 private, including in terminal recordings and screenshots. If it expires or is refused, run
 `~/.local/bin/alt pair` on the computer running Altitude and follow [manual pairing](#pair-each-device).
 Closing the terminal or the browser leaves the service running.
 
-The installer opens no browser and changes no trust stores. Clicking the link uses the terminal
+The installer opens no browser and changes trust only after your yes. Clicking the link uses the terminal
 or operating system's normal link handler, usually the default browser; some terminals require
 a modifier click. Over SSH, that browser opens on the device viewing the terminal, where
 `127.0.0.1` refers to that device, not the server, so the installer prints the tunnel to run on your own
 computer first, `ssh -L 8890:127.0.0.1:8890 <this server>` with the installed port; the link then opens
-there. The installer creates no tunnel itself. Lasting remote use needs the configured reachable
+there, and the installer does not offer to trust the certificate on the server. The installer creates no tunnel itself. Lasting remote use needs the configured reachable
 address, its certificate trust and network access.
 
 Reruns and updates retain paired devices and existing codes and print no new pairing link.
@@ -90,11 +92,13 @@ export PATH="$HOME/.local/bin:$PATH"
 `alt doctor` and `alt service status` lead with whether the service runs, its actual address and
 which devices can reach it, verified against the native process and TLS health. They separate the
 saved configuration from shell overrides they ignore. `alt doctor` then names the one next step from
-current state: the installer's private link while it still works, else trusting the certificate and
-running `alt pair` until a browser is paired, then the first missing tool with its command, such as
-a coding agent to install. It also checks tools and sign-ins, shows the command that fixes each failure and counts paired browsers;
-`--json` gives structured output for automation. Neither can see whether your browsers trust
-Altitude's certificate or whether a coding provider accepts your account.
+current state: until a browser is paired, `alt trust` while one of this computer's browsers does not
+trust the certificate, then the installer's private link while it still works, else trusting the
+certificate and running `alt pair`; after that the first missing tool with its command, such as a
+coding agent to install. It also checks tools and sign-ins, shows the command that fixes each
+failure, names which of this computer's browser stores trust the certificate and counts paired
+browsers; `--json` gives structured output for automation. Neither can see whether other devices
+trust Altitude's certificate or whether a coding provider accepts your account.
 
 The command trusts GitHub's HTTPS and the published release for `install.sh` itself. To verify the
 script before running it with GitHub's release attestation, run the commands below; to install one
@@ -205,10 +209,46 @@ from elsewhere, or created without these limits, keeps its own scope; read the s
 reports before trusting a CA, where "No limits" means any website. The CA is valid for ten years,
 and Altitude renews its server certificate by itself, so a device trusts it once.
 
+### On the computer running Altitude
+
+```sh
+~/.local/bin/alt trust
+```
+
+It shows the certificate's name, full SHA-256 fingerprint and scope and the browser stores it would
+change, then asks `Trust it? [y/N]` in the terminal; nothing changes unless you answer yes. It trusts
+only the certificate Altitude created, as the running service proves it serves, and only to identify
+websites, without administrator rights:
+
+- **macOS:** your login keychain, which Safari, Chrome, Edge and Firefox read. macOS asks for your
+  password in a window of its own; from a remote terminal it refuses, so use the
+  [macOS steps](#macos-desktop) instead.
+- **Linux:** each browser certificate database in your home folder: Chrome, Chromium, Edge and Brave
+  share `~/.pki/nssdb`, snap Chromium keeps its own, and each Firefox profile has one. Writing them
+  needs NSS's `certutil` (`libnss3-tools` on Ubuntu and Debian, `nss-tools` on Fedora); if it is
+  missing, `alt trust` prints the command to install it, which you run yourself. Chrome reads
+  `~/.pki/nssdb` without creating it, so `alt trust` creates it when Chrome, Chromium, Edge or Brave is
+  installed. A Firefox never opened has no profile yet: open it once, then run `alt trust` again. The system-wide store needs
+  administrator rights and these browsers do not read it, so it stays unchanged. A Flatpak Chrome
+  and a Firefox profile with a Primary Password are named for [importing by hand](#linux-desktop).
+
+Restart the browser afterwards. Run again, it changes nothing where the certificate is already
+trusted. It prints the commands that undo it, one per store, for example:
+
+```sh
+security delete-certificate -Z <SHA-1> -t "$HOME/Library/Keychains/login.keychain-db"   # macOS
+certutil -D -d sql:"$HOME/.pki/nssdb" -n '<name it printed>'                            # Linux
+```
+
+Removing the certificate in Keychain Access or the browser's certificate manager does the same. A
+certificate Altitude did not create is trusted by hand, as below.
+
 ### Share with a desktop or phone
 
-On the computer running Altitude, use the `ca.crt` path the installer or `alt doctor` reports and
-continue with [Linux](#linux-desktop) or [macOS](#macos-desktop). Another device needs Altitude on a
+On the computer running Altitude without `alt trust`, use the `ca.crt` path the installer or
+`alt doctor` reports and continue with [Linux](#linux-desktop) or [macOS](#macos-desktop). On
+another computer, the **Pair this device** page shows the steps for its system and browser, with
+a **Steps for** menu to pick another. Another device needs Altitude on a
 [private-network address](#install-the-application). Open **Settings → Devices → Set up a device**
 on a trusted device, or run this on the computer running Altitude, locally or over SSH:
 
@@ -257,7 +297,9 @@ If it expires, run `~/.local/bin/alt pair` for a new code.
    **Always Trust**. Close the window and confirm with your password.
 4. Quit and reopen Safari or Chrome, then [verify HTTPS](#verify-https-before-pairing).
 
-Firefox may not read the login keychain: import the same file with the Firefox steps above.
+Firefox reads this trust while **Allow Firefox to automatically trust third-party root certificates
+you install** is on, the default in current versions; otherwise import the same file with the
+Firefox steps above.
 
 For the first browser, reopen the original private link from the installer after restarting;
 the cleaned page address cannot restore its code. If it expires, run `~/.local/bin/alt pair`
@@ -294,7 +336,9 @@ certificate warning. If a warning remains, do not pair: check that this browser 
 CA, that the address matches and that the device's clock is right.
 
 Uninstalling Altitude leaves this trust on your devices. To retire an installation, remove the CA
-in the same certificate manager, or its profile on an iPhone.
+in the same certificate manager, with the commands `alt trust` printed, or its profile on an
+iPhone. A fresh start that creates a new CA needs `alt trust` and each device's trust again; remove
+the old CA the same way.
 
 ## Pair each device
 

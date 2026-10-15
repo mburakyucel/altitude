@@ -10,7 +10,7 @@ import type { PairingLink } from "./pairingLink";
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
-const remote = { local: false, https: true, check: true, certificate: { name: "Altitude CA 4F7K" } };
+const remote = { local: false, https: true, check: true, command: false, certificate: { name: "Altitude CA 4F7K" } };
 
 type Answer = "trusted" | "untrusted" | "refused" | "retry" | "expired";
 
@@ -62,7 +62,7 @@ function agent(value: string) {
 const step = (name: RegExp) => screen.getByRole("heading", { name }).closest("li") as HTMLElement;
 
 const installLink: PairingLink = { code: "ABCD-2345" };
-const localHttps = { local: true, https: true, check: true, certificate: { name: "Altitude CA 4F7K" } };
+const localHttps = { local: true, https: true, check: true, command: true, certificate: { name: "Altitude CA 4F7K" } };
 const recovery = "Run ~/.local/bin/alt pair on the computer running Altitude for a new code.";
 const transportRecovery = "Could not confirm pairing. Reopen the install link, or run ~/.local/bin/alt pair for a new code.";
 
@@ -204,7 +204,7 @@ describe("Install pairing link", () => {
   });
 
   it("never redeems over remote HTTP", async () => {
-    const fixture = linkService({ local: false, https: false, check: false, certificate: null });
+    const fixture = linkService({ local: false, https: false, check: false, command: false, certificate: null });
     renderGate(installLink);
     expect(await screen.findByText("This Altitude serves plain HTTP. Pair on the computer running it.")).toBeVisible();
     await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
@@ -352,7 +352,7 @@ describe("Pair this device", () => {
     expect(calls.pairs).toEqual([]);
   });
   it("on the computer running Altitude, needs no certificate step and pairs with a code", async () => {
-    const calls = service({ local: true, https: false, check: false, certificate: null });
+    const calls = service({ local: true, https: false, check: false, command: false, certificate: null });
     const user = renderGate();
     expect(await screen.findByRole("button", { name: "Pair" })).toBeVisible();
     expect(screen.queryByText("This is the computer running Altitude.")).toBeNull();
@@ -437,16 +437,35 @@ describe("Pair this device", () => {
     expect(screen.queryByLabelText("Pairing code")).toBeNull();
   });
 
-  it("on a desktop browser, explains importing the certificate and links the setup guide", async () => {
+  it("on another desktop, shows the steps for the system and browser chosen and links the setup guide", async () => {
     service(remote);
-    renderGate();
-    expect(await screen.findByText("Import the certificate as a trusted authority, then restart the browser.")).toBeVisible();
+    const user = renderGate();
+    expect(await screen.findByText("Import it as a trusted authority in this browser or system.")).toBeVisible();
     expect(screen.getByRole("link", { name: "Certificate guide" })).toHaveAttribute("href", expect.stringContaining("docs/SETUP.md#trust-https-on-each-device"));
-    expect(screen.getByText(/Keychain Access › login/)).toBeVisible();
+    expect(screen.queryByText("~/.local/bin/alt trust")).toBeNull();
+    const chooser = screen.getByLabelText("Steps for");
+    await user.selectOptions(chooser, "mac");
+    expect(screen.getByText(/In Keychain Access, open “Altitude CA 4F7K”, expand Trust/)).toBeVisible();
+    await user.selectOptions(chooser, "linux");
+    expect(screen.getByText("chrome://certificate-manager")).toBeVisible();
+    expect(screen.getByText(/the certificate viewer shows its fingerprints/)).toBeVisible();
+    await user.selectOptions(chooser, "linux-firefox");
+    expect(screen.getByText("Tick Trust this CA to identify websites, then OK.")).toBeVisible();
+    expect(screen.queryByText("chrome://certificate-manager")).toBeNull();
+  });
+
+  it("on the hosting computer, offers alt trust first and keeps the steps by hand behind a disclosure", async () => {
+    service(localHttps, ["untrusted"]);
+    const user = renderGate();
+    expect(await screen.findByText("~/.local/bin/alt trust")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Download the certificate" })).not.toBeVisible();
+    await user.click(screen.getByText("Trust it by hand instead"));
+    expect(screen.getByRole("link", { name: "Download the certificate" })).toBeVisible();
+    expect(screen.getByLabelText("Steps for")).toBeVisible();
   });
 
   it("over plain HTTP elsewhere, says to pair on the computer running Altitude and hides the other steps", async () => {
-    service({ local: false, https: false, check: false, certificate: null });
+    service({ local: false, https: false, check: false, command: false, certificate: null });
     renderGate();
     expect(await screen.findByText("This Altitude serves plain HTTP. Pair on the computer running it.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: /^Trust Altitude’s certificate/ })).toBeNull();

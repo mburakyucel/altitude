@@ -792,15 +792,18 @@ including any merge hold.
 ## Device pairing
 
 `alt doctor` leads with the owned service's hosting computer, verified URL and listener exposure,
-then one next step from current state (the installer's private link while it works, trusting the
-certificate and `alt pair` until a browser is paired, then the first missing tool with its command),
-then a newer release when one is offered (with what an automatic update waits for, such as the
-validation run of a named task or an open browser terminal), then tool readiness including a coding
-agent, the paired-browser count, the browser-trust state until a browser is paired, and the unknown
-provider state. `alt update` installs the newest release now instead of waiting for the automatic attempt:
-from its start new work waits, and it waits up to a minute for work in flight before stopping with
-"Update staged … Retry this version", which leaves that version eligible for its automatic attempt.
-The automatic attempt and the app's Update button run detached and wait up to twenty-five minutes.
+then one next step from current state (until a browser is paired, `alt trust` while one of this
+computer's browser stores lacks the certificate, then the installer's private link while it works, else
+trusting the certificate and `alt pair`; then the first missing tool with its command), then a newer
+release when one is offered (with what an automatic update waits for, such as the validation run of a
+named task or an open browser terminal), then tool readiness including a coding agent, which of this
+computer's browser stores trust the certificate, the paired-browser count, the other-device trust state
+until a browser is paired, and the unknown provider state. `--json` lists those stores under
+`certificate_trust.this_computer`. `alt update` installs the newest release now instead of waiting for
+the automatic attempt: from its start new work waits, and it waits up to a minute for work in flight
+before stopping with "Update staged … Retry this version", which leaves that version eligible for its
+automatic attempt. The automatic attempt and the app's Update button run detached and wait up to
+twenty-five minutes.
 `alt doctor --json` retains
 structured diagnostics. `alt service status` uses the same hosting reading;
 `alt service status --json` includes service-manager details and hosting facts. Conflicting shell
@@ -853,10 +856,17 @@ an iPhone configuration profile holding only the certificate, and the certificat
 when the time is up or on Ctrl-C. Settings → Devices → **Set up a device** opens the same kind of link
 from the service, with **Open setup page** for the current device and a QR/link for another one.
 The page guides Linux browser imports, macOS Keychain trust, iPhone/iPad profiles and Android trust.
-Both sharing routes refuse loopback-only service addresses; on the hosting computer, use the public
-`ca.crt` path reported by `alt doctor` directly. Neither route installs trust or changes network
-exposure. Verify the exact HTTPS URL without a warning before pairing.
-See [certificate setup](SETUP.md#trust-https-on-each-device).
+Both sharing routes refuse loopback-only service addresses; on the hosting computer, use `alt trust`.
+Neither route installs trust or changes network exposure. Verify the exact HTTPS URL without a warning
+before pairing. See [certificate setup](SETUP.md#trust-https-on-each-device).
+
+`alt trust` (operator only) trusts the running service's own generated CA, as the service proves over
+HTTPS that it serves, in this account's browser stores, to identify websites only: the login keychain on
+a Mac, the Chrome and Firefox NSS databases on Linux through `certutil`. It shows the CA's name, full
+SHA-256, scope and each store, and changes nothing until the terminal (`/dev/tty`, never standard input)
+answers yes; without a terminal it asks nothing. It prints one undo command per store, exits 0 once every
+store it can change trusts the CA, and refuses an external certificate and a container. The installer
+runs it in a terminal on the hosting computer, not over SSH.
 
 ## Project lifecycle
 
