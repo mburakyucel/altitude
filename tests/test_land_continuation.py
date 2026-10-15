@@ -233,6 +233,39 @@ class TestLandContinuation(AltitudeCase):
         self.assertEqual(current["prs"], [101, 102])
         self.assertEqual(land._pr_view(self.repo, "102")["state"], "OPEN")
 
+    def test_followup_after_a_merge_not_on_current_main_is_refused(self):
+        pull = json.loads((self.ghdir / "pr.json").read_text())
+        pull["mergeCommit"]["oid"] = self.git("commit-tree", "HEAD^{tree}", "-p", self.merge, "-m", "elsewhere").strip()
+        S.write_json(self.ghdir / "pr.json", pull)
+        self.followup()
+        delivery = self.task()["delivery"]
+        with self.assertRaisesRegex(land.LandError, "^cannot continue: previous PR merge is not on current main"):
+            self.land()
+        self.assertEqual(self.task()["delivery"], delivery)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "src/followup")
+        self.assertEqual(sum(call[:2] == ["pr", "create"] for call in self.gh_log()), 1)
+
+    def test_adopting_after_the_tasks_own_merged_pr_restores_its_hold(self):
+        task = self.task()
+        task.update(hold_merge=None, hold_merge_id="first-hold",
+                    merge_approval={"pr": 101, "hold_id": "first-hold", "hold": "Review each PR"})
+        S.save_task("demo", task)
+        S.write_json(self.ghdir / "prs.json", {"101": land._pr_view(self.repo, "101")})
+        self.git("merge", "-q", "--no-edit", "origin/main")
+        self.followup()
+        self.git("commit", "-q", "-m", "Assigned external proposal")
+        head = self.git("rev-parse", "HEAD").strip()
+        self.git("push", "-q", "origin", "HEAD:proposal/external")
+        S.write_json(self.ghdir / "pr.json", {
+            "number": 102, "url": "https://github.com/team/demo/pull/102", "state": "OPEN", "baseRefName": "main",
+            "headRefName": "proposal/external", "isCrossRepository": False, "isDraft": False, "reviewDecision": ""})
+        with self.assertRaisesRegex(land.LandError, "Review each PR"):
+            self.land(merge=True, adopt_pr=102, expected_head=head, reason="This task is also assigned PR 102")
+        current = self.task()
+        self.assertEqual((current["adopted_pr"]["number"], current["hold_merge"], current["hold_merge_id"]),
+                         (102, "Review each PR", "first-hold"))
+        self.assertEqual(land._pr_view(self.repo, "102")["state"], "OPEN")
+
     def test_explicit_later_hold_release_applies_to_task(self):
         task = self.task()
         task.update(hold_merge=None, hold_merge_id="later-release",
