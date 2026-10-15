@@ -54,7 +54,8 @@ class TaskTransitions(AltitudeCase):
     def test_completion_refuses_a_superseded_report(self):
         task = self.reported()
         self.refused(expected_owner={**T.report_owner(task), "session_id": "earlier"})
-        # Follow-up work after the report: its verification names the earlier owner.
+        # Follow-up work after the report: its verification names the owner from before that work.
+        task = {**task, "verified": {**task["verified"], "owner": T.report_owner(task)}}
         S.save_task(self.project, {**task, "report_after": S.now()})
         self.refused()
         S.save_task(self.project, task)
