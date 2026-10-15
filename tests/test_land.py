@@ -1419,6 +1419,67 @@ class TestLand(AltitudeCase):
         self.assertIn("checks changed", result["local_tests"]["error"])
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
 
+    def push_foreign_head(self):
+        foreign = self.git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "foreign").strip()
+        self.git("push", "-q", "origin", f"{foreign}:refs/heads/worktree-fix-x")
+
+    def assert_local_suite_refused(self, result, error):
+        self.assertIs(result["merged"], False)
+        self.assertEqual(result["local_tests"]["error"], error)
+        self.assertTrue(result["local_tests"]["passed"])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_a_head_that_moves_during_the_local_suite_is_not_merged(self):
+        self.staged_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        real = land._local_suite
+
+        def suite_then_push(cwd, test_cmd):
+            result = real(cwd, test_cmd)
+            self.push_foreign_head()
+            return result
+
+        self.patch(land, "_local_suite", side_effect=suite_then_push)
+        self.assert_local_suite_refused(land.land("fix: head race", cwd=self.repo, wait=0, merge=True),
+                                        "the base or the head moved while the merge candidate was under test")
+
+    def test_a_head_that_moves_while_final_checks_are_read_is_not_merged(self):
+        self.staged_change()
+        self.no_checks()
+        real, suites = land._checks_evidence, []
+        self.patch(land, "_local_suite", side_effect=lambda cwd, cmd: suites.append(cmd) or {
+            "command": cmd, "passed": True, "returncode": 0, "tests": 12, "skipped": 0, "expected_failures": 0,
+            "error": None})
+
+        def read_then_push(root, pair, **kwargs):
+            state = real(root, pair, **kwargs)
+            if suites:
+                self.push_foreign_head()
+            return state
+
+        self.patch(land, "_checks_evidence", side_effect=read_then_push)
+        self.assert_local_suite_refused(land.land("fix: final read race", cwd=self.repo, wait=0, merge=True),
+                                        "the base or the head moved while final checks were being read")
+
+    def test_checks_github_reports_only_through_rest_during_the_local_suite_block_the_merge(self):
+        self.staged_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        real = land._local_suite
+
+        def suite_then_unrolled_check(cwd, test_cmd):
+            result = real(cwd, test_cmd)
+            # The check run exists but has not reached the PR's rollup yet.
+            S.write_json(self.ghdir / "check_evidence.json",
+                         json.loads((self.ghdir / "last_check_evidence.json").read_text()))
+            (self.ghdir / "checks.json").write_text('[{"bucket": "pending"}]')
+            return result
+
+        self.patch(land, "_local_suite", side_effect=suite_then_unrolled_check)
+        self.assert_local_suite_refused(land.land("fix: rest race", cwd=self.repo, wait=0, merge=True),
+                                        "PR checks changed from none to reported while the local suite ran")
+
     def test_first_adoption_during_ordinary_checks_cannot_change_the_merge_target(self):
         self.staged_change()
         real = land._checks_evidence
@@ -1732,6 +1793,16 @@ class TestLand(AltitudeCase):
             with self.subTest(change=change), self.assertRaisesRegex(land.LandError, refusal):
                 land.land("fix: first", cwd=self.repo, wait=0)
             self.assertEqual(S.load_task("demo", "fix-x")["delivery"], stale)
+
+    def test_merged_pr_reconciliation_refuses_a_merge_not_on_current_main(self):
+        self.merged_after_later_push()
+        pull = json.loads((self.ghdir / "pr.json").read_text())
+        pull["mergeCommit"]["oid"] = self.git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "elsewhere").strip()
+        S.write_json(self.ghdir / "pr.json", pull)
+        recorded = S.load_task("demo", "fix-x")["delivery"]
+        with self.assertRaisesRegex(land.LandError, "is not on current main"):
+            land.land("fix: first", cwd=self.repo, wait=0)
+        self.assertEqual(S.load_task("demo", "fix-x")["delivery"], recorded)
 
     def test_merged_pr_matching_the_record_leaves_it_unchanged(self):
         self.staged_change()
@@ -2175,6 +2246,22 @@ class TestCheckEvidence(AltitudeCase):
         check.pop("isRequired")
         with self.assertRaisesRegex(land.LandError, "incomplete"):
             self.classify()
+
+    def test_ruleset_required_check_names_its_app(self):
+        check = self.contexts()["nodes"][0]
+        check["isRequired"] = True
+        self.pr["baseRef"]["rules"] = self.connection([{"type": "REQUIRED_STATUS_CHECKS", "parameters": {
+            "requiredStatusChecks": [{"context": check["name"], "integrationId": 2}]}}])
+        self.assertEqual(self.classify(), "missing", "another app's same-named check is not the required one")
+        check["checkSuite"]["app"]["databaseId"] = 2
+        self.assertEqual(self.classify(), "pass")
+
+    def test_ruleset_required_workflows_refuse(self):
+        for kind in ("WORKFLOWS", "REQUIRED_WORKFLOW_STATUS_CHECKS"):
+            with self.subTest(kind=kind):
+                self.pr["baseRef"]["rules"] = self.connection([{"type": kind, "parameters": {}}])
+                with self.assertRaisesRegex(land.LandError, "required workflow evidence"):
+                    self.classify()
 
     def test_optional_skip_does_not_block_successful_pr_checks(self):
         self.optional_deploy()
