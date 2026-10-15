@@ -259,7 +259,7 @@ def undo_trust(store: dict, authority: dict, home: Path) -> str:
     path = store["path"]
     shown = f'"$HOME/{path.relative_to(home)}"' if path.is_relative_to(home) else shlex.quote(str(path))
     if _darwin():
-        return f"security delete-certificate -Z {authority['sha1']} -t {shown}"
+        return f"security delete-certificate -Z {authority['sha256'].replace(':', '')} -t {shown}"
     nickname = (_nss_entry(store, authority) or (authority["nickname"],))[0]
     return f"certutil -D -d sql:{shown} -n {shlex.quote(nickname)}"
 

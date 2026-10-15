@@ -71,9 +71,8 @@ class TestLinux(TrustCase):
         folder = self.home / place
         folder.mkdir(parents=True)
         if password:
-            secret = self.root / "password"
-            secret.write_text(password[0] + "\n")
-            subprocess.run([CERTUTIL, "-N", "-d", f"sql:{folder}", "-f", secret], check=True, capture_output=True)
+            subprocess.run([CERTUTIL, "-N", "-d", f"sql:{folder}", "-f", "/dev/stdin"], input=f"{password[0]}\n",
+                           text=True, check=True, capture_output=True)
         else:
             subprocess.run([CERTUTIL, "-N", "-d", f"sql:{folder}", "--empty-password"], check=True, capture_output=True)
         return folder
@@ -285,11 +284,11 @@ esac
                                      str(self.home / "Library/Keychains/login.keychain-db")])
         self.assertEqual(Path(added[7]).name, "ca.crt", "the certificate the service proved, copied while it ran")
         self.assertFalse(Path(added[7]).exists())
-        sha1 = hashlib.sha1(ssl.PEM_cert_to_DER_cert((self.service_tls / "ca.crt").read_text())).hexdigest().upper()
-        self.assertEqual(authority["sha1"], sha1)
+        sha256 = hashlib.sha256(ssl.PEM_cert_to_DER_cert((self.service_tls / "ca.crt").read_text())).hexdigest().upper()
+        self.assertEqual(authority["sha256"].replace(":", ""), sha256)
         self.assertEqual(self.lines[-1], "Trusted in macOS login keychain (Safari, Chrome, Edge, Firefox). Restart your "
                          "browser before opening Altitude.\nTo undo:\n"
-                         f"  security delete-certificate -Z {sha1} -t \"$HOME/Library/Keychains/login.keychain-db\"")
+                         f"  security delete-certificate -Z {sha256} -t \"$HOME/Library/Keychains/login.keychain-db\"")
         self.assertTrue(self.trust("n"))
         self.assertEqual(self.lines, ["Already trusted on this computer in: macOS login keychain (Safari, Chrome, Edge, "
                                       "Firefox)."])

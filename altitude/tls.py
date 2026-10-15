@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import hashlib
 import ipaddress
 import os
 from pathlib import Path
@@ -902,13 +901,11 @@ NO_STORE = ("No Chrome or Firefox certificate database was found in your home fo
 
 
 def _authority(directory: Path, ca: Path) -> dict:
-    """The CA as the trust stores take it: its identity, its file, the server certificate a check verifies, the name
-    it is added under, which starts with its fingerprint so an older installation's CA is never mistaken for it, and
-    the SHA-1 that names exactly this certificate for removal."""
+    """The CA as the trust stores take it: its identity, its file, the server certificate a check verifies, and the
+    name it is added under, which starts with its fingerprint so an older installation's CA is never mistaken for it."""
     found = identity(ca)
     return {**found, "ca": ca, "server": directory / "server.crt",
-            "nickname": f"{found['name']} · {found['sha256'].replace(':', '')[:8]}",
-            "sha1": hashlib.sha1(ssl.PEM_cert_to_DER_cert(ca.read_text())).hexdigest().upper()}
+            "nickname": f"{found['name']} · {found['sha256'].replace(':', '')[:8]}"}
 
 
 def this_computer(directory: Path) -> dict:

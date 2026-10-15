@@ -237,7 +237,7 @@ Restart the browser afterwards. Run again, it changes nothing where the certific
 trusted. It prints the commands that undo it, one per store, for example:
 
 ```sh
-security delete-certificate -Z <SHA-1> -t "$HOME/Library/Keychains/login.keychain-db"   # macOS
+security delete-certificate -Z <SHA-256> -t "$HOME/Library/Keychains/login.keychain-db"   # macOS
 certutil -D -d sql:"$HOME/.pki/nssdb" -n '<name it printed>'                            # Linux
 ```
 
