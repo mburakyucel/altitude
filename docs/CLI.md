@@ -835,7 +835,8 @@ for a year, then reads that token at a hidden prompt and keeps it in the private
 command line or in a log, and the operator's own Claude sign-in stays untouched. Saving it ends the
 engine's [sign-in lapse](OPERATIONS.md#engine-sign-in-recovery), and each project's chat reminds the
 operator to run it again two weeks before the year ends, counted from when it was saved. Usage
-readings and improvement reviews still read the operator's own sign-in.
+readings and improvement reviews still read the operator's own sign-in. The token appears on the screen, so the operator runs it in a
+terminal of their own: an Altitude terminal's output reaches its reader, the task's owner or the coordinator.
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
 from the record the service wrote when it started, and checks over HTTPS that the
