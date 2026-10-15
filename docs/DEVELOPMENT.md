@@ -1428,6 +1428,9 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   applies IPv4/IPv6 loopback changes while running and stopped, verifies actual HTTPS/native PID,
   later-start loading and preserved CA/keys/pairing/registration; process loss after the durable
   settings write leaves a receipt that `alt recover` restores;
+- gives the stopped service a leaf certificate one day from expiry, issued by the release under the
+  retained CA and server key; with stock LibreSSL still first on the saved service PATH, the
+  service's own startup renews it with the OpenSSL 3 it discovers, keeping the CA, key and pairing;
 - publishes `v0.0.2`; the daemon installs it automatically with no browser terminal open, and
   the overview reports its successful automatic installation;
 - turns automatic updates off, publishes `v0.0.3`, checks its overview, terminal notice and
@@ -1505,7 +1508,8 @@ shell trusts, with `github.com` resolving to the loopback.
   [macOS installation lane](#macos-installation-lane)'s `mac` phase under a throwaway HOME, as
   `installation_mac.py` does: install, the daemon's automatic installation of a newer release with
   no browser terminal open and the overview reporting it, update detection and notice with automatic
-  updates off and the release waiting for confirmation, `alt update`, the Update button, recovery from
+  updates off and the release waiting for confirmation, `alt update`, the Update button, the service's
+  renewal of a near-expiry certificate with the OpenSSL it discovers, recovery from
   an automatic update whose startup exits and uninstall. When it fails, launchd's record of the job, the guest's
   busiest processes, a sample of the service's process and its open files are kept.
 - `login`: the account installs through the public command into its own home. Its LaunchAgent

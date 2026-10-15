@@ -39,6 +39,13 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
 
+# A managed leaf one day from expiry, issued by the release's own tls._issue under the retained CA and server key.
+NEAR_EXPIRY = ("import os,sys,tempfile; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from altitude import config,tls\n"
+               "issue=tls._openssl\n"
+               "tls._openssl=lambda *args,**kwargs: issue(*('1' if arg=='365' else arg for arg in args),**kwargs)\n"
+               "with tempfile.TemporaryDirectory(dir=config.TLS_DIR) as staging:\n"
+               " os.replace(tls._issue(config.TLS_DIR,Path(staging),sys.argv[2]),config.TLS_DIR/'server.crt')\n")
+
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -776,7 +783,8 @@ class ReleaseServer:
 class MacLifecycle(Lifecycle):
     """The macOS lifecycle under a throwaway HOME of the running account, as installation_mac.py launches it.
 
-    install.sh installs a built release through its public curl | sh command; the installed daemon's own release check
+    install.sh installs a built release through its public curl | sh command; the service's startup renews a near-expiry
+    leaf with the OpenSSL it discovers behind stock LibreSSL; the installed daemon's own release check
     automatically installs the first newer synthetic release; after opting out, alt update and the app's Update button
     activate later releases. An automatic release whose startup exits is rolled back and not retried on subsequent
     checks; uninstall keeps configuration, TLS identity and fictional data. GitHub's
@@ -919,6 +927,38 @@ class MacLifecycle(Lifecycle):
         self.healthy("address-recovered", release)
         assert all(digest(p) == h for p, h in before.items()), "Address recovery did not restore the owned files"
         assert all(digest(p) == h for p, h in identities.items()), "Recovery altered identity or registrations"
+
+    def native_renewal(self, release: dict):
+        """The launchd service's own startup renews a managed leaf near expiry with the OpenSSL it discovers while
+        stock LibreSSL stays first on its saved PATH, keeping the CA, server key and pairing."""
+        saved = json.loads(self.settings.read_text())["environment"]
+        version = lambda tool: subprocess.run([tool, "version"], capture_output=True, text=True, timeout=10).stdout.strip()
+        first = shutil.which("openssl", path=saved["PATH"])
+        discovered = self.run("renewal-discovered-openssl", "/usr/bin/env", f"PATH={saved['PATH']}", sys.executable,
+                              "-B", "-c", "import sys; sys.path.insert(0,sys.argv[1]); from altitude import platform; "
+                              "print(platform.openssl())", self.prefix / "current").strip()
+        tools = {"service_path": saved["PATH"], "first": first, "first_version": first and version(first),
+                 "discovered": discovered, "discovered_version": version(discovered)}
+        write_json(self.results / "renewal-openssl.json", tools)
+        assert (tools["first_version"] or "").startswith("LibreSSL"), f"Stock LibreSSL is not first on the service PATH: {tools}"
+        assert re.match(r"OpenSSL ([3-9]|\d\d)", tools["discovered_version"]), tools
+        retained = {path: digest(path) for path in (self.tls / "ca.crt", self.tls / "ca.key", self.tls / "server.key",
+                    self.home / ".config/altitude/access/devices.json")}
+        previous = digest(self.tls / "server.crt")
+        self.run("renewal-stop", self.alt, "service", "stop")
+        # Issue the near-expiry leaf in the harness, not in the packaged release: the release's own issuer, one day.
+        self.run("renewal-near-expiry", sys.executable, "-B", "-c", NEAR_EXPIRY, self.prefix / "current", saved["ALTITUDE_HOST"])
+        expiring = digest(self.tls / "server.crt")
+        assert expiring != previous, "The near-expiry leaf was not written"
+        month = str(30 * 24 * 60 * 60)  # tls.RENEW_SECONDS
+        self.run("renewal-due", discovered, "x509", "-checkend", month, "-noout", "-in", self.tls / "server.crt", success=False)
+        self.run("renewal-start", self.alt, "service", "start")
+        self.healthy("renewed", release)
+        renewed = digest(self.tls / "server.crt")
+        assert renewed not in (expiring, previous), "The service started without renewing its near-expiry leaf"
+        self.run("renewal-not-due", discovered, "x509", "-checkend", month, "-noout", "-in", self.tls / "server.crt")
+        assert all(digest(path) == value for path, value in retained.items()), "Renewal changed the CA, key or pairing"
+        assert self.request("/api/access")["paired"], "Existing pairing was lost"
 
     def native_cache_retry(self, releases: ReleaseServer, candidate: dict, version: str, current: dict):
         """Affected cache state fails automatically, then explicit quarantine and retry preserve history."""
@@ -1082,7 +1122,8 @@ class MacLifecycle(Lifecycle):
             self.run("registered-project-broker-preflight", sys.executable, "-B", "-c", preflight,
                      self.prefix / "current")
             self.native_address_recovery(before)
-            # Address changes intentionally reissue the leaf under the same retained CA and server key.
+            self.native_renewal(before)
+            # Address changes and renewal intentionally reissue the leaf under the same retained CA and server key.
             retained[self.tls / "server.crt"] = digest(self.tls / "server.crt")
             initial = self.healthy("address-baseline-before-update", before)
             status = self.offered("current", None)
