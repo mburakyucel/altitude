@@ -590,34 +590,43 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
         raise T.TransitionError("Selected review context must be a list of original message IDs.")
     key = (project, slug, review_id)
     with config.restart_lock() as quiet, dispatch.launch_lock(), S.project_lock(project):
-        if not quiet or config.activation_pending():  # in-flight reviews finish; new ones wait for the restart
-            raise T.TransitionError("Altitude restarts soon to apply an update. Run the accepted review after it "
-                                    "restarts; alt doctor or alt repo shows what it waits for.")
-        task = _load(project, slug)
-        _owner(task, actor, expected_attempt, required=True)
-        review = _find(task, review_id)
-        if review["state"] != "requested":
-            return _project_review(review, task, None)
-        if task.get("state") != "running":
-            raise T.TransitionError("Resume the current owner before running the requested review.")
-        if why := _eligible(project, task, review.get("subject", "changes")):
-            raise T.TransitionError(why)
-        if review["owner"] != {k: task.get(k) for k in ("attempt", "l2_engine")}:
-            raise T.TransitionError("The owner changed. Withdraw or explicitly retry this review on the current attempt.")
-        if why := _capacity(task):
-            raise T.TransitionError(why)
-        choice = route.pick_review(task, config.project(project), **(review.get("selection") or {}))
-        why = (None if choice.get("engine") == review["engine"] and choice.get("model") == review["model"]
-                                  else "The selected reviewer is no longer available. Explicitly retry to select another.")
-        if why:
-            review.update(state="failed", error=why, finished_at=S.now())
-            S.save_task(project, task)
-            return _project_review(review, task, None)
-        # Reserve capacity before export/launch. Cancellation retains this reservation until termination is known.
-        review.update(state="running", started_at=S.now(), generation=task.get("agent_id"), effort=choice.get("effort"))
-        S.save_task(project, task)
+        # Visible before the fence check, so an automatic update requested meanwhile waits for this run (#1003).
         with _inflight_lock:
+            registered = key not in _inflight
             _inflight.add(key)
+        admitted = False
+        try:
+            if not quiet or config.activation_pending():  # in-flight reviews finish; new ones wait for the restart
+                raise T.TransitionError("Altitude restarts soon to apply an update. Run the accepted review after it "
+                                        "restarts; alt doctor or alt repo shows what it waits for.")
+            task = _load(project, slug)
+            _owner(task, actor, expected_attempt, required=True)
+            review = _find(task, review_id)
+            if review["state"] != "requested":
+                return _project_review(review, task, None)
+            if task.get("state") != "running":
+                raise T.TransitionError("Resume the current owner before running the requested review.")
+            if why := _eligible(project, task, review.get("subject", "changes")):
+                raise T.TransitionError(why)
+            if review["owner"] != {k: task.get(k) for k in ("attempt", "l2_engine")}:
+                raise T.TransitionError("The owner changed. Withdraw or explicitly retry this review on the current attempt.")
+            if why := _capacity(task):
+                raise T.TransitionError(why)
+            choice = route.pick_review(task, config.project(project), **(review.get("selection") or {}))
+            why = (None if choice.get("engine") == review["engine"] and choice.get("model") == review["model"]
+                                      else "The selected reviewer is no longer available. Explicitly retry to select another.")
+            if why:
+                review.update(state="failed", error=why, finished_at=S.now())
+                S.save_task(project, task)
+                return _project_review(review, task, None)
+            # Reserve capacity before export/launch. Cancellation retains this reservation until termination is known.
+            review.update(state="running", started_at=S.now(), generation=task.get("agent_id"), effort=choice.get("effort"))
+            S.save_task(project, task)
+            admitted = True
+        finally:
+            if registered and not admitted:
+                with _inflight_lock:
+                    _inflight.discard(key)
     result = None
     invoked = False
     try:

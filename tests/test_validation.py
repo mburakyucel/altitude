@@ -717,6 +717,30 @@ class TestValidationRunner(ClientStop, RunnerCase):
                 server.auto_update()
             install.assert_called_once_with("v0.2.0", automatic=True)
 
+    def test_an_update_offered_during_admission_waits_for_the_admitted_run(self):
+        """A run is visible to the automatic update from before its fence check, so a release found mid-admission
+        cannot be requested under it."""
+        from altitude import installation
+        prefix = self.tmp / "installed"
+        prefix.mkdir()
+        check, requests, checks = validation._check, [], []
+
+        def offered_mid_check(*args, **kwargs):
+            task = check(*args, **kwargs)
+            checks.append(task)
+            if len(checks) == 1:  # the check before the request joins the machine's line admits nothing yet
+                return task
+            with mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"}), \
+                    mock.patch.object(config, "INSTALL_PREFIX", prefix), \
+                    mock.patch.object(installation, "request_update", side_effect=lambda *a, **k: requests.append(a)):
+                S.write_json(config.ROOT / "update.json", {"latest": {"version": "v0.2.0", "notes": "https://example.test/n"}})
+                server.auto_update()
+                waiting = installation.update_status()["waiting_for"]
+            self.assertEqual((requests, waiting), ([], [f"the validation run of {self.project}/{self.slug}"]))
+            return task
+        with mock.patch.object(validation, "_check", side_effect=offered_mid_check):
+            self.assertEqual(self.validate(["true"])["exit"], 0)
+
     def test_only_the_tasks_own_worker_may_run_its_validation(self):
         self.owner.return_value = False
         self.assertEqual(self.validate(["true"], status=403)["error"], server.TASK_DOOR_REFUSED)

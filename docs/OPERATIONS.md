@@ -330,9 +330,10 @@ that request on, new dispatches, resumes, coordinator turns, report verification
 terminals wait too, and the update activates as soon as the turns and claims in flight end, within
 twenty-five minutes or it fails and the previous version keeps running. Commands under an operator
 grant hold no quiet point. An open browser terminal defers the update and lifts that wait until it
-closes. The notice, Settings → About and `alt doctor` name what the update waits for, from the
-daemon's last thirty-second check, for example "the validation run of atlas/check-the-lane" or "the
-browser terminal open in atlas". Running task workers keep running. The page reconnects after
+closes. Until the update starts, the notice, Settings → About and `alt doctor` name what it waits
+for, from the daemon's last thirty-second check, for example "the validation run of
+atlas/check-the-lane" or "the browser terminal open in atlas"; once it starts, the notice shows it
+installing until Altitude restarts. Running task workers keep running. The page reconnects after
 restart and shows the installed version and release notes. Close browser terminals to allow an
 automatic update; ordinary desktop terminals do not hold it.
 

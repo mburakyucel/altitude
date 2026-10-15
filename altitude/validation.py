@@ -612,11 +612,11 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
             with config.restart_lock() as ready:
                 if not ready:
                     raise ValueError(RESTARTING)
-                task = check()  # the task, the switch and the host may have changed while the request waited
-                if mine["replaced"]:
-                    raise ValueError(f"alt task validate: {leaving()} while it waited")
-                _holder = key
+                _holder = key   # visible before the fence check, so an automatic update requested meanwhile waits (#1003)
                 try:
+                    task = check()  # the task, the switch and the host may have changed while the request waited
+                    if mine["replaced"]:
+                        raise ValueError(f"alt task validate: {leaving()} while it waited")
                     return _run(project, slug, task, argv, kvm=kvm, publish=publish, phone=phone, capture=capture,
                                 container_browser=container_browser, leaving=leaving, place=place)
                 finally:

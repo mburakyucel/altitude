@@ -300,6 +300,25 @@ class TestReviews(AltitudeCase):
         self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
         self.assertEqual(self.run_review(requested)["state"], "completed")
 
+    def test_an_update_offered_during_admission_waits_for_the_admitted_review(self):
+        from altitude import installation
+        prefix = self.tmp / "installed"
+        prefix.mkdir()
+        requested, requests, capacity = self.request(), [], reviews._capacity
+
+        def offered_mid_admission(task):
+            with mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"}), \
+                    mock.patch.object(config, "INSTALL_PREFIX", prefix), \
+                    mock.patch.object(installation, "request_update", side_effect=lambda *a, **k: requests.append(a)):
+                S.write_json(config.ROOT / "update.json", {"latest": {"version": "v0.2.0", "notes": "https://example.test/n"}})
+                server.auto_update()
+                self.assertEqual((requests, installation.update_status()["waiting_for"]),
+                                 ([], [f"the adversarial review of {self.project}/{self.slug}"]))
+            return capacity(task)
+        with mock.patch.object(reviews, "_capacity", side_effect=offered_mid_admission):
+            self.assertEqual(self.run_review(requested)["state"], "completed")
+        self.assertEqual(reviews.running(), [])
+
     def test_owner_attempt_and_original_source_are_required(self):
         with self.assertRaises(T.TransitionError):
             reviews.request(self.project, self.slug, actor="l2", request_id=uuid.uuid4().hex, expected_attempt=0)
