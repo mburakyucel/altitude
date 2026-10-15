@@ -25,6 +25,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from altitude import platform  # noqa: E402
+from altitude.engines import common  # noqa: E402
 
 DARWIN = sys.platform == "darwin"
 NONCE = uuid.uuid4().hex[:8]
@@ -203,6 +204,57 @@ def detached_job():
     if DARWIN:
         Path(platform.job_logs_hint(job)).unlink(missing_ok=True)
     return "the command ran outside the caller and its job ended"
+
+
+@row
+def launch_input():
+    """A confined job launched as Altitude launches a review: its own folder and a fictional sign-in arrive in the first
+    line of its input, the operator's settings are linked into that folder, and another job's saved launch input waits
+    in the launcher's job folders as it does before that job's supervisor takes it."""
+    if not DARWIN:
+        return None  # Linux hands the input over systemd-run's pipe, with no job folder to read
+    job, secret = name("input"), f"fixture-sign-in-{NONCE}"
+    jobs = Path(os.path.realpath(platform._jobs()))
+    pending = jobs / f"altitude-probe-pending-{NONCE}"
+    settings = Path.home() / f".altitude-probe-{NONCE}-settings"
+    with tempfile.TemporaryDirectory() as folder:
+        own = Path(folder).resolve() / "engine"
+        own.mkdir()
+        try:
+            pending.mkdir(mode=0o700, parents=True)
+            (pending / "stdin").write_text(json.dumps({"SIGN_IN": secret}) + "\n")
+            settings.mkdir()
+            (settings / "settings.json").write_text("{}")
+            script = (f'read rest; [ "$rest" = own-input ] && echo input; '
+                      f'[ "$PROBE_FOLDER" = \'{own}\' ] && printf %s "$PROBE_SIGN_IN" > "$PROBE_FOLDER/sign-in" '
+                      '&& echo sign-in; '
+                      f'ln -s \'{settings}/settings.json\' "$PROBE_FOLDER/settings.json" && echo link; '
+                      'grep -q . "$PROBE_FOLDER/settings.json" && echo read-linked; '
+                      'echo x >> "$PROBE_FOLDER/settings.json" 2>/dev/null && echo write-linked; '
+                      f"echo x > '{settings}/new' 2>/dev/null && echo write-home; "
+                      'echo x > "$PROBE_FOLDER/state" && echo write-own; '
+                      f"ls '{jobs}' >/dev/null 2>&1 && echo list-jobs; "
+                      f"cat '{jobs}/{platform._label(job)}/spec.json' >/dev/null 2>&1 && echo read-own-job; "
+                      f"cat '{pending}/stdin' >/dev/null 2>&1 && echo read-pending; "
+                      f"echo x >> '{pending}/stdin' 2>/dev/null && echo write-pending")
+            launch = platform.job_command(job, common.with_launch_env(["/bin/sh", "-c", script]), env(),
+                                          writable=(own,), runtime_max=60)
+            result = subprocess.run(launch, input=json.dumps({"PROBE_FOLDER": str(own), "PROBE_SIGN_IN": secret})
+                                    + "\nown-input\n", capture_output=True, text=True, timeout=90)
+            signed_in = (own / "sign-in").read_text() == secret
+            untouched = (os.listdir(settings) == ["settings.json"] and (settings / "settings.json").read_text() == "{}"
+                         and (pending / "stdin").read_text() == json.dumps({"SIGN_IN": secret}) + "\n")
+        finally:
+            shutil.rmtree(pending, ignore_errors=True)
+            shutil.rmtree(settings, ignore_errors=True)
+    check(result.stdout.split() == ["input", "sign-in", "link", "read-linked", "write-own"] and signed_in and untouched
+          and secret not in json.dumps(launch), f"launch input: {result.stdout.split()} {result.stderr.strip()[-300:]!r} "
+                                               f"sign-in received: {signed_in}; untouched: {untouched}; "
+                                               f"sign-in on the command line: {secret in json.dumps(launch)}")
+    check(not platform.job_active(job, env()), "job still active after it ended")
+    return ("the job takes its folder and sign-in from its input's first line, not its command line, writes its own "
+            "folder and reads but cannot write the home settings linked into it, and can neither list the launcher's "
+            "job folders nor read its own job folder or another job's saved launch input there")
 
 
 LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/"
