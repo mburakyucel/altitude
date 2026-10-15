@@ -24,6 +24,12 @@ RESULTS = """\
 
 
 class TestMutationReport(unittest.TestCase):
+    def test_the_selection_names_existing_files(self):
+        # A renamed module or test file would otherwise surface only when someone next starts a run.
+        repo = Path(mutation.__file__).resolve().parents[1]
+        for path in [*mutation.MODULES, *mutation.TESTS]:
+            self.assertTrue((repo / path).is_file(), path)
+
     def test_functions_are_named_as_written(self):
         self.assertEqual(mutation.function_of("altitude.door.x__bounded__mutmut_2"), "_bounded")
         self.assertEqual(mutation.function_of("altitude.land.xǁLandingǁmerge__mutmut_4"), "Landing.merge")

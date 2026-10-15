@@ -38,7 +38,8 @@ MODULES = {
 # The fast unit tests that exercise those modules; browser, container and VM lanes stay out.
 TESTS = [f"tests/test_{name}.py" for name in (
     "lifecycle", "runtime_storage", "edit_count", "concurrency", "clean_close", "resume_hold", "task_status",
-    "faults", "worker_end",
+    "faults", "worker_end", "decisions", "question_groups", "conversation_decisions", "reported_continuation",
+    "continuation_journey",
     "git_policy", "git_policy_integration", "worker_git_folders", "checkout_preservation",
     "task_door", "codex_door",
     "land", "land_adoption", "land_contention", "land_continuation", "merge_approval_journey",
@@ -62,13 +63,13 @@ def copy_tree(source: Path) -> None:
             shutil.copy2(path, source / name, follow_symlinks=False)
 
 
-def configure(source: Path) -> None:
+def configure(source: Path, modules: dict) -> None:
     # Fork server without warm-up: each worker imports tests/support.py itself and so gets its own temporary
     # root. Workers forked from a process that had imported it share one root, and the first to exit removes
     # it for all the others, so most mutants would fail their tests for that reason alone.
     (source / "setup.cfg").write_text(
         "[mutmut]\nsource_paths = altitude\n"
-        f"only_mutate ={lines(MODULES)}\n"
+        f"only_mutate ={lines(modules)}\n"
         f"also_copy ={lines(sorted(p.name for p in source.iterdir() if p.name not in ('altitude', 'tests')))}\n"
         "pytest_add_cli_args = -p no:cacheprovider\n"
         f"pytest_add_cli_args_test_selection ={lines(TESTS)}\n"
@@ -123,15 +124,15 @@ def function_of(mutant: str) -> str:
     return ".".join(filter(None, name[1:].split("ǁ"))) if name.startswith("xǁ") else name[2:]
 
 
-def classify(results: str) -> dict[str, dict[str, list[str]]]:
+def classify(results: str, modules: dict = MODULES) -> dict[str, dict[str, list[str]]]:
     """Mutant names of the selected modules by module and status, from `mutmut results --all true`."""
-    found = {module: {} for module in MODULES}
+    found = {module: {} for module in modules}
     for line in results.splitlines():
         match = RESULT.match(line)
         if not match:
             continue
         mutant, status = match.groups()
-        for module, patterns in MODULES.items():
+        for module, patterns in modules.items():
             if any(fnmatch.fnmatchcase(mutant, pattern) for pattern in patterns):
                 found[module].setdefault(status, []).append(mutant)
     return found
@@ -170,7 +171,10 @@ def render(found: dict, diffs: dict[str, str], heading: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("results", type=Path, help="new or empty directory for report.md and mutmut.log")
+    parser.add_argument("modules", nargs="*", choices=list(MODULES), metavar="module",
+                        help=f"only these, for a rerun after new tests (default: all of {', '.join(MODULES)})")
     args = parser.parse_args()
+    modules = {module: MODULES[module] for module in args.modules or MODULES}
     if args.results.exists() and any(args.results.iterdir()):
         parser.error(f"{args.results} is not empty")
     # Read before RESULTS exists, so a results folder inside the checkout is not a local change.
@@ -184,7 +188,7 @@ def main() -> int:
     try:
         source, venv = scratch / "source", scratch / "venv"
         copy_tree(source)
-        configure(source)
+        configure(source, modules)
         subprocess.run([sys.executable, "-m", "venv", venv], check=True)
         subprocess.run([venv / "bin" / "python", "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
                         "--no-cache-dir", "--require-hashes", "--only-binary=:all:", "-r", REQUIREMENTS], check=True)
@@ -198,7 +202,7 @@ def main() -> int:
         # Git hooks and `bin/alt` start `python3` from PATH, and the mutated modules import mutmut.
         env = {k: v for k, v in os.environ.items() if k != "ALTITUDE_ACTOR"}
         env["PATH"] = f"{venv / 'bin'}{os.pathsep}{env.get('PATH', '')}"
-        patterns = [pattern for module in MODULES.values() for pattern in module]
+        patterns = [pattern for module in modules.values() for pattern in module]
         with open(args.results / "mutmut.log", "wb") as log:
             returncode = run_mutmut([mutmut, "run", *patterns], source, env, venv, log)
         if returncode:
@@ -206,7 +210,7 @@ def main() -> int:
             return returncode
         listed = subprocess.run([mutmut, "results", "--all", "true"], cwd=source, env=env, check=True,
                                 capture_output=True, text=True).stdout
-        found = classify(listed)
+        found = classify(listed, modules)
         survivors = [mutant for by_status in found.values() for mutant in by_status.get("survived", [])]
         with ThreadPoolExecutor(os.cpu_count()) as pool:
             shown = pool.map(lambda mutant: subprocess.run([mutmut, "show", mutant], cwd=source, env=env, check=True,

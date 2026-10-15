@@ -1159,7 +1159,9 @@ measurement, not a check: `make check` and the required CI never run it, and its
 - **Other**: mutmut did not settle the edit (not checked, suspicious, crashed); the report names
   each one. A nonzero count means that module's counts are incomplete.
 
-Read each survivor and sort it:
+Survivors are relative to the listed test files: a test elsewhere in the suite may already catch
+one. Before calling a survivor a gap, apply its diff by hand and run `make check-python`. Then
+sort it:
 
 - **Real gap**: the edit changes observable behavior (a refused transition allowed, a check skipped,
   a wrong state, path or exit status recorded) and nothing notices. Add a regression test that fails
@@ -1168,6 +1170,9 @@ Read each survivor and sort it:
   every caller overrides, or a timeout constant a fixture replaces. Leave it.
 - **Noise**: wording of log lines and messages. Test it only where the exact text is the behavior,
   such as a refusal the operator reads.
+
+`MODULES="altitude/door.py"` (any of the five, space-separated) limits a rerun to those modules, to
+check that new tests kill the survivors they were written for.
 
 A survivor count is not a target; the worst real gaps become ordinary test work in their own tasks.
 

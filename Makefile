@@ -17,9 +17,9 @@ check-web:
 	cd web && $(TIME) pnpm build
 	cd web && $(TIME) pnpm ui $(SHARDED)
 	cd web && $(TIME) pnpm ui:shell $(SHARDED)
-mutation:       ## mutation run over the core modules' fast unit tests, a measurement outside `check` (RESULTS=dir for report.md)
+mutation:       ## mutation run over the core modules' fast unit tests, a measurement outside `check` (RESULTS=dir for report.md [MODULES="altitude/door.py ..."])
 	$(if $(RESULTS),,$(error Set RESULTS to a new directory for the report))
-	python3 scripts/mutation.py "$(RESULTS)"
+	python3 scripts/mutation.py "$(RESULTS)" $(MODULES)
 web:            ## build the SPA into web/dist (supported Node and pnpm on PATH)
 	cd web && pnpm install --frozen-lockfile && pnpm build
 ui:             ## isolated headless browser walkthroughs at phone and desktop widths (build first; CAPTURE=1 with UI_ARGS=spec keeps GIFs in web/ui-artifacts/captures)
