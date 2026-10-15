@@ -489,7 +489,7 @@ class TestInstallationVm(AltitudeCase):
         with mock.patch.object(vm.subprocess, "run", side_effect=lambda command, **kw: subprocess.CompletedProcess(
                     command, 0, "QEMU emulator version 9.0 fixture\n", "") if command[0] == "qemu-system-x86_64"
                     else native(command, **kw)), \
-                mock.patch.object(vm, "build", side_effect=lambda commit, work, results: events.append("built")), \
+                mock.patch.object(vm, "build", side_effect=lambda commit, work, results, versions: events.append("built")), \
                 mock.patch.object(vm, "base_image", return_value={"image": "fixture"}), mock.patch.object(vm, "Machine", Machine), \
                 mock.patch.object(vm, "browsers", side_effect=lambda machine, work, log: events.append("browsers") or {"node": "v22"}), \
                 mock.patch.object(vm, "harness", side_effect=lambda machine, commits, phase, log: events.append(phase) or 0), \
