@@ -673,6 +673,29 @@ class TestMacLifecycle(AltitudeCase):
         with self.assertRaisesRegex(ValueError, "unexpected altitude/__pycache__/"):
             installation.metadata(tree, archive=True)
 
+    def test_only_a_published_baseline_may_refuse_its_caches_with_the_legacy_error(self):
+        """The Linux update phase leaves caches out only for a published baseline that predates #1029; a candidate
+        that refuses them fails the run with its error."""
+        archive, checksum = test_installation.Installation.archive(self, "v0.0.1")
+        tree = self.tmp / "versions/v0.0.1"
+        installation.extract(archive, checksum, tree)
+        harness = Lifecycle(self.tmp, self.tmp, self.tmp / "results", "a" * 40)
+        harness.results.mkdir()
+        harness.env = {"PATH": os.environ["PATH"], "HOME": str(self.tmp)}
+        legacy = subprocess.CompletedProcess([], 1, "", "ValueError: Release files do not match its manifest; the only "
+                                             "extra files look like generated Python caches: run alt recover")
+        other = subprocess.CompletedProcess([], 1, "", "ValueError: Release v0.0.1 does not match its manifest: "
+                                            "unexpected altitude/__pycache__/config.cpython-312.pyc")
+        self.assertFalse(harness.legacy_cache_refusal(tree, published=False))  # the candidate's own check accepts
+        for result, published, expected in ((legacy, True, True), (legacy, False, None), (other, True, None)):
+            with self.subTest(stderr=result.stderr, published=published), \
+                    mock.patch("scripts.installation_lifecycle.subprocess.run", return_value=result):
+                if expected:
+                    self.assertTrue(harness.legacy_cache_refusal(tree, published))
+                else:
+                    with self.assertRaisesRegex(AssertionError, "refused its generated caches"):
+                        harness.legacy_cache_refusal(tree, published)
+
     def test_the_injected_near_expiry_leaf_is_due_and_the_releases_check_renews_it(self):
         from altitude import config, platform, tls
         from scripts.installation_lifecycle import NEAR_EXPIRY

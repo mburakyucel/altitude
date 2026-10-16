@@ -1374,8 +1374,9 @@ healthy baseline with fictional data, settings and TLS identity unchanged; two m
 keep that same failed attempt and download nothing. An outside process then imports from the installed
 baseline with `-I` and without `-B`, writing Python caches into it, and the server publishes the candidate.
 The baseline's daemon must install it automatically with no browser terminal open,
-record success and serve the candidate's healthy version with a new PID, leaving those caches in place. A
-published baseline whose own release check refuses such caches gets none, which its results record as a limit. The harness then turns
+record success and serve the candidate's healthy version with a new PID, leaving those caches in place. Only a
+published baseline from v0.8.0 or older, whose own check refuses them with its earlier error, gets none, which
+its results record as a limit; any other refusal fails the run. The harness then turns
 automatic updates off and publishes a newer synthetic release; a paired app **Update** request
 installs it explicitly. Each update, the failed one included, downloads only its archive and checksum, once. The baseline must have
 automatic updates (`v0.1.2` or later). The hosts

@@ -317,6 +317,20 @@ class Lifecycle:
         write_json(self.results / "foreign-caches.json", caches)
         return caches
 
+    def legacy_cache_refusal(self, tree: Path, published: bool) -> bool:
+        """Whether the installed release's own check refuses its generated caches as v0.8.0 and older do. Only a
+        published baseline may: the candidate's code refusing them, or any other failure, stops the run."""
+        probe = subprocess.run([sys.executable, "-I", "-B", "-c", "import sys; from pathlib import Path; "
+                                "sys.path.insert(0, sys.argv[1]); from altitude import installation; "
+                                "installation.metadata(Path(sys.argv[1]))", str(tree)],
+                               env=self.env, capture_output=True, text=True, timeout=60)
+        (self.results / "foreign-caches-baseline-check.log").write_text(f"exit: {probe.returncode}\n{probe.stderr}")
+        if probe.returncode == 0:
+            return False
+        if published and "the only extra files look like generated Python caches" in probe.stderr:
+            return True
+        raise AssertionError(f"The installed release refused its generated caches: {probe.stderr.strip()[-500:]}")
+
     def exercise(self):
         old, old_sha, package, before, new, new_sha, new_package, after = self.prepare()
         self.manual_updates()
@@ -709,15 +723,10 @@ class Lifecycle:
                 assert self.record()["attempt"] == failed, self.record()
             assert [line for line in requests if f"/releases/download/{broken_version}/" in line] == fetched, requests
             write_json(self.results / "automatic-failure-no-repeat.json", {"record": self.record(), "downloads": fetched})
-            # An outside process writes bytecode into the installed release first (#1029). A published baseline whose
-            # own release check predates accepting it refuses that tree, so its caches are left out and noted.
+            # An outside process writes bytecode into the installed release first (#1029).
             outgoing = self.prefix.joinpath("current").resolve()
             caches = self.foreign_caches(outgoing)
-            accepted = subprocess.run([sys.executable, "-I", "-B", "-c", "import sys; from pathlib import Path; "
-                                       "sys.path.insert(0, sys.argv[1]); from altitude import installation; "
-                                       "installation.metadata(Path(sys.argv[1]))", str(outgoing)],
-                                      env=self.env, capture_output=True, timeout=60).returncode == 0
-            if not accepted:
+            if self.legacy_cache_refusal(outgoing, published):
                 for name in caches:
                     (outgoing / name).unlink()
                 caches = []
