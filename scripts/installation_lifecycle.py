@@ -317,9 +317,10 @@ class Lifecycle:
         write_json(self.results / "foreign-caches.json", caches)
         return caches
 
-    def legacy_cache_refusal(self, tree: Path, published: bool) -> bool:
-        """Whether the installed release's own check refuses its generated caches as v0.8.0 and older do. Only a
-        published baseline may: the candidate's code refusing them, or any other failure, stops the run."""
+    def legacy_cache_refusal(self, tree: Path, release: str | None) -> bool:
+        """Whether the installed release's own check refuses its generated caches as v0.8.0 and older do. Only RELEASE,
+        a published baseline from v0.8.0 or older, may: a later release or the candidate refusing them, or any other
+        failure, stops the run."""
         probe = subprocess.run([sys.executable, "-I", "-B", "-c", "import sys; from pathlib import Path; "
                                 "sys.path.insert(0, sys.argv[1]); from altitude import installation; "
                                 "installation.metadata(Path(sys.argv[1]))", str(tree)],
@@ -327,7 +328,8 @@ class Lifecycle:
         (self.results / "foreign-caches-baseline-check.log").write_text(f"exit: {probe.returncode}\n{probe.stderr}")
         if probe.returncode == 0:
             return False
-        if published and "the only extra files look like generated Python caches" in probe.stderr:
+        legacy = release and tuple(map(int, re.match(r"v(\d+)\.(\d+)\.(\d+)", release).groups())) < (0, 9, 0)
+        if legacy and "the only extra files look like generated Python caches" in probe.stderr:
             return True
         raise AssertionError(f"The installed release refused its generated caches: {probe.stderr.strip()[-500:]}")
 
@@ -726,7 +728,7 @@ class Lifecycle:
             # An outside process writes bytecode into the installed release first (#1029).
             outgoing = self.prefix.joinpath("current").resolve()
             caches = self.foreign_caches(outgoing)
-            if self.legacy_cache_refusal(outgoing, published):
+            if self.legacy_cache_refusal(outgoing, before["version"] if published else None):
                 for name in caches:
                     (outgoing / name).unlink()
                 caches = []
@@ -1397,7 +1399,7 @@ class MacLifecycle(Lifecycle):
             # An outside process writes bytecode into the installed baseline first (#1029).
             outgoing = self.prefix.joinpath("current").resolve()
             caches = self.foreign_caches(outgoing)
-            if self.legacy_cache_refusal(outgoing, published=True):
+            if self.legacy_cache_refusal(outgoing, before["version"]):
                 for name in caches:
                     (outgoing / name).unlink()
                 caches = []
