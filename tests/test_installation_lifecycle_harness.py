@@ -1371,10 +1371,12 @@ class TestInstallationMacosVm(AltitudeCase):
         self.assertEqual(json.loads(coordinator.stdout.splitlines()[0])["thread_id"], "fictional-session")
         self.assertEqual(json.loads(coordinator.stdout.splitlines()[-1])["type"], "turn.completed")
 
-    def test_published_names_two_release_tags_and_runs_alone(self):
+    def test_published_names_release_tags_and_runs_alone(self):
         from scripts import installation_macos_vm as vm
-        for argv, error in ((["--published", "v0.3.0"], "is not a release version"),
+        for argv, error in ((["--published", "main"], "main is not a release version"),
+                            (["--published", "v0.3.0.."], " is not a release version"),
                             (["--published", "v0.3.0..main"], "main is not a release version"),
+                            (["--published", "v0.3.0", "--phase", "login"], "runs only the published phase"),
                             (["--published", "v0.3.0..v0.4.0", "--phase", "login"], "runs only the published phase")):
             with mock.patch.object(vm.sys, "argv", ["installation_macos_vm.py", "run", str(self.tmp / "r"), *argv]), \
                     mock.patch.object(vm.sys, "stderr", io.StringIO()) as stderr, mock.patch.object(vm, "lock") as lock:
@@ -1401,6 +1403,26 @@ class TestInstallationMacosVm(AltitudeCase):
         self.assertEqual(ran, [("published", "a" * 40 + ".." + "b" * 40)])
         record = json.loads((self.tmp / "results/macos-vm.json").read_text())
         self.assertEqual((record["source_commit"], record["published"]["candidate"]["release"]), (None, "v0.4.0"))
+
+    def test_published_baseline_alone_updates_to_the_source_built_under_its_next_minor(self):
+        from scripts import installation_macos_vm as vm
+        fetched, builds, ran = [], [], []
+        def published(github, tag, folder):
+            fetched.append(tag)
+            return {"release": tag, "commit": "a" * 40, "sha256": {}}
+        with mock.patch.object(vm, "repository", return_value="https://github.com/example/altitude"), \
+                mock.patch.object(vm, "published", side_effect=published), \
+                mock.patch.object(vm, "build", side_effect=lambda commit, work, log, *args: builds.append((commit, *args))), \
+                mock.patch.object(vm, "CACHE", self.tmp), \
+                mock.patch.object(vm, "run_phase", side_effect=lambda name, inputs, results, record, commits:
+                                  ran.append((name, commits)) or record["phases"].setdefault(name, {"passed": True})):
+            self.assertEqual(vm.lane(self.tmp / "results", "c" * 40, ["published"], ("v0.9.0", None)), 0)
+        # The candidate follows the stable baseline, so the baseline's own daemon installs it automatically.
+        self.assertEqual((fetched, builds), (["v0.9.0"], [("c" * 40, "v0.10.0", "candidate")]))
+        self.assertEqual(ran, [("published", "a" * 40 + ".." + "c" * 40)])
+        record = json.loads((self.tmp / "results/macos-vm.json").read_text())
+        self.assertEqual((record["source_commit"], record["published"]["candidate"]),
+                         ("c" * 40, {"release": "v0.10.0", "commit": "c" * 40, "built": True}))
 
     def test_other_hosts_refuse_before_touching_anything(self):
         from scripts import installation_macos_vm as vm
