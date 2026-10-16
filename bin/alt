@@ -434,6 +434,9 @@ def main(argv=None) -> None:
                            help="current L2: show this worktree file with the question, in a group the one marked "
                                 "\"review\": \"proposal\" (repeat; one .md/.txt, images)")
             x.add_argument("--recommendation"); x.add_argument("--label"); x.add_argument("--why")
+            x.add_argument("--standing-policy", metavar="HEADING",
+                           help="current L2: ask L3 for this standing approval; the question is the paragraph under "
+                                "HEADING in AGENTS.md on the project's main, and takes no other question options")
             x.add_argument("--fault", action="store_true", help="the environment failed, not a decision: file the incident and tell L3")
             x.add_argument("--for-operator", action="store_true", help="the brief says to ask the operator here, the call is plainly theirs, or the wait is "
                                 "on their action (a run command, a posted step): skip L3; the reason's first line "
@@ -931,7 +934,14 @@ def main(argv=None) -> None:
         elif tc == "recheck-ci":
             out(T.recheck_ci(p, args.slug, args.run, args.at, args.reason, actor=ACTOR))
         elif tc == "block":
-            questions, args.reason = _question_input(args, args.reason)
+            if args.standing_policy is None:
+                questions, args.reason = _question_input(args, args.reason)
+            elif ACTOR != "l2" or any((args.reason, args.questions_file, args.show, args.fault, args.for_operator,
+                                       args.recommendation, args.label, args.why)):
+                sys.exit("alt task block --standing-policy: the current L2's whole question to L3; "
+                         "put task-specific steps in a reply first")
+            else:
+                questions = None
             if args.show and (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK")
                               or p != os.environ.get("ALTITUDE_PROJECT") or not os.environ.get("ALTITUDE_ATTEMPT")
                               or args.fault):
@@ -954,7 +964,7 @@ def main(argv=None) -> None:
                                       expected_attempt=int(attempt), updates={"waiting_on": waiting},
                                       recommendation=args.recommendation, recommendation_label=args.label,
                                       recommendation_why=args.why, questions=questions, show=_shown(args, p),
-                                      tell_l3=True)
+                                      tell_l3=True, standing_policy=args.standing_policy)
                     if args.show:
                         asked = T.shown_question(questions)["question"] if questions else args.reason
                         question = next(q for q in reversed(blocked["questions"])

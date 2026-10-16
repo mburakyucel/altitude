@@ -1425,9 +1425,11 @@ granted command runs with the operator's access and is trusted to stay inside th
 record, not command parsing, makes it accountable. An operator's answer to the owner's purpose
 question is recorded by the running owner from its task chat or by L3 or the operator and verified
 against that question revision. Alternatively, L3 applies an original operator approval from the
-same project's chat to an exact policy-purpose request: a unique, single-paragraph heading in the
-registered checkout's `refs/heads/main:AGENTS.md`, pinned to its commit, must cite the approval and
-match the current open owner-authored L3 question apart from whitespace. The standing path fences
+same project's chat to the owner's policy request: `alt task block --standing-policy <heading>` publishes
+the paragraph under a unique, single-paragraph heading in the registered checkout's
+`refs/heads/main:AGENTS.md` as an L3 question marked with that heading, and the grant requires that
+current open marked question, the paragraph's citation of the approval, and a still-matching paragraph,
+apart from whitespace, pinned to its commit. The standing path fences
 the observed attempt and stores the original approval, policy text/commit and question revision;
 task branches and dirty policy files supply no authority. L3 judges later corrections and revocations,
 revokes active grants and assigns policy removal; neither shell commands nor chat consent are
