@@ -3,7 +3,6 @@ fixture macOS `security`; the running service is a real HTTPS health endpoint. N
 import hashlib
 import os
 from pathlib import Path
-import pty
 import shutil
 import ssl
 import subprocess
@@ -12,6 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from tests.support import in_terminal
 from tests.test_tls import HealthServer, ServiceCase
 from altitude import config, installation, platform, tls
 
@@ -308,22 +308,16 @@ class TestTerminal(unittest.TestCase):
         before the question that the answer ignores."""
         answer = Path(self.enterContext(tempfile.TemporaryDirectory())) / "answer"
         code = "import sys; from altitude import tls; open(sys.argv[1], 'w').write(repr(tls._terminal_answer('Trust it? [y/N] ')))"
-        pid, terminal = pty.fork()
-        if pid == 0:
+
+        def child():
             read, write = os.pipe()
             os.write(write, b"n\n")
             os.dup2(read, 0)
             os.chdir(Path(__file__).resolve().parent.parent)
             os.execv(sys.executable, [sys.executable, "-c", code, str(answer)])
-        shown = b""
-        try:
-            os.write(terminal, b"n\n")
-            while b"Trust it? [y/N] " not in shown:
-                shown += os.read(terminal, 1024)
-            os.write(terminal, b"Yes\n")
-            os.waitpid(pid, 0)
-        finally:
-            os.close(terminal)
+
+        status, shown = in_terminal(child, typed=b"n\n", answers={b"Trust it? [y/N] ": b"Yes\n"})
+        self.assertEqual(status, 0, shown)
         self.assertEqual(answer.read_text(), "'yes'")
 
 
