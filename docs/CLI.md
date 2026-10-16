@@ -1160,6 +1160,7 @@ alt task grant <slug> --approval <message-id> --question <id> --revision <n> --r
 alt task grant <slug> --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
 alt task grant <slug> --from-task <earlier-slug> --approval <message-id> --question <id> --revision <n> --attempt <n> [--source task|project] --reason <why>
 alt task grant <slug> --revoke --reason <why>
+alt task grant <slug> --withdraw <approval-id> --reason <why>
 alt task run <slug> <command>
 alt task terminal [<slug>] [--json]
 alt project terminal [--json]  # the coordinator, through its project socket
@@ -2181,9 +2182,11 @@ and virtual machines on the Mac, which cannot start inside a validation run, use
 
 ```text
 alt task grant <slug> --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
+alt task grant <slug> --approval <message-id> --question <id> --revision <n> --attempt <n> [--source task|project] --reason <why>
 alt task grant <slug> --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
 alt task grant <slug> --from-task <earlier-slug> --approval <message-id> --question <id> --revision <n> --attempt <n> [--source task|project] --reason <why>
 alt task grant <slug> --revoke --reason <why>
+alt task grant <slug> --withdraw <approval-id> --reason <why>
 alt task run <slug> <command>
 ```
 
@@ -2207,7 +2210,8 @@ a guard still refuses, the owner puts that one command in a `run` block for the 
 rather than rewording it. Rules Altitude does not control, such as a repository ruleset or billing, are
 reported as the operator's remaining step.
 
-Without applicable standing project approval, the owner asks the operator once per purpose,
+Without applicable standing project approval or an earlier operator message that already approves the
+step, the owner asks the operator once per purpose,
 in a plain question naming the purpose and its bounds
 (what may run and what may not, limits, cleanup, verification and when the purpose ends), and
 resolves the operator's answer with `alt task resolve`. Whoever records the grant cites that same
@@ -2232,6 +2236,20 @@ run against that earlier question and answer; the grant records the purpose as t
 it and `from_task`, binds this task's current attempt and is revoked as usual. L3 judges later
 corrections and whether the new work is the same purpose; any narrower or wider purpose is asked again.
 
+The operator can also approve a step before any question asks for it, for example "publish the release
+once its checks pass" in the request that creates the work. The owner then asks L3 for the grant in an
+L3-directed `alt task block` naming the step and the operator's message, and does not ask the operator
+again. L3 records it with the second form above, citing that original operator message in the project's
+chat (`--source project`) or this task's chat, against the owner's current open L3 question and
+`--attempt`. The grant's purpose is the operator's whole message, word for word, so none of its
+conditions is left out and nothing wider is granted; the reason names the concrete step, such as the
+version. L3 records it only after judging that the message approves this step for this task's work,
+that the message's own conditions hold now (otherwise it records nothing and tells the owner what is
+missing), that later corrections in either chat leave it standing, and that the step is not on the
+never-granted list above. Only L3 records it: an owner or operator call, a message that is not the
+operator's own, removed, in another project or in another task's chat, a stale attempt or revision, and
+any question other than the owner's current open L3 request refuse.
+
 For standing approval, the owner copies the complete paragraph under the policy's heading in the
 project's committed `AGENTS.md`, such as **Container operations on this machine** or **VM lane runs on
 this Mac**, into an L3-directed `alt task block --reason` (without `--for-operator`). Task-specific
@@ -2254,10 +2272,19 @@ This checks the recorded purpose; it does not classify shell commands or infer c
 
 One grant occupies the task's grant slot. Revoke it before switching to or from a different standing
 purpose; the standing grant grants the entire policy scope, while its `--reason` retains the task's
-plan and limits. L3 stops applying a revoked approval immediately, revokes active grants with
-`--revoke`, and assigns removal of the policy paragraph. Existing grants do not automatically reread
+plan and limits. When the operator revokes a standing approval, L3 withdraws its approval ID as below
+and assigns removal of the policy paragraph. Existing grants do not automatically reread
 policy or interpret later chat. Widening a standing policy is a security decision under the project's
 review rules; another project needs its own operator approval and committed policy.
+
+When the operator withdraws a permission, L3 or the operator records it with `--withdraw`, naming the
+message that gave it: an answer, an earlier message or the approval a standing policy cites. Every grant
+in the project resting on that message ends at once, as a revocation does (its `grant-revoke` event says
+`withdrawn`, and a command still running under it is stopped), and the message grounds no later grant on
+any task by any path. The project's event log keeps the `grant-withdraw` record, so a withdrawal made
+before any grant exists binds too; the task it is recorded on gets a `grant-withdraw` event listing the
+grants it ended. Grants resting on other messages are untouched. A plain `--revoke` is routine cleanup
+after a purpose is done or before switching purposes: the same message can ground a grant again.
 
 The purpose grant covers iteration until the purpose is done: run, inspect, correct and retest,
 including after a failed attempt, without approval for each command or attempt. One command at a time

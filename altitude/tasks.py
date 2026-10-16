@@ -3279,15 +3279,31 @@ def _standing_policy(project: str, heading: str, approval: str) -> dict:
     return {"file": "AGENTS.md", "heading": heading, "commit": commit, "text": text}
 
 
+def _operator_message(project: str, slug: str, approval: str, source: str) -> dict:
+    row = next((row for row in _decision_messages(project, slug, source)
+                if row["id"] == approval and row["role"] == OPERATOR_MESSAGE_ROLE
+                and row.get("by") == OPERATOR_MESSAGE_ROLE and not row.get("resume") and not row.get("removed_at")), None)
+    if not row:
+        raise ValueError(f"cite an original operator message in this {source}'s chat")
+    return row
+
+
+def _withdrawn(project: str, approval: str) -> bool:
+    return any(e.get("kind") == "grant-withdraw" and e.get("approval") == approval
+               for e in S.read_project_log(project, None))
+
+
 def record_grant(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
                  actor: str, source: str = "task", expected_attempt: int | None = None,
                  standing_policy: str | None = None, from_task: str | None = None) -> dict:
-    """Record an exact operator answer, or L3's application of an approved project-policy purpose.
+    """Record an exact operator answer, or L3's application of authority the operator gave before the question.
 
-    The recorder judges approval and later revocations; mechanical checks bind its source, purpose,
-    question and attempt. An owner self-records only from the operator's task-chat answer. L3 may apply
-    the operator's answer to a question another task of this project asked (`from_task`), for that
-    identical purpose; the grant records where the answer came from and binds this task's current attempt.
+    The recorder judges approval and later corrections; mechanical checks bind its source, purpose, question and
+    attempt. An owner self-records only from the operator's task-chat answer to its operator question. L3 grounds
+    the owner's open L3 purpose question in an approved project-policy paragraph (`standing_policy`) or in an
+    earlier operator message, whose whole text is the purpose. L3 may also apply the operator's answer to a
+    question another task of this project asked (`from_task`), for that identical purpose. A withdrawn approval
+    grounds nothing.
     """
     if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
         raise TransitionError("an operator grant needs the owner, the coordinator or the operator and a reason")
@@ -3300,6 +3316,8 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                                   or source != "task"):
                 raise ValueError("the owner records a grant only while running its current attempt, "
                                  "from the operator's task-chat answer")
+            if _withdrawn(project, approval):
+                raise ValueError("the operator withdrew this approval; it grounds no grant")
             asked = task
             if from_task is not None:
                 if actor != "l3" or standing_policy is not None or from_task == slug:
@@ -3312,22 +3330,26 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
             policy = None
             saved = decision.get("resolution") or {}
             current = next(q for q in reversed(asked["questions"]) if q["id"] == question)
-            if standing_policy is not None:
-                if actor != "l3" or source != "project":
-                    raise ValueError("only L3 records a standing project approval")
+            purpose = decision["detail"]
+            if standing_policy is not None or (from_task is None and decision["audience"] == "l3"):
+                # Authority given before the question: the owner's open request to L3 names the purpose.
+                if actor != "l3":
+                    raise ValueError("only L3 applies a standing policy or an earlier operator message")
                 if expected_attempt != task.get("attempt"):
-                    raise ValueError("standing grant must name the current task attempt")
+                    raise ValueError("a grant from earlier authority must name the current task attempt")
                 if (decision != current or decision["status"] != "open" or decision["audience"] != "l3"
                         or decision["asked_by"] != "l2" or decision.get("shown") or decision.get("response")):
-                    raise ValueError("standing grant needs the owner's current open L3 purpose question")
-                operator = next((row for row in _decision_messages(project, slug, "project")
-                                 if row["id"] == approval and row["role"] == OPERATOR_MESSAGE_ROLE
-                                 and row.get("by") == OPERATOR_MESSAGE_ROLE and not row.get("removed_at")), None)
-                if not operator:
-                    raise ValueError("standing approval must cite an original operator message in this project's chat")
-                policy = _standing_policy(project, standing_policy, approval)
-                if decision["detail"].split() != policy["text"].split():
-                    raise ValueError("requested purpose must exactly match the standing policy scope")
+                    raise ValueError("this grant needs the owner's current open L3 purpose question")
+                if standing_policy is not None:
+                    if source != "project":
+                        raise ValueError("a standing approval cites the project's chat")
+                    operator = _operator_message(project, slug, approval, "project")
+                    policy = _standing_policy(project, standing_policy, approval)
+                    if purpose.split() != policy["text"].split():
+                        raise ValueError("requested purpose must exactly match the standing policy scope")
+                else:  # the operator's whole message is the purpose, so none of its conditions is left out
+                    operator = _operator_message(project, slug, approval, source)
+                    purpose = operator["text"]
             else:
                 if (decision != current or decision["status"] != "resolved" or decision["audience"] != "operator"
                         or saved.get("disposition") != "answered" or saved.get("remaining")
@@ -3344,7 +3366,7 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                 operator = _decision_source(project, from_task or slug, decision, approval, source, exact=True)
             previous = task.get("grant")
             if previous and (policy or previous.get("policy")) and any((
-                    previous.get("purpose", "").split() != decision["detail"].split(),
+                    previous.get("purpose", "").split() != purpose.split(),
                     previous.get("approval") != approval, previous.get("source") != source,
                     previous.get("attempt") != task.get("attempt"), previous.get("policy") != policy)):
                 raise ValueError("revoke the existing operator grant before switching its purpose or standing policy")
@@ -3353,7 +3375,7 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                            revision=revision, reason=reason, standing_policy=standing_policy, from_task=from_task,
                            error=str(exc))
             raise TransitionError(f"operator grant refused: {exc}") from exc
-        grant = {"purpose": decision["detail"], "answer": operator.get("text"), "approval": approval,
+        grant = {"purpose": purpose, "answer": operator.get("text"), "approval": approval,
                  "approved_at": operator["at"], "question": question, "revision": revision, "source": source,
                  "attempt": task.get("attempt"), "actor": actor, "reason": reason.strip(), "at": S.now()}
         if policy:
@@ -3369,6 +3391,28 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
         S.save_task(project, task)
         S.append_event(project, slug, "grant", **grant)
         return grant
+
+
+def withdraw_approval(project: str, slug: str, approval: str, reason: str, *, actor: str) -> list[str]:
+    """The operator withdrew a permission: the message that gave it ends every grant resting on it, on any task of
+    the project, and grounds no new one. Returns the tasks whose grant ended."""
+    if actor not in ("l3", OPERATOR_MESSAGE_ROLE) or not approval.strip() or not reason.strip():
+        raise TransitionError("withdrawing an approval needs the coordinator or the operator, the approval and a reason")
+    with S.project_lock(project):
+        S.load_task(project, slug)
+        S.project_log(project, "grant-withdraw", approval=approval, slug=slug, actor=actor, reason=reason.strip())
+        ended = []
+        for task in S.list_tasks(project):
+            previous = task.get("grant")
+            if previous and previous.get("approval") == approval:
+                task["grant"] = None
+                S.save_task(project, task)
+                S.append_event(project, task["slug"], "grant-revoke", actor=actor, reason=reason.strip(),
+                               purpose=previous["purpose"], approval=approval, withdrawn=True)
+                ended.append(task["slug"])
+        S.append_event(project, slug, "grant-withdraw", actor=actor, approval=approval, reason=reason.strip(),
+                       ended=ended)
+        return ended
 
 
 def revoke_grant(project: str, slug: str, reason: str, *, actor: str,

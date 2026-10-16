@@ -247,6 +247,176 @@ class TestOperatorGrant(AltitudeCase):
         T.revoke_grant(self.project, self.slug, "Acceptance complete.", actor="l3")
         self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
 
+    def earlier(self, text="Fix it structurally, and publish the release once its checks pass.",
+                turn="dddddddddddd", **row):
+        """An operator message in project chat that authorizes an outward step before any question asks it."""
+        self.tick()
+        message = {"turn_id": turn, "role": "user", "by": "burak", "trigger": "chat", "at": self.at, "text": text,
+                   **row}
+        chat = config.project_dir(self.project) / "chat.jsonl"
+        chat.write_text((chat.read_text() if chat.exists() else "") + json.dumps(message) + "\n")
+        return message
+
+    def from_earlier(self, question, approval="dddddddddddd", slug=None, **overrides):
+        arguments = dict(question=question["id"], revision=question["revision"], actor="l3", source="project",
+                         expected_attempt=1, reason="Publish v0.9.0 now that its checks passed.")
+        arguments.update(overrides)
+        return T.record_grant(self.project, slug or self.slug, approval, **arguments)
+
+    def test_l3_grounds_the_owners_request_in_an_earlier_operator_message_whose_whole_text_is_the_purpose(self):
+        message = self.earlier()
+        # The owner's request may describe more than the operator wrote; the grant records only the operator's words.
+        question = self.ask("Please record a grant to publish v0.9.0 and deploy it to every server.", "l3")
+        arguments = ("task", "grant", self.slug, "--approval", message["turn_id"], "--source", "project",
+                     "--question", question["id"], "--revision", str(question["revision"]), "--attempt", "1",
+                     "--reason", "Publish v0.9.0 now that its checks passed.")
+        result = self.alt(*arguments, env={"ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l3"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        grant = S.load_task(self.project, self.slug)["grant"]
+        self.assertEqual((grant["purpose"], grant["answer"], grant["approval"], grant["source"], grant["question"],
+                          grant["revision"], grant["actor"], grant["attempt"], grant["reason"]),
+                         (message["text"], message["text"], message["turn_id"], "project", question["id"],
+                          question["revision"], "l3", 1, "Publish v0.9.0 now that its checks passed."))
+        self.assertNotIn("policy", grant)
+        T.resume(self.project, self.slug)
+        self.assertEqual(self.run_command("echo published")["exit"], 0)
+        # The operator's message in this task's own chat grounds a grant the same way.
+        T.revoke_grant(self.project, self.slug, "Published.", actor="l3")
+        self.tick()
+        row = T.message(self.project, self.slug, "burak", "Once the tests pass, deploy the docs site.", by="burak")
+        question = self.ask("Please record a grant to deploy the docs site; the tests passed.", "l3")
+        grant = self.from_earlier(question, row["id"], source="task", reason="Tests passed; deploy the docs site.")
+        self.assertEqual((grant["purpose"], grant["source"]), ("Once the tests pass, deploy the docs site.", "task"))
+
+    def test_an_earlier_message_grounds_only_its_own_words_from_its_own_chat_for_l3(self):
+        message = self.earlier()
+        question = self.ask("Please record the release grant.", "l3")
+        other = self.project + "-other"
+        self.register(other)
+        config.project_dir(other).mkdir(parents=True, exist_ok=True)
+        (config.project_dir(other) / "chat.jsonl").write_text(json.dumps({**message, "turn_id": "eeeeeeeeeeee"}) + "\n")
+        self.earlier("Maybe later.", "aaaaaaaaaaaa", role="assistant")
+        self.earlier("I relay the release.", "bbbbbbbbbbbb", by="l3")
+        self.earlier("Publish it.", "cccccccccccc", removed_at=self.at)
+        self.tick()
+        relay = T.message(self.project, self.slug, "l3", "The operator approved publishing.", by="l3")
+        sibling = T.new(self.project, "Another task", "Unrelated.")["slug"]
+        T.dispatch(self.project, sibling, attempt=1, session_id="sibling", agent_id="sibling",
+                   worktree=str(self.task_worktree(sibling)), branch="sibling")
+        self.tick()
+        elsewhere = T.message(self.project, sibling, "burak", "Publish the release.", by="burak")
+        refusals = [
+            (dict(approval="eeeeeeeeeeee"), "original operator message in this project's chat"),  # another project
+            (dict(approval="aaaaaaaaaaaa"), "original operator message in this project's chat"),
+            (dict(approval="bbbbbbbbbbbb"), "original operator message in this project's chat"),
+            (dict(approval="cccccccccccc"), "original operator message in this project's chat"),
+            (dict(approval=message["turn_id"], source="task"), "original operator message in this task's chat"),
+            (dict(approval=relay["id"], source="task"), "original operator message in this task's chat"),
+            (dict(approval=elsewhere["id"], source="task"), "original operator message in this task's chat"),
+            (dict(actor="l2"), "current attempt"),  # a blocked owner records nothing
+            (dict(actor="burak"), "only L3"),
+            (dict(expected_attempt=None), "current task attempt"),
+            (dict(expected_attempt=2), "current task attempt"),
+            (dict(revision=99), "question is unavailable"),
+        ]
+        for overrides, error in refusals:
+            with self.subTest(overrides=overrides):
+                with self.assertRaisesRegex(T.TransitionError, error):
+                    self.from_earlier(question, **overrides)
+        with self.assertRaisesRegex(T.TransitionError, "question is unavailable"):  # it grounds no other task's request
+            self.from_earlier(question, slug=sibling)
+        self.assertEqual(len(self.events("grant-refused")), len(refusals))
+        self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
+        # A running owner cannot self-record it either, and only the owner's current open request to L3 is grounded.
+        T.resume(self.project, self.slug)
+        with self.assertRaisesRegex(T.TransitionError, "only L3"):
+            self.from_earlier(question, actor="l2", source="task", approval=relay["id"])
+        T.block(self.project, self.slug, "Revised", actor="l2", expected_state="running", expected_attempt=1,
+                updates={"waiting_on": "l3"}, questions={"questions": [
+                    {"id": question["id"], "question": "Please record the release grant for v0.9.1."}]})
+        with self.assertRaisesRegex(T.TransitionError, "current open L3 purpose question"):
+            self.from_earlier(question)
+        T.resume(self.project, self.slug)
+        operator_question = self.ask("May I publish the release?", "burak")
+        with self.assertRaisesRegex(T.TransitionError, "answered the current operator question"):
+            self.from_earlier(operator_question)
+        self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
+
+    def test_a_withdrawn_approval_ends_every_grant_resting_on_it_and_grounds_no_new_one(self):
+        message = self.earlier()
+        later = self.earlier("Also publish the hotfix once its checks pass.", "ffffffffffff")
+        question = self.ask("Please record the release grant.", "l3")
+        sibling = T.new(self.project, "Publish the hotfix", "Ship it.")["slug"]
+        T.dispatch(self.project, sibling, attempt=1, session_id="sibling", agent_id="sibling",
+                   worktree=str(self.task_worktree(sibling)), branch="sibling")
+        self.tick()
+        T.block(self.project, sibling, "Please record the release grant here too.", actor="l2",
+                expected_state="running", expected_attempt=1, updates={"waiting_on": "l3"})
+        theirs = S.load_task(self.project, sibling)["questions"][-1]
+        self.from_earlier(question)
+        self.from_earlier(theirs, slug=sibling)
+        third = T.new(self.project, "Install a toolchain", "Unrelated.")["slug"]
+        T.dispatch(self.project, third, attempt=1, session_id="third", agent_id="third",
+                   worktree=str(self.task_worktree(third)), branch="third")
+        self.tick()
+        T.block(self.project, third, "Please record the hotfix grant.", actor="l2", expected_state="running",
+                expected_attempt=1, updates={"waiting_on": "l3"})
+        unrelated = self.from_earlier(S.load_task(self.project, third)["questions"][-1], later["turn_id"], slug=third)
+        T.resume(self.project, self.slug)
+        self.assertEqual(self.run_command("echo granted")["exit"], 0)
+        # A plain revoke is cleanup: the same message grounds the grant again.
+        T.revoke_grant(self.project, self.slug, "Paused.", actor="l3")
+        T.block(self.project, self.slug, "Again", actor="l2", expected_state="running", expected_attempt=1,
+                updates={"waiting_on": "l3"}, questions={"questions": [{"id": question["id"],
+                                                                       "question": "Please record it again."}]})
+        question = S.load_task(self.project, self.slug)["questions"][-1]
+        self.from_earlier(question)
+        T.resume(self.project, self.slug)
+        env = {"ALTITUDE_PROJECT": self.project}
+        with self.assertRaisesRegex(T.TransitionError, "coordinator or the operator"):
+            T.withdraw_approval(self.project, self.slug, message["turn_id"], "No.", actor="l2")
+        mixed = self.alt("task", "grant", self.slug, "--withdraw", message["turn_id"], "--revoke", "--reason", "No.",
+                         env={**env, "ALTITUDE_ACTOR": "l3"})
+        self.assertIn("takes only --reason", mixed.stderr)
+        self.assertIsNotNone(S.load_task(self.project, self.slug)["grant"])
+        withdrawn = self.alt("task", "grant", sibling, "--withdraw", message["turn_id"],
+                             "--reason", "The operator said not to publish after all.", env={**env, "ALTITUDE_ACTOR": "l3"})
+        self.assertEqual(withdrawn.returncode, 0, withdrawn.stderr)
+        self.assertEqual(sorted(json.loads(withdrawn.stdout)["ended"]), sorted([self.slug, sibling]))
+        for slug in (self.slug, sibling):
+            self.assertIsNone(S.load_task(self.project, slug)["grant"])
+            [revoked] = [e for e in S.read_events(self.project, slug) if e["kind"] == "grant-revoke" and e.get("withdrawn")]
+            self.assertEqual(revoked["approval"], message["turn_id"])
+        self.assertEqual(S.load_task(self.project, third)["grant"], unrelated)  # another permission stays
+        self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
+        T.block(self.project, self.slug, "Again", actor="l2", expected_state="running", expected_attempt=1,
+                updates={"waiting_on": "l3"}, questions={"questions": [{"id": question["id"],
+                                                                       "question": "Please record it once more."}]})
+        question = S.load_task(self.project, self.slug)["questions"][-1]
+        with self.assertRaisesRegex(T.TransitionError, "withdrew this approval"):
+            self.from_earlier(question)
+        # A permission withdrawn before any grant rests on it grounds none, and the operator may withdraw too.
+        self.assertEqual(T.withdraw_approval(self.project, self.slug, "999999999999", "Not that one.", actor="burak"), [])
+        self.earlier("Publish the beta.", "999999999999")
+        with self.assertRaisesRegex(T.TransitionError, "withdrew this approval"):
+            self.from_earlier(question, "999999999999")
+        self.assertIsNone(S.load_task(self.project, self.slug)["grant"])
+
+    def test_a_withdrawn_answer_grounds_no_direct_or_reused_grant(self):
+        grant, question, row = self.granted()
+        self.assertEqual(T.withdraw_approval(self.project, self.slug, row["id"], "Operator withdrew it.", actor="l3"),
+                         [self.slug])
+        with self.assertRaisesRegex(T.TransitionError, "withdrew this approval"):
+            T.record_grant(self.project, self.slug, row["id"], question=question["id"], revision=question["revision"],
+                           reason="Again.", actor="l3")
+        later = T.new(self.project, "Carry on", "Remaining work.")["slug"]
+        T.dispatch(self.project, later, attempt=1, session_id="later", agent_id="later",
+                   worktree=str(self.task_worktree(later)), branch="later")
+        with self.assertRaisesRegex(T.TransitionError, "withdrew this approval"):
+            T.record_grant(self.project, later, row["id"], question=question["id"], revision=question["revision"],
+                           reason="Same purpose.", actor="l3", expected_attempt=1, from_task=self.slug)
+        self.assertIsNone(S.load_task(self.project, later).get("grant"))
+
     def test_the_owner_records_its_grant_from_the_operators_task_chat_answer(self):
         question = self.ask()
         row = self.answer(question)
@@ -905,6 +1075,19 @@ class TestOperatorGrant(AltitudeCase):
         self.assertIn("grant was revoked", row["error"])
         T.revoke_grant(self.project, self.slug, "Done.", actor="l3")
         self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
+
+    def test_withdrawing_the_approval_stops_the_command_its_grant_is_running(self):
+        self.earlier()
+        self.from_earlier(self.ask("Please record the release grant.", "l3"))
+        T.resume(self.project, self.slug)
+        started, release = self.tmp / "started", self.tmp / "release"
+        self.patch(platform, "job_stop", side_effect=lambda name, env, **kwargs: release.touch())
+        with ThreadPoolExecutor(1) as pool:
+            running = self.running(pool, started, release)
+            T.withdraw_approval(self.project, self.slug, "dddddddddddd", "The operator said stop.", actor="l3")
+            result = running.result(timeout=30)
+        platform.job_stop.assert_called_with(self.unit(1), mock.ANY)
+        self.assertIn("grant was revoked", result["error"])
 
     def test_recording_the_same_answer_again_keeps_the_grant_and_its_running_command(self):
         grant, question, row = self.granted()
