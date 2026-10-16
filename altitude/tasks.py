@@ -1771,9 +1771,20 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
           recommendation: str | None = None,
           recommendation_label: str | None = None, recommendation_why: str | None = None,
           questions: dict | None = None, show: list[str] | None = None, resume_pending: bool = False,
-          tell_l3: bool = False) -> dict:
+          tell_l3: bool = False, standing_policy: str | None = None) -> dict:
     """`tell_l3` queues L3's notification of newly published questions under the same lock, so no reader
-    sees the owner's question before L3 is due to read it: until L3 has, the question alerts no device."""
+    sees the owner's question before L3 is due to read it: until L3 has, the question alerts no device.
+
+    `standing_policy` names a heading in main's AGENTS.md: the owner's L3 question becomes that paragraph,
+    marked with the heading, which is the one question `record_grant` applies a standing approval to."""
+    if standing_policy is not None:
+        if (actor != "l2" or questions is not None or show is not None or (updates or {}).get("waiting_on") != "l3"
+                or any(value is not None for value in (recommendation, recommendation_label, recommendation_why))):
+            raise TransitionError("a standing-policy request is the owner's whole question to L3")
+        try:
+            reason = _standing_policy(project, standing_policy)["text"]
+        except ValueError as exc:
+            raise TransitionError(str(exc)) from exc
     with S.project_lock(project):
         task = S.load_task(project, slug)
         published = {(q["id"], q["revision"]) for q in task.get("questions", [])}
@@ -1839,6 +1850,9 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         if actor == "l2" and not task.get("fault"):
             _publish_block_questions(task, reason, actor, questions, recommendation,
                                      recommendation_label, recommendation_why, shown=captured)
+            if standing_policy is not None:
+                next(q for q in reversed(task["questions"])
+                     if q["status"] == "open" and q["detail"] == reason)["standing_policy"] = standing_policy
             _require_merge_mark(project, task, published)
             if not task.get("resume_after"):  # a message queued for the next turn keeps it the L2's
                 _take_turn(task)
@@ -3193,8 +3207,9 @@ def step_ran(project: str, command: str) -> list[dict]:
 def block_question(task: dict, asks: str | None = None) -> str:
     """Notify the coordinator of published questions without transferring decision authority."""
     slug = task["slug"]
-    questions = "\n".join(f"- {q['id']} revision {q['revision']} (authority: {q['audience']}): {q['detail']}"
-                          for q in task.get("questions", []) if q["status"] == "open")
+    questions = "\n".join(f"- {q['id']} revision {q['revision']} (authority: {q['audience']}"
+                          + (f", standing policy: {q['standing_policy']}" if q.get("standing_policy") else "")
+                          + f"): {q['detail']}" for q in task.get("questions", []) if q["status"] == "open")
     asks = asks or f"blocked and asks: {task['blocked_reason'][:800]}"
     return (f"Task `{slug}` {asks}\n{questions}\n\n"
             f"Read `alt task messages {slug}` and `alt task show {slug}`. When the brief, the docs, or a recorded "
@@ -3256,7 +3271,7 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     return t
 
 
-def _standing_policy(project: str, heading: str, approval: str) -> dict:
+def _standing_policy(project: str, heading: str) -> dict:
     """Capture one approved purpose from main, never a task's editable policy."""
     root = config.project_path(project)
     try:
@@ -3274,7 +3289,7 @@ def _standing_policy(project: str, heading: str, approval: str) -> dict:
     index = matches[0]
     end = headings[index + 1].start() if index + 1 < len(headings) else len(document)
     text = document[headings[index].end():end].strip()
-    if not text or re.search(r"\n\s*\n", text) or f"`{approval}`" not in text:
+    if not text or re.search(r"\n\s*\n", text):
         raise ValueError("standing policy must be one paragraph citing the backtick-quoted operator approval ID")
     return {"file": "AGENTS.md", "heading": heading, "commit": commit, "text": text}
 
@@ -3320,12 +3335,17 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                 if (decision != current or decision["status"] != "open" or decision["audience"] != "l3"
                         or decision["asked_by"] != "l2" or decision.get("shown") or decision.get("response")):
                     raise ValueError("standing grant needs the owner's current open L3 purpose question")
+                if decision.get("standing_policy") != standing_policy:
+                    raise ValueError("standing grant needs the owner's own request for this policy: "
+                                     f"`alt task block <slug> --standing-policy '{standing_policy}'`")
                 operator = next((row for row in _decision_messages(project, slug, "project")
                                  if row["id"] == approval and row["role"] == OPERATOR_MESSAGE_ROLE
                                  and row.get("by") == OPERATOR_MESSAGE_ROLE and not row.get("removed_at")), None)
                 if not operator:
                     raise ValueError("standing approval must cite an original operator message in this project's chat")
-                policy = _standing_policy(project, standing_policy, approval)
+                policy = _standing_policy(project, standing_policy)
+                if f"`{approval}`" not in policy["text"]:
+                    raise ValueError("standing policy must be one paragraph citing the backtick-quoted operator approval ID")
                 if decision["detail"].split() != policy["text"].split():
                     raise ValueError("requested purpose must exactly match the standing policy scope")
             else:

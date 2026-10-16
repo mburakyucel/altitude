@@ -1153,6 +1153,7 @@ alt task release <slug> --reason <reason>
 alt task message <slug> <text>|- [--file <path>] [--image <id>] [--summary <line>]
 alt task reply [<slug>] <text>|- [--file <path>] [--capture <run>] [--to l3]
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-operator | --fault]
+alt task block <slug> --standing-policy <heading>
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
 alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
@@ -2181,6 +2182,7 @@ and virtual machines on the Mac, which cannot start inside a validation run, use
 
 ```text
 alt task grant <slug> --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
+alt task block <slug> --standing-policy <heading>
 alt task grant <slug> --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
 alt task grant <slug> --from-task <earlier-slug> --approval <message-id> --question <id> --revision <n> --attempt <n> [--source task|project] --reason <why>
 alt task grant <slug> --revoke --reason <why>
@@ -2232,11 +2234,10 @@ run against that earlier question and answer; the grant records the purpose as t
 it and `from_task`, binds this task's current attempt and is revoked as usual. L3 judges later
 corrections and whether the new work is the same purpose; any narrower or wider purpose is asked again.
 
-For standing approval, the owner copies the complete paragraph under the policy's heading in the
-project's committed `AGENTS.md`, such as **Container operations on this machine** or **VM lane runs on
-this Mac**, into an L3-directed `alt task block --reason` (without `--for-operator`). Task-specific
-steps, cleanup and verification belong in the preceding reply. L3 reads the original approval and
-later corrections, then records the grant with `--standing-policy '<heading>'`, the paragraph's
+For standing approval, the owner names the policy's heading, such as `alt task block "$ALTITUDE_TASK"
+--standing-policy 'VM lane runs on this Mac'`, and Altitude asks L3 with the paragraph committed under it,
+marked with that heading. Task-specific steps, cleanup and verification belong in the preceding reply.
+L3 reads the original approval and later corrections, then records the grant with `--standing-policy '<heading>'`, the paragraph's
 approval ID, the current question/revision and `--attempt`. No new operator answer is required. The owner cannot self-record
 a standing grant. L3 resumes the owner with the recorded purpose; the owner resolves that dependency
 from L3's message using the ordinary question flow.
@@ -2246,9 +2247,10 @@ commit. The heading must be unique and contain exactly one paragraph citing the 
 approval ID. That ID must name an original operator message in the same project's chat, so a
 standing approval works on an installation only while its project chat holds the cited message; after
 project records are recreated, the operator confirms the unchanged paragraph once in the new chat and
-the citation moves to that message. The current open question must be owner-authored, directed to
-L3 and match the paragraph's raw Markdown apart from whitespace. Missing or ambiguous policy, another project's approval, a stale attempt/revision,
-and a wider or paraphrased purpose refuse. The record and event retain the policy file, heading,
+the citation moves to that message. The current open question must be the owner's
+`--standing-policy` request for that heading and still match main's paragraph apart from whitespace, so a
+question written by hand, however close to the paragraph, is never grantable. Missing or ambiguous
+policy, another project's approval, a stale attempt/revision, and a wider or paraphrased purpose refuse. The record and event retain the policy file, heading,
 commit and full text alongside the original operator approval, exact question and L3 rationale.
 This checks the recorded purpose; it does not classify shell commands or infer consent from prose.
 
