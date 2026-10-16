@@ -1089,6 +1089,30 @@ class TestOperatorGrant(AltitudeCase):
         platform.job_stop.assert_called_with(self.unit(1), mock.ANY)
         self.assertIn("grant was revoked", result["error"])
 
+    def test_a_withdrawal_interrupted_before_it_cleared_a_grant_still_voids_it(self):
+        self.earlier()
+        grant = self.from_earlier(self.ask("Please record the release grant.", "l3"))
+        T.resume(self.project, self.slug)
+        S.project_log(self.project, "grant-withdraw", approval="dddddddddddd", slug=self.slug, actor="l3",
+                      reason="Interrupted before the grant was cleared.")
+        self.assertEqual(S.load_task(self.project, self.slug)["grant"], grant)
+        self.assertIn("withdrew the approval", self.run_command("true", status=403)["error"])
+        self.assertTrue(server._grant_revoked(self.project, self.slug, {"granted": grant["id"]}))
+        self.assertEqual(T.withdraw_approval(self.project, self.slug, "dddddddddddd", "Finish it.", actor="l3"),
+                         [self.slug])
+
+    def test_withdrawing_any_approval_a_standing_paragraph_cites_ends_its_grant(self):
+        self.standing()
+        extended = self.standing_text + "\nBy `123456abcdef` it also covers one sign-in copy."
+        self.commit_standing(f"# Rules\n\n### {self.standing_heading}\n\n{extended}\n")
+        question = self.ask(" ".join(extended.split()), "l3")
+        self.standing_grant(question)
+        self.assertEqual(T.withdraw_approval(self.project, self.slug, "123456abcdef", "Sign-in copy withdrawn.",
+                                             actor="burak"), [self.slug])
+        self.assertIsNone(S.load_task(self.project, self.slug)["grant"])
+        with self.assertRaisesRegex(T.TransitionError, "withdrew this approval"):
+            self.standing_grant(question)
+
     def test_recording_the_same_answer_again_keeps_the_grant_and_its_running_command(self):
         grant, question, row = self.granted()
         started, release = self.tmp / "started", self.tmp / "release"

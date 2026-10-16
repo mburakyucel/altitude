@@ -3288,9 +3288,17 @@ def _operator_message(project: str, slug: str, approval: str, source: str) -> di
     return row
 
 
-def _withdrawn(project: str, approval: str) -> bool:
-    return any(e.get("kind") == "grant-withdraw" and e.get("approval") == approval
-               for e in S.read_project_log(project, None))
+def _grounds(grant: dict) -> set[str]:
+    """The operator messages a grant rests on: its approval and every approval its standing paragraph cites."""
+    policy = grant.get("policy")
+    return {grant["approval"], *(re.findall(r"`([0-9a-f]{12})`", policy["text"]) if policy else ())}
+
+
+def grant_withdrawn(project: str, grant: dict) -> bool:
+    """Whether the operator withdrew a message the grant rests on. The project log records the withdrawal before
+    any grant is cleared, so a grant an interrupted withdrawal left in place is already void."""
+    withdrawn = {e.get("approval") for e in S.read_project_log(project, None) if e.get("kind") == "grant-withdraw"}
+    return bool(_grounds(grant) & withdrawn)
 
 
 def record_grant(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
@@ -3316,8 +3324,6 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                                   or source != "task"):
                 raise ValueError("the owner records a grant only while running its current attempt, "
                                  "from the operator's task-chat answer")
-            if _withdrawn(project, approval):
-                raise ValueError("the operator withdrew this approval; it grounds no grant")
             asked = task
             if from_task is not None:
                 if actor != "l3" or standing_policy is not None or from_task == slug:
@@ -3364,6 +3370,8 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                                              "answer with `alt task resolve` first, then record the grant")
                     raise ValueError("cite the operator message that answered the current operator question revision")
                 operator = _decision_source(project, from_task or slug, decision, approval, source, exact=True)
+            if grant_withdrawn(project, {"approval": approval, "policy": policy}):
+                raise ValueError("the operator withdrew this approval; it grounds no grant")
             previous = task.get("grant")
             if previous and (policy or previous.get("policy")) and any((
                     previous.get("purpose", "").split() != purpose.split(),
@@ -3404,11 +3412,11 @@ def withdraw_approval(project: str, slug: str, approval: str, reason: str, *, ac
         ended = []
         for task in S.list_tasks(project):
             previous = task.get("grant")
-            if previous and previous.get("approval") == approval:
+            if previous and approval in _grounds(previous):
                 task["grant"] = None
                 S.save_task(project, task)
                 S.append_event(project, task["slug"], "grant-revoke", actor=actor, reason=reason.strip(),
-                               purpose=previous["purpose"], approval=approval, withdrawn=True)
+                               purpose=previous["purpose"], approval=previous["approval"], withdrawn=approval)
                 ended.append(task["slug"])
         S.append_event(project, slug, "grant-withdraw", actor=actor, approval=approval, reason=reason.strip(),
                        ended=ended)

@@ -2278,12 +2278,14 @@ policy or interpret later chat. Widening a standing policy is a security decisio
 review rules; another project needs its own operator approval and committed policy.
 
 When the operator withdraws a permission, L3 or the operator records it with `--withdraw`, naming the
-message that gave it: an answer, an earlier message or the approval a standing policy cites. Every grant
-in the project resting on that message ends at once, as a revocation does (its `grant-revoke` event says
-`withdrawn`, and a command still running under it is stopped), and the message grounds no later grant on
-any task by any path. The project's event log keeps the `grant-withdraw` record, so a withdrawal made
-before any grant exists binds too; the task it is recorded on gets a `grant-withdraw` event listing the
-grants it ended. Grants resting on other messages are untouched. A plain `--revoke` is routine cleanup
+message that gave it: an answer, an earlier message or any approval a standing paragraph cites (a grant
+from that paragraph rests on all of them). Every grant in the project resting on that message ends at
+once, as a revocation does (its `grant-revoke` event names the withdrawn message, and a command still
+running under it is stopped), and the message grounds no later grant on any task by any path. The
+project's event log keeps the `grant-withdraw` record before any grant is cleared, and `alt task run`
+checks it too, so a withdrawal made before any grant exists binds, and a grant an interrupted
+withdrawal left in place runs nothing; the task it is recorded on gets a `grant-withdraw` event listing
+the grants it ended. Grants resting on other messages are untouched. A plain `--revoke` is routine cleanup
 after a purpose is done or before switching purposes: the same message can ground a grant again.
 
 The purpose grant covers iteration until the purpose is done: run, inspect, correct and retest,
