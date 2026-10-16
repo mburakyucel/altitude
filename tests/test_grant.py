@@ -434,6 +434,29 @@ class TestOperatorGrant(AltitudeCase):
             self.standing_grant(question)
         self.assertFalse(self.events("grant"))
 
+    def test_standing_request_is_its_own_l3_question_beside_other_open_questions(self):
+        self.standing()
+        # The paragraph already asked of the operator stays the operator's question, apart from the request.
+        self.ask(self.standing_text, "burak")
+        before = {q["id"]: q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"}
+        self.assertEqual([q["audience"] for q in before.values()], ["operator"])
+        T.resume(self.project, self.slug)
+        question = self.ask_standing()
+        open_questions = [q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"]
+        self.assertEqual({q["id"]: q for q in open_questions if q["id"] != question["id"]}, before)
+        self.assertNotIn(question["id"], before)
+        self.assertEqual((question["audience"], question["revision"], question.get("shown"), question.get("review")),
+                         ("l3", 1, None, None))
+        # Asking again keeps the same request; a changed paragraph on main revises that request only.
+        T.resume(self.project, self.slug)
+        self.assertEqual(self.ask_standing(), question)
+        self.commit_standing(self.standing_document.replace(self.standing_text, self.standing_text + " Narrowed."))
+        T.resume(self.project, self.slug)
+        revised = self.ask_standing()
+        self.assertEqual((revised["id"], revised["revision"], revised["detail"]),
+                         (question["id"], 2, self.standing_text + " Narrowed."))
+        self.assertEqual(self.standing_grant(revised)["purpose"], revised["detail"])
+
     def test_standing_request_reads_main_not_branch_dirty_checkout_or_owner_worktree(self):
         self.standing()
         expanded = self.standing_text + " Also change native services."

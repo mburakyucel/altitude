@@ -1775,7 +1775,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
     """`tell_l3` queues L3's notification of newly published questions under the same lock, so no reader
     sees the owner's question before L3 is due to read it: until L3 has, the question alerts no device.
 
-    `standing_policy` names a heading in main's AGENTS.md: the owner's L3 question becomes that paragraph,
+    `standing_policy` names a heading in main's AGENTS.md: the owner asks L3 that paragraph as its own question,
     marked with the heading, which is the one question `record_grant` applies a standing approval to."""
     if standing_policy is not None:
         if (actor != "l2" or questions is not None or show is not None or (updates or {}).get("waiting_on") != "l3"
@@ -1848,11 +1848,18 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         if questions is not None and (actor != "l2" or task.get("fault")):
             raise TransitionError("structured questions require an L2 human dilemma, not an operational block")
         if actor == "l2" and not task.get("fault"):
-            _publish_block_questions(task, reason, actor, questions, recommendation,
-                                     recommendation_label, recommendation_why, shown=captured)
-            if standing_policy is not None:
-                next(q for q in reversed(task["questions"])
-                     if q["status"] == "open" and q["detail"] == reason)["standing_policy"] = standing_policy
+            if standing_policy is None:
+                _publish_block_questions(task, reason, actor, questions, recommendation,
+                                         recommendation_label, recommendation_why, shown=captured)
+            else:
+                # Its own L3 question, revising only an earlier request for this policy: other open questions keep
+                # their audience, files and review marks rather than lending them to the request.
+                previous = next((q for q in reversed(task.get("questions", [])) if q["status"] == "open"
+                                 and q.get("standing_policy") == standing_policy), None)
+                if previous is None or previous["detail"] != reason:
+                    _publish_question(task, reason, actor, previous=previous,
+                                      audience="l3")["standing_policy"] = standing_policy
+                _wait_on_open_members(task)
             _require_merge_mark(project, task, published)
             if not task.get("resume_after"):  # a message queued for the next turn keeps it the L2's
                 _take_turn(task)
