@@ -10,7 +10,7 @@ import { walkthrough } from "./walkthrough";
 test.use({ serviceScript: "operator-step-service.py" });
 test.setTimeout(90_000);
 
-test("a wait on the operator's step names the step until the owner is woken", async ({ page, request }, info) => {
+test("a wait on the operator's step names the step until the owner is woken, and its card says the command ran", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const rows = page.getByRole("region", { name: "Work", exact: true });
   const row = (title: string) => rows.getByRole("link", { name: new RegExp(`^${title} ·`) });
@@ -44,5 +44,38 @@ test("a wait on the operator's step names the step until the owner is woken", as
   await walk.state("03-work-row-after-the-terminal-notice", {
     visible: [row("Sign in").getByText("Your turn · 1 question", { exact: true })],
     hidden: [row("Sign in").getByText(step, { exact: true })],
+  });
+
+  // The question that handed the command says it ran while the owner checks, wherever it shows, and stays open.
+  const card = page.getByRole("article", { name: "Sign in", exact: true });
+  await walk.open("/");
+  await walk.state("04-needs-you-card-says-the-command-ran", {
+    visible: [
+      card.getByText("Run the sign-in command in the task terminal.", { exact: true }),
+      card.getByRole("status").getByText("Ran in the terminal", { exact: true }),
+      card.getByRole("status").getByText(/^Waiting for the L2 to check it · /),
+      card.locator(".btn-ghost").getByText("Open in terminal", { exact: true }),
+      card.getByRole("textbox", { name: /^Your answer to:/ }),
+    ],
+    hidden: [card.getByText("The terminal closed before this command finished", { exact: true })],
+  });
+  await walk.open("/projects/atlas/tasks/sign-in");
+  await walk.state("05-task-conversation-says-the-command-ran", {
+    visible: [
+      conversation.getByRole("status").getByText("Ran in the terminal", { exact: true }),
+      conversation.getByRole("status").getByText(/^Waiting for the L2 to check it · /),
+      command.locator(".btn-ghost").getByText("Open in terminal", { exact: true }),
+    ],
+    hidden: [conversation.getByText("The terminal closed before this command finished", { exact: true })],
+  });
+
+  expect(await (await request.put("/fixture/notice")).json()).toEqual({ resume_after: true });
+  await walk.open("/");
+  await walk.state("06-needs-you-card-says-the-terminal-closed-first", {
+    visible: [
+      card.getByRole("status").getByText("The terminal closed before this command finished", { exact: true }),
+      card.locator(".btn-primary").getByText("Open in terminal", { exact: true }),
+    ],
+    hidden: [card.getByText("Ran in the terminal", { exact: true }), card.getByText(/Waiting for the L2/)],
   });
 });

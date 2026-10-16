@@ -245,14 +245,12 @@ def run(args):
         origin = repository()  # before the guest boots: the release build needs the GitHub origin
         record['seeded_existing_ubuntu_cache'] = seed(cache)
         record['image'] = vm.base_image(cache, budget=budget.host_bytes)
-        original = vm.user_data
-        vm.user_data = lambda key: original(key).replace('packages: [git, gh, openssl]',
-            'packages: [git, gh, openssl, podman, crun, uidmap, dbus-bin, slirp4netns, nftables]')
-        vm.CPUS = platform.validation_guest_cpus()
-        record['limits'] = {'cpus': vm.CPUS, 'memory_bytes': vm.MEMORY_GIB * vm.GIB,
+        cpus = platform.validation_guest_cpus()
+        record['limits'] = {'cpus': cpus, 'memory_bytes': vm.MEMORY_GIB * vm.GIB,
                             'disk_bytes': vm.DISK_GIB * vm.GIB, 'minimum_free_bytes': vm.FLOOR,
                             'download_bytes': LIMIT, 'controller_seconds': args.timeout}
-        machine = vm.Machine(work, cache / vm.IMAGE)
+        machine = vm.Machine(work, cache / vm.IMAGE, cpus=cpus,
+            packages=(*vm.PACKAGES, 'podman', 'crun', 'uidmap', 'dbus-bin', 'slirp4netns', 'nftables'))
         machine.start(on_spawn=lambda pid: dump(area / 'guest-owner.json', {'process': platform.process_identity(pid)}))
         original_ssh = machine.ssh
         machine.ssh = lambda command, timeout=60, check=True: original_ssh(command, timeout=phase_seconds(timeout), check=check)
@@ -261,7 +259,7 @@ def run(args):
         record['guest_runtime'] = machine.ssh('uname -a; podman --version; crun --version').stdout
         resources = "import json,os;from pathlib import Path;print(json.dumps({'cpus':os.cpu_count(),'memory_kib':int(next(s.split()[1] for s in Path('/proc/meminfo').read_text().splitlines() if s.startswith('MemTotal:'))),'disk_bytes':int(Path('/sys/class/block/vda/size').read_text())*512}))"
         record['guest_resources'] = json.loads(machine.ssh(shlex.join(['python3', '-c', resources])).stdout)
-        if (record['guest_resources']['cpus'] != vm.CPUS
+        if (record['guest_resources']['cpus'] != cpus
                 or record['guest_resources']['memory_kib'] * 1024 > vm.MEMORY_GIB * vm.GIB
                 or record['guest_resources']['disk_bytes'] != vm.DISK_GIB * vm.GIB):
             raise RuntimeError('Observed guest resources differ from fixed limits')

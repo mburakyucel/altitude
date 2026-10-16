@@ -24,8 +24,10 @@ private place; `jobs` runs its launchd job rows, Stop of every descendant and th
 worker sandbox can; `read-only-home` runs the revision's suite cases that confine a child with Seatbelt or, with
 this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or worker can start. `source` installs
 from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
-repository and run from it, and a newer main pushed to the origin must deploy through that copy. `--published`
-downloads two published releases on this Mac, checked against their
+repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
+`incident` and `session` install the release into the account's own home with a scripted fictional engine and the
+tests' fake GitHub CLI, then drive the guest's own service through the revision's tests/macos_guest_runtime.py rows.
+`--published` downloads two published releases on this Mac, checked against their
 SHA256SUMS and tags, and runs only `published`: the baseline's own daemon must install the candidate and keep the
 state made through the app. The clone is deleted afterwards, also after a failure or a stop. RESULTS_DIR/macos-vm.json
 records the outcome.
@@ -696,17 +698,21 @@ def isolate(guest: Guest, record: dict) -> None:
 
 
 def certificates(folder: Path) -> None:
-    """A throwaway certificate authority and a github.com certificate that only the test's curl trusts."""
-    (folder / "ca.cnf").write_text(
-        "[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN=Altitude macOS VM lane test CA\n"
-        "[ca]\nbasicConstraints=critical,CA:true\nkeyUsage=critical,keyCertSign,cRLSign\n"
-        "[leaf]\nbasicConstraints=CA:false\nkeyUsage=critical,digitalSignature,keyEncipherment\n"
-        "subjectAltName=DNS:github.com\nextendedKeyUsage=serverAuth\n")
+    """A throwaway certificate authority and a github.com and api.github.com certificate that only the test's
+    curl, and an installation made through it, trusts."""
+    # Each certificate's name comes from its own configuration: LibreSSL's `req` keeps a configuration's name over
+    # -subj, and a server certificate named as its authority is one OpenSSL 3, the service's Python, calls self-signed.
+    for name, common in (("ca", "Altitude macOS VM lane test CA"), ("server", "github.com")):
+        (folder / f"{name}.cnf").write_text(
+            f"[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN={common}\n"
+            "[ca]\nbasicConstraints=critical,CA:true\nkeyUsage=critical,keyCertSign,cRLSign\n"
+            "[leaf]\nbasicConstraints=CA:false\nkeyUsage=critical,digitalSignature,keyEncipherment\n"
+            "subjectAltName=DNS:github.com,DNS:api.github.com\nextendedKeyUsage=serverAuth\n")
     openssl = "/usr/bin/openssl"
     run(openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", folder / "ca.key", "-out", folder / "ca.pem",
         "-days", "2", "-config", folder / "ca.cnf", "-extensions", "ca")
     run(openssl, "req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", folder / "server.key", "-out",
-        folder / "server.csr", "-config", folder / "ca.cnf", "-subj", "/CN=github.com")
+        folder / "server.csr", "-config", folder / "server.cnf")
     run(openssl, "x509", "-req", "-in", folder / "server.csr", "-CA", folder / "ca.pem", "-CAkey", folder / "ca.key",
         "-CAcreateserial", "-out", folder / "server.pem", "-days", "2", "-extfile", folder / "ca.cnf", "-extensions", "leaf")
     (folder / "ca.key").unlink()
@@ -1309,11 +1315,98 @@ git push -q origin main && git rev-parse HEAD""")
             pass
 
 
+# The runtime rows each phase drives in the guest (tests/macos_guest_runtime.py), split so that a `run` of one phase
+# finishes within `alt task run`'s ten minutes.
+RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
+                "grants": ("grants", "contention"), "incident": ("incident",), "session": ("logout-login",)}
+GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
+# Rows may end the account's session, so they run in the background while the host polls.
+ROWS_BUDGET = 420
+
+
+def runtime(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, phase: str) -> None:
+    """The release installed into the account's own home through the public command, with the fictional Codex CLI as
+    its only engine, the tests' fake GitHub CLI first on its saved PATH and api.github.com answered on the guest's
+    loopback, a fictional project registered, then PHASE's rows as the account."""
+    record["prerequisites"] = prerequisites(guest)
+    script = f"{GUEST_PYTHON} -B {SHARED}/source/tests/macos_guest_runtime.py"
+    setup = in_source(guest, inputs, f"zsh -lc {quote(script + ' setup')}", 120)
+    if setup.returncode:
+        raise Stop(f"the guest's setup failed: {setup.stderr.strip()[-300:]}")
+    record["setup"] = json.loads(setup.stdout)
+    guest.ssh("echo '127.0.0.1 api.github.com' | sudo -n tee -a /etc/hosts >/dev/null")
+    version = re.search(r"^VERSION='([^']+)'", (inputs / "release/install.sh").read_text(), re.M).group(1)
+    fixtures = (f"export CODEX_BIN={SHARED}/fixture/codex ALTITUDE_PRIMARY_ENGINE=codex "
+                f"ALTITUDE_UPSTREAM_ISSUE_REPOSITORY=fictional-owner/fictional-altitude PATH={SHARED}/fixture/bin:$PATH; ")
+    for name, command, timeout, expected in (
+            ("install", fixtures + public_command(repository), 300, f"Altitude {version} is installed"),
+            ("project", "~/.local/bin/alt project add fictional --path ~/Projects/fictional --l2-engine codex", 120, "")):
+        result = guest.ssh(f"zsh -lc {quote(command)}", timeout=timeout, check=False)
+        (results / f"{name}.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
+        if result.returncode or expected not in result.stdout:
+            raise Stop(f"{name} failed; see {name}.log")
+    # The operator's shell, as it installed: the fake GitHub CLI first on PATH for `alt` commands run from it.
+    rows = (f"PATH={SHARED}/fixture/bin:$PATH LANE_VERSION={version} LANE_LATEST={SHARED}/root/repos/{repository}/releases/latest "
+            f"{script} rows {' '.join(RUNTIME_ROWS[phase])} >{SHARED}/rows.jsonl 2>{SHARED}/rows.err; "
+            f"echo $? >{SHARED}/rows.exit")
+    guest.ssh(f"cd {SHARED} && nohup zsh -lc {quote(rows)} </dev/null >/dev/null 2>&1 &")
+    deadline = time.monotonic() + ROWS_BUDGET
+    while time.monotonic() < deadline:
+        time.sleep(5)
+        try:
+            if guest.ssh(f"test -f {SHARED}/rows.exit", timeout=30, check=False).returncode == 0:
+                break
+        except subprocess.TimeoutExpired:  # between sessions
+            pass
+    # Whatever the rows wrote, and the records they read: the fixture's turns, the service's log and the tasks.
+    guest.ssh(f"mkdir -p {SHARED}/evidence && cp /private/tmp/altitude-fixture/log.jsonl {SHARED}/evidence/ 2>/dev/null; "
+              f"cp -R ~/Library/Logs/altitude {SHARED}/evidence/logs 2>/dev/null; "
+              f"cp -R ~/.altitude/fictional/tasks {SHARED}/evidence/tasks 2>/dev/null; "
+              f"cp -R ~/.altitude/monitor {SHARED}/evidence/monitor 2>/dev/null; "
+              f"cp {SHARED}/rows.jsonl {SHARED}/rows.err {SHARED}/evidence/ 2>/dev/null; true", timeout=120, check=False)
+    guest.fetch(f"{SHARED}/evidence", results / "evidence")
+    found = [json.loads(line) for line in (results / "evidence/rows.jsonl").read_text().splitlines()
+             if line.startswith("{")] if (results / "evidence/rows.jsonl").exists() else []
+    done = {row["row"]: row for row in found}
+    record["cases"] = {name: {"passed": bool(done.get(name, {}).get("passed")),
+                              **({"unavailable": done[name]["unavailable"]} if done.get(name, {}).get("unavailable") else {}),
+                              **({"error": done[name]["error"]} if done.get(name, {}).get("error") else {}),
+                              **({} if name in done else {"error": "the row did not finish"})}
+                       for name in RUNTIME_ROWS[phase]}
+
+
+def phase_workers(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """A coordinator's Stop, a worker ended at its failed turn, a worker whose job cannot be read, and a validation
+    run interrupted by the service's restart (#779, #782, #678, #650)."""
+    runtime(guest, repository, results, record, inputs, "workers")
+
+
+def phase_grants(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """Granted commands as launchd jobs: revocation stops one, also across the service's restart, the coordinator
+    reuses an answer for the identical purpose, and a second command waits for the one machine-run place (#656, #668,
+    #728)."""
+    runtime(guest, repository, results, record, inputs, "grants")
+
+
+def phase_incident(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """Incident issues held on a release behind a newer one, and sent to the fake GitHub CLI otherwise (#767)."""
+    runtime(guest, repository, results, record, inputs, "incident")
+
+
+def phase_session(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """Logout and login without a restart (#731, #226). The guest cannot sleep: macOS under Apple's Virtualization
+    framework refuses `pmset sleepnow` as not permitted, so sleep past a job's time limit needs a real Mac."""
+    runtime(guest, repository, results, record, inputs, "session")
+
+
 # `fresh` starts from the fresh image, every other phase from prerequisites; `published` runs only with --published.
 PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login,
           "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home, "source": phase_source,
+          "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "session": phase_session,
           "published": phase_published}
-BUILT = ("fresh", "prerequisites", "lifecycle", "login")  # the phases that install the release built from the source
+# The phases that install the release built from the source, and those that also read the revision's files.
+BUILT = ("fresh", "prerequisites", "lifecycle", "login", *RUNTIME_ROWS)
+SOURCED = ("privacy", "jobs", "read-only-home", *RUNTIME_ROWS)
 
 
 def build(commit: str, work: Path, log: Path) -> None:
@@ -1406,7 +1499,7 @@ def lane(results: Path, commit: str | None, phases: list[str], releases: tuple[s
         if set(phases) & set(BUILT):
             note(f"building the release from {commit[:12]}")
             build(commit, work, results / "build.log")
-        if set(phases) & {"privacy", "jobs", "read-only-home"}:
+        if set(phases) & set(SOURCED):
             run("git", "archive", "-o", work / "source.tar", commit, cwd=SCRIPTS.parent)
         if "source" in phases:
             note("bundling the source commit and this Mac's Node, pnpm and web packages for the source phase")

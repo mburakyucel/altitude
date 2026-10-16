@@ -50,10 +50,6 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
         missing = vm.missing_prerequisites()
         if missing:
             raise RuntimeError(str(missing))
-        original_data = vm.user_data
-        vm.user_data = lambda key: original_data(key).replace(
-            'packages: [git, gh, openssl]',
-            'packages: [git, gh, openssl, podman, crun, uidmap, dbus-bin, libnss3-tools]')
         cache.mkdir(parents=True, exist_ok=True)
         record['image'] = vm.base_image(cache)
         release = work / 'release'
@@ -69,7 +65,8 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
                            check=True,timeout=180,cwd=REPO/'web')
             subprocess.run(['node',str(REPO/'scripts/browser_sandbox.mjs'),str(results/'browser-sandbox.json')],
                            check=True,timeout=60,cwd=REPO)
-        machine = vm.Machine(work, cache / vm.IMAGE)
+        machine = vm.Machine(work, cache / vm.IMAGE,
+                             packages=(*vm.PACKAGES, 'podman', 'crun', 'uidmap', 'dbus-bin', 'libnss3-tools'))
         machine.start()
         machine.wait_ready(time.monotonic() + 600)
         record['guest'] = machine.ssh('uname -a; podman --version; crun --version').stdout

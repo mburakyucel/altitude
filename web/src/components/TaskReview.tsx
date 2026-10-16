@@ -8,7 +8,7 @@ import "./task-review.css";
 
 const NAME: Record<ReviewSubject, string> = { proposal: "Proposal review", changes: "Implementation review" };
 const SUBJECTS = ["proposal", "changes"] as const;
-type Tone = "none" | "skip" | "wait" | "run" | "ok" | "warn" | "bad";
+export type Tone = "none" | "skip" | "wait" | "run" | "ok" | "warn" | "bad";
 const ICON: Record<Tone, React.ReactNode> = {
   none: <circle cx="12" cy="12" r="8.5" strokeDasharray="2.5 3" />,
   skip: <><circle cx="12" cy="12" r="8.5" strokeDasharray="2.5 3" /><path d="M8.5 12h7" /></>,
@@ -18,6 +18,10 @@ const ICON: Record<Tone, React.ReactNode> = {
   warn: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5v5.5M12 16.3v.2" /></>,
   bad: <><circle cx="12" cy="12" r="8.5" /><path d="M9 9l6 6M15 9l-6 6" /></>,
 };
+/** A review's state icon (SPEC.md §3.8.3), also a question's note after its command runs (§3.8.5). */
+export function StateIcon({ tone }: { tone: Tone }) {
+  return <span className={`review-icon review-icon-${tone}`} aria-hidden><svg viewBox="0 0 24 24">{ICON[tone]}</svg></span>;
+}
 const who = (role: string | null | undefined) => role === "l2" ? "L2" : "you";
 
 function tone(review: Review): Tone {
@@ -79,7 +83,7 @@ function Summary({ review, iteration, name, action, extra, empty, footer, held }
   const kind = !review ? "none" : held && tone(review) === "ok" ? "warn" : tone(review);
   const meta = review ? counts(review, iteration) : [];
   return <>
-    <span className={`review-icon review-icon-${kind}`} aria-hidden><svg viewBox="0 0 24 24">{ICON[kind]}</svg></span>
+    <StateIcon tone={kind} />
     <div className="review-main">
       <div className="review-top">
         <p className="review-heading"><span className="review-name">{name}</span>{review ? <span className="review-state"> · {stateLabel(review)}</span> : null}</p>
@@ -280,7 +284,7 @@ export function reviewLine(review: ReviewLine): { tone: Tone; name: string; stat
 export function ReviewStatus({ review, opens }: { review: ReviewLine; opens: boolean }) {
   const { tone, name, state } = reviewLine(review);
   return <>
-    <span className={`review-icon review-icon-${tone}`} aria-hidden><svg viewBox="0 0 24 24">{ICON[tone]}</svg></span>
+    <StateIcon tone={tone} />
     <span className="question-review-body">
       <span className="question-review-name">{name}</span>
       <span className="visually-hidden"> · </span>

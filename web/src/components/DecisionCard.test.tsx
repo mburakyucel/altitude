@@ -8,6 +8,7 @@ import { QuestionSet, ReviewDecision, StepCard } from "./DecisionCard";
 import type { Step } from "../data/api";
 import { ImageViewerHost } from "./MessageImages";
 import { ProseScope } from "./Prose";
+import { ProseTerminal } from "./CodeBlock";
 
 const installer = "Approve the report root?\n\nRun this once on the host:\n\n```sh\nsudo install -d /srv/reports\nalt ci reports --root /srv/reports\n```\n\nThen `alt task recheck-ci` reads it; see PR #12.";
 const base = { project: "atlas", slug: "gate", title: "Gate merges", id: "q1", revision: 1, status: "open", audience: "operator", asked_by: "l2", asked: "2026-09-23T22:00:00Z" };
@@ -97,6 +98,39 @@ describe("an operator step (SPEC.md §3.8.4)", () => {
     const open = screen.getByRole("button", { name: "Open in terminal" });
     expect(open).toHaveAttribute("aria-disabled", "true");
     expect(open).toHaveAccessibleDescription("Refresh Needs you before running this.");
+  });
+});
+
+describe("a question's command run in the task terminal (SPEC.md §3.8.5)", () => {
+  const signIn = DecisionSchema.parse({ ...base, question: "Sign in from the task terminal.\n\n```run\nexample-tool sign-in\n```" });
+  const at = new Date(Date.now() - 60_000).toISOString();
+  it.each([
+    [true, "Ran in the terminal", "Waiting for the L2 to check it · 1 min ago", "btn btn-ghost"],
+    [false, "The terminal closed before this command finished", "1 min ago", "btn btn-primary"],
+  ])("says how it went and keeps the question answerable (finished: %s)", (finished, headline, line, button) => {
+    mount(<ProseTerminal value={{ open: () => {} }}><QuestionSet decisions={[{ ...signIn, ran: { at, command: "example-tool sign-in", finished } }]} /></ProseTerminal>);
+    const status = screen.getByRole("status");
+    expect(status.querySelector("b")?.textContent).toBe(headline);
+    expect(status.querySelector("p")?.textContent).toBe(line);
+    expect(status.querySelector(".review-icon")).toHaveClass(finished ? "review-icon-wait" : "review-icon-warn");
+    // Running it again stays offered; once it finished, as a secondary action.
+    expect(screen.getByRole("button", { name: "Open in terminal" })).toHaveAttribute("class", button);
+    expect(screen.getByRole("textbox", { name: /^Your answer to:/ })).toBeEnabled();
+  });
+  it("quiets only the command that ran when the question hands several", () => {
+    const two = { ...signIn, question: "Sign in, then sync.\n\n```run\nexample-tool sign-in\n```\n\n```run\nexample-tool sync\n```" };
+    mount(<ProseTerminal value={{ open: () => {} }}><QuestionSet decisions={[{ ...two, ran: { at, command: "example-tool sign-in", finished: true } }]} /></ProseTerminal>);
+    expect(screen.getAllByRole("button", { name: "Open in terminal" }).map((button) => button.className)).toEqual(["btn btn-ghost", "btn btn-primary"]);
+  });
+  it("has no note before the command runs, and an answer's receipt replaces it", () => {
+    const { unmount } = mount(<ProseTerminal value={{ open: () => {} }}><QuestionSet decisions={[signIn]} /></ProseTerminal>);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open in terminal" })).toHaveAttribute("class", "btn btn-primary");
+    unmount();
+    mount(<QuestionSet decisions={[{ ...signIn, ran: { at, command: "example-tool sign-in", finished: true },
+      response: { text: "It printed a warning.", at, message_id: "m1" } }]} />);
+    expect(screen.queryByText("Ran in the terminal")).toBeNull();
+    expect(screen.getByText("It printed a warning.")).toBeVisible();
   });
 });
 
