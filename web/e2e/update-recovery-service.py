@@ -32,19 +32,19 @@ def main():
     with config.add_project("atlas", path=project):
         pass
     projects = config.PROJECTS_FILE.read_bytes()
-    case.publish("v0.5.0")
+    # The first download fails its checksum, so the automatic attempt fails with that cause.
+    case.publish("v0.5.0", checksum="0" * 64)
     case.listed("v0.5.0")
     installation.check_for_update()
     installation.request_update("v0.5.0", automatic=True)
     root = (case.prefix / "current").resolve()
     cache = root / "altitude/__pycache__"
     cache.mkdir()
-    # A real generated cache in the affected immutable tree; metadata must reject it.
+    # A real generated cache in the installed tree, as a foreign process writes it; the installed check accepts it.
     py_compile.compile(str(root / "altitude/config.py"), cfile=str(cache / f"config.{sys.implementation.cache_tag}.pyc"), doraise=True)
     retained = case.retained_data()
     certs = {path: path.read_bytes() for path in case.certificates.iterdir()}
     original_error = None
-    recovered = None
 
     @contextmanager
     def installation_environment():
@@ -59,12 +59,13 @@ def main():
     def evidence():
         try:
             installation.metadata(root)
-            strict = "valid"
+            verified = "valid"
         except ValueError:
-            strict = "rejected"
-        return {"record": installation._update_record()[1], "strict_metadata": strict,
+            verified = "rejected"
+        return {"record": installation._update_record()[1], "installed_metadata": verified,
+                "caches": len(list(cache.glob("*.pyc"))),
                 "current": os.readlink(case.prefix / "current"), "detached": len(case.detached),
-                "failure": original_error, "recovery": recovered,
+                "failure": original_error,
                 "fence": config.activation_pending(),
                 "retained": all(path.read_bytes() == content for path, content in retained.items()),
                 "projects_retained": config.PROJECTS_FILE.read_bytes() == projects,
@@ -80,7 +81,7 @@ def main():
         return get(handler)
 
     def do_POST(handler):
-        nonlocal original_error, recovered
+        nonlocal original_error
         if handler.path == "/fixture/finish-attempt":
             with installation_environment():
                 try:
@@ -91,9 +92,8 @@ def main():
                 config.RELEASE = installation.metadata((case.prefix / "current").resolve())
                 config.RELEASE["repository"] = "https://github.com/example/altitude"
             return handler._json(evidence())
-        if handler.path == "/fixture/recover":
-            with installation_environment():
-                recovered = installation.recover(case.prefix, generated_bytecode=True)
+        if handler.path == "/fixture/republish":
+            case.publish("v0.5.0")
             return handler._json(evidence())
         return post(handler)
 

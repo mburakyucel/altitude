@@ -178,6 +178,9 @@ class MacAddressConfiguration(AddressConfiguration):
 
 
 class CacheRecovery(InstallationCase):
+    """The standalone installer's repair for an installation on v0.8.0 or older, whose own update code refuses
+    generated caches; this release's own checks accept them."""
+
     def setUp(self):
         super().setUp()
         self.install()
@@ -190,7 +193,7 @@ class CacheRecovery(InstallationCase):
     def test_explicit_repair_quarantines_only_caches_and_keeps_strict_validation_and_state(self):
         original = self.retained_data()
         with self.assertRaisesRegex(ValueError, "manifest"):
-            installation.metadata(self.root.resolve())
+            installation.metadata(self.root.resolve(), archive=True)  # as an installation on v0.8.0 or older checks it
         result = installation.recover(generated_bytecode=True)
         self.assertTrue(result["repaired"])
         self.assertFalse(self.cache.exists())
@@ -236,7 +239,7 @@ class CacheRecovery(InstallationCase):
         self.assertEqual((backup / other.relative_to(self.root)).read_bytes(), b"second generated cache")
         self.assertTrue(self.cache.exists())
         with self.assertRaisesRegex(ValueError, "manifest"):
-            installation.metadata(self.root.resolve())
+            installation.metadata(self.root.resolve(), archive=True)  # as an installation on v0.8.0 or older checks it
         recovered = installation.recover(generated_bytecode=True)
         self.assertTrue(recovered["repaired"])
         self.assertEqual(recovered["quarantined"], [str(self.cache.relative_to(self.root))])

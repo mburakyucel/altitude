@@ -58,7 +58,7 @@ def build(version: str, output: Path, source: str = "HEAD") -> Path:
                  for path in sorted(package.rglob("*")) if path.is_file()}
         (package / "release.json").write_text(json.dumps({"version": version, "commit": commit,
                                                          "repository": repository, "files": files}, indent=2) + "\n")
-        metadata(package)
+        metadata(package, archive=True)
         with tarfile.open(archive, "w:gz") as bundle:
             for path in sorted(package.rglob("*")):
                 if path.is_file():

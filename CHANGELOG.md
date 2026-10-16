@@ -5,6 +5,38 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+## v0.9.0 — 2026-10-16
+
+Feature release of the early preview.
+
+- Python cache files that another program writes into the installed application no longer stop an
+  update, automatic or not, and need no repair. When an update does fail, the notice, Settings and
+  `alt doctor` say why.
+- `alt trust` adds Altitude's certificate to this computer's browsers after a yes in the terminal;
+  the installer offers it, and the pair page shows exact steps for other desktops.
+- Altitude's Claude runs use a sign-in of their own, made with **Sign in** on the Claude row of First
+  run or Settings › Prerequisites from any paired browser, or `alt sign-in claude`. Each Claude task,
+  coordinator turn and review gets its own Claude folder, so one run's settings cannot reach
+  another, and your own Claude sign-in stays yours. After updating, sign in once; until then, project
+  chat reports Claude's sign-in as lapsed.
+- An automatic update lets work in flight finish first, and the notice, Settings and `alt doctor`
+  name what it waits for.
+- A command only you can run stays in Needs you until it runs, and its question card shows that it
+  ran. The task conversation ends at its last message; lifecycle events stay in Live session.
+- A Mac account with a long name can add projects, and workers already running keep working after
+  Altitude activates newer code.
+
+Updating from v0.8.0 or older: those versions run their own update code, which still refuses Python
+cache files in the application folder. If the update to v0.9.0 fails because "the only extra files
+look like generated Python caches", run `alt recover --generated-bytecode && alt update` once; on
+v0.6.0 or older, use the standalone repair in
+[generated-cache recovery](https://github.com/mburakyucel/altitude/blob/main/docs/OPERATIONS.md#generated-cache-recovery).
+Later updates need nothing.
+
+Known limits: the update from v0.9.0 to the next release is the first real-installation proof of the
+cache fix (#1029), and first-browser pairing on a Mac (#926) still awaits confirmation on a real
+installation. Live providers are not part of release testing.
+
 ## v0.8.0 — 2026-10-15
 
 Feature release of the early preview.

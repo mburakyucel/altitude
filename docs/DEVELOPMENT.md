@@ -1371,9 +1371,12 @@ baseline and an ignored draft; a stable baseline reads GitHub's latest release. 
 publishes the baseline's next patch or release candidate, a copy of the candidate whose startup exits. The
 baseline's daemon must try it automatically, record the attempt failed and automatic, and restore itself to a
 healthy baseline with fictional data, settings and TLS identity unchanged; two more forced release checks must
-keep that same failed attempt and download nothing. The server then publishes the candidate. The baseline's
-daemon must install it automatically with no browser terminal open,
-record success and serve the candidate's healthy version with a new PID. The harness then turns
+keep that same failed attempt and download nothing. An outside process then imports from the installed
+baseline with `-I` and without `-B`, writing Python caches into it, and the server publishes the candidate.
+The baseline's daemon must install it automatically with no browser terminal open,
+record success and serve the candidate's healthy version with a new PID, leaving those caches in place. Only a
+published baseline from v0.8.0 or older, whose own check refuses them with its earlier error, gets none, which
+its results record as a limit; any other refusal fails the run. The harness then turns
 automatic updates off and publishes a newer synthetic release; a paired app **Update** request
 installs it explicitly. Each update, the failed one included, downloads only its archive and checksum, once. The baseline must have
 automatic updates (`v0.1.2` or later). The hosts
@@ -1523,13 +1526,10 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   `dev.altitude.job.altitude-update-…` launchd job, which activates it and is removed;
 - turns automatic updates on and publishes `v0.0.5`, whose startup exits; automatic activation
   restores `v0.0.4`. Two subsequent checks preserve the failed attempt and make no further download;
-- creates only declared-source Python caches in the installed tree and publishes healthy `v0.0.6`;
-  its automatic preflight fails without restarting the daemon, releases its receipt/fence and
-  preserves attempt history. Explicit `alt recover --generated-bytecode` quarantines caches,
-  preserves identity/registration and does not upgrade. A second affected-cache state exercises
-  the checksum-verified standalone archive repair entry point without activation, service restart
-  or attempt-history changes; a paired explicit retry then succeeds with a
-  replacement PID and `automatic=false`. This manual recovery is distinct from unattended success;
+- imports from the installed release in an outside process run with `-I` and without `-B`, which
+  writes Python caches into it, and publishes healthy `v0.0.6`; the daemon installs it automatically
+  with a replacement PID and `automatic=true`, keeping settings, TLS identity, pairing and the project
+  registration, and leaves the outgoing release's caches where they were;
 - uninstalls: the LaunchAgent, its launchd job and the update job are gone, settings, TLS identity
   and fictional history and project files remain.
 
