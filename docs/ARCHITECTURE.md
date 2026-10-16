@@ -416,10 +416,19 @@ an upgrade. Other abandoned reservations become failed after thirty minutes only
 installation lock is free and no activation receipt is pending. Age in the UI never releases a
 live updater's fence. The app announces a successful automatic update with its installed version
 and release notes after reconnecting.
-The page names a failed installed-release check and offers the terminal diagnostic action; other
-failures say "Run alt update in a terminal to see why." Specific causes, which can name private
-paths, stay in the daemon log, the update unit's journal or the terminal. Detached updater failures
-settle their own reservation even when preflight fails before activation.
+A failed attempt records its cause, the failure's first line with the home folder shortened to `~`,
+which the notice, Settings → About and `alt doctor` show beside Try again or `alt update`; an attempt
+that stopped without one says "Run alt update in a terminal to see why." Tracebacks stay in the update
+unit's log or the terminal. Detached updater failures settle their own reservation even when
+preflight fails before activation.
+
+Release verification checks every declared file's hash and refuses undeclared files. A downloaded or
+built archive must match its manifest exactly. An installed release tree also accepts bytecode that an
+interpreter generated for its declared Python modules (`<dir>/__pycache__/<module>.<tag>[.opt-N].pyc`,
+and the temporary name Python writes before renaming it), because any process importing from the tree
+without `-B` writes some, and `-I` ignores `PYTHONDONTWRITEBYTECODE` (#1029). Update, reconciliation,
+recovery, service start and address changes therefore never fail on, move or repair such caches;
+anything else extra, missing or changed in an installed tree still fails verification.
 
 `source_tls.py` prepares an existing Linux source service for explicit TLS configuration.
 The operator selects its existing certificate directory; native unit/process/listener evidence and

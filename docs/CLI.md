@@ -815,14 +815,11 @@ loopback address. This is an operator terminal action, with no new worker or bro
 The configured port and CA stay fixed; interruption uses `alt recover`. Source and container
 deployments retain their own configuration flow. A VPN provides the connection separately.
 
-`alt recover --generated-bytecode` verifies declared release resources and quarantines only matching
-generated caches, retaining strict manifests, service state and automatic-attempt history. Older
-affected installs can use [verified standalone repair](OPERATIONS.md#generated-cache-recovery).
-The operation is manual recovery, run back to back with its retry as
-`alt recover --generated-bytecode && alt update`, like the standalone repair for older releases,
-whose reviews and coordinator turns re-create the caches if they start in between; `alt update` or
-the app's Try again explicitly retries a failed release. A new release may still receive its own
-automatic attempt.
+Python caches written into the installed release never block `alt update`, automatic updates,
+`alt recover` or service start. An installation on v0.8.0 or older runs its own update code, which
+refuses them; [generated-cache recovery](OPERATIONS.md#generated-cache-recovery) covers it once.
+`alt update` or the app's Try again explicitly retries a failed release. A new release may still
+receive its own automatic attempt.
 
 `alt pair` prints a one-time code that pairs one browser with Altitude, the running service's
 address to open on that browser (or the reason there is none), a QR code of that address when a

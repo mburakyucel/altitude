@@ -352,30 +352,37 @@ activation recovery and offers explicit retry; a failed recovery retains its rec
 **Try again** in Settings → About is an explicit retry, including after dismissing the failure
 banner. It does not turn the failed attempt into an automatic success or clear automatic-attempt
 history. A newer offered release remains eligible for its own automatic attempt.
-An invalid installed release settles its update attempt as failed, with a release-check explanation;
-reconciliation does not repair or ignore unexpected installed files. Other abandoned jobs are marked
-failed after thirty minutes only when the installation lock is free; a slow live update keeps its
-admission fence. Failed preflight ends the detached updater's own reservation. Manual updates and
-activation share that lock through download, verification, activation and recovery, so automatic
-work cannot overlap them.
+A failed attempt shows its cause in the notice, Settings → About and `alt doctor`, for example the
+archive checksum that did not match or the file an installed release should not have; the update's
+log or terminal keeps the details. An installed release that fails verification settles its update
+attempt as failed with that cause; reconciliation does not repair or ignore unexpected installed files.
+Other abandoned jobs are marked failed after thirty minutes only when the installation lock is free; a
+slow live update keeps its admission fence. Failed preflight ends the detached updater's own
+reservation. Manual updates and activation share that lock through download, verification, activation
+and recovery, so automatic work cannot overlap them.
 
 #### Generated-cache recovery
 
-`alt recover --generated-bytecode` is an explicit, narrow repair for an owned installed release
-whose only extra files are the saved interpreter's generated caches corresponding to declared
-Python sources. When a release check finds only such caches, its error, which `alt update` prints,
-names this command together with its retry: `alt recover --generated-bytecode && alt update`. It
-verifies every declared resource, rejects symlinks and any other extras, then moves caches into a
-private backup under the application prefix and repeats strict manifest validation. It changes
-neither service lifecycle nor settings, CA identity, pairing or projects. The backup records what
-moved, including an interruption. This is manual recovery, not an upgrade, so the explicit update
-retry follows at once: on an affected release, a review or coordinator turn that starts in between
-re-creates the caches and the retry fails the same way. Archive and ordinary installed manifest
-checks accept no extra files. Isolated application-importing adapters use `-B` because `-I` ignores
-inherited bytecode-suppression environment settings.
+Any process that imports from the installed release without `-B`, such as a script or probe run
+with `-I`, writes Python caches into it. Altitude treats bytecode generated for the release's declared
+modules as derived from the release: updates, automatic ones included, recovery and service start
+neither fail on these caches nor move them. Anything else extra, missing or changed in the installed
+release still fails verification and needs diagnosis, and a downloaded release must match its
+manifest exactly.
 
-An affected older CLI without that recovery option needs the newer release's independently
-verified standalone `install.py` and matching archive/checksum from the same release:
+An installation on v0.8.0 or older runs its own update code, which refuses such caches. Its first
+update to a release with this behavior can fail with "the only extra files look like generated
+Python caches"; repair it once, then every later update has the fix. On v0.7.0 or v0.8.0, run the
+line the error names, back to back so that no review or coordinator turn re-creates the caches in
+between:
+
+```sh
+alt recover --generated-bytecode && alt update
+```
+
+It verifies every declared file, moves only the caches into a private backup under the application
+prefix, then updates. An older CLI without that option uses the current release's independently
+verified standalone `install.py` with the matching archive and checksum from the same release:
 
 ```sh
 python3 -B install.py --archive altitude-<tag>.tar.gz --sha256 <trusted-sha256> --repair-generated-bytecode \
@@ -383,9 +390,8 @@ python3 -B install.py --archive altitude-<tag>.tar.gz --sha256 <trusted-sha256> 
 ```
 
 This imports only the checksum/manifest-verified repair code and repairs the existing installation;
-it does not activate the supplied archive. The installed `alt update` that follows it at once
-downloads and installs the newest release. Preserve the backup and distinguish this intervention
-from an unattended automatic upgrade. Other integrity failures need diagnosis, not cache removal.
+it does not activate the supplied archive. Both leave service state, settings, certificate identity,
+pairing, projects and automatic-attempt history unchanged, and record what moved in the backup.
 
 Uninstall retains configuration, identity and runtime data, so reinstall reuses them. It is not a
 fresh reset. No reset command is provided: use a disposable installation/home for clean validation;

@@ -69,21 +69,32 @@ def _verify_declared(root: Path, data: dict) -> None:
             raise ValueError(f"Release verification failed: {name}")
 
 
-def _generated_caches(release: dict, tag: str) -> set[str]:
-    """The bytecode files `tag`'s interpreter writes for the release's declared modules."""
-    return {str(Path(name).parent / "__pycache__" / f"{Path(name).stem}.{tag}.pyc")
-            for name in release["files"] if name.endswith(".py")}
+# Bytecode an interpreter writes for a module: any implementation's cache tag, an optimization level, and the
+# temporary name it writes before renaming it into place.
+GENERATED_CACHE = re.compile(r"(?:(.+)/)?__pycache__/([^/.]+)\.[A-Za-z0-9_-]+(?:\.opt-[12])?\.pyc(?:\.[0-9]+)?")
 
 
-def metadata(root: Path) -> dict:
+def _generated_cache(name: str, files: dict) -> bool:
+    """Whether `name` is bytecode some interpreter generated for one of the release's declared Python modules."""
+    match = GENERATED_CACHE.fullmatch(name)
+    return bool(match) and str(PurePosixPath(match[1] or "", f"{match[2]}.py")) in files
+
+
+def metadata(root: Path, *, archive: bool = False) -> dict:
+    """The verified manifest of a release tree. Every declared file must match its hash and nothing undeclared may
+    exist, except that an installed tree may hold bytecode generated for its declared modules: any process importing
+    from it without -B writes some (#1029), so it is derived from the release, never a change to it. An `archive`,
+    as extracted or built, has none."""
     data = _release_manifest(root)
     actual = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
     expected = {*data["files"], "release.json"}
-    if actual != expected:
-        caches = expected <= actual and not actual - expected - _generated_caches(data, sys.implementation.cache_tag)
-        raise ValueError("Release files do not match its manifest" + (
-            "; the only extra files look like generated Python caches: run "
-            "alt recover --generated-bytecode && alt update as one command" if caches else ""))
+    missing = sorted(expected - actual)
+    extra = sorted(name for name in actual - expected if archive or not _generated_cache(name, data["files"]))
+    if missing or extra:
+        listed = lambda names: ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        raise ValueError(f"Release {data['version']} does not match its manifest: "
+                         + "; ".join([*([f"missing {listed(missing)}"] if missing else []),
+                                      *([f"unexpected {listed(extra)}"] if extra else [])]))
     _verify_declared(root, data)
     return data
 
@@ -107,7 +118,7 @@ def extract(archive: Path, checksum: str, destination: Path) -> dict:
         if sum(member.size for member in members) > ARCHIVE_LIMIT:
             raise ValueError("Application archive exceeds 256 MiB")
         bundle.extractall(destination, filter="data")
-    return metadata(destination)
+    return metadata(destination, archive=True)
 
 
 def version_key(version: str) -> tuple:
@@ -172,9 +183,15 @@ UPDATE_STALE_SECONDS = 1800
 # How long a detached update waits for work in flight once its request fences new work: an L3 turn's own limit and
 # margin (#1003). `alt update` in a terminal waits a minute.
 UPDATE_DRAIN_SECONDS = 1500
-# The page shows only this next step; the cause stays in the terminal or the update unit's log.
+# An attempt that ended without a known cause, such as an updater that stopped; its log or terminal has the rest.
 UPDATE_FAILED = "Run alt update in a terminal to see why."
-UPDATE_VERIFICATION_FAILED = "The installed application failed its release check. Run alt update in a terminal to see why."
+
+
+def _cause(exc: BaseException) -> str:
+    """What the page and `alt doctor` show for a failed attempt: the failure's own first line, with the home folder
+    shortened to ~; tracebacks stay in the update's log."""
+    text = (str(exc).strip().splitlines() or [""])[0].replace(str(Path.home()), "~")[:300]
+    return (text if text.endswith((".", "!", "?")) else text + ".") if text else UPDATE_FAILED
 
 
 def _update_record() -> tuple[Path, dict]:
@@ -270,7 +287,7 @@ def _reconcile_update_locked(prefix: Path, owner: str | None = None) -> None:
         try:
             installed = metadata(_version_path(prefix, os.readlink(current)))["version"] if current.is_symlink() else None
         except (OSError, ValueError, RuntimeError) as exc:
-            record["attempt"] = {**attempt, "state": "failed", "error": UPDATE_VERIFICATION_FAILED}
+            record["attempt"] = {**attempt, "state": "failed", "error": _cause(exc)}
             failure = exc if owner is not None and attempt.get("id") == owner else None
         else:
             if installed is not None and attempt.get("version") == installed:
@@ -381,19 +398,19 @@ def request_update(version: str, *, automatic: bool = False) -> dict:
                          "ALTITUDE_UPDATE_ATTEMPT": ident})
     except InstallationBusy as exc:
         raise UpdateRefused("Another update or recovery is already running") from exc
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, ValueError, RuntimeError) as exc:
         with contextlib.suppress(OSError, ValueError):
-            _finish_attempt(ident, "failed")
+            _finish_attempt(ident, "failed", _cause(exc))
         raise
     return update_status()
 
 
-def _finish_attempt(ident: str, state: str) -> None:
-    """Only this transaction changes its receipt; details stay in its terminal or job log."""
+def _finish_attempt(ident: str, state: str, error: str = UPDATE_FAILED) -> None:
+    """Only this transaction changes its receipt; a failure records its cause, and the traceback stays in its log."""
     with _changing_update_record() as record:
         attempt = record.get("attempt") or {}
         if attempt.get("state") == "running" and attempt.get("id") == ident:
-            record["attempt"] = {**attempt, "state": state, **({"error": UPDATE_FAILED} if state == "failed" else {})}
+            record["attempt"] = {**attempt, "state": state, **({"error": error} if state == "failed" else {})}
 
 
 def update(version: str | None = None) -> dict:
@@ -412,9 +429,9 @@ def update(version: str | None = None) -> dict:
                 _require_no_update(_prefix())
                 ident = uuid.uuid4().hex
             return _update(version, ident)
-        except (OSError, ValueError, RuntimeError):
+        except (OSError, ValueError, RuntimeError) as exc:
             if ident:
-                _finish_attempt(ident, "failed")
+                _finish_attempt(ident, "failed", _cause(exc))
             raise
 
 
@@ -725,10 +742,13 @@ def _next(hosting: dict, pairing: dict, needs: list[dict], trust: dict) -> list[
 
 
 def describe_update(update: dict | None) -> list[str]:
-    """`alt doctor`'s line about a newer release, naming what an automatic update waits for."""
+    """`alt doctor`'s line about a newer release, naming what an automatic update waits for or why it failed."""
     if not update or not update.get("available"):
         return []
-    version, waiting = update["available"]["version"], update["waiting_for"]
+    version, waiting, attempt = update["available"]["version"], update["waiting_for"], update.get("attempt") or {}
+    if attempt.get("state") == "failed" and attempt.get("version") == version:
+        return [f"Update: the update to Altitude {version} did not finish. {attempt.get('error') or UPDATE_FAILED} "
+                "alt update tries again."]
     if not update["automatic_pending"]:
         return [f"Update: Altitude {version} is available; alt update installs it."]
     listed = ", ".join(waiting[:-1]) + " and " + waiting[-1] if len(waiting) > 1 else "".join(waiting)
@@ -852,20 +872,18 @@ def recover(prefix: Path | None = None, *, generated_bytecode: bool = False) -> 
 
 
 def _quarantine_generated_bytecode(prefix: Path) -> dict:
-    """An explicit operator repair; declared resources and normal manifest validation stay strict."""
+    """The standalone installer's repair for an installation on v0.8.0 or older, whose own update code refuses
+    generated caches in its release; afterwards that installation's tree matches its manifest exactly."""
     require_service_owner(prefix)
     root = _version_path(prefix, os.readlink(prefix / "current"))
     release = _release_manifest(root)
     _verify_declared(root, release)
     actual = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
     extras = actual - {*release["files"], "release.json"}
-    saved = json.loads(_settings().read_text())
-    tag = subprocess.check_output([saved["python"], "-I", "-B", "-c", "import sys; print(sys.implementation.cache_tag)"],
-                                  text=True, timeout=10).strip()
-    if extras - _generated_caches(release, tag):
+    if any(not _generated_cache(name, release["files"]) for name in extras):
         raise RuntimeError("The installed release has unexpected files beyond generated Python caches; no repair was applied")
     if not extras:
-        metadata(root)
+        metadata(root, archive=True)
         return {"repaired": False, "version": release["version"], "detail": "The installed release already matches its manifest"}
     backup = prefix / "recovery" / uuid.uuid4().hex
     backup.mkdir(parents=True, mode=0o700)
@@ -875,7 +893,7 @@ def _quarantine_generated_bytecode(prefix: Path) -> dict:
         destination = backup / name
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.replace(root / name, destination)
-    metadata(root)
+    metadata(root, archive=True)
     atomic(backup / "recovery.json", json.dumps({**receipt, "complete": True}) + "\n")
     return {"repaired": True, "version": release["version"], "backup": str(backup),
             "quarantined": sorted(extras), "service": "unchanged",
@@ -1314,7 +1332,8 @@ def main() -> None:
                         help="verify the active source deployment's existing TLS; do not install")
     parser.add_argument("--apply", action="store_true", help="apply the verified source TLS service override")
     parser.add_argument("--repair-generated-bytecode", action="store_true",
-                        help="use verified archive code to quarantine only generated caches in the owned installation; no upgrade")
+                        help="for an installation on v0.8.0 or older: use verified archive code to quarantine only generated "
+                             "caches in the owned installation; no upgrade")
     args = parser.parse_args()
     if os.environ.get("ALTITUDE_ACTOR") in ("l2", "l3"):
         parser.error("Application installation is an operator operation")

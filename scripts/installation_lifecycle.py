@@ -307,6 +307,16 @@ class Lifecycle:
             time.sleep(1)
         raise AssertionError(f"The update to {version} did not record {state}")
 
+    def foreign_caches(self, tree: Path) -> list[str]:
+        """Import from an installed release as an outside process does, with -I and without -B (#1029); -I also
+        ignores PYTHONDONTWRITEBYTECODE, so Python writes bytecode into the release. Returns the caches it wrote."""
+        self.run("foreign-process-import", sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+                 "import altitude.config, altitude.git_policy, altitude.platform", tree)
+        caches = sorted(str(path.relative_to(tree)) for path in tree.rglob("__pycache__/*.pyc"))
+        assert any(name.startswith("altitude/__pycache__/config.") for name in caches), caches
+        write_json(self.results / "foreign-caches.json", caches)
+        return caches
+
     def exercise(self):
         old, old_sha, package, before, new, new_sha, new_package, after = self.prepare()
         self.manual_updates()
@@ -699,11 +709,26 @@ class Lifecycle:
                 assert self.record()["attempt"] == failed, self.record()
             assert [line for line in requests if f"/releases/download/{broken_version}/" in line] == fetched, requests
             write_json(self.results / "automatic-failure-no-repeat.json", {"record": self.record(), "downloads": fetched})
+            # An outside process writes bytecode into the installed release first (#1029). A published baseline whose
+            # own release check predates accepting it refuses that tree, so its caches are left out and noted.
+            outgoing = self.prefix.joinpath("current").resolve()
+            caches = self.foreign_caches(outgoing)
+            accepted = subprocess.run([sys.executable, "-I", "-B", "-c", "import sys; from pathlib import Path; "
+                                       "sys.path.insert(0, sys.argv[1]); from altitude import installation; "
+                                       "installation.metadata(Path(sys.argv[1]))", str(outgoing)],
+                                      env=self.env, capture_output=True, timeout=60).returncode == 0
+            if not accepted:
+                for name in caches:
+                    (outgoing / name).unlink()
+                caches = []
+                self.result["limits"].append("The published baseline's own update code refuses generated caches in its "
+                                             "release, so its automatic update ran without them")
             publish(after)
             self.advance_check(after["version"])
             self.wait_version(after["version"], timeout=300)
             automatic = self.wait_attempt(after["version"], "succeeded")
             assert automatic["automatic"], automatic
+            assert sorted(str(path.relative_to(outgoing)) for path in outgoing.rglob("__pycache__/*.pyc")) == caches
             updated_health = self.healthy("automatic-updated", after)
             assert updated_health["pid"] != initial["pid"], "Automatic update did not replace the daemon"
             status = self.doctor("automatic-updated", after)["update"]
@@ -988,7 +1013,7 @@ class MacLifecycle(Lifecycle):
         self.env.update({key: str(self.fixture) for key in keys})
 
     def versions(self, package: Path, release: dict) -> dict:
-        """Same-source versions for automatic/manual updates, failed startup and explicit cache-repair retry."""
+        """Same-source versions for automatic/manual updates, failed startup and an update beside foreign caches."""
         made = {}
         for offset, failing in ((1, False), (2, False), (3, False), (4, True), (5, False)):
             version = re.sub(r"\.(\d+)$", lambda match: f".{int(match[1]) + offset}", release["version"])
@@ -1094,57 +1119,27 @@ class MacLifecycle(Lifecycle):
         assert all(digest(path) == value for path, value in retained.items()), "Renewal changed the CA, key or pairing"
         assert self.request("/api/access")["paired"], "Existing pairing was lost"
 
-    def native_cache_retry(self, releases: ReleaseServer, candidate: dict, version: str, current: dict):
-        """Affected cache state fails automatically, then explicit quarantine and retry preserve history."""
+    def native_foreign_caches(self, releases: ReleaseServer, candidate: dict, version: str, current: dict):
+        """A process outside Altitude imports from the installed release with -I and without -B, writing bytecode
+        into it (#1029); the daemon's next automatic update still installs the candidate and keeps every state."""
         retained = {path: digest(path) for path in (self.settings, self.tls / "ca.crt", self.tls / "ca.key",
                     self.tls / "server.key", self.home / ".config/altitude/access/devices.json",
                     self.home / ".altitude/projects.json")}
-        code = ("import py_compile,sys; from pathlib import Path; root=Path(sys.argv[1]); "
-                "[py_compile.compile(str(root/'altitude'/ (name+'.py')),doraise=True) "
-                "for name in ('__init__','config','platform','state')]")
-        self.run("cache-affected-state", sys.executable, "-I", "-B", "-c", code, self.prefix / "current")
-        initial = self.healthy("cache-current-service", current)
+        outgoing = self.prefix.joinpath("current").resolve()
+        caches = self.foreign_caches(outgoing)
+        initial = self.healthy("foreign-caches-current-service", current)
         releases.publish(candidate["folder"], version)
         self.advance_check(version)
-        failed = self.wait_attempt(version, "failed")
-        assert failed["automatic"], failed
-        history = self.record()["automatic_attempts"]
-        assert version in history, history
-        assert self.healthy("cache-failed-service", current)["pid"] == initial["pid"]
-        assert self.request("/api/overview")["update"]["attempt"]["state"] == "failed"
-        repair = json.loads(self.run("cache-supported-manual-repair", self.alt, "recover", "--generated-bytecode"))
-        assert repair["repaired"] and repair["service"] == "unchanged", repair
-        receipt = json.loads((Path(repair["backup"]) / "recovery.json").read_text())
-        assert receipt["complete"] and len(receipt["files"]) == 4, receipt
-        assert all((Path(repair["backup"]) / name).is_file() for name in receipt["files"])
-        assert self.record()["automatic_attempts"] == history
-        assert self.healthy("cache-manually-repaired-service", current)["pid"] == initial["pid"]
-        # The documented fallback also repairs an affected installation without importing that tree.
-        # This bootstrap was verified against the baseline archive during prepare(); it does not activate it.
-        self.run("cache-bootstrap-affected-state", sys.executable, "-I", "-B", "-c", code, self.prefix / "current")
-        archive = next(self.baseline.glob("altitude-*.tar.gz"))
-        checksum = (self.baseline / (archive.name + ".sha256")).read_text().strip()
-        bootstrap = json.loads(self.run("cache-verified-standalone-repair", sys.executable, "-B",
-                                       self.baseline / "install.py", "--archive", archive, "--sha256", checksum,
-                                       "--prefix", self.prefix, "--repair-generated-bytecode"))
-        assert bootstrap["repaired"] and bootstrap["version"] == current["version"], bootstrap
-        assert bootstrap["service"] == "unchanged", bootstrap
-        bootstrap_receipt = json.loads((Path(bootstrap["backup"]) / "recovery.json").read_text())
-        assert bootstrap_receipt["complete"] and len(bootstrap_receipt["files"]) == 4, bootstrap_receipt
-        assert all((Path(bootstrap["backup"]) / name).is_file() for name in bootstrap_receipt["files"])
-        assert self.record()["automatic_attempts"] == history
-        assert self.record()["attempt"] == failed
-        assert self.healthy("cache-bootstrap-repaired-service", current)["pid"] == initial["pid"]
-        assert all(digest(p) == h for p, h in retained.items()), "Standalone repair altered retained state"
-        self.request("/api/update", {"version": version})
+        self.wait_version(version)
         succeeded = self.wait_attempt(version, "succeeded")
-        assert not succeeded["automatic"], "Explicit retry is not an unattended upgrade"
-        assert self.healthy("cache-retry-succeeded", candidate["release"])["pid"] != initial["pid"]
-        assert self.request("/api/access")["paired"]
-        assert all(digest(p) == h for p, h in retained.items()), "Cache recovery/retry altered retained state"
-        write_json(self.results / "cache-recovery-retry.json", {"manual_repair": repair,
-                   "standalone_manual_repair": bootstrap, "failed": failed,
-                   "succeeded": succeeded, "automatic_attempts": history, "preserved": True})
+        assert succeeded["automatic"], succeeded
+        assert self.healthy("foreign-caches-updated", candidate["release"])["pid"] != initial["pid"]
+        assert self.request("/api/access")["paired"], "Existing pairing was lost"
+        assert all(digest(p) == h for p, h in retained.items()), "The update altered retained state"
+        assert sorted(str(path.relative_to(outgoing)) for path in outgoing.rglob("__pycache__/*.pyc")) == caches, \
+            "The update moved the outgoing release's caches"
+        write_json(self.results / "foreign-caches-automatic-update.json", {"caches": caches, "succeeded": succeeded,
+                   "preserved": True})
 
     def pair(self):
         code = re.search(r"Pairing code: (\S+)", self.run("pair", self.alt, "pair")).group(1)
@@ -1197,7 +1192,7 @@ class MacLifecycle(Lifecycle):
     def mac(self):
         archive, checksum, package, before = self.prepare()
         made = self.versions(package, before)
-        automatic_version, second, third, broken, cache_retry = list(made)
+        automatic_version, second, third, broken, foreign = list(made)
         repository = re.search(r"^REPOSITORY='https://github\.com/([^']+)'$", (self.baseline / "install.sh").read_text(), re.M)
         self.repository = repository.group(1)
         server = ReleaseServer(self.release_authority(*ReleaseServer.HOSTS), self.repository)
@@ -1338,7 +1333,7 @@ class MacLifecycle(Lifecycle):
             write_json(self.results / "automatic-failure-no-repeat.json", {"update": status, "record": self.record(),
                                                                           "downloads": downloads})
             assert (self.prefix / "versions" / broken).is_dir()
-            self.native_cache_retry(server, made[cache_retry], cache_retry, made[third]["release"])
+            self.native_foreign_caches(server, made[foreign], foreign, made[third]["release"])
             assert digest(registry) == registration, "Native lifecycle lost the original project registration"
             # Remove only the registration fixture after preservation is proven; uninstall can exercise full removal.
             registry.write_bytes(original_registry)

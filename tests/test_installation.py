@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests.fakes import FakeL2
-from tests.support import REPO, SUITE, make_repo
+from tests.support import REPO, SUITE, git, make_repo
 from altitude import access, config, dispatch, engines, git_policy, installation, monitor, platform, state as S, tasks as T, tls
 
 
@@ -733,8 +733,27 @@ class Installation(InstallationCase):
             installation.metadata(target)
         resource.write_bytes(original)
         (target / "unexpected.py").write_text("unlisted code")
-        with self.assertRaisesRegex(ValueError, "do not match"):
+        with self.assertRaisesRegex(ValueError, "does not match its manifest: unexpected unexpected.py"):
             installation.metadata(target)
+
+    def test_an_archive_carries_no_generated_caches(self):
+        """Only an installed tree may gain bytecode; the archive an update downloads is exactly its manifest."""
+        folder = self.tmp / "with-cache"
+        with tarfile.open(self.archive()[0]) as bundle:
+            bundle.extractall(folder, filter="data")
+        cache = folder / f"altitude/__pycache__/config.{sys.implementation.cache_tag}.pyc"
+        cache.parent.mkdir()
+        cache.write_bytes(b"fixture generated cache")
+        archive = self.tmp / "with-cache.tar.gz"
+        with tarfile.open(archive, "w:gz") as bundle:
+            for path in sorted(folder.rglob("*")):
+                if path.is_file():
+                    bundle.add(path, arcname=str(path.relative_to(folder)), recursive=False)
+        target = self.tmp / "staged"
+        target.mkdir()
+        with self.assertRaisesRegex(ValueError, "does not match its manifest: unexpected altitude/__pycache__/config"):
+            installation.extract(archive, hashlib.sha256(archive.read_bytes()).hexdigest(), target)
+        self.assertEqual(installation.metadata(target)["version"], "v0.1.0")  # the same tree, once installed
 
     def test_archive_traversal_symlinks_hardlinks_and_duplicate_entries_are_rejected(self):
         for name, kind, duplicate in (("../escape", tarfile.REGTYPE, False),
@@ -1209,8 +1228,10 @@ class NewVersionNotice(NoticeCase):
             self.run_detached()
         status = installation.update_status()
         self.assertEqual((status["current"], status["attempt"]["state"]), ("v0.1.0", "failed"))
-        # The page gets a fixed sentence; the cause stays in the terminal or the update unit's log.
-        self.assertEqual(status["attempt"]["error"], "Run alt update in a terminal to see why.")
+        # The page and alt doctor show the failure's own cause; a stalled updater has none to show.
+        self.assertEqual(status["attempt"]["error"], "fixture: not published.")
+        self.assertEqual(installation.describe_update(status),
+                         ["Update: the update to Altitude v0.2.0 did not finish. fixture: not published. alt update tries again."])
         installation.request_update("v0.2.0")
         self.assertEqual(len(self.detached), 2)
         with mock.patch.object(installation.time, "time", return_value=time.time() + 1801):
@@ -1299,23 +1320,68 @@ class AutomaticUpdates(NoticeCase):
             pass
         self.assertEqual(path.stat().st_mtime_ns, before)
 
-    def test_detached_preflight_failure_settles_its_running_reservation(self):
+    def test_caches_a_foreign_process_writes_into_the_installed_release_never_block_the_automatic_update(self):
+        """#1029: a process that imports from the installed release with -I and without -B writes bytecode into it;
+        the next automatic update still verifies, activates and keeps every piece of the installation's state."""
+        self.publish("v0.2.0")
+        key, device = access.redeem(access.issue_code()["code"], "Fixture browser")
+        project = self.home / "Projects/fictional"
+        project.mkdir(parents=True)
+        git("init", "-q", "-b", "main", cwd=project)
+        with config.add_project("fictional", path=project):
+            pass
+        retained = {**self.retained_data(), **{path: path.read_bytes() for path in self.certificates.iterdir()},
+                    config.PROJECTS_FILE: config.PROJECTS_FILE.read_bytes()}
+        outgoing = (self.prefix / "current").resolve()
+        foreign = {"PATH": os.environ["PATH"], "HOME": str(self.home), "ALTITUDE_HOME": str(self.runtime),
+                   "ALTITUDE_CONFIG": str(self.settings), "PYTHONDONTWRITEBYTECODE": "1"}  # -I ignores the last one
+        subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+                        "import altitude.config, altitude.platform, altitude.state", str(outgoing)],
+                       env=foreign, check=True, timeout=60)
+        caches = sorted(str(path.relative_to(outgoing)) for path in outgoing.rglob("__pycache__/*.pyc"))
+        self.assertIn(f"altitude/__pycache__/config.{sys.implementation.cache_tag}.pyc", caches)
+        self.assertEqual(installation.automatic_update(), "v0.2.0")
+        self.server.auto_update()
+        result = self.run_detached()
+        attempt = installation._update_record()[1]["attempt"]
+        self.assertEqual((result["version"], attempt["state"], attempt["automatic"]), ("v0.2.0", "succeeded", True))
+        self.assertEqual(os.readlink(self.prefix / "current"), "versions/v0.2.0")
+        self.assertEqual(self.active, "active")  # the fixture probe saw v0.2.0 healthy
+        self.assertEqual({path: path.read_bytes() for path in retained}, retained)
+        self.assertEqual(access.device(key), device)
+        # Nothing was moved or repaired: the outgoing release keeps its caches and still verifies for rollback.
+        self.assertEqual(sorted(str(path.relative_to(outgoing)) for path in outgoing.rglob("__pycache__/*.pyc")), caches)
+        self.assertEqual(installation.metadata(outgoing)["version"], "v0.1.0")
+
+    def test_an_undeclared_file_in_the_installed_release_still_fails_the_update_and_names_itself(self):
         installation.request_update("v0.2.0", automatic=True)
-        cache = self.prefix / f"current/altitude/__pycache__/config.{sys.implementation.cache_tag}.pyc"
-        cache.parent.mkdir()
-        cache.write_bytes(b"fixture generated cache")
-        with self.assertRaisesRegex(ValueError, "do not match its manifest; .*run alt recover --generated-bytecode && alt update as one command"):
-            self.run_detached()  # the job log names the release check's cause and its recovery, not an expired request
+        tag = sys.implementation.cache_tag
+        generated = [f"altitude/__pycache__/config.{tag}.pyc", f"altitude/engines/__pycache__/claude.{tag}.opt-1.pyc",
+                     "altitude/__pycache__/state.cpython-399.pyc", f"altitude/__pycache__/tls.{tag}.pyc.4402"]
+        current = self.prefix / "current"
+        for name in generated:
+            (current / name).parent.mkdir(exist_ok=True)
+            (current / name).write_bytes(b"fixture generated cache")
+        self.assertEqual(installation.metadata(current.resolve())["version"], "v0.1.0")
+        for name in (f"altitude/__pycache__/unexpected.{tag}.pyc", f"__pycache__/alt.{tag}.pyc",
+                     f"altitude/__pycache__/config.{tag}.py", "altitude/__pycache__/config.pyc", "altitude/unexpected.py"):
+            with self.subTest(name=name):
+                (current / name).parent.mkdir(exist_ok=True)
+                (current / name).write_bytes(b"fixture undeclared file")
+                with self.assertRaisesRegex(ValueError, f"^Release v0.1.0 does not match its manifest: unexpected {name}$"):
+                    installation.metadata(current.resolve())
+                if name != "altitude/unexpected.py":
+                    (current / name).unlink()
+        with self.assertRaisesRegex(ValueError, "unexpected altitude/unexpected.py"):
+            self.run_detached()  # the job log has the same cause
         status = installation.update_status()
         self.assertEqual(status["attempt"]["state"], "failed")
-        self.assertIn("release check", status["attempt"]["error"])
+        self.assertEqual(status["attempt"]["error"],
+                         "Release v0.1.0 does not match its manifest: unexpected altitude/unexpected.py.")
         self.assertTrue(status["attempt"]["automatic"])
         self.assertFalse(config.activation_pending())
         self.assertFalse(status["automatic_pending"], "a failure does not authorize another automatic attempt")
         self.assertEqual(os.readlink(self.prefix / "current"), "versions/v0.1.0")
-        cache.rename(cache.with_name(f"config.{sys.implementation.cache_tag}.opt-1.pyc"))
-        with self.assertRaisesRegex(ValueError, "^Release files do not match its manifest$"):
-            installation.metadata((self.prefix / "current").resolve())  # only caches the repair accepts get its hint
 
     def test_detached_reconciliation_error_ends_only_its_own_reservation(self):
         installation.request_update("v0.2.0", automatic=True)
@@ -1342,7 +1408,7 @@ class AutomaticUpdates(NoticeCase):
         installation.reconcile_update()
         status = installation.update_status()
         self.assertEqual(status["attempt"]["state"], "failed")
-        self.assertIn("release check", status["attempt"]["error"])
+        self.assertEqual(status["attempt"]["error"], "Release v0.1.0 does not match its manifest: unexpected unexpected.")
         self.assertFalse(config.activation_pending())
         self.assertEqual(unexpected.read_text(), "fixture extra file", "reconciliation does not repair installed files")
 
@@ -1668,6 +1734,7 @@ class UpdateRequests(NoticeCase):
         with mock.patch.object(platform, "detach", side_effect=RuntimeError(f"systemd-run failed in {self.home}")):
             self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=503)["error"], public)
         self.assertEqual(installation.update_status()["attempt"]["state"], "failed")
+        self.assertEqual(installation.update_status()["attempt"]["error"], "systemd-run failed in ~.")
         with mock.patch("altitude.server._save_machine", side_effect=ValueError(f"Invalid JSON in {self.home}/settings.json")):
             self.assertEqual(self.post("/api/update-check", {"enabled": False}, status=503)["error"], public)
         installation._update_record()[0].write_text("{not json")

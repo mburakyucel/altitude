@@ -581,9 +581,7 @@ def main(argv=None) -> None:
     sub.add_parser("install-git-guards")
     diagnostic = sub.add_parser("doctor", help="show hosting and readiness without provider requests")
     diagnostic.add_argument("--json", action="store_true", dest="as_json", help="structured diagnostic output")
-    recovery = sub.add_parser("recover", help="restore the previous installation after interrupted activation")
-    recovery.add_argument("--generated-bytecode", action="store_true",
-                          help="quarantine only generated caches after checking every declared release file; no upgrade")
+    sub.add_parser("recover", help="restore the previous installation after interrupted activation")
     sub.add_parser("uninstall", help="remove the owned application service and retain user data")
     installer = sub.add_parser("install", help="install an exact verified private application archive")
     installer.add_argument("--archive", type=Path, required=True)
@@ -840,8 +838,6 @@ def main(argv=None) -> None:
                     if args.directory is not None or args.apply or args.host:
                         ap.error("--directory, --host and --apply require service prepare-tls or configure")
                     result = installation.service(args.operation)
-            elif c == "recover":
-                result = installation.recover(generated_bytecode=args.generated_bytecode)
             else:
                 result = getattr(installation, c)()
             if c == "doctor" and not args.as_json:
