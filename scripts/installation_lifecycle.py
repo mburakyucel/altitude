@@ -12,8 +12,8 @@ baseline while that server answers for GitHub's release list and downloads, veri
 whose startup fails once and restores itself, then automatically activates the candidate, then opts out and uses the
 app's Update request for a newer synthetic release.
 `public-install` and `public-update` run docs/SETUP.md's command against GitHub itself (see Lifecycle.public). `mac` runs the whole macOS lifecycle under the throwaway HOME installation_mac.py gives it (see
-MacLifecycle); `mac-published` updates a published release to a later published one there, keeping the state made
-through the app (see MacLifecycle.published).
+MacLifecycle); `mac-published` updates a published release, with an outside process's caches in it, to a later
+published or source-built one there, keeping the state made through the app (see MacLifecycle.published).
 """
 from __future__ import annotations
 
@@ -317,9 +317,10 @@ class Lifecycle:
         write_json(self.results / "foreign-caches.json", caches)
         return caches
 
-    def legacy_cache_refusal(self, tree: Path, published: bool) -> bool:
-        """Whether the installed release's own check refuses its generated caches as v0.8.0 and older do. Only a
-        published baseline may: the candidate's code refusing them, or any other failure, stops the run."""
+    def legacy_cache_refusal(self, tree: Path, release: str | None) -> bool:
+        """Whether the installed release's own check refuses its generated caches as v0.8.0 and older do. Only RELEASE,
+        a published baseline from v0.8.0 or older, may: a later release or the candidate refusing them, or any other
+        failure, stops the run."""
         probe = subprocess.run([sys.executable, "-I", "-B", "-c", "import sys; from pathlib import Path; "
                                 "sys.path.insert(0, sys.argv[1]); from altitude import installation; "
                                 "installation.metadata(Path(sys.argv[1]))", str(tree)],
@@ -327,7 +328,8 @@ class Lifecycle:
         (self.results / "foreign-caches-baseline-check.log").write_text(f"exit: {probe.returncode}\n{probe.stderr}")
         if probe.returncode == 0:
             return False
-        if published and "the only extra files look like generated Python caches" in probe.stderr:
+        legacy = release and tuple(map(int, re.match(r"v(\d+)\.(\d+)\.(\d+)", release).groups())) < (0, 9, 0)
+        if legacy and "the only extra files look like generated Python caches" in probe.stderr:
             return True
         raise AssertionError(f"The installed release refused its generated caches: {probe.stderr.strip()[-500:]}")
 
@@ -726,7 +728,7 @@ class Lifecycle:
             # An outside process writes bytecode into the installed release first (#1029).
             outgoing = self.prefix.joinpath("current").resolve()
             caches = self.foreign_caches(outgoing)
-            if self.legacy_cache_refusal(outgoing, published):
+            if self.legacy_cache_refusal(outgoing, before["version"] if published else None):
                 for name in caches:
                     (outgoing / name).unlink()
                 caches = []
@@ -1355,15 +1357,16 @@ class MacLifecycle(Lifecycle):
         self.uninstall(retained)
 
     def published(self):
-        """The published baseline installed through its public command, state made through the app, then the
-        baseline's own daemon automatically installing the later published candidate, which must keep that state and
-        read it: the same paired device, the operator's name and its machine settings, TLS identity, configuration and
-        data."""
+        """The published baseline installed through its public command, state made through the app and caches an outside
+        process writes into the installed release, then the baseline's own daemon automatically installing the later
+        candidate, published or built from source, which must leave those caches and keep that state and read it: the
+        same paired device, the operator's name and its machine settings, TLS identity, configuration and data."""
         archive, checksum, package, before = self.prepare()
         _, _, candidate, after = self.archive(self.candidate, "candidate")
         self.engines("candidate-engine-settings", candidate)
         self.result["limits"] = [
-            "Published releases' own files, served to the offline guest under GitHub's release addresses on this machine, "
+            "The published baseline's own files and the candidate's, served to the offline guest under GitHub's release "
+            "addresses on this machine, "
             "not downloaded from GitHub by the guest; the 12-hour check schedule is advanced by rewriting update.json",
             "Application state is a paired device, a machine setting, configuration, TLS identity and fictional data, "
             "made under a throwaway HOME with fixture engines; no project, task or live provider",
@@ -1393,6 +1396,15 @@ class MacLifecycle(Lifecycle):
                 path.write_text("Fictional retained installation acceptance data\n")
             retained = {path: digest(path) for path in [*sentinels, self.settings, *self.tls.glob("*")] if path.is_file()}
             write_json(self.results / "state-before.json", {"device": device, "machine": self.request("/api/machine")})
+            # An outside process writes bytecode into the installed baseline first (#1029).
+            outgoing = self.prefix.joinpath("current").resolve()
+            caches = self.foreign_caches(outgoing)
+            if self.legacy_cache_refusal(outgoing, before["version"]):
+                for name in caches:
+                    (outgoing / name).unlink()
+                caches = []
+                self.result["limits"].append("The published baseline's own update code refuses generated caches in its "
+                                             "release, so its automatic update ran without them")
 
             # The baseline's own daemon finds the candidate and installs it at a quiet point, with nothing requested.
             server.publish(self.candidate, after["version"])
@@ -1400,6 +1412,8 @@ class MacLifecycle(Lifecycle):
             self.wait_version(after["version"], timeout=300)
             attempt = self.wait_attempt(after["version"], "succeeded")
             assert attempt["automatic"], attempt
+            assert sorted(str(path.relative_to(outgoing)) for path in outgoing.rglob("__pycache__/*.pyc")) == caches, \
+                "The update moved the outgoing release's caches"
             updated = self.healthy("updated", after)
             assert updated["pid"] != initial["pid"], "The update did not replace the daemon"
             self.doctor("updated", after)

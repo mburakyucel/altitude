@@ -228,7 +228,7 @@ present the release installs, updates to newer stable releases, recovers from a 
 again at login after a restart and uninstalls; its probes check confinement and launchd job Stop, and a
 source checkout starts from and deploys through Altitude's own copy of its repository. After publication, `PUBLISHED=<previous>..<tag>`
 updates the previous published release to the new one there through the previous release's own
-daemon, keeping the state made through the app. Record its `macos-vm.json` files with the candidate's
+daemon, with an outside process's caches in the previous release, keeping the state made through the app. Record its `macos-vm.json` files with the candidate's
 evidence. It establishes no physical second Mac, browser/device certificate trust or download from
 GitHub.
 
