@@ -42,6 +42,7 @@ test("a created task, a proposal review, review before merge, a repaired fault a
   await nav.getByRole("link", { name: /Needs you/ }).click();
   const proposal = page.getByRole("article", { name: "Add a synonyms editor for search admins", exact: true });
   await expect(proposal).toContainText("Build the synonyms editor as shown?");
+  await expect(proposal.getByRole("button", { name: "Approve proposal", exact: true })).toBeEnabled();  // Needs you has read its current list
   await proposal.evaluate((card) => card.scrollIntoView({ block: "start" }));
   await capture("proposal");
   await proposal.getByRole("link", { name: /Open L2 chat/ }).click();
@@ -51,6 +52,9 @@ test("a created task, a proposal review, review before merge, a repaired fault a
     if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
     await expect(page.getByRole("region", { name: "Live session", exact: true })).toContainText("both fixes are in");
   }
+  const latest = conversation.getByRole("button", { name: "Latest messages", exact: true });
+  if (await latest.isVisible()) await latest.click();  // the conversation's end: the question and its answers
+  await expect(latest).toBeHidden();
   await capture("task-view");
   await conversation.getByRole("button", { name: "Show proposal review details", exact: true }).click();
   await conversation.locator(`[data-review-id="readme-synonyms-proposal"]`).evaluate((card) => card.scrollIntoView({ block: "start" }));
@@ -71,6 +75,7 @@ test("a created task, a proposal review, review before merge, a repaired fault a
   await nav.getByRole("link", { name: /Needs you/ }).click();
   const review = page.getByRole("article", { name: "Add per-tenant limits to the public API", exact: true });
   await expect(review).toContainText("Review PR #214 before merge");
+  await expect(review.getByRole("button", { name: "Approve merge", exact: true })).toBeEnabled();
   await review.evaluate((card) => card.scrollIntoView({ block: "start" }));
   await capture("review");
 
