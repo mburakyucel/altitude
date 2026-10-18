@@ -33,7 +33,7 @@ FEATURES = {
     "feature-terminal": [("terminal-1-command-phone", "bottom"), ("terminal-2-typed-phone", "top")],
 }
 # The capture each feature shows at phone width; the live session's is docs/images/session-phone.png.
-PROOF = {"feature-create": "create-2-created-phone", "feature-proposal": "proposal-phone",
+PROOF = {"feature-create": "create-2-created-phone", "feature-proposal": "proposal-review-phone",
          "feature-task": "task-view-phone", "feature-review": "review-findings-phone",
          "feature-heal": "heal-2-repaired-phone", "feature-improve": "improve-accepted-phone",
          "feature-terminal": "terminal-2-typed-phone"}
