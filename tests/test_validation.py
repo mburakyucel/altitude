@@ -127,6 +127,12 @@ import json, os, subprocess, sys
 args = sys.argv[1:]
 with open(RECORD, "a") as out:
     out.write(json.dumps(args) + "\n")
+pause = os.path.join(os.environ["XDG_RUNTIME_DIR"], "libpod", "tmp")
+if not os.path.isdir(pause):  # Podman 4.9 writes the user's pause pid in this folder and does not create it (#1034)
+    print("error creating temporary file: No such file or directory", file=sys.stderr)
+    print('Error: invalid internal status, try resetting the pause process with "podman system migrate": '
+          f"setting up the process: open {pause}/pause.pid: no such file or directory", file=sys.stderr)
+    sys.exit(125)
 if args[:2] == ["image", "exists"]:
     sys.exit(0 if os.path.exists(BUILT) else 1)
 if args[:1] == ["build"]:
@@ -327,6 +333,9 @@ class TestValidationRunner(ClientStop, RunnerCase):
         podman.chmod(0o755)
         self.patch(platform, "SYSTEMD_RUN", str(shim))
         self.patch(validation, "podman", return_value=[str(podman)])
+        self.runtime = self.tmp / "runtime"   # the user's runtime directory as a reboot leaves it: empty
+        self.runtime.mkdir(mode=0o700)
+        self.patch(platform, "validation_runroot", return_value=str(self.runtime / "altitude-validation"))
 
     def calls(self, verb):
         return [a for a in map(json.loads, self.record.read_text().splitlines()) if a[:1] == [verb]]
@@ -953,6 +962,27 @@ class TestValidationRunner(ClientStop, RunnerCase):
                    .splitlines()]
         self.assertEqual((saved["ended"], saved["exit"]), ("exit", 0))
         self.assertEqual(len([e for e in S.read_events(self.project, self.slug) if e["kind"] == "machine-run"]), 1)
+
+    def test_the_first_run_after_a_reboot_creates_the_folder_of_podmans_pause_process(self):
+        """After a reboot the runner was the first Podman user, and Podman could not record its pause process (#1034)."""
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+        pause = self.runtime / "libpod" / "tmp"
+        self.assertEqual(stat.S_IMODE(pause.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE((self.runtime / "libpod").stat().st_mode), 0o700)
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+
+    def test_a_leftover_podman_could_not_remove_names_its_error_and_goes_once_podman_works(self):
+        (self.runtime / "libpod").write_text("")  # the pause folder cannot be created: every Podman call fails
+        result = self.validate(["true"])
+        self.assertEqual((result["exit"], result["ended"]), (125, "cleanup failed"))
+        self.assertIn("invalid internal status", result["output"], "the run's log keeps Podman's error")
+        for why in (result["cleanup"], self.validate(["true"], status=400)["error"]):
+            self.assertIn("could not remove", why)
+            self.assertIn('try resetting the pause process with "podman system migrate"', why)
+        self.assertEqual(len(self.rows()), 1, "a refused request starts no run")
+        (self.runtime / "libpod").unlink()
+        self.assertEqual(self.validate(["true"])["ended"], "exit", "the next request removes the leftover first")
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
 
     def test_a_run_that_never_started_leaves_nothing_and_keeps_the_runner_open(self):
         with mock.patch.object(validation, "_clone", side_effect=OSError("worktree unreadable")):

@@ -562,7 +562,10 @@ while True:
   command at a time.
 - **Storage.** The image, Podman's storage, the cloud-image cache and each run's area live in
   `~/.altitude-validation`, beside Altitude's home rather than in it and outside every folder a task
-  worker writes, so no path a worker replaced becomes a mount or a place the run writes.
+  worker writes, so no path a worker replaced becomes a mount or a place the run writes. On Linux, Podman's
+  temporary folder is there too, so before each Podman call the runner creates `libpod/tmp` in the user's
+  runtime directory, where rootless Podman records the user's one pause process and which Podman creates only
+  as its own default temporary folder. The first run after a reboot therefore needs no operator step.
 - **Results.** Regular files that the command writes to `$VALIDATION_RESULTS` are copied to the task
   folder's `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches
   that folder from Altitude's home without following links. Across the whole results tree, JSON/JSONL
@@ -593,7 +596,8 @@ while True:
   admits no run until earlier areas are removed. Each start and each later request while an area
   remains retry its removal once the area's processes have stopped, so a leftover that becomes
   removable reopens the runner without a restart. Until then the request is refused with the area,
-  entry or processes that stayed and why, also in altd's log.
+  entry or processes that stayed and why, on Linux with the cleanup's last output line, where Podman
+  says why it could not run, also in altd's log.
 - **Switch.** Settings → **Validation runs** is on after install. Turning it off stops a running
   run, including one admitted but not yet started, and refuses new ones. The switch is kept in the
   runner's storage, where a worker cannot turn it back on.

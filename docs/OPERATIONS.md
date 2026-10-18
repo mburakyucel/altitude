@@ -682,10 +682,11 @@ after its log and results are retained. Each run appears on its task as a machin
 `validation`. Activation waits for admitted validation to finish recording evidence, and new runs are
 refused while activation or an offered [automatic update](#installed-application-lifecycle) is pending. After an
 unexpected daemon exit or host reboot, startup stops abandoned runs, retains their logs and results,
-and records them as interrupted. If copying evidence fails, the ledger names the original paths
+and records them as interrupted; the runner prepares the folder rootless Podman needs in the user's runtime
+directory itself, so a reboot needs no operator step. If copying evidence fails, the ledger names the original paths
 in the runner area; that area stays intact and new runs stay refused pending recovery. A run area
 that cleanup cannot remove also keeps new runs refused; each later request retries its removal and
-its refusal names what stayed and why.
+its refusal names what stayed and why, including Podman's own error when Podman could not run.
 
 Fictional browser checks use `alt task validate -- make ui-validate`: the existing Mac Seatbelt
 runner with the approved inner-browser-sandbox exception, or the Linux container with Chromium's
