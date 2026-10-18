@@ -3,7 +3,7 @@
 
     python3 scripts/installation_macos_vm.py image [--step]
     python3 scripts/installation_macos_vm.py run RESULTS_DIR [--source REF] [--phase PHASE]
-    python3 scripts/installation_macos_vm.py run RESULTS_DIR --published BASELINE..CANDIDATE
+    python3 scripts/installation_macos_vm.py run RESULTS_DIR --published BASELINE[..CANDIDATE] [--source REF]
     python3 scripts/installation_macos_vm.py clean
 
 `image` builds the guests once, from Apple's restore image for the newest macOS this Mac supports: `fresh`, a new
@@ -27,10 +27,11 @@ from a source checkout cloned from an origin in the guest: the first start must 
 repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
 `incident` and `session` install the release into the account's own home with a scripted fictional engine and the
 tests' fake GitHub CLI, then drive the guest's own service through the revision's tests/macos_guest_runtime.py rows.
-`--published` downloads two published releases on this Mac, checked against their
-SHA256SUMS and tags, and runs only `published`: the baseline's own daemon must install the candidate and keep the
-state made through the app. The clone is deleted afterwards, also after a failure or a stop. RESULTS_DIR/macos-vm.json
-records the outcome.
+`--published` downloads the published baseline, and the candidate when it names one, on this Mac, checked against
+their SHA256SUMS and tags; without a published candidate it builds one from the source revision under the baseline's
+next minor version. It runs only `published`: after an outside process writes caches into the installed baseline, the
+baseline's own daemon must install the candidate and keep the state made through the app. The clone is deleted
+afterwards, also after a failure or a stop. RESULTS_DIR/macos-vm.json records the outcome.
 
 The host reaches a guest only through the Virtualization framework's host-guest socket, relayed to the guest's sshd.
 Everything lives in ~/.cache/altitude-installation-vm/macos; nothing runs as root on this Mac. One guest runs at a
@@ -63,7 +64,7 @@ import uuid
 
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS.parent))
-from scripts.installation_vm import published, release_version, repository  # noqa: E402 (shared with the Linux lane)
+from scripts.installation_vm import next_minor, published, release_version, repository  # noqa: E402 (shared with the Linux lane)
 
 CACHE = Path.home() / ".cache/altitude-installation-vm/macos"
 HELPER = CACHE / "bin/macos_vm"
@@ -1409,15 +1410,15 @@ BUILT = ("fresh", "prerequisites", "lifecycle", "login", *RUNTIME_ROWS)
 SOURCED = ("privacy", "jobs", "read-only-home", *RUNTIME_ROWS)
 
 
-def build(commit: str, work: Path, log: Path) -> None:
+def build(commit: str, work: Path, log: Path, version: str = "v0.0.1", output: str = "release") -> None:
     """The release, built in `work` with packages already in this Mac's pnpm store; the build downloads nothing."""
     temp = work / "tmp"
     temp.mkdir()
     environment = {**os.environ, "TMPDIR": str(temp), "XDG_CACHE_HOME": str(temp), "npm_config_cache": str(temp),
                    "npm_config_offline": "true"}
     with log.open("w") as stream:
-        subprocess.run([sys.executable, "-B", str(SCRIPTS / "build_release.py"), "--version", "v0.0.1",
-                        "--output", str(work / "release"), "--source", commit], stdout=stream, stderr=subprocess.STDOUT,
+        subprocess.run([sys.executable, "-B", str(SCRIPTS / "build_release.py"), "--version", version,
+                        "--output", str(work / output), "--source", commit], stdout=stream, stderr=subprocess.STDOUT,
                        env=environment, check=True, timeout=300)
 
 
@@ -1472,8 +1473,9 @@ def run_phase(name: str, inputs: Path, results: Path, record: dict, commits: str
         note(f"{name}: clone deleted; {'passed' if phase['passed'] else 'failed'}")
 
 
-def lane(results: Path, commit: str | None, phases: list[str], releases: tuple[str, str] | None = None) -> int:
-    """Runs PHASES against COMMIT's release and files, or with RELEASES only `published` from those published tags."""
+def lane(results: Path, commit: str | None, phases: list[str], releases: tuple[str, str | None] | None = None) -> int:
+    """Runs PHASES against COMMIT's release and files, or with RELEASES only `published` from the published baseline
+    to the published candidate or, when RELEASES names none, to COMMIT's release under the baseline's next minor."""
     results.mkdir(parents=True, exist_ok=True)
     git = lambda *args: run("git", *args, cwd=SCRIPTS.parent).stdout.strip()
     record = {"source_commit": commit, "harness": {"commit": git("rev-parse", "HEAD"),
@@ -1490,11 +1492,17 @@ def lane(results: Path, commit: str | None, phases: list[str], releases: tuple[s
         if releases:
             github = repository()
             for name, tag in zip(("baseline", "candidate"), releases):
-                note(f"downloading the published {tag} as the {name}")
-                try:
-                    record.setdefault("published", {})[name] = published(github, tag, work / name)
-                except SystemExit as error:  # the shared download reports a mismatch this way
-                    raise Stop(str(error)) from None
+                if tag:
+                    note(f"downloading the published {tag} as the {name}")
+                    try:
+                        record.setdefault("published", {})[name] = published(github, tag, work / name)
+                    except SystemExit as error:  # the shared download reports a mismatch this way
+                        raise Stop(str(error)) from None
+            if not releases[1]:
+                version = next_minor(releases[0])
+                note(f"building the candidate {version} from {commit[:12]}")
+                build(commit, work, results / "build.log", version, "candidate")
+                record["published"]["candidate"] = {"release": version, "commit": commit, "built": True}
             commits = f"{record['published']['baseline']['commit']}..{record['published']['candidate']['commit']}"
         if set(phases) & set(BUILT):
             note(f"building the release from {commit[:12]}")
@@ -1541,15 +1549,16 @@ def main() -> int:
     run_parser.add_argument("--source", default="HEAD", help="committed revision to build and test (default: HEAD)")
     run_parser.add_argument("--phase", choices=[name for name in PHASES if name != "published"], action="append",
                             help="run only this phase (repeatable)")
-    run_parser.add_argument("--published", metavar="BASELINE..CANDIDATE",
-                            help="run only the published phase, updating the published BASELINE to the published CANDIDATE")
+    run_parser.add_argument("--published", metavar="BASELINE[..CANDIDATE]",
+                            help="run only the published phase, updating the published BASELINE to the published "
+                                 "CANDIDATE or, without one, to the source revision built under BASELINE's next minor")
     commands.add_parser("clean", help="delete the images, the helper and any leftover clone")
     args = parser.parse_args()
     releases = None
     if getattr(args, "published", None):
-        baseline, _, candidate = args.published.partition("..")
+        baseline, separator, candidate = args.published.partition("..")
         try:
-            releases = (release_version(baseline), release_version(candidate))
+            releases = (release_version(baseline), release_version(candidate) if separator else None)
         except SystemExit as error:
             parser.error(str(error))
         if args.phase:
@@ -1567,7 +1576,7 @@ def main() -> int:
             watch_disk()
             if args.command == "image":
                 return image(args.step)
-            if releases:
+            if releases and releases[1]:
                 return lane(args.results.resolve(), None, ["published"], releases)
             resolved = subprocess.run(["git", "rev-parse", "--verify", f"{args.source}^{{commit}}"], text=True,
                                       capture_output=True, cwd=SCRIPTS)
@@ -1575,7 +1584,8 @@ def main() -> int:
                 print(f"{args.source} is not a commit in this repository.", file=sys.stderr)
                 return 2
             return lane(args.results.resolve(), resolved.stdout.strip(),
-                        args.phase or [name for name in PHASES if name != "published"])
+                        ["published"] if releases else args.phase or [name for name in PHASES if name != "published"],
+                        releases)
     except Stop as error:
         print(f"Stopped: {error}", file=sys.stderr)
         return 1

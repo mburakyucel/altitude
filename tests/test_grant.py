@@ -19,7 +19,7 @@ from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 from tests.support import REPO, AltitudeCase, git, make_repo
-from altitude import config, dispatch, engines, line, platform, server, state as S, tasks as T, terminal
+from altitude import config, dispatch, engines, l3, line, platform, server, state as S, tasks as T, terminal
 
 # On the suite's interpreter: macOS's /usr/bin/python3 is an xcrun shim whose cache warnings would join the log.
 SHIM = f"#!{sys.executable}\n" + r'''"""systemd-run stand-in: honour the output properties and runtime limit, run the command after `--`."""
@@ -481,17 +481,64 @@ class TestOperatorGrant(AltitudeCase):
         git("commit", "-q", "-m", "Record fixture policy", cwd=self.repo)
         return git("rev-parse", "main", cwd=self.repo).strip()
 
+    def ask_standing(self, heading=None):
+        """The owner's supported request: Altitude asks L3 with the paragraph committed under the heading."""
+        self.tick()
+        T.block(self.project, self.slug, None, actor="l2", expected_state="running", expected_attempt=1,
+                updates={"waiting_on": "l3"}, standing_policy=heading or self.standing_heading)
+        return S.load_task(self.project, self.slug)["questions"][-1]
+
     def standing_grant(self, question, **overrides):
         arguments = dict(question=question["id"], revision=question["revision"], reason="Container work only.",
                          actor="l3", source="project", expected_attempt=1, standing_policy=self.standing_heading)
         arguments.update(overrides)
         return T.record_grant(self.project, self.slug, "abcdef123456", **arguments)
 
+    def test_owner_requests_the_vm_lane_standing_grant_by_heading_and_l3_grants_it_first_time(self):
+        """The real VM-lane paragraph from this repository's AGENTS.md, requested by heading through the CLI."""
+        heading = "VM lane runs on this Mac"
+        self.commit_standing((REPO / "AGENTS.md").read_text())
+        approval_id = "e87e34a448cb"
+        approval = {"turn_id": approval_id, "role": "user", "by": "burak", "trigger": "chat", "at": self.at,
+                    "text": "The VM lane runs are approved until I revoke them."}
+        (config.project_dir(self.project) / "chat.jsonl").write_text(json.dumps(approval) + "\n")
+        commit = git("rev-parse", "main", cwd=self.repo).strip()
+        self.patch(engines, "worker_live", return_value=False)
+        self.serving(self.httpd.server_address[1])
+        self.tick()
+        owner = {"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": self.project, "ALTITUDE_TASK": self.slug,
+                 "ALTITUDE_ATTEMPT": "1"}
+        for extra in (["--reason", "Standing approval, verbatim:"], ["--for-operator"], ["--recommendation", "Grant"]):
+            with self.subTest(extra=extra):  # the request is the whole question; task details go in a reply
+                refused = self.alt("task", "block", self.slug, "--standing-policy", heading, *extra, env=owner)
+                self.assertIn("whole question to L3", refused.stderr)
+        self.assertEqual(S.load_task(self.project, self.slug)["state"], "running")
+        asked = self.alt("task", "block", self.slug, "--standing-policy", heading, env=owner)
+        self.assertEqual(asked.returncode, 0, asked.stderr)
+        question = S.load_task(self.project, self.slug)["questions"][-1]
+        paragraph = (REPO / "AGENTS.md").read_text().split(f"### {heading}\n\n", 1)[1].split("\n\n", 1)[0].strip()
+        self.assertIn(f"`{approval_id}`", paragraph)
+        self.assertEqual((question["detail"], question["audience"], question["asked_by"], question["standing_policy"]),
+                         (paragraph, "l3", "l2", heading))
+        notice = l3._queue_rows(l3.queue_path(self.project))[-1]["text"]
+        self.assertIn(f"{question['id']} revision 1 (authority: l3, standing policy: {heading}): ", notice)
+        arguments = ("task", "grant", self.slug, "--approval", approval_id,
+                     "--question", question["id"], "--revision", str(question["revision"]), "--source", "project",
+                     "--standing-policy", heading, "--reason", "One macOS VM lane run for this task.", "--attempt", "1")
+        env = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l3"}
+        result = self.alt(*arguments, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.events("grant-refused"))
+        grant = json.loads(result.stdout)
+        self.assertEqual(grant["policy"], {"file": "AGENTS.md", "heading": heading, "commit": commit, "text": paragraph})
+        self.assertEqual((grant["purpose"], grant["approval"], grant["answer"], grant["source"], grant["attempt"]),
+                         (paragraph, approval_id, approval["text"], "project", 1))
+
     def test_standing_cli_grant_resume_run_and_revoke_preserve_original_authority(self):
         approval = self.standing()
         commit = git("rev-parse", "main", cwd=self.repo).strip()
         self.patch(engines, "worker_live", return_value=False)
-        question = self.ask(" ".join(self.standing_text.split()), "l3")
+        question = self.ask_standing()
         self.assertLess(approval["at"], question["asked"])
         arguments = ("task", "grant", self.slug, "--approval", approval["turn_id"],
                      "--question", question["id"], "--revision", str(question["revision"]), "--source", "project",
@@ -531,41 +578,89 @@ class TestOperatorGrant(AltitudeCase):
         self.assertIsNone(S.load_task(self.project, self.slug)["grant"])
         self.assertIn("no operator grant", self.run_command("true", status=403, attempt="2")["error"])
 
-    def test_standing_grant_refuses_outside_and_mixed_purposes_without_mutation(self):
+    def test_standing_grant_refuses_wrapped_paraphrased_or_hand_copied_purposes_without_mutation(self):
         self.standing()
         for purpose in ("Restart the native Altitude service.", "Update the host trust store.",
                         "Change host network configuration.", "Read host credential directories.",
                         "Delete a host directory the launcher did not create.",
-                        self.standing_text + " Also restart the native service."):
+                        self.standing_text + " Also restart the native service.",
+                        "Run the container lane for this task. Standing approval, verbatim: " + self.standing_text,
+                        self.standing_text):
             with self.subTest(purpose=purpose):
                 question = self.ask(purpose, "l3")
+                self.assertNotIn("standing_policy", question)
                 before = S.load_task(self.project, self.slug)
-                with self.assertRaisesRegex(T.TransitionError, "exactly match the standing policy scope"):
+                with self.assertRaisesRegex(T.TransitionError, "standing grant needs the owner's own request for this "
+                                            f"policy: `alt task block <slug> --standing-policy '{self.standing_heading}'`"):
                     self.standing_grant(question)
                 self.assertEqual(S.load_task(self.project, self.slug), before)
                 T.resume(self.project, self.slug)
-        self.assertEqual(len(self.events("grant-refused")), 6)
+        self.assertEqual(len(self.events("grant-refused")), 8)
+        self.assertFalse(self.events("grant"))
+        # A request for one policy grants no other.
+        self.commit_standing(self.standing_document + "\n### Another lane\n\nAnother lane (`abcdef123456`).\n")
+        question = self.ask_standing("Another lane")
+        with self.assertRaisesRegex(T.TransitionError, "own request for this policy"):
+            self.standing_grant(question)
         self.assertFalse(self.events("grant"))
 
-    def test_standing_grant_reads_main_not_branch_dirty_checkout_or_owner_worktree(self):
+    def test_standing_request_is_its_own_l3_question_beside_other_open_questions(self):
+        self.standing()
+        # The paragraph already asked of the operator stays the operator's question, apart from the request.
+        self.ask(self.standing_text, "burak")
+        before = {q["id"]: q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"}
+        self.assertEqual([q["audience"] for q in before.values()], ["operator"])
+        T.resume(self.project, self.slug)
+        question = self.ask_standing()
+        open_questions = [q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"]
+        self.assertEqual({q["id"]: q for q in open_questions if q["id"] != question["id"]}, before)
+        self.assertNotIn(question["id"], before)
+        self.assertEqual((question["audience"], question["revision"], question.get("shown"), question.get("review")),
+                         ("l3", 1, None, None))
+        # Asking again keeps the same request; a changed paragraph on main revises that request only.
+        T.resume(self.project, self.slug)
+        self.assertEqual(self.ask_standing(), question)
+        self.commit_standing(self.standing_document.replace(self.standing_text, self.standing_text + " Narrowed."))
+        T.resume(self.project, self.slug)
+        revised = self.ask_standing()
+        self.assertEqual((revised["id"], revised["revision"], revised["detail"]),
+                         (question["id"], 2, self.standing_text + " Narrowed."))
+        self.assertEqual(self.standing_grant(revised)["purpose"], revised["detail"])
+
+    def test_standing_request_reads_main_not_branch_dirty_checkout_or_owner_worktree(self):
         self.standing()
         expanded = self.standing_text + " Also change native services."
         git("switch", "-q", "-c", "unapproved-policy", cwd=self.repo)
         self.commit_standing(self.standing_document.replace(self.standing_text, expanded))
         (self.repo / "AGENTS.md").write_text(self.standing_document.replace(self.standing_text, expanded + " Dirty edit."))
         (self.worktree / "AGENTS.md").write_text(self.standing_document.replace(self.standing_text, expanded + " Owner edit."))
-        for purpose in (expanded, expanded + " Dirty edit.", expanded + " Owner edit."):
-            with self.subTest(purpose=purpose):
-                question = self.ask(purpose, "l3")
-                with self.assertRaisesRegex(T.TransitionError, "exactly match"):
-                    self.standing_grant(question)
-                T.resume(self.project, self.slug)
-        question = self.ask(self.standing_text, "l3")
+        question = self.ask_standing()
+        self.assertEqual(question["detail"], self.standing_text)
         self.assertEqual(self.standing_grant(question)["policy"]["text"], self.standing_text)
+
+    def test_standing_grant_refuses_a_request_main_has_changed_since(self):
+        self.standing()
+        question = self.ask_standing()
+        self.commit_standing(self.standing_document.replace(self.standing_text, self.standing_text + " Narrowed."))
+        with self.assertRaisesRegex(T.TransitionError, "exactly match the standing policy scope"):
+            self.standing_grant(question)
+        self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
+
+    def test_standing_request_refuses_missing_or_ambiguous_policy_without_asking(self):
+        for document in ("# Rules\n", "# Rules\n\n### Container operations on this machine\n\n"
+                         "### Container operations on this machine\n\nTwice (`abcdef123456`).\n",
+                         "# Rules\n\n### Container operations on this machine\n\nOne (`abcdef123456`).\n\nTwo.\n"):
+            with self.subTest(document=document):
+                self.commit_standing(document)
+                with self.assertRaisesRegex(T.TransitionError, "standing policy"):
+                    T.block(self.project, self.slug, None, actor="l2", expected_state="running", expected_attempt=1,
+                            updates={"waiting_on": "l3"}, standing_policy="Container operations on this machine")
+                self.assertEqual(S.load_task(self.project, self.slug)["state"], "running")
+        self.assertFalse(S.load_task(self.project, self.slug).get("questions"))
 
     def test_standing_grant_refuses_missing_or_ambiguous_policy(self):
         self.standing()
-        question = self.ask(self.standing_text, "l3")
+        question = self.ask_standing()
         documents = ("# Rules\n", self.standing_document + self.standing_document,
                      self.standing_document + "\nAnother policy paragraph.\n",
                      self.standing_document.replace("`abcdef123456`", "`different123`"))
@@ -583,7 +678,7 @@ class TestOperatorGrant(AltitudeCase):
 
     def test_standing_grant_requires_original_operator_source_in_this_project(self):
         approval = self.standing()
-        question = self.ask(self.standing_text, "l3")
+        question = self.ask_standing()
         other = self.project + "-other"
         self.register(other)
         config.project_dir(other).mkdir(parents=True, exist_ok=True)
@@ -603,7 +698,7 @@ class TestOperatorGrant(AltitudeCase):
 
     def test_standing_grant_preserves_role_source_attempt_and_question_fences(self):
         self.standing()
-        question = self.ask(self.standing_text, "l3")
+        question = self.ask_standing()
         for overrides in ({"actor": "l2"}, {"actor": "burak"}, {"actor": "altd"}, {"source": "task"},
                           {"expected_attempt": None}, {"expected_attempt": 2}, {"revision": 99}):
             with self.subTest(overrides=overrides):
@@ -628,7 +723,7 @@ class TestOperatorGrant(AltitudeCase):
     def test_switching_to_or_from_standing_grant_requires_explicit_revocation(self):
         direct, _, _ = self.granted()
         self.standing()
-        question = self.ask(self.standing_text, "l3")
+        question = self.ask_standing()
         with self.assertRaisesRegex(T.TransitionError, "revoke the existing operator grant"):
             self.standing_grant(question)
         self.assertEqual(S.load_task(self.project, self.slug)["grant"], direct)
@@ -1105,7 +1200,10 @@ class TestOperatorGrant(AltitudeCase):
         self.standing()
         extended = self.standing_text + "\nBy `123456abcdef` it also covers one sign-in copy."
         self.commit_standing(f"# Rules\n\n### {self.standing_heading}\n\n{extended}\n")
-        question = self.ask(" ".join(extended.split()), "l3")
+        question = self.ask_standing()
+        self.earlier()  # an operator message grounds no standing-policy request
+        with self.assertRaisesRegex(T.TransitionError, "earlier operator message grounds no standing-policy request"):
+            self.from_earlier(question)
         self.standing_grant(question)
         self.assertEqual(T.withdraw_approval(self.project, self.slug, "123456abcdef", "Sign-in copy withdrawn.",
                                              actor="burak"), [self.slug])
