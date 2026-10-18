@@ -202,7 +202,7 @@ def browser_grant(project: str, task: dict) -> dict:
             or not re.fullmatch(r"[0-9a-f]{40}", str(policy.get("commit", "")))
             or not isinstance(policy.get("text"), str) or not grant.get("approval")
             or f"`{grant['approval']}`" not in policy["text"]
-            or grant.get("purpose", "").split() != policy["text"].split()):
+            or grant.get("purpose", "").split() != policy["text"].split() or T.grant_withdrawn(project, grant)):
         raise PermissionError(refused)
     try:
         pinned = subprocess.run(["git", "show", f"{policy['commit']}:AGENTS.md"], cwd=config.project_path(project),
@@ -699,7 +699,8 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
             revoked = False
             if granted:
                 try:
-                    revoked = (S.load_task(project, slug).get("grant") or {}).get("id") != granted
+                    current = S.load_task(project, slug).get("grant") or {}
+                    revoked = current.get("id") != granted or T.grant_withdrawn(project, current)
                     if revoked:
                         why = "the VM policy grant was revoked while this validation ran"
                 except (OSError, ValueError):
