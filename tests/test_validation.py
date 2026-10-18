@@ -1191,6 +1191,11 @@ else:
         self.assertFalse((evidence / "controller.json").exists())
         self.assertEqual(list((validation.home() / "runs").iterdir()), [])
 
+    def test_a_withdrawn_policy_approval_refuses_the_grant_an_interrupted_withdrawal_left(self):
+        approval = S.load_task(self.project, self.slug)["grant"]["approval"]
+        S.project_log(self.project, "grant-withdraw", approval=approval, slug=self.slug, actor="l3", reason="Withdrawn.")
+        self.assertIn("current standing VM policy", self.validate([], container_browser=True, status=403)["error"])
+
     def test_revocation_stops_and_records_the_admitted_run(self):
         started = threading.Event()
         original_job = validation._job
@@ -1217,6 +1222,32 @@ else:
         self.assertFalse(thread.is_alive())
         self.assertIn("grant was revoked", answers[0]["error"])
         self.assertEqual(answers[0]["cleanup"], None)
+
+    def test_a_withdrawal_stops_the_admitted_run_even_before_its_grant_is_cleared(self):
+        started = threading.Event()
+        original_job = validation._job
+
+        def job(name, script, folder, timeout, limits):
+            if "-clean-" in name:
+                return original_job(name, script, folder, timeout, limits)
+            started.set()
+            wait_for(lambda: bool(validation._active.get("stopped")), "the withdrawal to stop the run")
+            return {"exit": 125, "timed_out": False, "started": S.now(), "finished": S.now(),
+                    "error": None, "output": "", "output_truncated": False}
+
+        approval = S.load_task(self.project, self.slug)["grant"]["approval"]
+        answers = []
+        with mock.patch.object(validation, "_job", side_effect=job):
+            thread = threading.Thread(target=lambda: answers.append(self.validate([], container_browser=True)))
+            thread.start()
+            try:
+                self.assertTrue(started.wait(10))
+                S.project_log(self.project, "grant-withdraw", approval=approval, slug=self.slug, actor="l3",
+                              reason="Interrupted before the grant was cleared.")
+            finally:
+                thread.join(15)
+        self.assertFalse(thread.is_alive())
+        self.assertIn("grant was revoked", answers[0]["error"])
 
     def test_platform_admits_only_apple_silicon_mac(self):
         with mock.patch.object(platform, "validation_unavailable", return_value=None):

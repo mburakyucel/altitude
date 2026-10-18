@@ -3421,6 +3421,8 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
                     raise ValueError("alt task run: this request already ran a different command")
                 return task, earlier, None
             grant = task.get("grant")
+            if grant and T.grant_withdrawn(project, grant):
+                raise PermissionError("alt task run: the operator withdrew the approval this grant rests on")
             if not grant:
                 raise PermissionError("alt task run: this task has no operator grant; ask the operator for access for "
                                       "a concrete purpose, resolve their answer, then record it with "
@@ -3486,9 +3488,9 @@ def _grant_revoked(project: str, slug: str, row: dict) -> bool:
     """The grant a command runs under is no longer the task's current grant."""
     try:
         grant = S.load_task(project, slug).get("grant") or {}
+        return grant.get("id") != row.get("granted") or T.grant_withdrawn(project, grant)
     except (OSError, ValueError):
         return False
-    return grant.get("id") != row.get("granted")
 
 
 def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,

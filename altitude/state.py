@@ -200,14 +200,16 @@ def read_events(project: str, slug: str) -> list[dict]:
 def project_log(project: str, kind: str, **data) -> None:
     """Project-level events such as L3 rotations and incidents, not tied to a task."""
     storage.append(config.project_dir(project) / "events.log",
-                   json.dumps({"at": now(), "kind": kind, **data}, sort_keys=True) + "\n")
+                   json.dumps({"at": now(), "kind": kind, **data}, sort_keys=True) + "\n", sync=True)
 
 
-def read_project_log(project: str, limit: int = 200) -> list[dict]:
+def read_project_log(project: str, limit: int | None = 200) -> list[dict]:
+    """The last `limit` project events, or all of them."""
     p = config.project_dir(project) / "events.log"
     if not p.exists():
         return []
-    lines = p.read_text().splitlines()[-limit:]
+    lines = p.read_text().splitlines()
+    lines = lines[-limit:] if limit else lines
     out = []
     for line in lines:
         try:
