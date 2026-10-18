@@ -266,16 +266,17 @@ def run_script(name: str, run: Path, argv: list[str], *, kvm: bool, publish: tup
 
 
 def cleanup_script(paths: list[Path]) -> str:
-    """Remove every container on the runner's storage, the given paths (files a container wrote as another user
-    are removed inside Podman's user namespace) and images of earlier Containerfiles."""
+    """Remove every container on the runner's storage, images of earlier Containerfiles and, last, so that what the
+    unit says last is why a path stayed, the given paths (files a container wrote as another user are removed inside
+    Podman's user namespace)."""
     pod, tag = shlex.join(podman()), image_tag()
     return "\n".join([
         *podman_setup(),
         f"{pod} rm --all --force --time=0 >/dev/null",
-        *(f"{pod} unshare rm -rf {shlex.quote(str(path))}" for path in paths),
         f"{pod} images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep '^localhost/altitude-validation:' "
         f"| grep -vx {shlex.quote(tag)} | xargs -r {pod} rmi --force >/dev/null",
-        f"{pod} image prune --force >/dev/null", "exit 0"])
+        f"{pod} image prune --force >/dev/null",
+        *(f"{pod} unshare rm -rf {shlex.quote(str(path))}" for path in paths), "exit 0"])
 
 
 def _job(name: str, script: str, folder: Path, timeout: int, limits: bool) -> dict:
