@@ -1431,9 +1431,14 @@ the paragraph under a unique, single-paragraph heading in the registered checkou
 current open marked question, the paragraph's citation of the approval, and a still-matching paragraph,
 apart from whitespace, pinned to its commit. The standing path fences
 the observed attempt and stores the original approval, policy text/commit and question revision;
-task branches and dirty policy files supply no authority. L3 judges later corrections and revocations,
-revokes active grants and assigns policy removal; neither shell commands nor chat consent are
-classified automatically. Switching standing purposes requires revocation of the existing grant.
+task branches and dirty policy files supply no authority. L3 likewise grounds the owner's current open
+unmarked L3 question in an earlier original operator message from project chat or the task's own chat that approved the step
+before any question asked it; the grant's purpose is that whole message, so none of its conditions is
+dropped. L3 judges later corrections, revocations and the message's conditions; neither shell commands
+nor chat consent are classified automatically. A withdrawal names the approving message: it revokes
+every grant in the project resting on it and, kept in the project's event log, refuses any later grant
+citing it, while plain revocation stays cleanup. Switching standing purposes requires revocation of the
+existing grant.
 Either grant opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
 executes the command in a job of its own through `engines.machine_command`, with the service manager
 reachable (no Seatbelt profile on macOS, since launchd refuses service control to sandboxed processes) and

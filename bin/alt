@@ -493,6 +493,8 @@ def main(argv=None) -> None:
     hm.add_argument("--pr-number", dest="pr", type=int); hm.add_argument("--head"); hm.add_argument("--reason")
     mc = ts.add_parser("grant", help="record the operator's grant for a task, or revoke it (owner, L3 or operator)")
     mc.add_argument("slug"); mc.add_argument("--revoke", action="store_true")
+    mc.add_argument("--withdraw", metavar="APPROVAL", help="L3 or operator: the operator withdrew the permission this "
+                    "message gave; end every grant in the project resting on it and ground no new one")
     mc.add_argument("--approval", help="the original operator approval message")
     mc.add_argument("--question"); mc.add_argument("--revision", type=int)
     mc.add_argument("--source", choices=("task", "project"), default="task"); mc.add_argument("--reason", required=True)
@@ -1027,7 +1029,13 @@ def main(argv=None) -> None:
             if ACTOR == "l2" and (args.slug != os.environ.get("ALTITUDE_TASK")
                                   or p != os.environ.get("ALTITUDE_PROJECT") or not attempt):
                 sys.exit("alt task grant: an L2 records or revokes the grant only on its own task")
-            if not args.revoke:
+            if args.withdraw is not None:
+                if args.revoke or any(value is not None for value in (args.standing_policy, args.from_task, args.attempt,
+                                                                       args.approval, args.question, args.revision)):
+                    sys.exit("alt task grant --withdraw <approval>: takes only --reason")
+                out({"withdrawn": args.withdraw, "ended": T.withdraw_approval(p, args.slug, args.withdraw, args.reason,
+                                                                              actor=ACTOR)})
+            elif not args.revoke:
                 if not (args.approval and args.question and args.revision):
                     sys.exit("alt task grant: --approval <message-id> --question <id> --revision <n> --reason <why>")
                 out(T.record_grant(p, args.slug, args.approval, question=args.question, revision=args.revision,
