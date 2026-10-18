@@ -109,12 +109,16 @@ def podman() -> list[str]:
 
 
 def podman_setup() -> list[str]:
-    """The shell lines before a script's first Podman call. Rootless Podman keeps one pause process per user and writes
-    its pid in `libpod/tmp` of the user's runtime directory, a folder Podman creates only as its own default temporary
-    folder. `--tmpdir` replaces that folder, so after a reboot empties the runtime directory the runner creates it;
-    otherwise Podman cannot start until another Podman command has run without `--tmpdir` (#1034)."""
+    """The shell lines before a script's first Podman call. Podman expects its temporary folder to be emptied by each
+    restart of the computer, as a tmpfs is, and sets up again when it finds the folder empty, including the folder
+    where rootless Podman records the user's one pause process. The runner's folder is in its storage, whose Podman
+    database records that path, so the runner empties it at its first call after a restart instead; otherwise Podman
+    refuses every call until another Podman command has set up (#1034)."""
+    tmp, boot = shlex.quote(str(home() / "tmp")), shlex.quote(platform.boot_identity())
+    marker = shlex.quote(str(home() / "tmp" / "boot"))
     return [f"export XDG_RUNTIME_DIR={shlex.quote(str(Path(platform.validation_runroot()).parent))}",
-            '(umask 077 && mkdir -p "$XDG_RUNTIME_DIR/libpod/tmp")']
+            f'[ "$(cat {marker} 2>/dev/null)" = {boot} ] || '
+            f"{{ rm -rf {tmp} && mkdir -p -m 700 {tmp} && printf %s {boot} > {marker}; }}"]
 
 
 def host_port() -> int:

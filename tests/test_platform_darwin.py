@@ -511,7 +511,7 @@ class Processes(DarwinCase):
                 else:
                     query.return_value = subprocess.CompletedProcess([], 0, outcome)
                 with self.assertRaises((ValueError, subprocess.CalledProcessError)):
-                    platform._process_boot()
+                    platform.boot_identity()
 
     def test_stop_signals_every_member_checked_again_and_escalates_after_the_grace(self):
         self.add(1)  # launchd: another coalition

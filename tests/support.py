@@ -512,7 +512,7 @@ class AltitudeCase(unittest.TestCase):
         The daemon reads the kernel boot identity outside worker confinement. Kernel-reader tests
         supply their own observations instead of importing this integration fixture.
         """
-        self.patch(platform, "_process_boot", return_value="fixture-boot")
+        self.patch(platform, "boot_identity", return_value="fixture-boot")
 
     def linux_process_facts(self) -> None:
         """The case's own process as Linux procfs spells it: a resume claim records altd's process identity."""

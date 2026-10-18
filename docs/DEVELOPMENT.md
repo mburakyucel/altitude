@@ -562,10 +562,11 @@ while True:
   command at a time.
 - **Storage.** The image, Podman's storage, the cloud-image cache and each run's area live in
   `~/.altitude-validation`, beside Altitude's home rather than in it and outside every folder a task
-  worker writes, so no path a worker replaced becomes a mount or a place the run writes. On Linux, Podman's
-  temporary folder is there too, so before each Podman call the runner creates `libpod/tmp` in the user's
-  runtime directory, where rootless Podman records the user's one pause process and which Podman creates only
-  as its own default temporary folder. The first run after a reboot therefore needs no operator step.
+  worker writes, so no path a worker replaced becomes a mount or a place the run writes. On Linux,
+  Podman's temporary folder is there too. Podman expects that folder to be emptied by every restart, as
+  its default in the user's runtime directory is, and only then sets up again, including where rootless
+  Podman records the user's pause process. The runner therefore empties it at its first Podman call
+  after each restart, and the first run after a restart needs no operator step.
 - **Results.** Regular files that the command writes to `$VALIDATION_RESULTS` are copied to the task
   folder's `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches
   that folder from Altitude's home without following links. Across the whole results tree, JSON/JSONL
