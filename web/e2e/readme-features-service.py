@@ -1,28 +1,118 @@
-"""The README's feature illustrations on the Atlas example of readme-service.py: a pull request waiting for the
-operator's review after an independent review, a command an owner hands to the operator's terminal, a task the
-coordinator repairs and resumes, and improvement suggestions in the Altitude project. Real handlers, storage and
-terminal; the shell has no profile and a fixed prompt, and every message is authored example text."""
+"""The README's feature illustrations on the Atlas example of readme-service.py: a task the coordinator offers under
+its reply and creates on the operator's press, an owner's design proposal with its independent review, a pull request
+waiting for the operator's review after an independent review, a command an owner hands to the operator's terminal, a
+task the coordinator repairs and resumes, and improvement suggestions in the Altitude project. Real handlers, storage
+and terminal; the coordinator's engine and the shell are fixtures, and every message is authored example text."""
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import os
-from pathlib import Path
+import pathlib
 
 from service_support import serve
 from tests.support import git, local_terminal_launch, local_terminal_stop, make_repo
 from altitude import config, dispatch, engines, improve, improve_eval, l3, project_setup, route, server, terminal
 from altitude import state as S, tasks as T, verify
 
-_spec = importlib.util.spec_from_file_location("readme_service", Path(__file__).with_name("readme-service.py"))
+_spec = importlib.util.spec_from_file_location("readme_service", pathlib.Path(__file__).with_name("readme-service.py"))
 readme = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(readme)
 PROJECT = readme.PROJECT
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
+CREATED = "Hold new cursors until the index switch completes"
+SYNONYMS_SPEC = """# Synonyms editor
+
+Search admins manage each tenant's synonyms on one page.
+
+- **Draft.** Edits stay in a draft; live search is unchanged.
+- **Preview.** Run real queries against the draft and compare the results.
+- **Publish.** One button makes the draft live; the previous set stays one click away.
+- **Empty.** A tenant without synonyms sees an example row and Add synonyms.
+"""
+
+
+def other_engine(task):
+    return next((e for e in config.ENGINES if e != task.get("l2_engine")), config.ENGINES[0])
+
+
+def finding(key, title, body):
+    return {"id": key, "severity": "medium", "title": title, "body": body, "path": None, "line": None}
 
 
 def main():
     example = readme.seed()
     say = example["say"]
     slugs = {row["title"]: row["slug"] for row in S.list_tasks(PROJECT)}
+
+    # Create a task: the coordinator's latest reply offers one, and the operator's press runs its turn, scripted here.
+    say(slugs["Preserve client compatibility"], "l2", "Contract tests pass across the switch in both directions.", 9)
+    with readme.minutes_ago(8):
+        l3.chat_log(PROJECT, "user", "A few searches started right at the v2 switch came back empty. Is that a bug?",
+                    trigger="chat", turn_id="0ffe12a4b7c3")
+    with readme.minutes_ago(7):
+        l3.chat_log(PROJECT, "assistant", "Yes. A cursor issued in the second before the switch can point at the new "
+                    "index before it serves reads. Holding new cursors until the switch completes fixes it.",
+                    trigger="chat", turn_id="0ffe12a4b7c3", offer=CREATED)
+
+    def coordinator(prompt, **options):
+        if options.get("on_start"):
+            options["on_start"](None)
+        if l3.OFFER_PREFIX + CREATED in prompt:
+            server.l3_verb_request(PROJECT, {"kind": "alt", "args": ["task", "new", "--title", CREATED, "-"],
+                                             "stdin": "Hold cursors issued during the v2 switch until it completes."})
+            return {"text": "Started it, with the empty searches at the switch in its brief.", "session_id": "readme-l3"}
+        return {"text": "Noted.", "session_id": "readme-l3"}
+    engines.claude_print = coordinator
+
+    # Proposal review: the synonyms editor's owner shows its design and the other engine's review before building it.
+    synonyms = slugs["Add a synonyms editor for search admins"]
+    design = pathlib.Path(S.load_task(PROJECT, synonyms)["worktree"]) / "design" / "synonyms-editor.md"
+    design.parent.mkdir(parents=True)
+    design.write_text(SYNONYMS_SPEC)
+    say(synonyms, "l2", "Here is the editor I propose before building it: one page per tenant, a draft you preview "
+        "against real queries, and Publish to make it live. The review found two problems, both fixed, and offered "
+        "inline editing from search results as an alternative.", 4)
+    T.block(PROJECT, synonyms, "Build the synonyms editor as shown?", actor="l2", expected_attempt=1,
+            updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+            show=T.shown_files(PROJECT, S.load_task(PROJECT, synonyms), ["design/synonyms-editor.md"]),
+            questions={"questions": [{"question": "Build the synonyms editor as shown?", "review": "proposal",
+                                      "why": "Admins edit a draft and publish it; live search changes only on Publish.",
+                                      "options": [
+                {"key": "go", "label": "Approve proposal", "text": "Build it as shown."},
+                {"key": "changes", "label": "Request changes", "text": "Hold it for changes."}],
+                "recommended_key": "go"}]})
+    task = S.load_task(PROJECT, synonyms)
+    head = git("rev-parse", "HEAD", cwd=task["worktree"]).strip()
+    snapshot = {"head": head, "base": head, "tree": "3" * 40, "context_hash": "4" * 64,
+                "design": {"id": task["questions"][-1]["shown"]["id"]}}
+    with readme.minutes_ago(7):
+        at = T._conversation_time()
+    task.setdefault("reviews", []).append({
+        "id": "readme-synonyms-proposal", "requested_at": at, "requested_by": "l2", "subject": "proposal",
+        "state": "completed", "focus": "", "engine_label": config.ENGINE_LABELS[other_engine(task)],
+        "same_engine": False, "finished_at": at, "snapshot": snapshot,
+        "result": {"text": "The draft-and-publish flow is clear and safe to build.", "limitations": [], "findings": [
+            finding("live", "Saving changes live search at once", "A typo in a synonym would reach every tenant search."),
+            finding("empty", "No empty state for a new tenant", "A tenant without synonyms sees a blank table."),
+            {**finding("inline", "Edit synonyms from search results",
+                       "Quicker for one term at a time; bulk edits still need the page."), "severity": "alternative"}]},
+        "dispositions": [
+            {"finding_id": "live", "disposition": "fixed", "reason": "Edits stay in a draft until Publish."},
+            {"finding_id": "empty", "disposition": "fixed", "reason": "A new tenant sees an example and Add synonyms."},
+            {"finding_id": "inline", "disposition": "dismissed", "reason": "Offered to you as an alternative."}],
+        "reconciled": {**snapshot, "reason": "Checked both fixes in the revised design.", "at": at},
+        "message": {"id": "readme-synonyms-proposal", "at": at, "role": "system", "by": "l2",
+                    "review_id": "readme-synonyms-proposal", "text": "Adversarial proposal review requested."}})
+    S.save_task(PROJECT, task)
+    example["live"](synonyms, [
+        example["said"](30, "I am drafting the editor against the existing admin pages."),
+        *example["ran"](26, "readme-routes", "rg -n \"synonym\" src/admin src/search",
+                        "src/search/analyzer.ts:31: const synonyms = tenantSynonyms(tenant)\n"
+                        "src/admin/routes.ts:12: tenants/:id/settings"),
+        example["said"](22, "Synonyms load per tenant at query time, so a draft can be previewed without publishing."),
+        *example["ran"](14, "readme-capture", "pnpm capture synonyms-editor",
+                        "captured design/synonyms-editor-phone.png\ncaptured design/synonyms-editor-desktop.png"),
+        example["said"](6, "The design is ready. The other engine's review is complete; both fixes are in."),
+    ], 31)
 
     # Review before merge: the owner's report, the other engine's review and the operator's merge hold.
     limits = slugs["Add per-tenant limits to the public API"]
@@ -34,10 +124,8 @@ def main():
     task = S.load_task(PROJECT, limits)
     head = git("rev-parse", "HEAD", cwd=task["worktree"]).strip()
     task.update(delivery={"number": 214, "head": head, "at": S.now()}, prs=[214])
-    other = next((e for e in config.ENGINES if e != task.get("l2_engine")), config.ENGINES[0])
+    other = other_engine(task)
     snapshot = {"head": head, "base": head, "tree": "1" * 40, "context_hash": "2" * 64}
-    finding = lambda key, title, body: {"id": key, "severity": "medium", "title": title, "body": body,
-                                        "path": None, "line": None}
     with readme.minutes_ago(12):
         at = T._conversation_time()
     task.setdefault("reviews", []).append({
@@ -91,7 +179,8 @@ def main():
     # The review's lifecycle is real; the Altitude-project gate and Claude's reserve are unit-tested and fixed here.
     improve._altitude = lambda _project: True
     route.improvement_reserve = lambda: None
-    server.request_l3_drain = lambda _project: False
+    drain = server.request_l3_drain
+    server.request_l3_drain = lambda project: project == PROJECT and drain(project)  # the Altitude project's L3 stays idle
     improve.set_weekly("altitude", True, agree=improve.terms("altitude")["version"], now=NOW - timedelta(days=9))
     suggestions = [
         ("agents", "Owners re-ask questions you already answered",

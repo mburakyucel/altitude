@@ -175,9 +175,19 @@ def seed() -> dict:
                 {"type": "user", "timestamp": at(minutes - 0.5), "message": {"content": [
                     {"type": "tool_result", "tool_use_id": ident, "content": output}]}}]
 
-    session = config.HOME / ".claude" / "projects" / "readme" / f"readme-{compatibility}.jsonl"
-    session.parent.mkdir(parents=True, exist_ok=True)
-    records = [
+    def live(slug, records, started):
+        """The owner's session transcript, and its current invocation's output for the task's latest-activity preview."""
+        session = config.HOME / ".claude" / "projects" / "readme" / f"readme-{slug}.jsonl"
+        session.parent.mkdir(parents=True, exist_ok=True)
+        session.write_text("".join(json.dumps(record) + "\n" for record in records))
+        job = S.task_dir(PROJECT, slug) / "l2-engine"
+        job.mkdir(parents=True, exist_ok=True)
+        S.write_json(job / f"readme-{slug}.json", {"id": f"readme-{slug}", "engine": engine,
+                                                   "session_id": f"readme-{slug}", "started_at": at(started)})
+        (job / f"readme-{slug}.stdout.jsonl").write_text(
+            "".join(json.dumps(record) + "\n" for record in records if record["type"] != "attachment"))
+
+    live(compatibility, [
         *delivered,
         said(18, "The cursor currently holds an offset. I am checking where the index generation can travel with it."),
         *ran(16, "readme-search", 'rg -n "cursor|generation" src/search',
@@ -187,15 +197,7 @@ def seed() -> dict:
                  "shape. I will cover old cursors, new searches and rollback in the contract suite."),
         *ran(12, "readme-tests", "pnpm test -- search-contract", "18 contract tests passed"),
         said(0.25, "Contract tests pass. I am checking rollback across index generations."),
-    ]
-    session.write_text("".join(json.dumps(record) + "\n" for record in records))
-    # The current invocation's output supplies the task's latest-activity preview.
-    job = S.task_dir(PROJECT, compatibility) / "l2-engine"
-    job.mkdir(parents=True, exist_ok=True)
-    S.write_json(job / f"readme-{compatibility}.json", {"id": f"readme-{compatibility}", "engine": engine,
-                                                         "session_id": f"readme-{compatibility}", "started_at": at(34)})
-    (job / f"readme-{compatibility}.stdout.jsonl").write_text(
-        "".join(json.dumps(record) + "\n" for record in records if record["type"] != "attachment"))
+    ], 34)
 
     # Later the backfill owner needs a product decision; L3 brings it to the operator.
     T.block(PROJECT, backfill, RETENTION["question"], actor="l2", questions={"questions": [RETENTION]})
@@ -205,7 +207,7 @@ def seed() -> dict:
     route.engine_readouts = lambda: [{"engine": name, "label": config.ENGINE_LABELS[name], "week": readings[name],
                                       "known": True, "stale": False, "at": S.now()} for name in config.ENGINES]
     S.regen_state_md(PROJECT)
-    return {"fake": fake, "repo": repo, "repos": repos, "say": say}
+    return {"fake": fake, "repo": repo, "repos": repos, "say": say, "said": said, "ran": ran, "live": live}
 
 
 if __name__ == "__main__":
