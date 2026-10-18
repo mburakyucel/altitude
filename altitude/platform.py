@@ -1890,7 +1890,8 @@ def process_start(pid: int) -> str:
     return _stat(pid)[19]
 
 
-def _process_boot() -> str:
+def boot_identity() -> str:
+    """This boot of the computer: it changes with every restart."""
     if _darwin():
         # Public read-only kernel identity; reading root-owned launchd via libproc
         # can require privileges the ordinary application account does not have.
@@ -1904,7 +1905,7 @@ def process_identity(pid: int) -> dict:
     """A process lifetime within its boot and PID namespace, including container recreation."""
     start = process_start(pid)
     identity = {"pid": pid, "start": start,
-                "boot": _process_boot(),
+                "boot": boot_identity(),
                 "namespace": "darwin" if _darwin() else os.readlink(PROC / str(pid) / "ns/pid")}
     if process_start(pid) != start:
         raise ProcessLookupError("Process changed while recording its identity")
@@ -1920,7 +1921,7 @@ def process_identity_live(identity: object) -> bool:
     try:
         # Issue #543: a recycled PID can belong to another UID whose namespace is unreadable.
         # Disprove ownership from public lifetime facts before asking for that protected evidence.
-        if (_process_boot() != identity["boot"]
+        if (boot_identity() != identity["boot"]
                 or process_start(identity["pid"]) != identity["start"]):
             return False
         return process_identity(identity["pid"]) == identity and process_running(identity["pid"], identity["start"]) is True

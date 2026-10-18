@@ -108,6 +108,19 @@ def podman() -> list[str]:
             "--tmpdir", str(home() / "tmp"), "--cgroup-manager=cgroupfs", "--events-backend=file"]
 
 
+def podman_setup() -> list[str]:
+    """The shell lines before a script's first Podman call. Podman expects its temporary folder to be emptied by each
+    restart of the computer, as a tmpfs is, and sets up again when it finds the folder empty, including the folder
+    where rootless Podman records the user's one pause process. The runner's folder is in its storage, whose Podman
+    database records that path, so the runner empties it at its first call after a restart instead; otherwise Podman
+    refuses every call until another Podman command has set up (#1034)."""
+    tmp, boot = shlex.quote(str(home() / "tmp")), shlex.quote(platform.boot_identity())
+    marker = shlex.quote(str(home() / "tmp" / "boot"))
+    return [f"export XDG_RUNTIME_DIR={shlex.quote(str(Path(platform.validation_runroot()).parent))}",
+            f'[ "$(cat {marker} 2>/dev/null)" = {boot} ] || '
+            f"{{ rm -rf {tmp} && mkdir -p -m 700 {tmp} && printf %s {boot} > {marker}; }}"]
+
+
 def host_port() -> int:
     """A free loopback port chosen by the kernel, never Altitude's own."""
     while True:
@@ -235,7 +248,7 @@ def run_script(name: str, run: Path, argv: list[str], *, kvm: bool, publish: tup
     if not platform.validation_in_container():
         return native_script(run, argv, engines.machine_files(run, f"{name}.service")[0], simulator=simulator)
     tag, pod = image_tag(), shlex.join(podman())
-    lines = ["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125", f"export XDG_RUNTIME_DIR={shlex.quote(str(Path(platform.validation_runroot()).parent))}",
+    lines = ["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125", *podman_setup(),
              f"{pod} image exists {tag} || {pod} build --quiet --tag={tag} "
              f"--file={shlex.quote(str(containerfile()))} {shlex.quote(str(run / 'empty'))} >/dev/null || exit 125"]
     if kvm:
@@ -253,16 +266,17 @@ def run_script(name: str, run: Path, argv: list[str], *, kvm: bool, publish: tup
 
 
 def cleanup_script(paths: list[Path]) -> str:
-    """Remove every container on the runner's storage, the given paths (files a container wrote as another user
-    are removed inside Podman's user namespace) and images of earlier Containerfiles."""
+    """Remove every container on the runner's storage, images of earlier Containerfiles and, last, so that what the
+    unit says last is why a path stayed, the given paths (files a container wrote as another user are removed inside
+    Podman's user namespace)."""
     pod, tag = shlex.join(podman()), image_tag()
     return "\n".join([
-        f"export XDG_RUNTIME_DIR={shlex.quote(str(Path(platform.validation_runroot()).parent))}",
+        *podman_setup(),
         f"{pod} rm --all --force --time=0 >/dev/null",
-        *(f"{pod} unshare rm -rf {shlex.quote(str(path))}" for path in paths),
         f"{pod} images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep '^localhost/altitude-validation:' "
         f"| grep -vx {shlex.quote(tag)} | xargs -r {pod} rmi --force >/dev/null",
-        f"{pod} image prune --force >/dev/null", "exit 0"])
+        f"{pod} image prune --force >/dev/null",
+        *(f"{pod} unshare rm -rf {shlex.quote(str(path))}" for path in paths), "exit 0"])
 
 
 def _job(name: str, script: str, folder: Path, timeout: int, limits: bool) -> dict:
@@ -445,7 +459,9 @@ def _remove(path: Path) -> str | None:
 def cleanup(paths: list[Path], unit: str | None = None) -> str | None:
     """Remove what runs left: Podman's containers on Linux, `unit`'s processes on macOS, and `paths`, in order: on
     macOS the first path that cannot be removed stops cleanup, so a run area listed last stays as the marker the runner
-    retries. Returns why cleanup did not finish, naming what stayed, or None."""
+    retries. Returns why cleanup did not finish, naming what stayed and on Linux the cleanup unit's last output line,
+    where Podman says why it could not run (#1034), or None."""
+    said = ""
     try:
         if platform.validation_in_container():
             name = f"{UNIT_PREFIX}clean-{uuid.uuid4().hex[:12]}.service"
@@ -456,6 +472,8 @@ def cleanup(paths: list[Path], unit: str | None = None) -> str | None:
                     path.unlink(missing_ok=True)
             if outcome["exit"] != 0:
                 return f"the cleanup unit ended without success: {outcome['error'] or outcome['exit']}"
+            said = next((f"; the cleanup unit's last output: {text}" for text in reversed(outcome["output"].splitlines())
+                         if text.strip()), "")
         else:
             if unit:
                 env = platform.manager_env(engines.clean_env())
@@ -471,7 +489,7 @@ def cleanup(paths: list[Path], unit: str | None = None) -> str | None:
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         return f"cleanup failed: {exc}"
     left = [str(path) for path in paths if os.path.lexists(path)]
-    return f"could not remove {', '.join(left)}" if left else None
+    return f"could not remove {', '.join(left)}{said}" if left else None
 
 
 def _interrupted(area: Path) -> bool:

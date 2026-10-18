@@ -124,9 +124,24 @@ class TestValidationImage(TestCase):
 # the run's read-only lookup cache in the logs these cases compare.
 PODMAN = f"#!{sys.executable}\n" + r'''"""podman stand-in: record the call; run a container's command on the host with its mounts in place."""
 import json, os, subprocess, sys
-args = sys.argv[1:]
+args, options = sys.argv[1:], {}
+while args[0].startswith("--"):
+    name, _, value = args.pop(0).partition("=")
+    options[name] = value or args.pop(0)
 with open(RECORD, "a") as out:
     out.write(json.dumps(args) + "\n")
+# Podman 4.9 sets up after a restart only when its temporary folder has no `alive` file; only then does it create the
+# folder where it records the user's pause process, and without that folder every call fails (#1034).
+pause, alive = os.path.join(os.environ["XDG_RUNTIME_DIR"], "libpod", "tmp"), os.path.join(options["--tmpdir"], "alive")
+if not os.path.exists(alive):
+    os.makedirs(pause, mode=0o700, exist_ok=True)
+    os.makedirs(options["--tmpdir"], exist_ok=True)
+    open(alive, "w").close()
+if not os.path.isdir(pause):
+    print("error creating temporary file: No such file or directory", file=sys.stderr)
+    print('Error: invalid internal status, try resetting the pause process with "podman system migrate": '
+          f"setting up the process: open {pause}/pause.pid: no such file or directory", file=sys.stderr)
+    sys.exit(125)
 if args[:2] == ["image", "exists"]:
     sys.exit(0 if os.path.exists(BUILT) else 1)
 if args[:1] == ["build"]:
@@ -326,7 +341,12 @@ class TestValidationRunner(ClientStop, RunnerCase):
         podman.write_text(PODMAN.replace("RECORD", repr(str(self.record)), 1).replace("BUILT", repr(str(built))))
         podman.chmod(0o755)
         self.patch(platform, "SYSTEMD_RUN", str(shim))
-        self.patch(validation, "podman", return_value=[str(podman)])
+        self.runtime = self.tmp / "runtime"   # the user's runtime directory as a restart leaves it: empty
+        self.runtime.mkdir(mode=0o700)
+        self.patch(platform, "validation_runroot", return_value=str(self.runtime / "altitude-validation"))
+        self.patch(platform, "boot_identity", return_value="first-boot")
+        options = validation.podman()[1:]
+        self.patch(validation, "podman", side_effect=lambda: [str(podman), *options])
 
     def calls(self, verb):
         return [a for a in map(json.loads, self.record.read_text().splitlines()) if a[:1] == [verb]]
@@ -953,6 +973,41 @@ class TestValidationRunner(ClientStop, RunnerCase):
                    .splitlines()]
         self.assertEqual((saved["ended"], saved["exit"]), ("exit", 0))
         self.assertEqual(len([e for e in S.read_events(self.project, self.slug) if e["kind"] == "machine-run"]), 1)
+
+    def restart(self, boot: str) -> None:
+        """The computer restarts: the user's runtime directory is empty again and the boot has a new identity."""
+        shutil.rmtree(self.runtime)
+        self.runtime.mkdir(mode=0o700)
+        platform.boot_identity.return_value = boot
+
+    def test_the_first_run_after_a_restart_lets_podman_set_up_again(self):
+        """After a restart the runner was the first Podman user, and Podman could not record its pause process (#1034)."""
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+        tmp = validation.home() / "tmp"
+        (tmp / "exits" / "earlier").mkdir(parents=True)   # what Podman kept in the folder during the earlier boot
+        self.restart("second-boot")
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+        self.assertTrue((self.runtime / "libpod" / "tmp").is_dir())
+        self.assertEqual(((tmp / "boot").read_text(), stat.S_IMODE(tmp.stat().st_mode)), ("second-boot", 0o700))
+        self.assertFalse((tmp / "exits").exists())
+        (tmp / "exits" / "this-boot").mkdir(parents=True)
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+        self.assertTrue((tmp / "exits" / "this-boot").exists(), "within one boot the folder is Podman's to keep")
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+
+    def test_a_leftover_podman_could_not_remove_names_its_error_and_goes_once_podman_works(self):
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+        shutil.rmtree(self.runtime / "libpod")   # something removed the pause folder within this boot
+        result = self.validate(["true"])
+        self.assertEqual((result["exit"], result["ended"]), (125, "cleanup failed"))
+        self.assertIn("invalid internal status", result["output"], "the run's log keeps Podman's error")
+        for why in (result["cleanup"], self.validate(["true"], status=400)["error"]):
+            self.assertIn("could not remove", why)
+            self.assertIn('try resetting the pause process with "podman system migrate"', why)
+        self.assertEqual(len(self.rows()), 2, "a refused request starts no run")
+        (self.runtime / "libpod" / "tmp").mkdir(parents=True)   # the user's own Podman sets up
+        self.assertEqual(self.validate(["true"])["ended"], "exit", "the next request removes the leftover first")
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
 
     def test_a_run_that_never_started_leaves_nothing_and_keeps_the_runner_open(self):
         with mock.patch.object(validation, "_clone", side_effect=OSError("worktree unreadable")):
