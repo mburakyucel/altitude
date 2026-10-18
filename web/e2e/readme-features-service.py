@@ -1,8 +1,9 @@
 """The README's feature illustrations on the Atlas example of readme-service.py: a task the coordinator offers under
-its reply and creates on the operator's press, an owner's design proposal with its independent review, a pull request
-waiting for the operator's review after an independent review, a command an owner hands to the operator's terminal, a
-task the coordinator repairs and resumes, and improvement suggestions in the Altitude project. Real handlers, storage
-and terminal; the coordinator's engine and the shell are fixtures, and every message is authored example text."""
+its reply and creates on the operator's press, an owner's design proposal with its independent review, an owner's
+open question beside its live session, a pull request waiting for the operator's review after an independent review,
+a command an owner hands to the operator's terminal, a task the coordinator repairs and resumes, and improvement
+suggestions in the Altitude project. Real handlers, storage and terminal; the coordinator's engine and the shell are
+fixtures, and every message is authored example text."""
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import os
@@ -18,10 +19,10 @@ readme = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(readme)
 PROJECT = readme.PROJECT
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
-CREATED = "Hold new cursors until the index switch completes"
+CREATED = "Hold cursors during the index switch"
 SYNONYMS_SPEC = """# Synonyms editor
 
-Search admins manage each tenant's synonyms on one page.
+One page per tenant.
 
 - **Draft.** Edits stay in a draft; live search is unchanged.
 - **Preview.** Run real queries against the draft and compare the results.
@@ -75,7 +76,7 @@ def main():
             updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
             show=T.shown_files(PROJECT, S.load_task(PROJECT, synonyms), ["design/synonyms-editor.md"]),
             questions={"questions": [{"question": "Build the synonyms editor as shown?", "review": "proposal",
-                                      "why": "Admins edit a draft and publish it; live search changes only on Publish.",
+                                      "why": "Live search changes only on Publish.",
                                       "options": [
                 {"key": "go", "label": "Approve proposal", "text": "Build it as shown."},
                 {"key": "changes", "label": "Request changes", "text": "Hold it for changes."}],
@@ -90,14 +91,14 @@ def main():
         "id": "readme-synonyms-proposal", "requested_at": at, "requested_by": "l2", "subject": "proposal",
         "state": "completed", "focus": "", "engine_label": config.ENGINE_LABELS[other_engine(task)],
         "same_engine": False, "finished_at": at, "snapshot": snapshot,
-        "result": {"text": "The draft-and-publish flow is clear and safe to build.", "limitations": [], "findings": [
-            finding("live", "Saving changes live search at once", "A typo in a synonym would reach every tenant search."),
+        "result": {"text": "The draft-and-publish flow is safe to build.", "limitations": [], "findings": [
+            finding("live", "Saving changes live search at once", "A typo would reach every tenant's search."),
             finding("empty", "No empty state for a new tenant", "A tenant without synonyms sees a blank table."),
-            {**finding("inline", "Edit synonyms from search results",
+            {**finding("inline", "Edit from search results",
                        "Quicker for one term at a time; bulk edits still need the page."), "severity": "alternative"}]},
         "dispositions": [
             {"finding_id": "live", "disposition": "fixed", "reason": "Edits stay in a draft until Publish."},
-            {"finding_id": "empty", "disposition": "fixed", "reason": "A new tenant sees an example and Add synonyms."},
+            {"finding_id": "empty", "disposition": "fixed", "reason": "A new tenant sees an example row."},
             {"finding_id": "inline", "disposition": "dismissed", "reason": "Offered to you as an alternative."}],
         "reconciled": {**snapshot, "reason": "Checked both fixes in the revised design.", "at": at},
         "message": {"id": "readme-synonyms-proposal", "at": at, "role": "system", "by": "l2",
@@ -112,6 +113,32 @@ def main():
         *example["ran"](14, "readme-capture", "pnpm capture synonyms-editor",
                         "captured design/synonyms-editor-phone.png\ncaptured design/synonyms-editor-desktop.png"),
         example["said"](6, "The design is ready. The other engine's review is complete; both fixes are in."),
+    ], 31)
+
+    # The task view: the typo-tolerance owner's conversation, its open question and its live session.
+    typos = slugs["Add typo tolerance to search"]
+    say(typos, "l2", "Search now matches one typo per word, so \"serch\" finds \"search\". Exact matches still rank "
+        "first.", 26)
+    steer = say(typos, T.OPERATOR_MESSAGE_ROLE, "Product codes must stay exact. A code one character off is a different "
+        "product.", 22)
+    say(typos, "l2", "Codes stay exact: words with digits skip typo matching. Relevance tests pass on the sample "
+        "tenants.", 12)
+    T.block(PROJECT, typos, "Allow two typos in long words?", actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+            questions={"questions": [{"question": "Allow two typos in long words?",
+                                      "why": "Two typos found 6% more results in the sample; 1 in 20 was off-topic.",
+                                      "options": [
+                {"key": "one", "label": "One typo", "text": "Keep one typo per word."},
+                {"key": "two", "label": "Two in long words", "text": "Allow two in words of eight letters or more."}],
+                "recommended_key": "one"}]})
+    example["live"](typos, [
+        example["said"](30, "I am adding typo matching to the query parser."),
+        *example["ran"](27, "readme-fuzzy", "rg -n \"exact|fuzzy\" src/search",
+                        "src/search/parser.ts:40: const exact = isQuoted(term)\n"
+                        "src/search/match.ts:18: export function fuzzy(term, edits)"),
+        steer,
+        example["said"](20, "Words with digits skip typo matching, so product codes stay exact."),
+        *example["ran"](14, "readme-relevance", "pnpm test -- relevance", "41 relevance tests passed\n0 failed"),
+        example["said"](11, "One choice is yours before I finish: how many typos long words allow."),
     ], 31)
 
     # Review before merge: the owner's report, the other engine's review and the operator's merge hold.

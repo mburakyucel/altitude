@@ -131,7 +131,7 @@ screen that proves it.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-create-phone.webp">
-  <img src="images/feature-create.webp" alt="The coordinator answers that searches started at the index switch can come back empty and offers Create task for holding new cursors until the switch completes; after the press, the reply shows Task created and the new task's card." width="860">
+  <img src="images/feature-create.webp" alt="The coordinator answers that searches started at the index switch can come back empty and offers Create task for holding cursors during the switch; after the press, the reply shows Task created and the new task's card." width="860">
 </picture>
 
 **Approve the design before it is built.** The synonyms editor's owner shows its proposal with the other
@@ -147,7 +147,7 @@ session.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-task-phone.webp">
-  <img src="images/feature-task.webp" alt="The synonyms editor task on a computer: the owner's proposal and its question with Approve proposal in the conversation, beside the live session's replies and commands; on a phone in front, the same question." width="860">
+  <img src="images/feature-task.webp" alt="The typo tolerance task on a computer: the owner's updates, your message keeping product codes exact and the owner's question whether long words allow one typo or two, beside the live session's replies and commands; on a phone in front, the same conversation." width="860">
 </picture>
 
 **Steer mid-flight.** Your message to the compatibility owner beside its live session.

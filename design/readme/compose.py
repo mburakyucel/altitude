@@ -20,7 +20,7 @@ PAIR = ROOT / "design/readme/pair.html"
 OPENING = [("opening-1-question-desktop", "opening-1-question-phone", 2.6),
            ("opening-2-chosen-desktop", "opening-2-chosen-phone", 1.2),
            ("opening-3-resumed-desktop", "opening-3-resumed-phone", 3.2)]
-# The task view: its desktop and phone captures in the opening loop's layout, the phone covering only the sidebar.
+# The task view: its desktop and phone captures in the opening loop's layout, the phone covering the whole sidebar.
 TASK = ("task-view-desktop", "task-view-phone")
 # Each feature picture: its left and right phone captures and the end of each that stays in view.
 FEATURES = {
@@ -75,8 +75,8 @@ def main(images: pathlib.Path, out: pathlib.Path):
     chrome, hero, pair = browser(), HERO.read_text(), PAIR.read_text()
     out.mkdir(parents=True, exist_ok=True)
 
-    def scene(desktop: str, phone: str, png: pathlib.Path, layout: str = hero):
-        render(chrome, layout, (2240, 1360), {"../../docs/images/project-desktop.png": images / f"{desktop}.png",
+    def scene(desktop: str, phone: str, png: pathlib.Path, layout: str = hero, size: tuple[int, int] = (2240, 1360)):
+        render(chrome, layout, size, {"../../docs/images/project-desktop.png": images / f"{desktop}.png",
                                             "../../docs/images/decision-phone.png": images / f"{phone}.png"}, png)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -90,7 +90,7 @@ def main(images: pathlib.Path, out: pathlib.Path):
         script.write_text("".join(frames) + frames[-1].split("\n")[0] + "\n")  # the demuxer applies the last duration only before another entry
         encode(out / "opening.webp", ["-f", "concat", "-safe", "0", "-i", str(script), "-vf",
                "fps=10,scale=1600:-1:flags=lanczos,format=yuva420p", "-c:v", "libwebp_anim", "-loop", "0"])
-        scene(*TASK, tmp / "feature-task.png", hero.replace("<body>", '<body class="task">'))
+        scene(*TASK, tmp / "feature-task.png", hero.replace("<body>", '<body class="task">'), (2060, 1240))
         encode(out / "feature-task.webp", ["-i", str(tmp / "feature-task.png"), "-vf", "scale=1720:-1:flags=lanczos",
                                            "-c:v", "libwebp", "-frames:v", "1"])
         for name, ((left, left_end), (right, right_end)) in FEATURES.items():

@@ -20,15 +20,15 @@ answers the decision with seven days from Needs you and checks that it leaves th
 on the desktop run only, answers the same decision on a phone page while a desktop page shows the task
 resume. Page errors and horizontal overflow fail the journey.
 
-The feature pictures come from `web/e2e/readme-features.pw.ts` against `web/e2e/readme-features-service.py`,
-which seeds the same Atlas example and adds six states: the coordinator's latest reply offering a task, which the
+The feature pictures come from `web/e2e/readme-features.pw.ts` against `web/e2e/readme-features-service.py`, which
+seeds the same Atlas example and adds seven states: the coordinator's latest reply offering a task, which the
 journey's press creates through the coordinator's real verbs with a scripted engine; the synonyms editor owner's
 design question with its document and a proposal review by the other engine (two fixed findings and one
-alternative), whose task page also shows its live session; the per-tenant limits pull request held for the
-operator after an independent review with two fixed findings; a deploy command the billing owner hands to the
-task's terminal (a real shell with no profile and a fixed prompt); the sign-on task paused by a machine problem
-until the coordinator repairs and resumes it; and improvement suggestions in an Altitude project. The journey
-also runs at both widths in every `make check`.
+alternative); the typo tolerance owner's open question beside its live session; the per-tenant limits pull request
+held for the operator after an independent review with two fixed findings; a deploy command the billing owner hands
+to the task's terminal (a real shell with no profile and a fixed prompt); the sign-on task paused by a machine
+problem until the coordinator repairs and resumes it; and improvement suggestions in an Altitude project. The
+journey also runs at both widths in every `make check`.
 
 ## Reproduce
 

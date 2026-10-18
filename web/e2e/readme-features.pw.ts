@@ -4,15 +4,15 @@ import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
 // The README's feature illustrations (design/readme/README.md#feature-pictures): a task created from the
-// coordinator's offer, a design proposal with its review and the task page around it, a pull request waiting for the
-// operator's review, a command typed into the task's terminal, a fault the coordinator repairs, and improvement
-// suggestions. With ALTITUDE_README_IMAGES naming a folder, each state is written there as
+// coordinator's offer, a design proposal with its review, a task page with its question and live session, a pull
+// request waiting for the operator's review, a command typed into the task's terminal, a fault the coordinator
+// repairs, and improvement suggestions. With ALTITUDE_README_IMAGES naming a folder, each state is written there as
 // `<feature>-<viewport>.png` at 2×.
 const images = process.env.ALTITUDE_README_IMAGES ? resolve(process.env.ALTITUDE_README_IMAGES) : undefined;
 test.use({ serviceScript: "readme-features-service.py", deviceScaleFactor: 2, locale: "en-US", timezoneId: "UTC", colorScheme: "light" });
 test.setTimeout(90_000);
 
-test("a created task, a proposal review, review before merge, a repaired fault and improvement suggestions", async ({ page, request }, info) => {
+test("a created task, a proposal review, the task view, review before merge, a repaired fault and improvement suggestions", async ({ page, request }, info) => {
   const phone = info.project.name === "phone";
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -33,7 +33,7 @@ test("a created task, a proposal review, review before merge, a repaired fault a
   await expect(offer).toBeVisible();
   await capture("create-1-offer");
   await offer.click();
-  const created = chat.locator(".task-card").filter({ hasText: "Hold new cursors until the index switch completes" });
+  const created = chat.locator(".task-card").filter({ hasText: "Hold cursors during the index switch" });
   await expect(created).toBeVisible();
   await expect(chat.getByRole("button", { name: "Task created", exact: true })).toBeVisible();
   await capture("create-2-created");
@@ -47,18 +47,25 @@ test("a created task, a proposal review, review before merge, a repaired fault a
   await capture("proposal");
   await proposal.getByRole("link", { name: /Open L2 chat/ }).click();
   await expect(conversation).toContainText("Here is the editor I propose");
+  await conversation.getByRole("button", { name: "Show proposal review details", exact: true }).click();
+  await conversation.locator(`[data-review-id="readme-synonyms-proposal"]`).evaluate((card) => card.scrollIntoView({ block: "start" }));
+  await capture("proposal-review");
+
+  // The task view: the typo-tolerance owner's conversation and open question, beside its live session on a computer.
+  await page.goto(phone ? "/projects/atlas?tab=work" : "/projects/atlas");
+  await page.getByRole("region", { name: "Work", exact: true })
+    .getByRole("link", { name: /Add typo tolerance to search/ }).first().click();
+  await expect(conversation).toContainText("Allow two typos in long words?");
   if (!phone) {
     const toggle = page.getByRole("button", { name: "Live session", exact: true });
     if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
-    await expect(page.getByRole("region", { name: "Live session", exact: true })).toContainText("both fixes are in");
+    await expect(page.getByRole("region", { name: "Live session", exact: true })).toContainText("One choice is yours");
   }
   const latest = conversation.getByRole("button", { name: "Latest messages", exact: true });
   if (await latest.isVisible()) await latest.click();  // the conversation's end: the question and its answers
   await expect(latest).toBeHidden();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());  // the jump to the question focuses it
   await capture("task-view");
-  await conversation.getByRole("button", { name: "Show proposal review details", exact: true }).click();
-  await conversation.locator(`[data-review-id="readme-synonyms-proposal"]`).evaluate((card) => card.scrollIntoView({ block: "start" }));
-  await capture("proposal-review");
 
   // The other engine's review is done, both findings fixed; the PR waits for the operator's merge.
   await page.goto(phone ? "/projects/atlas?tab=work" : "/projects/atlas");

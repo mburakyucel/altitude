@@ -132,6 +132,7 @@ def seed() -> dict:
         if role == T.OPERATOR_MESSAGE_ROLE:
             delivered.append({"type": "attachment", "timestamp": at, "attachment": {
                 "type": "hook_additional_context", "content": [T.render_inbox([row])]}})
+            return delivered[-1]  # the session's record of the delivery, for a live session seeded later
 
     compatibility = owner("Preserve client compatibility",
                           "Keep the v1 response contract and in-flight cursors across the index cutover.", 34)
