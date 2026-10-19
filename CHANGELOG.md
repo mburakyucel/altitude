@@ -9,6 +9,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 Feature release of the early preview.
 
+- Project chat shows the coordinator typing until its turn ends, not only until its first words,
+  and its reply keeps everything it wrote, in order, with a new paragraph after each step.
 - A step you already approved in your own words, such as "publish the release once its checks
   pass", is no longer asked again: the coordinator grants the task's request from that message,
   limited to exactly what it says. Taking that approval back ends every permission resting on it,
