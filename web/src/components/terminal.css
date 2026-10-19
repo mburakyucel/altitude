@@ -7,6 +7,8 @@
 .terminal-close { min-height: 36px; padding: 0 14px; flex: none; }
 .terminal-stopped { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border: 1px solid var(--chip-claimed-border); border-radius: var(--radius-control); background: var(--chip-claimed-bg); color: var(--chip-claimed-text); font-size: var(--text-meta); }
 .terminal-stopped .btn { min-height: 36px; flex: none; }
+/* Who can read the terminal: a standing fact, so one quiet line rather than a box. */
+.terminal-reader { margin-top: 8px; padding: 0 2px; color: var(--text-secondary); font-size: var(--text-meta); line-height: 1.3; }
 .terminal-note { padding: 10px 12px; border-radius: var(--radius-control); background: var(--bubble); color: var(--text-secondary); font-size: var(--text-meta); }
 .terminal-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
 .terminal-card h3 { font-weight: 600; }
@@ -19,6 +21,8 @@
 .terminal-reconnecting { position: absolute; top: 8px; right: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(229, 231, 235, 0.92); color: #111827; font-size: var(--text-meta); font-weight: 500; pointer-events: none; }
 /* The padding is xterm's own, which its fit subtracts: on the screen around it, the last row would sit under the edge. */
 .terminal-screen .xterm { height: 100%; padding: 8px 0 8px 10px; }
+/* xterm's scroll layer fills that padding too, black by default: the screen's own colour shows through instead. */
+.terminal-screen .xterm .xterm-viewport { background-color: transparent; }
 .terminal-keys { display: flex; flex: none; gap: 6px; padding: 8px 8px 0; }
 .terminal-keys button { min-width: 0; min-height: var(--target-min); flex: 1 1 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font-weight: 500; }
 .terminal-keys .terminal-enter { flex-grow: 1.5; border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
@@ -32,7 +36,8 @@
 /* Phone: the task's third tab and the project's full-screen view, the screen edge to edge. */
 .task-page[data-phone] .terminal-panel { background: transparent; }
 .task-page[data-phone] .terminal-body, .terminal-page .terminal-body { padding: 0 0 8px; }
-.task-page[data-phone] .terminal-card, .terminal-page .terminal-card, .task-page[data-phone] .terminal-note, .terminal-page .terminal-note { margin: 8px 12px 0; }
+.task-page[data-phone] .terminal-card, .terminal-page .terminal-card, .task-page[data-phone] .terminal-note, .terminal-page .terminal-note,
+.task-page[data-phone] .terminal-reader, .terminal-page .terminal-reader { margin: 8px 12px 0; }
 .task-page[data-phone] .terminal-screen, .terminal-page .terminal-screen { border-radius: 0; }
 /* The running terminal's tab carries its × and the tab underline spans both. */
 .task-tab-close { display: flex; min-width: 0; border-bottom: 2px solid var(--accent); }

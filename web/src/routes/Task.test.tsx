@@ -1413,7 +1413,7 @@ describe("Phone swipe lifecycle", () => {
       expect(within(tabs).getByRole("link", { name: "Terminal" })).toHaveAttribute("aria-current", "page");
       expect(within(tabs).getByRole("button", { name: "Close terminal" })).toBeVisible();
       expect(screen.getAllByRole("navigation", { name: "Task views" })).toHaveLength(1);
-      await swipeOn(".terminal-note", 100, 300);
+      await swipeOn(".terminal-reader", 100, 300);
       await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/live`));
       await waitFor(() => expect(screen.queryByTestId("terminal-screen")).toBeNull());
       expect(live()).toBeVisible();
@@ -1428,12 +1428,12 @@ describe("Phone swipe lifecycle", () => {
       expect(track().style.transform).toBe("");
       await swipeOn(".terminal-keys", 100, 300);
       expect(track().style.transform).toBe("");
-      touch("touchStart", 300, ".terminal-note");
-      touch("touchMove", 100, ".terminal-note");
+      touch("touchStart", 300, ".terminal-reader");
+      touch("touchMove", 100, ".terminal-reader");
       const offset = parseFloat(track().style.transform.replace(/[^\d.-]/g, ""));
       expect(offset).toBeLessThan(0);
       expect(offset).toBeGreaterThan(-100);
-      touch("touchEnd", 100, ".terminal-note");
+      touch("touchEnd", 100, ".terminal-reader");
       await waitFor(() => expect(track().style.transform).toBe(""));
       expect(router.state.location.pathname).toBe(`${route}/terminal`);
       expect(screen.getByTestId("terminal-screen")).toBeVisible();
