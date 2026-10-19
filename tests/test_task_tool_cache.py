@@ -166,7 +166,7 @@ class TaskToolCache(AltitudeCase):
     def test_completion_cleanup_failure_retains_reported_state_and_no_digest(self):
         task = T.new(self.project, "Completion cleanup error", "Fictional task")
         T.dispatch(self.project, task["slug"], attempt=1, session_id="fixture", agent_id="fixture",
-                   worktree="/fictional/worktree", branch="fixture")
+                   worktree="/fictional/worktree", branch="fixture", l2_engine=config.ENGINES[0])
         T.report(self.project, task["slug"], {"verdict":"ok", "prs":[], "spend":{}})
         self.scratch(task["slug"]).mkdir(parents=True)
         with mock.patch.object(T.shutil, "rmtree", side_effect=PermissionError("cleanup refused")):

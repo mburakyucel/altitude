@@ -3,7 +3,7 @@ came from, and completion waits for a current report (docs/ARCHITECTURE.md#task-
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import state as S, tasks as T
+from altitude import config, state as S, tasks as T
 
 
 class TaskTransitions(AltitudeCase):
@@ -29,7 +29,7 @@ class TaskTransitions(AltitudeCase):
 
     def test_a_report_promotes_only_a_block_its_worker_made(self):
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
-                   worktree="/wt", branch="b")
+                   worktree="/wt", branch="b", l2_engine=config.ENGINES[0])
         T.block(self.project, self.slug, "Landing window pending")
         self.assertEqual(T.report(self.project, self.slug, {"verdict": "ok"}, expected_state="blocked",
                                   expected_attempt=1, expected_block_from="running")["state"], "reported")
@@ -41,7 +41,7 @@ class TaskTransitions(AltitudeCase):
 
     def reported(self):
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
-                   worktree="/wt", branch="b")
+                   worktree="/wt", branch="b", l2_engine=config.ENGINES[0])
         T.report(self.project, self.slug, {"verdict": "ok"})
         return self.task()
 

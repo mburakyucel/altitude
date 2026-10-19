@@ -80,7 +80,7 @@ class TestGitPolicy(unittest.TestCase):
             "input=data, text=True).returncode)\n"
         )
         hook.chmod(0o755)
-        git_policy.install_hooks(self.repo, hooks)
+        self.git("config", "core.hooksPath", str(hooks))
         return trace
 
     def assert_packing_preserves_lagging_main(self, *command, prune=True):

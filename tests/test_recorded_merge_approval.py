@@ -27,7 +27,7 @@ class TestRecordedMergeApproval(AltitudeCase):
         self.slug = task["slug"]
         self.at = "2026-09-07T20:01:00+00:00"
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
-                   worktree=str(self.repo), branch=f"worktree-{self.slug}")
+                   worktree=str(self.repo), branch=f"worktree-{self.slug}", l2_engine=config.ENGINES[0])
         self.pull = {"number": 235, "url": "https://github.com/team/project/pull/235", "state": "OPEN",
                      "isDraft": False, "isCrossRepository": False, "baseRefName": "main",
                      "headRefName": f"worktree-{self.slug}", "headRefOid": "d" * 40}
@@ -177,7 +177,7 @@ class TestRecordedMergeApproval(AltitudeCase):
     def test_absent_foreign_and_nonoperator_messages_cannot_authorize(self):
         foreign = T.new(self.project, "Another task", "Other work")
         T.dispatch(self.project, foreign["slug"], attempt=1, session_id="other", agent_id="other",
-                   worktree=str(self.repo), branch="worktree-other")
+                   worktree=str(self.repo), branch="worktree-other", l2_engine=config.ENGINES[0])
         other = T.message(self.project, foreign["slug"], T.OPERATOR_MESSAGE_ROLE, "You can merge it")
         nonoperator = T.message(self.project, self.slug, "l2", "Ready for review.")
         for identity in ("0" * 32, other["id"], nonoperator["id"]):
@@ -273,7 +273,7 @@ class TestRecordedMergeApproval(AltitudeCase):
         foreign = T.new("foreign", "Review narrative", "Other work", hold_merge="Other review")
         self.assertEqual(foreign["slug"], self.slug)
         T.dispatch("foreign", self.slug, attempt=1, session_id="other", agent_id="other",
-                   worktree=str(self.repo), branch=self.pull["headRefName"])
+                   worktree=str(self.repo), branch=self.pull["headRefName"], l2_engine=config.ENGINES[0])
         other = T.message("foreign", self.slug, T.OPERATOR_MESSAGE_ROLE, "You can merge it")
         self.approval = other
         self.refused("original operator approval")

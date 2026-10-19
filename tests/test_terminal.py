@@ -38,7 +38,7 @@ class TerminalCase(AltitudeCase):
         self.slug = T.new(self.project, "Inspect the build", "Look at the build output.")["slug"]
         self.worktree = self.task_worktree(self.slug)
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
-                   worktree=str(self.worktree), branch="work")
+                   worktree=str(self.worktree), branch="work", l2_engine=config.ENGINES[0])
 
     def _close_all(self):
         for key in list(terminal._terminals):

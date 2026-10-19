@@ -206,7 +206,7 @@ class TestPlannedTasks(AltitudeCase):
         task = self.create("Held", "--wait", "approval")
         with self.assertRaisesRegex(T.TransitionError, "planned wait"):
             T.dispatch(self.project, task["slug"], attempt=1, session_id="session", agent_id="worker",
-                       worktree=None, branch=None)
+                       worktree=None, branch=None, l2_engine=config.ENGINES[0])
 
     def test_confirmed_receipt_owns_delivery_even_while_raw_inbox_rows_remain(self):
         task = self.create("Receipt interruption", "--wait", "approval")
@@ -214,7 +214,7 @@ class TestPlannedTasks(AltitudeCase):
         message = T.message(self.project, slug, "burak", "Do this once")
         T.release(self.project, slug, "Approved")
         T.dispatch(self.project, slug, attempt=1, session_id="session", agent_id="worker",
-                   worktree=None, branch=None, messages=[message], input_delivered=True)
+                   worktree=None, branch=None, messages=[message], input_delivered=True, l2_engine=config.ENGINES[0])
         self.assertEqual(S.load_task(self.project, slug)["state"], "running")
         self.assertIn(message["id"], (S.task_dir(self.project, slug) / "inbox.jsonl").read_text())
         self.assertEqual(T.pending(self.project, slug), [])

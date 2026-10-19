@@ -531,13 +531,6 @@ def deploy_source(repo: str | Path, branch: str) -> tuple[str, str, list[str]]:
     return head, tip, _copy("diff", "--name-only", head, tip).split()
 
 
-def _configured_hooks_path(repo: Path) -> str | None:
-    result = _run(repo, "config", "--get", "core.hooksPath")
-    if result.returncode == 1:
-        return None
-    return _output(result, "cannot read core.hooksPath") or None
-
-
 def _resolve_hooks_path(repo: Path, raw: str) -> Path:
     path = Path(os.path.expanduser(raw))
     return path.resolve() if path.is_absolute() else (repo / path).resolve()
@@ -779,42 +772,17 @@ def _repair_hooks(repo: str | Path, *, combine: bool, expected: str | None) -> d
     return {**final, "action": action}
 
 
-def install_hooks(repo: str | Path, hooks_dir: str | Path | None = None) -> Path:
-    if hooks_dir is None:
-        return Path(repair_hooks(repo)["hooks_path"])
-    # Explicit directories are used by isolated hook-policy fixtures and installation tooling.
-    root, desired = Path(repo).resolve(), Path(hooks_dir).absolute()
-    _verify_hook_files(desired)
-    raw, scope, path = _selection(root)
-    if raw is not None and path != desired.resolve():
-        raise GitPolicyError(f"core.hooksPath is already {raw!r}; refusing to overwrite it")
-    _output(_run(root, "config", "--worktree" if scope == "worktree" else "--local", "core.hooksPath", str(desired)),
-            "cannot install Git policy hooks")
-    return desired
+def install_hooks(repo: str | Path) -> Path:
+    return Path(repair_hooks(repo)["hooks_path"])
 
 
-def require_hooks_installed(repo: str | Path, hooks_dir: str | Path | None = None) -> Path:
+def require_hooks_installed(repo: str | Path) -> Path:
     """Verify the complete tracked guard set without changing repository configuration."""
-    if hooks_dir is None:
-        observed = inspect_hooks(repo)
-        if observed["status"] != "ready":
-            raise GitPolicyError("Git guards are not installed or current; " + observed["detail"]
-                                 + " L3 can run project setup repair; review custom hooks in Setup.")
-        return Path(observed["hooks_path"])
-    root = Path(repo).resolve()
-    _git_dir(root)
-    desired = Path(hooks_dir or _active_hooks()).resolve()
-    current = _configured_hooks_path(root)
-    if current is None or _resolve_hooks_path(root, current) != desired:
-        raise GitPolicyError(f"Git guards are not installed from {desired}; run `alt install-git-guards`")
-    missing = [name for name in REQUIRED_HOOKS if not (desired / name).is_file()]
-    not_executable = [name for name in REQUIRED_HOOKS if (desired / name).is_file() and not os.access(desired / name, os.X_OK)]
-    if missing or not_executable:
-        detail = ([f"missing {', '.join(missing)}"] if missing else []) + (
-            [f"non-executable {', '.join(not_executable)}"] if not_executable else []
-        )
-        raise GitPolicyError(f"Git guard installation is incomplete: {'; '.join(detail)}")
-    return desired
+    observed = inspect_hooks(repo)
+    if observed["status"] != "ready":
+        raise GitPolicyError("Git guards are not installed or current; " + observed["detail"]
+                             + " L3 can run project setup repair; review custom hooks in Setup.")
+    return Path(observed["hooks_path"])
 
 
 def combined_hook(name: str, original: str, guards: str, expected: str | None) -> int:
