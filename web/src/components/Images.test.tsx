@@ -418,6 +418,48 @@ describe("private image reads", () => {
     expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual(["/api/images/alpha/abc", "/api/images/alpha/abc"]);
   });
 
+  it("starts a message this page sent from its picture, swaps in the saved copy on the same image, and still shows a refused read", async () => {
+    browser();
+    let status = 200;
+    let answer!: () => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => {
+      answer = () => resolve(status === 200 ? new Response("fictional raster", { headers: { "Content-Type": "image/png" } }) : json({}, status));
+    })));
+    const saved = { id: "abc", name: "screen.png", mime_type: "image/png", size: 12, width: 2, height: 2, source_message_id: "message" };
+    // The server may shorten a name; the pictures match by position.
+    const sent = [{ name: `${"s".repeat(140)}.png`, url: "data:image/png;base64,AAAA" }];
+    const shown = (previews = sent) => <ImageViewerHost scope="/"><MessageImages project="alpha" images={[saved]} previews={previews} /></ImageViewerHost>;
+    const { unmount } = render(shown(), { wrapper: MemoryRouter });
+    const picture = screen.getByRole("img", { name: "screen.png" });
+    expect(picture).toHaveAttribute("src", "data:image/png;base64,AAAA");
+    expect(screen.getByRole("button", { name: "Open image screen.png" })).toContainElement(picture);
+    expect(screen.queryByText("Loading image…")).toBeNull();
+    await act(async () => answer());
+    await waitFor(() => expect(picture).toHaveAttribute("src", "blob:image-1"));
+    expect(screen.getByRole("img", { name: "screen.png" })).toBe(picture);
+    unmount();
+
+    status = 403;
+    const refused = render(shown(), { wrapper: MemoryRouter });
+    await act(async () => answer());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Image access denied.");
+    expect(screen.queryByRole("img")).toBeNull();
+    refused.unmount();
+
+    // Pictures that are not this message's are never shown in its place.
+    const other = render(shown([...sent, { name: "other.png", url: "data:image/png;base64,BBBB" }]), { wrapper: MemoryRouter });
+    expect(screen.getByText("Loading image…")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).toBeNull();
+    other.unmount();
+
+    // The held picture's own read starts off screen too, so the picture never outlives an unread image.
+    vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} });
+    const calls = vi.mocked(fetch).mock.calls.length;
+    render(shown(), { wrapper: MemoryRouter });
+    expect(screen.getByRole("img", { name: "screen.png" })).toHaveAttribute("src", "data:image/png;base64,AAAA");
+    expect(vi.mocked(fetch).mock.calls.length).toBe(calls + 1);
+  });
+
   it("keeps an open viewer and its zoom when the opener's row is replaced, then focuses the replacement", async () => {
     const revoke = browser();
     vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));

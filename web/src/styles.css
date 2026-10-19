@@ -2509,7 +2509,8 @@ a.irc-name { color: var(--accent-text); text-decoration: underline; text-underli
 }
 .message-image-open { display: block; width: 100%; padding: 0; border: 0; color: var(--text-secondary); background: transparent; cursor: pointer; text-align: left; }
 .message-image-open img, .message-image-preview { display: block; width: 100%; height: 112px; object-fit: contain; }
-.message-image-open span { display: block; overflow: hidden; padding: 6px 8px; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.message-image-open span, .message-image-label { display: block; overflow: hidden; padding: 6px 8px; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.message-image-label { color: var(--text-secondary); }
 .message-image-placeholder { display: flex; min-height: 145px; flex-direction: column; justify-content: center; align-items: flex-start; gap: 6px; padding: 10px; font-size: 12px; color: var(--text-muted); }
 .message-image-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-image-placeholder .link { min-height: 44px; text-align: left; }
