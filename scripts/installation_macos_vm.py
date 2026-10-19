@@ -1047,7 +1047,8 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     # keychain with the remote-terminal message and change nothing (#1006 check 3). The undo command it prints on a
     # desktop names the authority by SHA-256: `security delete-certificate -Z` must remove it by that name.
     keychain = f"/Users/{ACCOUNT}/Library/Keychains/login.keychain-db"
-    listed = f"security dump-trust-settings 2>&1; security find-certificate -a -Z {keychain} | grep SHA-256"
+    # The refusal must leave no trust setting; `security add-trusted-cert` keeps the certificate itself untrusted.
+    listed = "security dump-trust-settings 2>&1"
     unchanged = step("trust-before", listed).stdout
     # The answer is typed once the question shows: `alt trust` discards keys typed before it asks.
     answered = step("trust-ssh", f"/usr/bin/expect -c 'set timeout 240; spawn {alt} trust; expect \"Trust it?\"; "
@@ -1059,10 +1060,10 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
                  in answered.stdout.replace("\r", "").replace("\n", " ")
                  and step("trust-after", listed).stdout == unchanged}
     fingerprint = "openssl x509 -in ~/.config/altitude/tls/ca.crt -noout -fingerprint -sha256 | cut -d= -f2 | tr -d :"
-    undone = step("undo-sha256", f"sha=$({fingerprint}) && security add-certificates -k {keychain} "
-                                 f"~/.config/altitude/tls/ca.crt && security find-certificate -a -Z {keychain} | "
-                                 f"grep -qi \"SHA-256 hash: $sha\" && security delete-certificate -Z $sha -t {keychain} "
-                                 f"&& ! security find-certificate -a -Z {keychain} | grep -qi \"SHA-256 hash: $sha\"")
+    found = f"security find-certificate -a -Z {keychain} | grep -qi \"SHA-256 hash: $sha\""
+    undone = step("undo-sha256", f"sha=$({fingerprint}) && {{ {found} || security add-certificates -k {keychain} "
+                                 f"~/.config/altitude/tls/ca.crt; }} && {found} && "
+                                 f"security delete-certificate -Z $sha -t {keychain} && ! {found}")
     removed = step("uninstall", f"{alt} uninstall")
     check(removed.returncode == 0 and json.loads(removed.stdout)["uninstalled"], "uninstall failed")
     gone = step("removed", f"test ! -e {agent} && ! launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} >/dev/null 2>&1 && "

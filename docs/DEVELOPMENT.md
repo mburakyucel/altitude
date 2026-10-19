@@ -1621,8 +1621,8 @@ shell trusts, with `github.com` resolving to the loopback.
   the browser is unpaired, doctor's next step is certificate trust and `alt pair`. From the SSH
   session, with the account's desktop logged in, `alt trust` answered `y` must name the SSH session,
   fail for the login keychain with the message pointing to the Mac's own desktop or the pair page's
-  Mac steps and leave the keychain and its trust settings unchanged (`trust-ssh`). The authority
-  added to the login keychain without trust must then be removed by `security delete-certificate -Z
+  Mac steps and add no trust setting (`trust-ssh`); macOS keeps the certificate itself in the
+  keychain, untrusted. That certificate must then be removed by `security delete-certificate -Z
   <SHA-256> -t`, the form of the undo command `alt trust` prints (`undo-sha256`). Uninstall must
   then remove the LaunchAgent and stop the service.
 - `privacy`: the account, logged in and outside any sandbox, runs the revision's own
