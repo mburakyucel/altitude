@@ -17,13 +17,18 @@ class ScreenLoadFailure extends Error {}
 // xterm.js loads only when a terminal is on screen. Its stylesheet travels with the app's: a lazy module with a
 // stylesheet is also preloaded, and WebKit keeps a failed preload across a reload (docs/ARCHITECTURE.md#web-delivery).
 // The screen measures its character cells as it opens, so its font loads first: cells measured in a fallback font
-// fit more rows than the screen holds, and the last of them, the prompt, sits below its edge.
+// fit more rows than the screen holds, and the last of them, the prompt, sits below its edge. A font that does not
+// arrive within a few seconds does not hold the terminal: it opens in the font it has.
 const FONT = { family: '"IBM Plex Mono", ui-monospace, monospace', size: 13 };
+const FONT_WAIT_MS = 3_000;
 const TerminalScreen = lazy(() => Promise.all([
   import("./TerminalScreen").catch((cause: unknown) => {
     throw new ScreenLoadFailure("The terminal's code did not load", { cause });
   }),
-  document.fonts.load(`${FONT.size}px ${FONT.family}`).catch(() => undefined),
+  Promise.race([
+    document.fonts.load(`${FONT.size}px ${FONT.family}`).catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS)),
+  ]),
 ]).then(([module]) => module));
 
 /**

@@ -154,8 +154,12 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
       sized = "";
       size();
     };
-    // After a lost connection: the same terminal resumes from its offset; anything else has ended it.
+    // After a lost connection: the same terminal resumes from its offset; anything else has ended it. One check runs
+    // at a time; a retry or a page shown again while one waits leaves the answer to it.
+    let checking = false;
     const check = async () => {
+      if (checking) return;
+      checking = true;
       try {
         const status = await terminalStatus(project, task);
         if (done) return;
@@ -164,7 +168,10 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
       } catch {
         if (done) return;
         report.current.onReconnecting(true);
+        clearTimeout(retry);
         retry = setTimeout(check, RECONNECT_MS);
+      } finally {
+        checking = false;
       }
     };
     // iOS suspends a page in the background and can drop its connection without a word to the stream, which would
@@ -364,7 +371,8 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
   }, [command?.seq, command?.text]); // eslint-disable-line react-hooks/exhaustive-deps -- one attempt per request
 
   // A key row key keeps focus where it is as it is pressed, and afterwards returns it to the screen only if the
-  // operator was typing: an open soft keyboard stays open, a closed one stays closed. Ctrl opens it for its letter.
+  // operator was typing: an open soft keyboard stays open, a closed one stays closed. Ctrl, latching, opens it for its
+  // letter.
   const hold = (event: ReactPointerEvent) => {
     event.preventDefault();
     typing.current = Boolean(host.current?.contains(document.activeElement));
@@ -410,7 +418,7 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
       {[KEYS[0]!, KEYS[1]!].map((key) => <button key={key.name} type="button" aria-label={key.name}
         onPointerDown={hold} onClick={() => press(key.data)}>{key.label}</button>)}
       <button type="button" aria-label="Control" aria-pressed={ctrl} onPointerDown={hold}
-        onClick={() => { typing.current = null; ctrlRef.current = !ctrlRef.current; setCtrl(ctrlRef.current); focus.current(); }}>Ctrl</button>
+        onClick={() => { const was = wasTyping(); ctrlRef.current = !ctrlRef.current; setCtrl(ctrlRef.current); if (ctrlRef.current || was) focus.current(); }}>Ctrl</button>
       {KEYS.slice(2).map((key) => <button key={key.name} type="button" aria-label={key.name}
         onPointerDown={hold} onClick={() => press(key.data)}>{key.label}</button>)}
       <button type="button" aria-label="Paste" onPointerDown={hold} onClick={() => void paste()}>

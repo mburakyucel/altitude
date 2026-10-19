@@ -296,9 +296,24 @@ describe("the terminal screen", () => {
       key(name);
       expect(document.activeElement, name).toBe(textarea);
     }
-    // Ctrl opens the keyboard for the letter it modifies.
+    // Ctrl opens the keyboard for the letter it modifies; releasing it leaves the keyboard as it was.
     act(() => textarea.blur());
     key("Control");
     expect(document.activeElement).toBe(textarea);
+    act(() => textarea.blur());
+    key("Control");
+    expect(document.activeElement).not.toBe(textarea);
+  });
+
+  it("runs one status check at a time, however often the page is shown while it waits", async () => {
+    let answer!: (status: TerminalStatus) => void;
+    vi.mocked(terminalStatus).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    open();
+    await show();
+    await show();
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    expect(vi.mocked(terminalStatus)).toHaveBeenCalledTimes(1);
+    await act(async () => answer(running));
+    expect(streams.map((stream) => stream.closed)).toEqual([true, false]);
   });
 });
