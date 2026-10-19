@@ -2397,8 +2397,10 @@ the server's reason on press. Both controls have 44px phone targets; screen read
 names, busy state and delivery statuses.
 A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the
-operator's bubble. `GET /api/chat` is the authority for what is running and what is queued; the UI
-polls it and never guesses.
+operator's bubble. Once the reply starts streaming, the indicator sits under the words so far and stays
+while the turn keeps working (tool calls, more words appended below, messages queued meanwhile) until the
+turn ends; a page reloaded mid-turn shows it under the bubble until the stored reply arrives. `GET /api/chat` is the authority for what is running and what is queued; the UI
+polls it and never guesses. `web/e2e/working-indicator.pw.ts` walks these states at both widths.
 
 ### 4.3 Discuss and decide in the owning conversation
 

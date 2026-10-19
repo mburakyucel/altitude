@@ -14,14 +14,14 @@ from altitude import config, engines, improve, improve_eval, l3, route, server, 
 NOW = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=1)
 
 
-def at(days: float, hours: float = 0) -> str:
-    return (NOW - timedelta(days=days) + timedelta(hours=hours)).isoformat()
+def at(days: float, hours: float = 0, now: datetime = NOW) -> str:
+    return (now - timedelta(days=days) + timedelta(hours=hours)).isoformat()
 
 
-def finished_task(n: int, days: float) -> dict:
-    return {"slug": f"dock-{n}", "title": f"Fictional dock task {n}", "state": "done", "created": at(days),
-            "reported": at(days, 5), "finished": at(days, 6), "verdict": "delivered", "tokens": 1000,
-            "messages": [{"id": f"m{n}", "at": at(days, 7), "role": "operator", "text": f"Why again, {n}?"}]}
+def finished_task(n: int, days: float, now: datetime = NOW) -> dict:
+    return {"slug": f"dock-{n}", "title": f"Fictional dock task {n}", "state": "done", "created": at(days, 0, now),
+            "reported": at(days, 5, now), "finished": at(days, 6, now), "verdict": "delivered", "tokens": 1000,
+            "messages": [{"id": f"m{n}", "at": at(days, 7, now), "role": "operator", "text": f"Why again, {n}?"}]}
 
 
 def suggestion(target="agents", title="Owners re-ask settled merge questions", **fields) -> dict:
@@ -30,6 +30,8 @@ def suggestion(target="agents", title="Owners re-ask settled merge questions", *
 
 
 class RunCase(AltitudeCase):
+    now = NOW  # the fixture's clock: the work finished before it, and the operator agreed and asked at it
+
     def setUp(self):
         super().setUp()
         self.quiet_engines()
@@ -50,18 +52,18 @@ class RunCase(AltitudeCase):
         """The operator's Turn on, as the settings sheet records it."""
         with S.project_lock(self.project):
             record = improve._load(self.project)
-            improve._agree_locked(record, improve.terms(self.project)["version"], NOW.isoformat())
+            improve._agree_locked(record, improve.terms(self.project)["version"], self.now.isoformat())
             S.write_json(improve._path(self.project), record)
 
     def load(self, count=6, *, agree=True):
-        improve_eval.load({"project": self.project, "now": NOW.isoformat(),
-                           "tasks": [finished_task(n, 1 + n) for n in range(1, count + 1)]})
+        improve_eval.load({"project": self.project, "now": self.now.isoformat(),
+                           "tasks": [finished_task(n, 1 + n, self.now) for n in range(1, count + 1)]})
         if agree:
             self.agree()
 
     def operator(self, text: str, hours: float = 0) -> str:
         turn = f"{abs(hash((text, hours))) % 16**12:012x}"
-        l3.chat_log(self.project, "user", text, trigger="chat", turn_id=turn, at=(NOW + timedelta(hours=hours)).isoformat())
+        l3.chat_log(self.project, "user", text, trigger="chat", turn_id=turn, at=(self.now + timedelta(hours=hours)).isoformat())
         return turn
 
     def started(self, **answer) -> dict:

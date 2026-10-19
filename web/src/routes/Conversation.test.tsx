@@ -1403,6 +1403,68 @@ describe("Conversation", () => {
     expect(region.querySelector("[data-pending]")).toBeNull();
   });
 
+  it.each([390, 1440])("keeps the typing indicator under a streamed reply while the turn keeps working, until it ends, at %ipx", async (width) => {
+    // The operator's report: the first words arrived, the turn went on to run tools and write more, and with a
+    // message queued meanwhile the page still looked finished.
+    const reply = liveReply();
+    const turn = { id: "c9", started_at: ago(0), trigger: "chat" };
+    const stored = [...history];
+    let active: typeof turn | null = null;
+    let queued: unknown[] = [];
+    mockFetch({ chatFn: () => jsonResponse({ ...chatView, history: stored, active, busy: Boolean(active), queued }), post: () => reply.response });
+    setViewport(width);
+    const { user, queryClient } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const typing = () => within(region).queryByRole("status", { name: "L3 is answering" });
+    await user.type(screen.getByLabelText("Message L3 about altitude"), "Fix the indicator");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    try {
+      await act(async () => { reply.frame({ turn }); reply.frame({ t: "A clear request, so I'll check the code first." }); });
+      const words = await within(region).findByText("A clear request, so I'll check the code first.");
+      expect(typing()).toBeInTheDocument();
+      expect(words.compareDocumentPosition(typing()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      // The poll names the running turn and a message queued behind it.
+      active = turn;
+      stored.push({ at: ago(0), role: "user", text: "Fix the indicator", trigger: "chat", turn_id: "c9" });
+      queued = [{ id: "q1", at: ago(0), role: "user", text: "A note for afterwards", trigger: "chat", position: 1 }];
+      await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+      await within(region).findByText("A note for afterwards");
+      expect(within(region).getByRole("button", { name: "Send now" })).toBeInTheDocument();
+      expect(within(region).getAllByRole("status", { name: "L3 is answering" })).toHaveLength(1);
+
+      await act(async () => reply.frame({ t: "\n\nFound it." }));
+      await within(region).findByText("Found it.");
+      expect(within(region).getByText("A clear request, so I'll check the code first.")).toBeInTheDocument();
+      expect(within(region).getAllByRole("status", { name: "L3 is answering" })).toHaveLength(1);
+
+      stored.push({ at: ago(0), role: "assistant", text: "A clear request, so I'll check the code first.\n\nFound it.", trigger: "chat", engine: "alpha", turn_id: "c9" });
+      active = null;
+      queued = [];
+      await act(async () => { reply.frame({ done: { turn_id: "c9" } }); reply.close(); });
+      await waitFor(() => expect(region.querySelector("[data-local]")).toBeNull());
+      expect(typing()).toBeNull();
+      expect(within(region).getAllByText("A clear request, so I'll check the code first.")).toHaveLength(1);
+      expect(within(region).getAllByText("Found it.")).toHaveLength(1);
+    } finally { await act(async () => reply.close()); }
+  });
+
+  it("shows the typing indicator from the poll alone while the turn runs, and removes it when the turn ends", async () => {
+    // After a reload or reconnect no stream is open: the server's running turn keeps the indicator.
+    const turn = { id: "c9", started_at: ago(0), trigger: "chat" };
+    const stored = [...history, { at: ago(0), role: "user", text: "Fix the indicator", trigger: "chat", turn_id: "c9" }];
+    let active: typeof turn | null = turn;
+    mockFetch({ chatFn: () => jsonResponse({ ...chatView, history: stored, active, busy: Boolean(active) }) });
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    expect(await within(region).findByRole("status", { name: "L3 is answering" })).toBeInTheDocument();
+    stored.push({ at: ago(0), role: "assistant", text: "Found it.", trigger: "chat", engine: "alpha", turn_id: "c9" });
+    active = null;
+    await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+    await within(region).findByText("Found it.");
+    expect(within(region).queryByRole("status", { name: "L3 is answering" })).toBeNull();
+  });
+
   it.each(["before", "after"])("keeps a sent message and its streaming reply through Work and back on the phone, %s acceptance", async (moment) => {
     const reply = liveReply();
     const turn = { id: "tab-turn", started_at: ago(0), trigger: "chat" };
