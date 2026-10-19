@@ -13,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -23,7 +24,7 @@ from unittest import mock
 from tests.support import ALT
 from tests.test_repair import RepairCase
 
-from altitude import access, engines, installation, platform, repair, route, server, terminal
+from altitude import access, engines, installation, platform, repair, repair_job, route, server, terminal
 
 # One turn per run: the plan's entry for this turn says what the agent reports, which `alt` commands it runs, whether
 # it leaves a child in its process group, how long it works and how it exits.
@@ -125,17 +126,18 @@ class AppRepairCase(RepairCase):
     def job_stop(self, name: str, env=None, *, timeout: int = 120) -> None:
         """The service manager's stop: SIGTERM to the job, SIGKILL after its grace."""
         process = self.jobs[name]
-        with contextlib.suppress(ProcessLookupError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):  # macOS: EPERM for an ended, unreaped group
             os.killpg(process.pid, signal.SIGTERM)
         try:
             process.wait(timeout=15)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, signal.SIGKILL)
             process.wait()
 
     def end_jobs(self) -> None:
         for process in self.jobs.values():
-            with contextlib.suppress(ProcessLookupError):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait()
         if self.child.exists():
@@ -682,3 +684,24 @@ class LeftRunning(unittest.TestCase):
                 {"kind": "user service", "name": "altitude-helper.service"},
                 {"kind": "user service", "name": "run-u7.service"},
                 {"kind": "user timer", "name": "app-sync.timer"}])
+
+
+class RecorderEnd(unittest.TestCase):
+    def test_an_agent_that_has_just_exited_is_stopped_and_the_end_recorded(self):
+        """A stop, deadline or logout that finds the agent ended but not yet collected still records the end; macOS
+        refuses a signal to a process group whose only member has exited (EPERM)."""
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory())) / "repair"
+        folder.mkdir()
+        (folder / "session.json").write_text(json.dumps({"first": [], "resume": [], "session_type": "system",
+                                                         "session_key": "session_id", "sign_in": None}))
+        (folder / "repair.json").write_text(json.dumps({"id": "repair", "state": "working", "questions": [
+            {"id": "q", "answer": None}]}))
+        recorder = repair_job.Recorder(folder)
+        recorder.agent = subprocess.Popen(["/usr/bin/true"], stdout=subprocess.PIPE, start_new_session=True)
+        recorder.agent.stdout.read()  # its output closes as it exits; it stays uncollected until the end
+        recorder.agent.stdout.close()
+        time.sleep(0.2)
+        recorder.end("stop")
+        row = json.loads((folder / "repair.json").read_text())
+        self.assertEqual((row["state"], row["end"], row["questions"][0]["answer"]), ("ended", "stop", "expired"))
+        self.assertIsNone(recorder.agent)
