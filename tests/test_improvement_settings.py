@@ -93,7 +93,7 @@ class TestWeekly(RunCase):
         # The first Monday run after the switch is turned on at self.now, at most a week away, so the fixture's six
         # tasks stay inside its first window; and the run a week later.
         this = improve._monday(self.now)
-        self.monday = this if self.now < this else improve._monday(self.now, 1)
+        self.monday = this if self.now <= this else improve._monday(self.now, 1)
         self.following = improve._monday(self.monday, 1)
 
     def switched(self, at=None, count=6):
@@ -188,11 +188,12 @@ class TestWeekly(RunCase):
         spawn.assert_called_once_with(f"improve:{self.project}", improve.execute, self.project, run["id"])
 
 
-# Sunday night, the early Monday hours before that day's run, Monday after it, and mid-week; in UTC and in a zone
-# behind it.
+# Sunday night, the early Monday hours before that day's run, its very hour, Monday after it, and mid-week; in UTC
+# and in a zone behind it.
 for _zone in ("UTC", "America/Los_Angeles"):
     for _name, _hour in (("sunday_2330", (-1, 23, 30)), ("monday_0030", (0, 0, 30)), ("monday_0230", (0, 2, 30)),
-                         ("monday_0900", (0, 9, 0)), ("wednesday_1200", (2, 12, 0))):
+                         ("monday_0730", (0, 7, 30)),
+                         ("monday_0800", (0, 8, 0)), ("monday_0900", (0, 9, 0)), ("wednesday_1200", (2, 12, 0))):
         _case = f"TestWeekly_{_zone.split('/')[-1]}_{_name}"
         globals()[_case] = type(_case, (TestWeekly,), {"zone": _zone, "hour": _hour})
 del _zone, _name, _hour, _case
