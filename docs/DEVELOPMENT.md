@@ -1665,7 +1665,7 @@ shell trusts, with `github.com` resolving to the loopback.
   with the checkout, the copy and the export its startup activated all at the new commit, serving
   the page with the mark the first start did not serve. The service's logs are kept.
 
-The runtime phases `workers`, `grants`, `incident` and `session` install the release into the account's own home through
+The runtime phases `workers`, `grants`, `incident`, `update` and `session` install the release into the account's own home through
 the public command, with `tests/macos_guest_engine.py`, a scripted fictional Codex CLI, as its only engine and the
 tests' fake GitHub CLI first on its saved PATH, and register a fictional project. `tests/macos_guest_runtime.py` then
 drives each row as the account against the installed service: the operator acts through `alt`, the coordinator
@@ -1690,6 +1690,12 @@ worker's own job and sandbox. No provider is reached.
   the daemon has not looked, just after it finds the newer release, 12 hours after its last lookup (a failed
   startup lookup is first retried an hour later); a terminal shows the newer release's notice once, not again
   that day, and again the next day (`schedule`, #226, #731). The row runs last, since the clock stays moved.
+- `update`: the guest's installed release, relabelled one patch version newer and otherwise unchanged, is offered
+  for automatic installation while a task's validation run holds the machine. `alt doctor` must read `Update:
+  Altitude <newer> installs automatically at the next quiet moment; waiting for the validation run of
+  fictional/<task>.`, another task's `alt task validate` is refused as Altitude restarting soon to apply an update
+  and starts nothing, and within 45 seconds of the run's end the update starts, succeeds and the service restarts
+  into the newer version while the other task's worker stays in its turn (`quiet-point`, #1003).
 - `session`: ending the login session without a restart stops the service and the automatic login starts it again
   (`logout-login`, #731); a login that does not return is recorded as unavailable with its reason. Sleep is
   the `jobs` phase's `sleep-hold` and `awake-clock` rows.
@@ -1733,7 +1739,7 @@ stop. One guest runs at a time, and the runner stops whenever less than 10 GiB o
 free. Building the images takes about fifteen minutes after the restore image's download. On an
 unloaded Mac `fresh` and `prerequisites` take under half a minute each, `lifecycle` about five
 minutes, `login` just over one, `privacy` under one, `workers` about five and a half, `grants` about four,
-`incident`, `session` and `source` about two and `published` about one and a half; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
+`incident`, `update`, `session` and `source` about two and `published` about one and a half; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
 run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with

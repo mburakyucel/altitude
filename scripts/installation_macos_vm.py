@@ -25,8 +25,9 @@ worker sandbox can; `read-only-home` runs the revision's suite cases that confin
 this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or worker can start. `source` installs
 from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
 repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
-`incident` and `session` install the release into the account's own home with a scripted fictional engine and the
-tests' fake GitHub CLI, then drive the guest's own service through the revision's tests/macos_guest_runtime.py rows.
+`incident`, `update` and `session` install the release into the account's own home with a scripted fictional engine
+and the tests' fake GitHub CLI, then drive the guest's own service through the revision's tests/macos_guest_runtime.py
+rows.
 `--published` downloads the published baseline, and the candidate when it names one, on this Mac, checked against
 their SHA256SUMS and tags; without a published candidate it builds one from the source revision under the baseline's
 next minor version. It runs only `published`: after an outside process writes caches into the installed baseline, the
@@ -1320,7 +1321,7 @@ git push -q origin main && git rev-parse HEAD""")
 # finishes within `alt task run`'s ten minutes.
 RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
                 "grants": ("grants", "contention"), "incident": ("incident", "schedule"),
-                "session": ("logout-login",)}
+                "update": ("quiet-point",), "session": ("logout-login",)}
 GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
 # Rows may end the account's session, so they run in the background while the host polls.
 ROWS_BUDGET = 420
@@ -1396,6 +1397,12 @@ def phase_incident(guest: Guest, repository: str, results: Path, record: dict, i
     runtime(guest, repository, results, record, inputs, "incident")
 
 
+def phase_update(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """An automatic update offered during a validation run waits for it, refusing new runs, and installs itself once
+    the run ends, while another task's worker stays in its turn (#1003)."""
+    runtime(guest, repository, results, record, inputs, "update")
+
+
 def phase_session(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """Logout and login without a restart (#731, #226). The guest cannot sleep: macOS under Apple's Virtualization
     framework refuses `pmset sleepnow` as not permitted; the `jobs` phase's `sleep-hold` and `awake-clock` rows cover
@@ -1406,7 +1413,8 @@ def phase_session(guest: Guest, repository: str, results: Path, record: dict, in
 # `fresh` starts from the fresh image, every other phase from prerequisites; `published` runs only with --published.
 PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login,
           "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home, "source": phase_source,
-          "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "session": phase_session,
+          "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "update": phase_update,
+          "session": phase_session,
           "published": phase_published}
 # The phases that install the release built from the source, and those that also read the revision's files.
 BUILT = ("fresh", "prerequisites", "lifecycle", "login", *RUNTIME_ROWS)

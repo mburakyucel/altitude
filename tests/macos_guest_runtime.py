@@ -13,14 +13,18 @@ account's shell; the coordinator's and the owner's are `alt` commands the fictio
                                                inside an owner's turn: resolve the operator's answer and record the grant
 """
 import ast
+import hashlib
+import io
 import json
 import os
 import re
 import ssl
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 HOME = Path.home()
@@ -447,6 +451,36 @@ def row_contention() -> dict:
     return facts
 
 
+def lookup(version: str) -> dict:
+    """Serve VERSION as GitHub's latest release, make the daemon's 12-hour check due and wait for its answer."""
+    latest = Path(os.environ["LANE_LATEST"])
+    latest.parent.mkdir(parents=True, exist_ok=True)
+    latest.write_text(json.dumps({"tag_name": version, "draft": False}))
+    path = ROOT / "update.json"
+    script = ("import fcntl,json,sys; p=sys.argv[1]; l=open(p.replace('update.json','update.lock'),'a');"
+              "fcntl.flock(l,fcntl.LOCK_EX); r=json.load(open(p)); r['next']=0; "
+              "open(p+'.lane','w').write(json.dumps(r)); __import__('os').replace(p+'.lane',p)")
+    subprocess.run([PYTHON, "-c", script, str(path)], check=True, timeout=30)
+    try:
+        return wait(f"the check to find {version}", lambda: (json.loads(path.read_text()).get("latest") or {})
+                    .get("version") == version and json.loads(path.read_text()), timeout=90)
+    except Failed as error:
+        fetched = shell(f"curl -sS --max-time 10 --cacert {SHARED}/ca.pem "
+                        f"https://api.github.com/{latest.relative_to(SHARED / 'root')}")
+        answer = subprocess.run(
+            [PYTHON, "-B", "-c", "import sys, traceback; sys.path.insert(0, sys.argv[1]); "
+             "from altitude import config, installation\ntry: print(installation.latest_release("
+             "installation.release_repository(), config.RELEASE['version']))\n"
+             "except Exception: traceback.print_exc()", str(HOME / ".local/share/altitude/current")],
+            capture_output=True, text=True, timeout=90,
+            env={**OPERATOR, "ALTITUDE_CONFIG": str(HOME / ".config/altitude/install.json")})
+        service = [line.strip() for line in shell(f"launchctl print {SERVICE}").stdout.splitlines()
+                   if "SSL_CERT_FILE" in line or "PATH =>" in line]
+        raise Failed(f"{error}; update.json {path.read_text()[:400]}; fetch {fetched.returncode} "
+                     f"{(fetched.stdout + fetched.stderr)[:300]}; the release's lookup "
+                     f"{(answer.stdout + answer.stderr)[-1200:]}; service environment {service}")
+
+
 def row_incident() -> dict:
     """#767: on an installed release behind a newer published release, an incident's issue is held and nothing is
     sent to GitHub until the operator asks; when current, the issue goes straight to GitHub's issue creation (here
@@ -455,48 +489,19 @@ def row_incident() -> dict:
         return [json.loads(line) for line in (GH_STATE / "log.jsonl").read_text().splitlines()] \
             if (GH_STATE / "log.jsonl").exists() else []
 
-    def check_now(version: str) -> dict:
-        """Serve VERSION as GitHub's latest release, make the daemon's 12-hour check due and wait for its answer."""
-        latest = Path(os.environ["LANE_LATEST"])
-        latest.parent.mkdir(parents=True, exist_ok=True)
-        latest.write_text(json.dumps({"tag_name": version, "draft": False}))
-        path = ROOT / "update.json"
-        script = ("import fcntl,json,sys; p=sys.argv[1]; l=open(p.replace('update.json','update.lock'),'a');"
-                  "fcntl.flock(l,fcntl.LOCK_EX); r=json.load(open(p)); r['next']=0; "
-                  "open(p+'.lane','w').write(json.dumps(r)); __import__('os').replace(p+'.lane',p)")
-        subprocess.run([PYTHON, "-c", script, str(path)], check=True, timeout=30)
-        try:
-            return wait(f"the check to find {version}", lambda: (json.loads(path.read_text()).get("latest") or {})
-                        .get("version") == version and json.loads(path.read_text()), timeout=90)
-        except Failed as error:
-            fetched = shell(f"curl -sS --max-time 10 --cacert {SHARED}/ca.pem "
-                            f"https://api.github.com/{latest.relative_to(SHARED / 'root')}")
-            lookup = subprocess.run(
-                [PYTHON, "-B", "-c", "import sys, traceback; sys.path.insert(0, sys.argv[1]); "
-                 "from altitude import config, installation\ntry: print(installation.latest_release("
-                 "installation.release_repository(), config.RELEASE['version']))\n"
-                 "except Exception: traceback.print_exc()", str(HOME / ".local/share/altitude/current")],
-                capture_output=True, text=True, timeout=90,
-                env={**OPERATOR, "ALTITUDE_CONFIG": str(HOME / ".config/altitude/install.json")})
-            service = [line.strip() for line in shell(f"launchctl print {SERVICE}").stdout.splitlines()
-                       if "SSL_CERT_FILE" in line or "PATH =>" in line]
-            raise Failed(f"{error}; update.json {path.read_text()[:400]}; fetch {fetched.returncode} "
-                         f"{(fetched.stdout + fetched.stderr)[:300]}; the release's lookup "
-                         f"{(lookup.stdout + lookup.stderr)[-1200:]}; service environment {service}")
-
     settings = ROOT / "settings.json"
     current = json.loads(settings.read_text()) if settings.exists() else {}
     settings.write_text(json.dumps({**current, "update_automatic": False}))  # the newer release is a lookup answer only
     version = os.environ["LANE_VERSION"]
     newer = re.sub(r"(\d+)$", lambda m: str(int(m[1]) + 1), version)
-    check_now(newer)
+    lookup(newer)
     before = len(calls())
     held = alt("incident", "new", "--title", "Fictional incident behind a release", "--what", "A fictional fault.",
                "--evidence", "Fictional evidence from the macOS VM lane.", "--cause", "Fictional cause.")
     held_calls = calls()[before:]
     published = alt("incident", "publish", held["id"])
     publish_calls = calls()[before + len(held_calls):]
-    check_now(version)
+    lookup(version)
     before = len(calls())
     direct = alt("incident", "new", "--title", "Fictional incident on the current release", "--what", "Another fault.",
                  "--evidence", "Fictional evidence from the macOS VM lane.", "--cause", "Fictional cause.")
@@ -561,6 +566,76 @@ def row_schedule() -> dict:
     return facts
 
 
+def relabelled(version: str, newer: str) -> None:
+    """The installed release's archive served as NEWER, changed only in the version it declares, as the lifecycle
+    lane's synthetic releases are: a release the daemon installs without a second build."""
+    repository = Path(os.environ["LANE_LATEST"]).parent.parent.relative_to(SHARED / "root/repos")
+    downloads = SHARED / "root" / repository / "releases/download"
+    (downloads / newer).mkdir(parents=True, exist_ok=True)
+    archive = downloads / newer / f"altitude-{newer}.tar.gz"
+    with tarfile.open(downloads / version / f"altitude-{version}.tar.gz") as source, \
+            tarfile.open(archive, "w:gz") as bundle:
+        for member in source.getmembers():
+            data = source.extractfile(member).read() if member.isfile() else None
+            if member.name == "release.json":
+                data = (json.dumps({**json.loads(data), "version": newer}, indent=2) + "\n").encode()
+                member.size = len(data)
+            bundle.addfile(member, io.BytesIO(data) if data is not None else None)
+    (downloads / newer / f"{archive.name}.sha256").write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + "\n")
+
+
+def row_quiet_point() -> dict:
+    """#1003: an automatic update offered while a validation run holds the machine waits for that run and names it
+    in `alt doctor`; a new validation request is refused meanwhile; once the run ends the update installs itself and
+    the service restarts into it while another task's worker stays in its turn."""
+    record = lambda: json.loads((ROOT / "update.json").read_text())  # noqa: E731
+    installed = lambda: json.loads((HOME / ".local/share/altitude/current/release.json").read_text())["version"]  # noqa: E731
+    settings = ROOT / "settings.json"
+    current = json.loads(settings.read_text()) if settings.exists() else {}
+    settings.write_text(json.dumps({**current, "update_automatic": True}))
+    version = os.environ["LANE_VERSION"]
+    newer = re.sub(r"(\d+)$", lambda m: str(int(m[1]) + 1), version)
+    relabelled(version, newer)
+    running = new_task("Validation during an update", "Fictional task that validates its candidate.\n"
+                       "FIXTURE-RUN: alt task validate -- /bin/sh -c 'echo validation-started; sleep 60'\n")
+    run = wait("the validation run", lambda: next((r for r in machine(running) if r.get("purpose") == "validation"),
+                                                  None), timeout=120)
+    wait("its launchd job", lambda: job_running(run["unit"]), timeout=60)
+    held = f"the validation run of {PROJECT}/{running}"
+    lookup(newer)
+    waiting = wait("the offered update to name the run", lambda: (record().get("waiting") or {}).get("for") == [held]
+                   and record()["waiting"], timeout=90)
+    doctor = next((line for line in alt("doctor", project=False).splitlines() if line.startswith("Update:")), "")
+    later = new_task("Validation while an update waits", "Fictional task that asks for a validation run while an "
+                     "update waits.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo second-run'\nFIXTURE-END: hold 300\n")
+    refused = wait("the second request's answer", lambda: ran(later, "alt task validate"), timeout=90)
+    unit, before = worker_unit(later), service_pid()
+    ended = wait("the validation run to end", lambda: next((r for r in machine(running) if r.get("n") == run["n"]
+                                                            and r.get("finished")), None), timeout=150)
+    attempt = wait("the automatic update to start", lambda: (record().get("attempt") or {}).get("version") == newer
+                   and record()["attempt"], timeout=120)
+    wait(f"the service to restart into {newer}", lambda: installed() == newer and (service_pid() or before) != before
+         and healthy(), timeout=180)
+    facts = {"installed": version, "newer": newer, "waiting": waiting, "doctor": doctor,
+             "refused": {key: refused.get(key) for key in ("exit", "stdout", "stderr")},
+             "second_runs": [r for r in machine(later) if r.get("purpose") == "validation"],
+             "run": {key: ended.get(key) for key in ("n", "ended", "exit", "finished")},
+             "attempt_after_run_s": round(attempt["started"] - datetime.fromisoformat(ended["finished"]).timestamp(), 1),
+             "attempt": wait("the attempt's outcome", lambda: record()["attempt"].get("state") != "running"
+                             and record()["attempt"], timeout=60),
+             "now": installed(), "service": {"before": before, "after": service_pid()},
+             "worker_kept": job_running(unit) and task(later).get("state") == "running"}
+    stopped_cleanly(later)
+    stopped_cleanly(running)
+    facts["passed"] = (doctor == f"Update: Altitude {newer} installs automatically at the next quiet moment; "
+                                 f"waiting for {held}."
+                       and refused.get("exit") != 0 and "restarts soon to apply an update" in refused.get("stderr", "")
+                       and not facts["second_runs"] and ended.get("exit") == 0 and facts["attempt_after_run_s"] < 45
+                       and facts["attempt"].get("state") == "succeeded" and facts["attempt"].get("automatic") is True
+                       and facts["now"] == newer and facts["worker_kept"])
+    return facts
+
+
 def row_logout_login() -> dict:
     """#731 and #226: the account's desktop session ends and starts again without a restart; the service stops
     with the session and the next login starts it again."""
@@ -589,7 +664,8 @@ def row_logout_login() -> dict:
 STATE: dict = {}
 ROWS = {"coordinator-stop": row_coordinator_stop, "failed-turn": row_failed_turn, "status-unknown": row_status_unknown,
         "validation-restart": row_validation_restart, "grants": row_grants, "contention": row_contention,
-        "incident": row_incident, "schedule": row_schedule, "logout-login": row_logout_login}
+        "incident": row_incident, "schedule": row_schedule, "quiet-point": row_quiet_point,
+        "logout-login": row_logout_login}
 
 
 def rows(names: list[str]) -> int:
