@@ -121,9 +121,11 @@ class Replay:
 PACKAGES = ("git", "gh", "openssl")
 
 
-def user_data(public_key: str, packages=PACKAGES) -> str:
+def user_data(public_key: str, packages=PACKAGES, commands=()) -> str:
+    """The guest's cloud-init: this run's SSH key, `packages`, then `commands` as root."""
     return "\n".join(["#cloud-config", "ssh_pwauth: false", "ssh_authorized_keys:", f"  - {public_key}",
-                      "package_update: true", f"packages: [{', '.join(packages)}]", ""])
+                      "package_update: true", f"packages: [{', '.join(packages)}]",
+                      *(["runcmd:", *(f"  - {json.dumps(command)}" for command in commands)] if commands else []), ""])
 
 
 def network_config() -> str:
@@ -190,11 +192,11 @@ def free_port() -> int:
 
 
 class Machine:
-    def __init__(self, work: Path, image: Path, *, packages=PACKAGES):
+    def __init__(self, work: Path, image: Path, *, packages=PACKAGES, commands=()):
         self.work, self.port, self.process, self.log = work, free_port(), None, None
         self.key = work / "id_ed25519"
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)], check=True)
-        (work / "user-data").write_text(user_data((work / "id_ed25519.pub").read_text().strip(), packages))
+        (work / "user-data").write_text(user_data((work / "id_ed25519.pub").read_text().strip(), packages, commands))
         (work / "network-config").write_text(network_config())
         subprocess.run(["cloud-localds", "-N", str(work / "network-config"), str(work / "seed.img"),
                         str(work / "user-data")], check=True)

@@ -77,7 +77,7 @@ class TestAbstractScope(AltitudeCase):
 class TestSandboxedJob(AltitudeCase):
     """Real bubblewrap, on a Linux host where it starts: not inside an Altitude worker, whose sandbox forbids new
     namespaces, a validation container, which cannot mount a fresh /proc, or a runner whose AppArmor refuses it user
-    namespaces. There the cases skip; `python3 -m unittest tests.test_session_sockets` runs them on such a host."""
+    namespaces. There the cases skip; `make sandbox-vm` runs them in a throwaway VM where they start."""
 
     def setUp(self):
         super().setUp()
