@@ -14,6 +14,7 @@ import type { ChoiceState } from "./Choice";
 import { InlineProse, Prose, ProseRepository, ProseScope, QuestionProse } from "./Prose";
 import { ReviewStatus, StateIcon, reviewLine } from "./TaskReview";
 import { ShownFiles } from "./Shown";
+import { PrPictures } from "./PrPictures";
 import { keepForVisit, useVisitMemory } from "./visitMemory";
 
 type Draft = { option?: string; text?: string };
@@ -189,6 +190,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
         setSelectedProject(question.project);
         keepForVisit(location.key, "origin", { project: question.project, slug: question.slug, id: question.id } satisfies QuestionOrigin);
       }} /> : null}
+      {question.pr_images ? <PrPictures pictures={question.pr_images} /> : null}
       <ReviewLink decision={question} from={chat ? undefined : from} />
       {(resolved && !withdrawn || question.response) && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
       {chat && question.detail && question.detail !== question.question ? <details className="question-context">
@@ -270,6 +272,7 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
   return <div className="question-set" data-review-pr={decision.pr ?? undefined} data-review-task={`${decision.project}/${decision.slug}`}>
     <QuestionProse className="decision-question" text={decision.question || `Review PR #${decision.pr} before merge`} />
     {decision.detail ? <QuestionProse className="decision-why" text={decision.detail} /> : null}
+    {decision.pr_images ? <PrPictures pictures={decision.pr_images} /> : null}
     <ReviewLink decision={decision} from={chat ? undefined : from} />
     <div className="decision-options" role="group" aria-label="Merge review">
       <Choice primary label={state === "fail" ? "Retry" : "Approve merge"} state={state} disabled={disabled || denied}

@@ -3443,9 +3443,10 @@ The copies are content-named files in the task folder's `shown/` directory and f
 The record on the reply row or question revision holds paths, content names, sizes and dimensions, the
 document's first heading and opening paragraph, and a hash of itself as its identity; it never holds
 the document text. A question showing identical files keeps its revision, changed files advance it,
-and the answer fence binds the files the operator saw. A question is a proposal approval when it
+and the answer fence binds the files the operator saw. An unmarked question is a proposal approval when it
 shows files, so its card carries the proposal review; in a group, `tasks.shown_question` gives the
-files to the one member marked as the proposal and the other listed members publish without them. A review
+files to the one member marked as the proposal, or with none to the one marked as the held PR's merge
+question, and the other listed members publish without them. A review
 whose captured `--show` set differs from the latest showing question's counts as covering an earlier
 version. `require_shown` refuses both the
 operator's answer and the owner's resolution while any copy is missing or altered, or for a question
@@ -3461,6 +3462,21 @@ document as a page card (cover picture, name, heading and excerpt, an **Earlier*
 whose copies are gone or resized is a card reading **Preview unavailable** that does not open (the card
 checks presence and size; reads verify each hash, so changed content of the same size shows the
 reader's unavailable state).
+
+A held PR's merge card carries the pictures the PR changes. `tasks.pr_images` reads the current PR's
+recorded head and base from its delivery or adoption and, once per head, lists the diff from the merge
+base with Git's raw output: blob ids, modes and paths, with renames paired and no diff drivers or
+textconv. It reads the blobs as Git objects from the project's repository, never the worktree, so later
+edits, a moved branch or a link change nothing shown. Each picture passes the shown-image checks and
+limits; another type, a link, a missing object or one past the limits is listed as `not_shown`. Copies
+are content-named in the same `shown/` folder beside a hashed record, `pr-<number>-<head>.json`, which
+also records an unreadable head as empty so no view reads it again. `question_view` (for an open
+question about the held PR) and `review_row` project `pr_images`: one entry per path with the change
+(added, changed, removed), the before and after copies' URLs and sizes, the `not_shown` paths and
+whether every copy is present; a PR without pictures projects none. The shown-files API serves them at
+`/api/shown/<project>/<slug>/pr/<number>/files/<name>` while the record matches the task's current PR,
+one file at a time with the same headers. The pictures bind nothing: the approval's check of PR, hold
+and readiness is unchanged.
 
 The reader lives at `/projects/<project>/tasks/<slug>/view/<message>` for a reply and
 `.../view/<question>/<revision>` for a question. Both routes render the task page itself, so the
