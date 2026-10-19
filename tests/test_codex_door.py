@@ -319,7 +319,7 @@ class TestCodexAdapter(AltitudeCase):
                                      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/manager/bus"})
         self.assertEqual(json.loads(result.stdout), {"project": "altitude", "task": "task", "secret": None, "bus": None})
 
-    def test_synchronous_turn_sends_the_whole_prompt_on_stdin_and_reads_the_last_message(self):
+    def test_synchronous_turn_sends_the_whole_prompt_on_stdin_and_keeps_every_message(self):
         # The engine starts reading after the turn's first half-second poll, and the prompt exceeds every pipe
         # buffer: a coordinator turn on a loaded Mac once waited its whole limit for the rest of its prompt (#617).
         engine = self.tmp / "codex"
@@ -338,7 +338,9 @@ class TestCodexAdapter(AltitudeCase):
         self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
         out = engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", cwd=self.worktree, model="gpt-6.1-sol", effort="high", resume="thr-l3",
                                  extra_env={"ALTITUDE_ACTOR": "l3"}, timeout=30)
-        received = json.loads(out["text"])
+        first, last = out["text"].split("\n\n")
+        self.assertEqual(first, "first")
+        received = json.loads(last)
         self.assertEqual(received["argv"][:2], ["exec", "resume"])
         self.assertEqual(received["argv"][-2:], ["thr-l3", "-"])
         self.assertIn('model_reasoning_effort="high"', received["argv"])
