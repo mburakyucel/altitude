@@ -166,8 +166,9 @@ def _pace(every) -> int:
 
 def subscribe(endpoint: str, every=0) -> dict:
     """A device registers what waking it takes and how often it may be woken, each time Altitude opens there, and
-    learns whether its push service refuses Altitude's alerts. Altitude stores the endpoint and nothing else about
-    the device."""
+    learns whether Altitude already held it, which a renewing device does not when its push service ended it, and
+    whether its push service refuses Altitude's alerts. Altitude stores the endpoint and nothing else about the
+    device."""
     every = _pace(every)
     endpoint = (endpoint or "").strip()
     target = urlparse(endpoint)
@@ -185,7 +186,7 @@ def subscribe(endpoint: str, every=0) -> dict:
                 again["every"][endpoint] = every
             if again != record:
                 _save(again)
-            return {"push": True, "refused": record["refused"].get(endpoint)}
+            return {"push": True, "known": True, "refused": record["refused"].get(endpoint)}
         # Already waiting decisions are not news to the first device; a later one must not silence
         # what the devices already subscribed are still owed.
         seen = _waiting()[0] if not record["subscriptions"] else record["seen"]
@@ -198,7 +199,7 @@ def subscribe(endpoint: str, every=0) -> dict:
         woken = {known: at for known, at in record["woken"].items() if known in kept}
         _save({"subscriptions": kept, "seen": seen, "owes": owes, "refused": refused,
                "every": {**paces, endpoint: every} if every else paces, "woken": woken})
-    return {"push": True, "refused": None}
+    return {"push": True, "known": False, "refused": None}
 
 
 def pace(endpoint: str, every) -> dict:

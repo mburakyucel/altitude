@@ -43,12 +43,18 @@ function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachabl
     const url = String(input);
     if (url.includes("/api/alerts/subscription")) {
       if (unreachable) throw new TypeError("Failed to fetch");
-      return jsonResponse(JSON.parse(String(init?.body)).remove ? { push: false } : { push: true, refused });
+      const { endpoint, remove } = JSON.parse(String(init?.body)) as { endpoint: string; remove?: boolean };
+      if (remove) return jsonResponse({ push: false });
+      const known = !ended.delete(endpoint); // told once, altd holds it
+      return jsonResponse({ push: true, known, refused });
     }
     if (url.includes("/api/alerts/pace")) {
       return paceRefusal ? jsonResponse({ error: paceRefusal }, 400) : jsonResponse({ every: JSON.parse(String(init?.body)).every });
     }
-    if (url.includes("/api/alerts")) return jsonResponse({ key });
+    if (url.includes("/api/alerts")) {
+      await keyRead;
+      return jsonResponse({ key });
+    }
     if (url.includes("/api/overview")) return jsonResponse(overview(queue));
     if (url.includes("/api/project/")) return jsonResponse({ name: url.split("/").at(-1), tasks: [] });
     if (url.includes("/api/task/")) return jsonResponse({ slug: "x", state: "blocked", messages: [] });
@@ -62,6 +68,10 @@ const ENDPOINT = "https://push.example/wake/device-1";
 
 /** What altd answers a change of pace with: refused with this reason, or saved. */
 let paceRefusal: string | null = null;
+/** Endpoints altd does not hold, because their push service ended them or they are new, until it is told one. */
+const ended = new Set<string>();
+/** Resolves when altd answers the key read, so a test can act while a renewal waits on it. */
+let keyRead: Promise<void> = Promise.resolve();
 
 /** The worker's store in Cache Storage, which the page shares: announced keys and this device's preferences. */
 function deviceStore(preferences?: Record<string, unknown>) {
@@ -162,6 +172,8 @@ const KEY = "altitude:choose-retention:q-retention";
 
 afterEach(() => {
   paceRefusal = null;
+  ended.clear();
+  keyRead = Promise.resolve();
   Reflect.deleteProperty(navigator, "serviceWorker");
   Reflect.deleteProperty(globalThis, "caches");
   vi.restoreAllMocks();
@@ -228,6 +240,7 @@ describe("decision alerts", () => {
       unsubscribe: vi.fn(async () => true),
     };
     browser.registration.subscribed = stale;
+    ended.add(ENDPOINT); // the new subscription is news to altd, and is not replaced again for that
     mockFetch([question]);
     renderApp({ route: "/" });
 
@@ -247,6 +260,60 @@ describe("decision alerts", () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url, init]) => url === "/api/alerts/subscription"
       && init?.body === JSON.stringify({ endpoint: ENDPOINT, every: 0 }))).toHaveLength(2));
     expect(browser.registration.pushManager.subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("renews a subscription its push service ended, which altd no longer holds", async () => {
+    const browser = alreadyOn([KEY]);
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const dead = { ...browser.registration.subscription, endpoint: "https://push.example/wake/dead", unsubscribe: vi.fn(async () => true) };
+    browser.registration.subscribed = dead;
+    ended.add(dead.endpoint);
+    mockFetch([question]);
+    renderApp({ route: "/" });
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+    })));
+    expect(dead.unsubscribe).toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: dead.endpoint, remove: true }),
+    }));
+    expect(screen.getByText(/even when Altitude is closed/)).toBeVisible();
+  });
+
+  it("says alerts arrive only while open when a renewal cannot subscribe again", async () => {
+    const browser = alreadyOn([KEY]);
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    browser.registration.subscribed = {
+      endpoint: "https://push.example/wake/old", options: { applicationServerKey: new Uint8Array(65).fill(9) },
+      unsubscribe: vi.fn(async () => true),
+    };
+    browser.registration.pushManager.subscribe.mockRejectedValue(new DOMException("refused", "NotAllowedError"));
+    mockFetch([question]);
+    renderApp({ route: "/" });
+
+    expect(await screen.findByText(/only while Altitude is open/)).toBeVisible();
+    expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBeNull();
+  });
+
+  it("keeps the switch off when it is turned off while a renewal is under way", async () => {
+    const browser = alreadyOn([KEY]);
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    let answer = () => {};
+    keyRead = new Promise((resolve) => { answer = resolve; });
+    mockFetch([question]);
+    const { user } = renderApp({ route: "/" });
+
+    await user.click(await screen.findByRole("button", { name: "Alerts on" }));
+    act(() => answer());
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, remove: true }),
+    })));
+    // The renewal finished first, and turning alerts off had the last word with altd and the push service.
+    const told = vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/alerts/subscription").map(([, init]) => init?.body);
+    expect(told.at(-1)).toBe(JSON.stringify({ endpoint: ENDPOINT, remove: true }));
+    expect(browser.registration.subscription.unsubscribe).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toBeVisible();
   });
 
   it("keeps alerting while Altitude is open, and says so, when this device cannot be woken", async () => {

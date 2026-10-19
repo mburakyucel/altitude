@@ -29,8 +29,8 @@ const alerts = (page: Page) => page.evaluate(() => (window as unknown as { __ale
 
 /**
  * A push service this browser can subscribe to; without one no device could be woken here. Its subscription
- * outlives a reload and carries the key it was made with, as a browser's does; `old` is one this device made
- * before Altitude's key changed.
+ * outlives a reload and carries the key it was made with, as a browser's does, and each one after the first has
+ * an endpoint of its own; `old` is one this device made before Altitude's key changed.
  */
 const fakePushService = (page: Page, old?: string) =>
   page.addInitScript((old) => {
@@ -43,7 +43,9 @@ const fakePushService = (page: Page, old?: string) =>
     }) as unknown as PushSubscription;
     PushManager.prototype.subscribe = (options?: PushSubscriptionOptionsInit) => {
       const key = [...new Uint8Array(options!.applicationServerKey as Uint8Array)];
-      const stored = { endpoint: "https://push.example/wake/walkthrough", key };
+      const count = Number(localStorage.getItem(`${STORE}.count`) ?? 0) + 1;
+      localStorage.setItem(`${STORE}.count`, String(count));
+      const stored = { endpoint: `https://push.example/wake/walkthrough${count > 1 ? `-${count}` : ""}`, key };
       localStorage.setItem(STORE, JSON.stringify(stored));
       return Promise.resolve(made(stored)!);
     };
@@ -350,12 +352,12 @@ test("a refusal shows on its own device until a push gets through, and an ended 
   await page.reload();
   await walk.state("10-refusal-cleared", { visible: [on, reach], hidden: [refused] });
 
-  // A subscription the push service will never take again ends on Altitude's side, and the device makes it again
+  // A subscription the push service will never take again ends on Altitude's side, and the device makes a new one
   // the next time Altitude opens there, without the switch.
   await ask("Pick a restore target");
-  expect(await tick(400, "VapidPkHashMismatch")).toEqual({ subscriptions: [], refused: {} });
+  expect(await tick(410)).toEqual({ subscriptions: [], refused: {} });
   await page.reload();
-  await expect.poll(subscriptions).toEqual([device]);
+  await expect.poll(subscriptions).toEqual([`${device}-2`]);
   await walk.state("11-ended-subscription-renewed", { visible: [on, reach], hidden: [refused, offer] });
 });
 

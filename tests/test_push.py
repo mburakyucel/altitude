@@ -372,6 +372,8 @@ class TestPush(AltitudeCase):
         self.assertIn(f"push to {self.endpoint.split('/')[2]} ended with 400 VapidPkHashMismatch: dropped", notes)
         push.notify()
         self.assertEqual(len(self.service.requests), 2)  # an ended subscription is not tried again
+        self.assertFalse(push.subscribe(self.endpoint)["known"])  # so the device renewing it makes a new one
+        push.forget(self.endpoint)
 
         # A refusal that may pass, or that the machine fixes, keeps the device and its retries.
         self.service.refusing, self.service.body = {"/wake/device-2": 429}, b'{"reason":"TooManyRequests"}'
@@ -388,7 +390,7 @@ class TestPush(AltitudeCase):
         self.decision("Rotate the signing key", "Rotate now or at the next release?")
         push.notify()  # owed, and waiting out the device's pace
         before = push.RECORD.read_text()
-        self.assertEqual(push.subscribe(self.endpoint, every=3600), {"push": True, "refused": None})
+        self.assertEqual(push.subscribe(self.endpoint, every=3600), {"push": True, "known": True, "refused": None})
         self.assertEqual(push.RECORD.read_text(), before)  # Altitude opening there changes nothing
         push.subscribe(self.endpoint)  # the device chose every decision meanwhile
         push.notify()
@@ -643,13 +645,13 @@ class TestAlertsAPI(AltitudeCase):
 
         endpoint = "https://push.example/wake/device-1"
         self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint}),
-                         (200, {"push": True, "refused": None}))
+                         (200, {"push": True, "known": False, "refused": None}))
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [endpoint])
         record = json.loads((self.tmp / "push.json").read_text())
         S.atomic_write(self.tmp / "push.json", json.dumps({**record, "refused": {endpoint: "403 BadJwtToken"}}))
         # The device learns its own refusal each time it tells Altitude about its subscription, and says why.
         self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint}),
-                         (200, {"push": True, "refused": "403 BadJwtToken"}))
+                         (200, {"push": True, "known": True, "refused": "403 BadJwtToken"}))
         self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint, "remove": True}),
                          (200, {"push": False}))
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [])
@@ -657,7 +659,7 @@ class TestAlertsAPI(AltitudeCase):
     def test_the_page_sets_how_often_its_device_is_woken(self):
         endpoint = "https://push.example/wake/device-1"
         self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint, "every": 900}),
-                         (200, {"push": True, "refused": None}))
+                         (200, {"push": True, "known": False, "refused": None}))
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["every"], {endpoint: 900})
         self.assertEqual(self.call("POST", "/api/alerts/pace", {"endpoint": endpoint, "every": 3600}),
                          (200, {"every": 3600}))
