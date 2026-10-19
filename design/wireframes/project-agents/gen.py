@@ -55,7 +55,7 @@ def phone(inner, back=P, title="Agents", h=844, overlay=""):
 AGENTS = [
     ("Dependency check", "Weekdays at 07:00 · Found something 2 h ago"),
     ("Review each merge", PULSE + "When a pull request merges · Running, 2 of 20 min"),
-    ("Clean checkout", "Mondays at 08:00 · Waiting for a free task slot"),
+    ("Clean checkout", "Mondays at 08:00 · Waiting for Review each merge"),
     ("What landed", PAUSE + "Fridays at 17:00 · Paused"),
 ]
 
@@ -106,13 +106,15 @@ def status(state="idle"):
     run_now, pause = '<span class="btn">Run now</span>', '<span class="btn">Pause</span>'
     rows = {
         "idle": ("Next: tomorrow at 07:00", run_now + pause, ""),
-        "running": ('<span class="spin"></span>Running · 4 of 20 min · <a ' + U + '>Open</a>', '<span class="btn">Stop</span>', ""),
+        "running": ('<span class="spin"></span>Running · 4 of 20 min · <a ' + U + '>Open</a>', '<span class="btn">Stop</span>' + pause, ""),
         "stopping": ('<span class="spin"></span>Running · 4 of 20 min · <a ' + U + '>Open</a>',
-                     '<span class="btn" aria-disabled="true"><span class="spin"></span>Stopping…</span>', ""),
+                     '<span class="btn" aria-disabled="true"><span class="spin"></span>Stopping…</span>' + pause, ""),
         "waiting": ("Waiting for a free task slot", '<span class="btn">Stop</span>', ""),
+        "waiting-agent": ("Waiting for Review each merge", '<span class="btn">Stop</span>', ""),
+        "new": ("Not on yet", run_now + '<span class="btn">Turn on</span>', ""),
         "starting": ("Next: tomorrow at 07:00", '<span class="btn" style="min-width:86px" aria-label="Run now, starting"><span class="spin"></span>Starting…</span>'
                      '<span class="btn" aria-disabled="true">Pause</span>', ""),
-        "refused": ("Next: tomorrow at 07:00", run_now + pause, '<div class="err">This week’s budget is used.</div>'),
+        "refused": ("Next: tomorrow at 07:00", run_now + pause, '<div class="err">Only 12 min of this week’s budget is left.</div>'),
         "paused": (PAUSE + "Paused", '<span class="btn">Resume</span>' + run_now, ""),
         "self-paused": (PAUSE + "Paused itself after 3 failed runs", '<span class="btn">Resume</span>' + run_now, ""),
         "pause-refused": ("Next: tomorrow at 07:00", run_now + pause,
@@ -166,6 +168,44 @@ board("DesktopAgent", 1440, 1240, desk(AGENT_HEAD + agent_page(), h=1240))
 board("PhoneAgent", 390, 1520, phone(agent_page("running"), back=P, title="Dependency check", h=1520))
 
 
+# ---- one run ----
+REPORT = ('<p>Two packages have security fixes, both in <code>pyproject.toml</code>:</p>'
+          '<ul><li><b>requests</b> 2.32.2 → 2.32.4: fixes a credential leak on redirects. Urgent; nothing else changes.</li>'
+          '<li><b>urllib3</b> 2.2.1 → 2.2.2: fixes proxy header handling. Soon; <code>uploader.py</code> is the only caller.</li></ul>'
+          '<p>Every package in <code>web/package.json</code> is current. <code>make audit</code> passed.</p>')
+SESSION = ('<div class="tl" style="gap:8px">'
+           '<div class="prose">Reading the dependency files, then checking each package for advisories.</div>'
+           '<div class="tool" data-kind="command"><b>Bash</b>pip index versions requests<span class="n">0.8 s</span></div>'
+           '<div class="tool" data-kind="command"><b>Bash</b>make audit<span class="n"><span class="spin"></span></span></div></div>')
+FOLDS = ''.join(f'<div class="fold" style="margin-top:4px">{CHEVR.replace("chev", "")}{t}</div>' for t in ("Brief it ran", "Session"))
+
+
+def run_page(state="ended"):
+    meta = '<p class="muted" style="margin:0 0 16px;font-size:13.5px">On its weekday schedule · Sonnet{}</p>'
+    if state == "running":
+        return (meta.format("")
+                + '<div class="card"><div class="status"><span class="tx"><span class="spin"></span>Running · 4 of 20 min</span>'
+                  '<span class="btns"><span class="btn">Stop</span></span></div></div>'
+                + f'<div class="card" style="margin-top:12px">{SESSION}</div>')
+    if state == "loading":
+        return '<div class="card"><span class="spin" role="status" aria-label="Loading this run…"></span></div>'
+    if state == "failed":
+        return '<div class="card"><p style="margin:0 0 10px">Could not load this run.</p><span class="btn">Retry</span></div>'
+    if state == "fail":
+        return (meta.format(" · 2 min · 0.9M tokens")
+                + '<div class="card"><div class="runhead"><span class="d fail"></span><b>Couldn’t finish</b></div>'
+                  '<p style="margin:6px 0 0"><code>make audit</code> is not a target, and the brief asks for it.</p></div>' + FOLDS)
+    return (meta.format(" · 6 min · 4.1M tokens")
+            + '<div class="card"><div class="runhead"><span class="d found"></span><b>Found something</b></div>'
+              f'<div class="report">{REPORT}</div></div>'
+            + FOLDS)
+
+
+RUN_HEAD = f'<a class="btn setting-back" href="#">{CHEVL}Dependency check</a><h1 style="margin-bottom:4px">Run · Today 07:00</h1>'
+board("DesktopRun", 1440, 900, desk(RUN_HEAD + run_page()))
+board("PhoneRun", 390, 844, phone(run_page("running"), back="Dependency check", title="Run · Today 07:00"))
+
+
 # ---- the form: new and edit ----
 def days(on=(0, 1, 2, 3, 4), time="07:00"):
     letters = "MTWTFSS"
@@ -179,16 +219,18 @@ ZAP = '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5
 XM = '<span class="x" role="button" aria-label="Remove this trigger"><svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></span>'
 
 
-def triggers(kind="schedule", open_schedule=True, empty=False):
+def triggers(kind="schedule", open_schedule=True, empty=False, step1=False, noday=False):
     """The Runs when list: each trigger one row with Remove; a schedule row opens its days and time."""
     if empty:
         rows = '<div class="tr"><span class="tx muted">Only when you run it</span></div>'
     else:
-        sched = (f'<div class="tr open"><div class="row1">{CLOCK}<span class="tx">On a schedule</span>{XM}</div>{days()}</div>' if open_schedule
+        none = '<div class="err" style="margin-top:8px">Pick at least one day.</div>' if noday else ""
+        sched = (f'<div class="tr open"><div class="row1">{CLOCK}<span class="tx">On a schedule</span>{XM}</div>{days(on=() if noday else (0, 1, 2, 3, 4))}{none}</div>' if open_schedule
                  else f'<div class="tr">{CLOCK}<span class="tx">Weekdays at 07:00</span>{XM}</div>')
         merge = f'<div class="tr">{ZAP}<span class="tx">A pull request merges<small>Its run reads that pull request.</small></span>{XM}</div>'
         rows = {"schedule": sched, "event": merge, "both": sched + merge}[kind]
-    return f'<div class="trig">{rows}<div class="add"><span class="btn">+ Add a trigger</span></div></div>'
+    add = "+ Add a schedule" if step1 else "+ Add a trigger"
+    return f'<div class="trig">{rows}<div class="add"><span class="btn">{add}</span></div></div>'
 
 
 TRIGGER_MENU = ('<div class="menu-mock" role="menu"><div class="hi">On a schedule</div><hr><div class="gh">In Altitude</div>'
@@ -216,7 +258,7 @@ def form(new=False, nameless=False, saving=False, refused=False, trig="schedule"
     br = ('<div class="field ta" style="color:var(--text-muted)">For example: check whether the build got slower this week, and say which step.</div>' if new
           else f'<div class="field ta">{brief}</div>')
     body = (f'<label class="flab" style="margin-top:6px">Name</label>{nm}{ex}'
-            f'<label class="flab">What it does</label>{br}<span class="hint">Write it as you would brief a task. It can use anything in the repository, such as a skill or script.</span>'
+            f'<label class="flab">What it does</label>{br}<span class="hint">Write it as you would brief a task. It can use anything in the repository.</span>'
             f'<label class="flab">Runs when</label>{triggers(trig, open_schedule=new)}{EVHINT if trig != "schedule" else ""}'
             f'<label class="flab">Tell me in chat</label>{seg()}'
             f'<div style="display:flex;gap:0 24px;flex-wrap:wrap;align-items:flex-end"><div><label class="flab">Model</label><span class="newtasks"><span><b>Default</b> · Default effort</span>{DOWN}</span></div>'
@@ -241,20 +283,36 @@ board("PhoneEdit", 390, 1150, phone(form(trig="event", name="Review each merge",
 
 
 # ---- chat ----
-def sysa(name, text, kind="plain", link="Open", brief=False):
+def sysa(name, text, kind="plain", link="Open"):
     dd = {"found": "dd found", "fail": "dd fail"}.get(kind, "dd")
     ln = f' <a href="#">{link}</a>' if link else ""
-    extra = ('<span class="bq">Check every dependency in pyproject.toml and web/package.json for security fixes and major releases. Use <code>make audit</code> if it…'
-             ' <a href="#">Show all</a></span>') if brief else ""
-    return f'<div class="sysa"><span class="ln"></span><span class="{dd}"></span><span class="t"><b>{name}</b> {text}{ln}{extra}</span><span class="ln"></span></div>'
+    return f'<div class="sysa"><span class="ln"></span><span class="t"><span class="{dd}"></span><b>{name}</b> {text}{ln}</span><span class="ln"></span></div>'
 
 
-CREATED = sysa("Created Dependency check", "· weekdays at 07:00 · tells you when it finds something ·", link="Edit", brief=True)
+def offer(state="shown"):
+    """L3's offer card: Altitude draws it from the stored definition; only the operator's press saves it."""
+    btns = '<span class="btn primary">Create agent</span><span class="btn">Edit first</span>'
+    foot = ""
+    if state == "saving":
+        btns = ('<span class="btn primary" style="min-width:112px" aria-label="Create agent, saving"><span class="spin"></span></span>'
+                '<span class="btn" aria-disabled="true">Edit first</span>')
+    elif state == "created":
+        btns, foot = "", f'<p class="ok" style="margin:10px 0 0">Created · <a {U}>Open</a></p>'
+    elif state == "refused":
+        btns, foot = "", '<div class="err">Not saved: Dependency check changed since this offer.</div>'
+    elif state == "lapsed":
+        btns, foot = "", '<p class="muted" style="margin:10px 0 0;font-size:13px">This offer lapsed.</p>'
+    row = f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">{btns}</div>' if btns else ""
+    return ('<div class="acard"><small class="muted">New agent</small><b>Dependency check</b>'
+            '<small class="muted">Weekdays at 07:00 · Tells you when it finds something · On when created</small>'
+            f'<p class="clamp">{BRIEF}</p><a {U} style="font-size:13px">Show all</a>{row}{foot}</div>')
+
+
 CHAT = ('<div class="day">Today</div>'
         '<div class="me">Can you set up a check every weekday morning for dependencies with security fixes? Only tell me when there is one.</div>'
-        '<div class="l3"><p>Set up. Say if you’d like it on a smaller model.</p></div>' + CREATED
+        '<div class="l3"><p>Here it is. Say if you’d like it on a smaller model.</p>' + offer() + '</div>'
         + '<div class="day">Tomorrow</div>'
-        + sysa("Dependency check", "found something: 2 packages have security fixes (requests, urllib3).", "found")
+        + sysa("Dependency check", "found something: 2 packages have security fixes.", "found")
         + sysa("Review each merge", "found something on PR #809: the upload limit moved without its test.", "found")
         + '<div class="me">Pause the dependency one for now.</div>'
         + '<div class="l3"><p>Done.</p></div>'
@@ -279,9 +337,9 @@ board("DesktopChat", 1440, 900,
 
 # ---- monitor ----
 def mon_agents():
-    rows = [("harbor · Review each merge", "Running 2 of 20 min", "Found something on PR #809 · yesterday · 6 min · 3.9M tokens"),
+    rows = [("harbor · Review each merge", "Running", "Found something on PR #809 · yesterday · 6 min · 3.9M tokens"),
             ("harbor · Dependency check", "Next tomorrow 07:00", "Found something · 2 h ago · 6 min · 4.1M tokens"),
-            ("harbor · Clean checkout", "Waiting for a slot", "Nothing found · Oct 12 · 9 min · 5.2M tokens"),
+            ("harbor · Clean checkout", "Waiting", "Nothing found · Oct 12 · 9 min · 5.2M tokens"),
             ("harbor · What landed", "Paused", "Skipped Fri: the week’s budget was used")]
     items = "".join(f'<a class="agl" href="#"><div class="tx"><div class="monitor-row"><b>{a}</b><span class="muted">{b}</span></div>'
                     f'<p class="muted" style="margin:0">{c}</p></div>{CHEVR}</a>' for a, b, c in rows)
@@ -292,7 +350,7 @@ SEATS = ('<h2>Seats</h2><div class="card"><div class="monitor-row"><h3 style="ma
          '<div class="monitor-row" style="margin-top:8px"><span>7-day</span><span>38%</span></div><div class="meter"><i style="width:38%"></i></div></div>')
 SESSIONS = ('<h2>Sessions (2)</h2><div class="sessionrow"><div class="monitor-row"><span class="chip">L3</span><b>harbor</b><span class="muted">1 min ago</span></div>'
             '<p class="muted">Claude Code · Fable · context 12%</p><div class="meter"><i style="width:12%"></i></div></div>'
-            '<div class="sessionrow"><div class="monitor-row"><span class="chip">L2</span><b>harbor / Review each merge · agent</b><span class="muted">just now</span></div>'
+            '<div class="sessionrow"><div class="monitor-row"><span class="chip">Agent</span><b>harbor / Review each merge</b><span class="muted">just now</span></div>'
             '<p class="muted">Claude Code · Sonnet · context 6%</p><div class="meter"><i style="width:6%"></i></div></div>')
 board("DesktopMonitor", 1440, 900, desk('<h1>Monitor</h1>' + SEATS + SESSIONS + mon_agents(), monitor=True))
 board("PhoneMonitor", 390, 844,
@@ -306,35 +364,29 @@ def trow(title, status, dot="dot"):
             f'<div class="tt">{title}</div><div class="tm">{status}</div></div>{CHEVR}</a>')
 
 
-def work_rows(open_agents=True):
+def work_rows():
     fold = f'<div class="fold">{CHEVR.replace("chev", "")}Done this week · 2</div>'
-    rows = (trow("Dependency check", "Weekdays at 07:00 · found something 2 h ago", "dot idle")
-            + trow("Review each merge", "When a pull request merges · running", "dot")
-            + trow("Clean checkout", "Mondays at 08:00 · waiting for a slot", "dot q")
-            + trow("What landed", "Fridays at 17:00 · paused", "dot idle")
-            + f'<p class="muted" style="margin:8px 4px 0;font-size:12.5px"><a {U}>All agents</a> · <a {U}>New agent</a></p>')
-    agents = (f'<div><div class="sh"><span class="i-wrap" style="transform:rotate(90deg);display:inline-flex">{CHEVR.replace("chev", "")}</span>Agents <span>4 · 1 running</span></div>{rows}</div>'
-              if open_agents else f'<div class="fold">{CHEVR.replace("chev", "")}Agents · 4 · 1 running</div>')
+    agents = f'<a class="fold agentsrow" href="#">Agents · 4{CHEVR}</a>'
     return ('<div><div class="sh">Current <span>3</span></div>'
             + trow("Review each merge", "Agent run · PR #812 · 2 of 20 min")
             + trow("Speed up the upload test", "Running · PR #811 green")
-            + trow("Clean checkout", "Agent run · waiting for a free task slot", "dot q")
+            + trow("Clean checkout", "Agent run · waiting for Review each merge", "dot q")
             + '</div>' + fold + agents)
 
 
 board("DesktopWork", 1440, 900,
       '<div style="display:grid;grid-template-columns:260px minmax(0,1fr) 340px;height:900px">' + rail() +
       '<main style="display:grid;grid-template-rows:64px minmax(0,1fr) auto;min-height:0;background:var(--surface)">'
-      '<div class="ph"><div><h1>harbor</h1><div class="sub">L3 answered 2 h ago on Claude · 3 tasks in flight</div></div></div>'
+      '<div class="ph"><div><h1>harbor</h1><div class="sub">L3 answered 2 h ago on Claude · 1 task in flight</div></div></div>'
       '<div style="overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:0 28px">'
       '<div style="max-width:760px;width:100%;margin:0 auto;display:flex;flex-direction:column;gap:16px;padding-bottom:16px">'
-      + sysa("Dependency check", "found something: 2 packages have security fixes (requests, urllib3).", "found")
+      + sysa("Dependency check", "found something: 2 packages have security fixes.", "found")
       + sysa("Review each merge", "found something on PR #809: the upload limit moved without its test.", "found")
       + '</div></div><div style="padding:12px 28px 20px"><div class="composer" style="max-width:760px;margin:0 auto"><div class="ph2">Message L3</div></div></div></main>'
       '<aside class="work"><div class="wh"><h2>Work</h2><span>3 current · 2 done this week</span></div>' + work_rows() + '</aside></div>')
 board("PhoneWork", 390, 844,
       '<div class="m"><div></div><header class="mh"><div><span class="name">harbor</span><div class="subl" style="padding-left:4px;margin-top:-6px">L3 · Ready</div></div><span class="sp"></span></header>'
-      '<div class="mbody top"><div class="wh"><h2>Work</h2><span>3 current · 2 done this week</span></div>' + work_rows(open_agents=False) + '</div><div></div>' + tabbar("work") + '</div>')
+      '<div class="mbody top"><div class="wh"><h2>Work</h2><span>3 current · 2 done this week</span></div>' + work_rows() + '</div><div></div>' + tabbar("work") + '</div>')
 
 
 # ---- dialogs ----
@@ -368,8 +420,8 @@ CELLS = [
     ("6 · Budget spent", "agents wait until Monday", section(rows=[AGENTS[3]], bstate="spent", retired=False, top=False)),
     ("7 · Run now starting", "held until the run is read; same width", status("starting")),
     ("8 · Run now refused", "Run now again, with its reason", status("refused")),
-    ("9 · Waiting for a slot", "the machine’s task cap is full", status("waiting")),
-    ("10 · Running, then Stop pressed", "Open goes to the run’s live page", status("running") + '<div style="height:10px"></div>' + status("stopping")),
+    ("9 · Waiting", "for a task slot, or for the project’s other agent run", status("waiting") + '<div style="height:10px"></div>' + status("waiting-agent")),
+    ("10 · Running, then Stop pressed", "Open goes to the run; Pause lets this run finish", status("running") + '<div style="height:10px"></div>' + status("stopping")),
     ("11 · Paused", "Resume answers at once", status("paused")),
     ("12 · Pause refused", "the line and button return", status("pause-refused")),
     ("13 · Every kind of run", "skips have no page, so no chevron", runs(more=False)),
@@ -390,16 +442,15 @@ CELLS = [
     ("22 · A retired agent", "runs and what it did, read-only", RETIRED_PAGE),
     ("23 · Chat lines", "quiet system lines; never an alert or a Needs you count",
      '<div style="display:flex;flex-direction:column;gap:14px;padding:6px 0">'
-     + sysa("Dependency check", "found something: 2 packages have security fixes (requests, urllib3).", "found")
-     + sysa("Dependency check", "found nothing: every dependency is current.")
+     + sysa("Dependency check", "found something: 2 packages have security fixes.", "found")
+     + sysa("Dependency check", "found nothing.")
      + sysa("Dependency check", "couldn’t finish: <code>make audit</code> is not a target.", "fail")
      + sysa("Dependency check", "stopped at its 20-minute limit.", "fail")
      + sysa("Dependency check", "stopped by you.")
-     + CREATED
-     + sysa("Changed Dependency check", "· runs at 06:00 ·", link="Edit")
      + sysa("Retired Dependency check", "", link="") + '</div>'),
-    ("24 · Add a trigger", "a menu under the button; Escape returns focus to it",
-     triggers("schedule", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">' + TRIGGER_MENU + '</div>'),
+    ("24 · Add a trigger", "step 1 adds schedules only; from step 3 a menu, Escape returns focus to the button",
+     triggers("schedule", open_schedule=False, step1=True) + '<div style="height:12px"></div>'
+     + triggers("schedule", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">' + TRIGGER_MENU + '</div>'),
     ("25 · No trigger", "the agent runs only when you press Run now", triggers(empty=True)),
     ("26 · One run for several events", "events during a run wait and go together",
      runs(rows=[("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For PR #810, #811 and #812: #811 changed the retry limit without a test."),
@@ -407,13 +458,24 @@ CELLS = [
     ("27 · Paused after repeated failures", "three runs in a row couldn’t finish",
      status("self-paused") + '<div style="height:12px"></div>'
      + sysa("Dependency check", "paused itself: 3 runs in a row couldn’t finish.", "fail", link="Open")),
-    ("28 · A late run", "missed while Altitude was off; one catch-up, never more",
-     runs(rows=[("", "Oct 13, 07:00, ran at 09:14", "Nothing found", "5 min · 3.4M tokens", "Every dependency is current.")], more=False)),
+    ("28 · A late run, a run that waited too long", "one catch-up after Altitude was off; a wait ends at six hours",
+     runs(rows=[("", "Oct 13, 07:00, ran at 09:14", "Nothing found", "5 min · 3.4M tokens", "Every dependency is current."),
+                ("skip", "Oct 12, 07:00", "Skipped", "", "No free slot for 6 hours.")], more=False)),
+    ("29 · A new agent", "saved paused; try it, then turn it on", status("new")),
+    ("30 · A schedule with no day", "Save waits for a day", triggers(noday=True)),
+    ("31 · Offer in chat", "drawn by Altitude from the stored definition; only your press saves it", offer()),
+    ("32 · Offer saving, then created", "the card stays where it was", offer("saving") + '<div style="height:12px"></div>' + offer("created")),
+    ("33 · Offer refused, offer lapsed", "no buttons once it cannot be saved", offer("refused") + '<div style="height:12px"></div>' + offer("lapsed")),
+    ("34 · Run page loading, read failed", "", run_page("loading") + '<div style="height:12px"></div>' + run_page("failed")),
+    ("35 · A run that couldn’t finish", "its reason in the report’s place", run_page("fail")),
+    ("36 · The project menu", "Agents… is always there, after Project settings…",
+     '<div class="menu-mock" role="menu" style="position:static"><div class="hi">Project settings…</div><div>Agents…</div>'
+     '<div>Setup… <span class="muted">Ready</span></div><div>Reset L3 conversation…</div><div>All settings…</div></div>'),
 ]
-board("States", 1200, 6680, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
+board("States", 1200, 8700, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Every state of the agents page, the agent page, the form, the dialogs and chat, as PROPOSAL.md specifies them.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in CELLS) + '</div>')
-board("PhoneStates", 1720, 4740, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
+board("PhoneStates", 1720, 6040, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: stacked choices, 44px targets, full-width cards.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in CELLS) + '</div>')
 print("written")

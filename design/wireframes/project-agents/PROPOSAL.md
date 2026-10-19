@@ -17,7 +17,8 @@ review, in a shape nobody else can reuse.
 An **agent** is a brief in your own words, one or more **triggers**, and limits. When a trigger fires,
 Altitude starts a **run**: a sandboxed worker that does the brief and ends with a **report**, one line
 and a full answer. You watch a run live as you watch a task, and you create, change, pause, run again
-and retire agents in the app or by asking L3. That is the whole model; everything below is how it
+and retire agents in the app or by asking L3. A run is not a task: it has its own page under its agent,
+and never counts among your tasks. That is the whole model; everything below is how it
 stays safe, cheap and quiet.
 
 - **Triggers.** Run now, always. A schedule: days and a time, several per agent. Something that happens
@@ -26,8 +27,8 @@ stays safe, cheap and quiet.
 - **Inputs.** A run reads the brief, what fired it (the merged pull request, the incident) and the
   report of its own previous run, so it can say what changed instead of repeating itself.
 - **Report.** "Found something", "Nothing found" or "Couldn't finish", one line, the full answer.
-- **Limits.** One run at a time per agent, a time limit per run, a weekly budget per project, and the
-  plan reserve every Altitude feature keeps for your own work.
+- **Limits.** One agent run at a time per project, after your tasks; a time limit per run; a weekly
+  budget per project; and the plan reserve every Altitude feature keeps for your own work.
 
 ## Triggers
 
@@ -35,110 +36,129 @@ stays safe, cheap and quiet.
 | --- | --- | --- |
 | **Run now** | A press on the agent's page, or asking L3 in chat | Step 1 |
 | **On a schedule** | Its own 30-second timer, the one the Weekly review uses | Step 1 |
-| **A pull request merges** | Altitude's own merges, at the moment they land | Step 2 |
-| **A task finishes** | Every task archived as done | Step 2 |
-| **An incident is filed** | Every incident Altitude records | Step 2 |
-| **An issue is opened**, **checks fail on the main branch**, **a release is published** | Nothing today: Altitude has no GitHub webhooks and watches no issues. It reads checks only for its own pull requests | Step 3, through one read-only GitHub reader per project |
+| **A pull request merges** | Altitude's own merges, at the moment they land | Step 3 |
+| **A task finishes** | Every task archived as done | Step 3 |
+| **An incident is filed** | Every incident Altitude records | Step 3 |
+| **An issue is opened**, **checks fail on the main branch**, **a release is published** | Nothing today: Altitude has no GitHub webhooks and watches no issues. It reads checks only for its own pull requests | Step 4, through one read-only GitHub reader per project |
 
 Decided myself: a device pairing is not a trigger, since it belongs to the machine, not a project; a
 chat message is not a trigger, since an agent run on every message would duplicate L3 and spend
 constantly. Asking L3 "run the dependency check" is Run now.
 
-**Overlap.** An agent never runs twice at once. A schedule that comes due during a run is skipped and
-says so. Events that arrive during a run wait, and the next run gets all of them together ("For PR
-#810, #811 and #812"), so a burst of merges costs one more run, not three. A project runs one agent at
-a time, and only in a free task slot with tasks served first, so agents never crowd out your work.
+**Overlap.** An agent has at most one run waiting or running. A schedule that comes due meanwhile is
+skipped and says so. Events that arrive meanwhile join it if it is still waiting, or wait for the next
+run, which gets all of them together ("For PR #810, #811 and #812"), so a burst of merges costs one more
+run, not three. A project runs one agent at a time, and only in a free task slot with tasks served
+first, so agents never crowd out your work. Waiting runs start oldest first, and one that has waited
+six hours is skipped ("no free slot for 6 hours"), so a 07:00 check never starts at midnight.
 
 **Missed time.** A schedule missed while Altitude was off runs once when it comes back, marked late
 ("07:00, ran at 09:14"); older ones are not caught up. An event is never lost while Altitude runs: it is recorded with the agent before
 anything starts. Each trigger fires once: a run is keyed by the agent and what fired it, so a restart
 cannot start the same run twice.
 
-**No loops.** Agent runs are not tasks for the purpose of triggers: a run finishing does not fire "a
-task finishes", and nothing a run does creates an event.
+**No loops.** An event that comes from an agent run never fires an agent: a run finishing is not "a
+task finishes", the incident a failed run files does not fire "an incident is filed", and from step 6
+the merge of a pull request a run opened does not fire "a pull request merges". Each event records
+where it came from, and each step that adds a trigger tests this rule for it.
 
 ## Lifecycle
 
 | Agent | Meaning |
 | --- | --- |
 | **On** | Its triggers fire |
-| **Paused** | Nothing fires; Run now still works. Paused by you, by L3 on your say, or by itself after three runs in a row couldn't finish |
+| **Paused** | Nothing fires; Run now still works. New agents start here; paused by you, by L3 on your say, or by itself after three runs in a row couldn't finish |
 | **Retired** | Gone from lists; its runs stay readable under Retired |
 
 | Run | Meaning |
 | --- | --- |
-| **Waiting** | Fired, waiting for a free task slot (the machine's task cap) |
+| **Waiting** | Fired, waiting for a free task slot or for the project's other agent run to finish |
 | **Running** | Its worker is working; Stop ends it |
 | **Found something** / **Nothing found** | Finished with its report |
 | **Couldn't finish** | The worker failed, or the brief could not be done (`make audit` is not a target) |
 | **Stopped by you** / **Stopped at its limit** | Ended by Stop or by its time limit |
-| **Skipped** | Not started, with the reason: the budget was spent, the plan was inside the reserve, it was still running |
+| **Skipped** | Not started, with the reason: the budget could not fit its limit, the plan was inside the reserve, its last run was still going, no slot for six hours |
 
 **Failure and retry.** A failed run is not retried automatically: its next trigger is the retry, and
-Run now is a manual one. Three runs in a row that couldn't finish or stopped at their limit pause the
-agent (Stop and skips do not count), so a broken brief
-or a lapsed sign-in stops costing time; it says so in chat, and from step 2 it waits in Needs you
+Run now is a manual one. Three triggered runs in a row that couldn't finish or stopped at their limit
+pause the agent (Run now, Stop and skips do not count), so a broken brief
+or a lapsed sign-in stops costing time; it says so in chat, and from step 3 it waits in Needs you
 until you resume, edit or retire it. A system fault still files its incident for L3 as every fault
 does.
 
 **Versions.** Every change to an agent is kept: who, when, from which message or press, and the brief
 as it was. Each run records the version it ran, and its page shows that brief.
 
-**Trying one.** Run now is the test: it runs the brief once, before or between triggers, and never uses
-up a schedule time or an event. For an event agent it replays the latest matching event (the last
-merged pull request).
+**Trying one.** A new agent starts paused, so a half-written brief never fires at 07:00: its page
+offers **Run now** and **Turn on**. Run now is the test: it runs the brief once, before or between
+triggers, and never uses up a schedule time or an event. For an event agent it replays the latest
+matching event (the last merged pull request). When you ask L3 for an agent that should start at once,
+its offer says so and Create turns it on.
 
-**History.** An agent's page lists its runs, newest first. A run is kept as a finished task is, with
-its report; its working copy is removed when it ends and it never pushes a branch.
+**History.** An agent's page lists its runs, newest first. A run keeps its report and session record
+under its agent, as improvement runs are kept; its working copy is removed when it ends and it never
+pushes a branch. Runs older than 90 days are removed, newest ten always kept.
 
 ## What a run may do
 
-A run is a task worker with the helper role (`personas/l1.md`), not the task owner's: its own copy of
-the repository, the same sandbox, model routing, machine task cap, Stop and live session as every task,
-and a result to return instead of proposals, questions, pull requests or reports to manage.
+A run is launched by the same machinery as a task worker, with the helper role (`personas/l1.md`):
+its own copy of the repository, the same sandbox, model routing, machine task cap, Stop and live
+session. It is not a task, so nothing that reads tasks sees it: your task list and counts, the Weekly
+review's look at finished tasks, task recovery and delivery checks stay as they are. Its result is its
+final answer in a fixed shape, read by Altitude when it ends, as a review's is.
 
 **Reports only, enforced.** A run reads the project, builds it and runs its commands in its own copy.
-It has the network, so it can read public pages and fetch dependencies. It has none of your sign-ins:
+It has the network, as tasks do, so it can read public pages and fetch dependencies, and because the
+engine itself needs it: the sandbox cannot let the engine reach its provider and block everything else.
+It holds only what it needs:
 
-- the GitHub token task owners get is not passed to it;
-- the places on this computer that hold sign-ins (SSH keys, the GitHub command's own sign-in file,
-  git's stored credentials, the engines' sign-ins) are hidden from it, as from every sandboxed job: a
-  separate change already under way hides them for all of them, and step 1 depends on it;
-- its door admits an allow-list, reading its own status and returning its report, and refuses every
-  other `alt` verb, including ones added later. It cannot push, open pull requests, file issues or
-  incidents, start tasks, ask questions, message L3 or request approvals.
+- the engine sign-in Altitude gives every job, which it must have to work;
+- no GitHub token, and none of your engine settings, plugins, connectors or skills folders: it starts
+  restricted, as reviews do, with only the repository;
+- no other sign-ins on this computer (SSH keys, the GitHub command's sign-in file, git's stored
+  credentials): a separate change already under way hides them from every sandboxed job, and step 1
+  merges after it;
+- no `alt` verbs at all: its door answers only the engine sign-in some engines ask for, so it cannot
+  push, open pull requests, file issues, start tasks, ask questions, message L3 or change agents.
 
-A model can be wrong in what it reports; it cannot change anything outside its own copy with your
-identity. A credential kept somewhere unusual on this computer is the remaining gap.
+What remains is the risk every task carries today, sharper because nobody watches a run: a page it
+reads could talk it into sending the project's code, or the engine sign-in it holds, somewhere else.
+It cannot act anywhere with your identity, and a credential kept somewhere unusual on this computer
+is the remaining gap.
 
 **Event text is data.** A run receives what fired it quoted as data after its brief, never as
-instructions. In steps 1 and 2 that text comes from Altitude and your own tasks. GitHub text (step 3)
+instructions. In steps 1 to 3 that text comes from Altitude and your own tasks. GitHub text (step 4)
 can be written by anyone, and an agent that holds your private code, reads a stranger's words and can
 reach the internet can be talked into sending one to the other. So by default a GitHub event fires only
-when its author has write access to the repository, and a run fired by anyone else's text runs without
-the network.
+when its author has write access to the repository, and its run receives that author's text alone, not
+comments by others; failing checks and releases come from the repository itself. Running a stranger's
+text with no network beyond the engine's provider would need a new sandbox mode, so step 4 decides
+whether to build one or keep strangers' text out.
 
-| | Reports only (recommended default; the only mode until step 5) | May act (step 5) |
+| | Reports only (recommended default; the only mode until step 6) | May act (step 6) |
 | --- | --- | --- |
 | Reads and runs commands in its own copy | Yes | Yes |
-| GitHub | Public pages; from step 3, a read-only reader | Your sign-in, as task owners have |
+| GitHub | Public pages; from step 4, a read-only reader | Your sign-in, as task owners have |
 | Pull requests | No | May open one: it goes through review and checks and is **held for your merge** |
-| Issues and tasks | No; it can say what it would file (step 4: as suggestions) | Listed for L3 to file on your say |
+| Issues and tasks | No; it can say what it would file (step 5: as suggestions) | Listed for L3 to file on your say |
 | Questions to you | Never | Never |
 
 ## What a run may spend
 
 - **Your plan, never an API key.** Runs use the sign-in task workers use; nothing is billed per use.
-- **A budget per project.** **Agents may use up to 2 hours a week** (30 min, 1, 2, 5 or 10 hours). Every
-  run's minutes count, Run now included; once spent, runs are skipped until Monday and say why. This is
-  the one number that caps what agents take from your week.
+- **A budget per project.** **Agents may use up to 2 hours a week** (30 min, 1, 2, 5 or 10 hours),
+  counted from Monday 00:00 on this computer's clock. Every run's minutes count, Run now included. A run
+  starts only if its whole limit fits what is left, so the budget is never overshot; otherwise it is
+  skipped and says why. Each project has its own, so a project's agents cannot spend another's week.
 - **A limit per run.** 10, 20 (default) or 60 minutes, counted from when its worker starts; at the limit
   Altitude stops it as Stop does. Time is the cap because it reads the same on every engine; tokens are
   recorded and shown, not capped, since most are cached rereads that count very differently against a
   plan.
 - **Your work first.** Before a run starts, Altitude checks the engine routing chose for it: if that
-  engine's weekly or five-hour window is at the reserve (90%, the improvement review's) or unreadable,
-  the run is skipped and says so.
+  engine's weekly or five-hour window is at the reserve (90%, the improvement review's) the run is
+  skipped and says so. A window Altitude cannot read also skips, as the Weekly review does: Altitude
+  reads Codex's windows only once Codex has been used, so an agent pinned to Codex may skip
+  ("Couldn't read Codex's plan use") until then.
 - **Off is off.** Pause stops triggers at once, Stop ends a run, Retire ends the agent.
 
 ## When a run deserves your attention
@@ -146,41 +166,45 @@ the network.
 Agents are quiet by design. Each agent's **Tell me in chat** is When it finds something (default),
 Every run, or Never. A run's line in the project's chat is a system line: it never alerts a device and
 never counts in Needs you. Couldn't finish and Stopped at its limit appear unless Tell me is Never;
-skips never do. Needs you shows an agent only when it needs a decision from you: from step 2 when it has
-paused itself, from step 4 its suggestions (uncounted, as improvement suggestions are), and from step 5
+skips never do. Needs you shows an agent only when it needs a decision from you: from step 3 when it has
+paused itself, from step 5 its suggestions (uncounted, as improvement suggestions are), and from step 6
 its held pull requests, as review cards.
 
 ## Where agents appear
 
 | Surface | What it shows | Step |
 | --- | --- | --- |
-| **Work** (the project's task list) | A running or waiting run is a row in **Current** ("Agent run · PR #812 · 2 of 20 min"), opening the run. After Done this week, a folded **Agents · 4 · 1 running** opens to one row per agent and links to All agents and New agent | 1 |
+| **Work** (the project's task list) | A running or waiting run is a row in **Current** ("Agent run · PR #812 · 2 of 20 min"), opening the run. After Done this week, one row **Agents · 4** opens the Agents page; it lists no agents, so nothing is shown twice | 1 |
+| **Project menu** | **Agents…**, always, so the page is reachable before the first agent exists | 1 |
 | **Agents page** | `/projects/<name>/agents`: every agent with its triggers and latest news, the weekly budget, New agent, Retired | 1 |
 | **Agent page** | Status and Run now, recent runs, what it does and its triggers with Edit, Retire | 1 |
-| **Run page** | The task page of the run: its live session while running, then its report and the brief version it ran | 1 |
-| **Project chat** | Quiet result lines; Altitude-written lines for every change L3 makes, including the brief | 1 |
-| **Monitor** | **Agents** across projects with what comes next and the latest result; a running run among Sessions | 1 |
-| **Needs you** | Paused itself (step 2), suggestions (step 4), held pull requests (step 5) | 2, 4, 5 |
+| **Run page** | Its live session while running, then its report, what fired it and the brief version it ran | 1 |
+| **Project chat** | Quiet result lines; an offer card for every agent L3 would create or change, which only your press saves | 1 |
+| **Monitor** | A running run among **Sessions**; **Agents** across projects with the latest result and what comes next | 2 |
+| **Needs you** | Paused itself (step 3), suggestions (step 5), held pull requests (step 6) | 3, 5, 6 |
 | **Project settings** | Nothing: agents are the project's work, not its configuration | – |
 
 ## L3 manages them on your say
 
-L3 has `alt agent` verbs: list and show at any time; new, change, pause, resume, retire, run and stop
-only in the chat turn answering your own message, which is recorded as the authority, as `alt improve
-run` works today. L3 can suggest an agent in conversation but never creates or changes one on its own
-judgement, and result lines reach its conversation as plain text written by Altitude, so a run's words
-cannot start or change agents. Altitude, not L3, writes the line confirming a change, from the saved
-record and with the brief: "Created Dependency check · weekdays at 07:00 · tells you when it finds
-something", the brief's first two lines with **Show all**, and **Edit**.
+L3 reads agents and runs at any time. In the chat turn answering your own message, which is recorded
+as the authority as `alt improve run` works today, it may pause, resume, retire, run now and stop: each
+only lowers or spends within the limits you set.
+
+Creating an agent or changing what it does (its brief, triggers, model, limit or Tell me) is only ever
+an **offer**: L3's reply carries a card Altitude draws from the stored definition, with the name, the
+triggers, the brief (three lines and **Show all**) and **Create agent** or **Save change**, plus **Edit
+first**, which opens the form filled in. Your press saves exactly what the card shows; L3 cannot save it
+for you. So text a run reported, which L3 may read while answering you, can at worst draft an offer you
+see and decline, never an agent that runs unattended. An offer you leave lapses after seven days.
 
 ## The Weekly improvement review
 
 It stays its own feature and moves onto the same clock: its Monday 08:00 claim becomes one case of the
 schedule rule (the latest due time not yet claimed, never before it was turned on, waiting while
 Altitude activates a change), and its existing tests for a late turn-on, a missed week and a pending
-activation pass unchanged. It is not made an agent because it is deliberately not a task: it has no
+activation pass unchanged. It is not made an agent because it is a different kind of run: it has no
 tools, reads a code-built summary of conversations under terms you agreed to, is proved by an eval, and
-costs far less than a run. When agents gain suggestions (step 4), they use its suggestion card, and it
+costs far less than a run. When agents gain suggestions (step 5), they use its suggestion card, and it
 can then appear in the agents list as a built-in entry.
 
 ## What we considered from elsewhere
@@ -197,8 +221,8 @@ point was read in:
 | Failure | Devin does not retry, the next trigger does ([automations](https://docs.devin.ai/product-guides/automations)); Temporal can pause a schedule on failure ([schedules](https://docs.temporal.io/schedule)) | No automatic retry; three failures in a row pause the agent and tell you |
 | Memory between runs | Temporal hands the last result to the next run ([schedules](https://docs.temporal.io/develop/python/schedules)); Cursor keeps a memories file but warns about untrusted input ([automations](https://cursor.com/docs/cloud-agent/automations)) | The previous report only; a notes file the run writes is left out, since injected text there would steer every later run |
 | What an agent may do | GitHub's agentic workflows run the agent read-only and let separate, capped jobs perform what it asks for ([safe outputs](https://github.github.com/gh-aw/reference/safe-outputs/)); Claude's GitHub Action has no shell or GitHub access until granted ([docs](https://code.claude.com/docs/en/github-actions)) | Reports only, enforced; later actions go through Altitude's own held steps |
-| Text from strangers | Simon Willison's "lethal trifecta": private data, untrusted content and a way out must not meet in one agent ([post](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/)); GitHub's agentic workflows sanitize event text and fire only for writers by default ([triggers](https://github.github.com/gh-aw/reference/triggers/)) | Event text is data; GitHub events fire for writers by default, and others' text runs offline |
-| Loops | Claude's GitHub Action ignores bot actors ([docs](https://code.claude.com/docs/en/github-actions)) | Nothing a run does fires a trigger |
+| Text from strangers | Simon Willison's "lethal trifecta": private data, untrusted content and a way out must not meet in one agent ([post](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/)); GitHub's agentic workflows sanitize event text and fire only for writers by default ([triggers](https://github.github.com/gh-aw/reference/triggers/)) | Event text is data; GitHub events fire for writers by default, and step 4 decides whether strangers' text may reach a run |
+| Loops | Claude's GitHub Action ignores bot actors ([docs](https://code.claude.com/docs/en/github-actions)) | An event that comes from a run fires no agent |
 | Changed instructions | LangSmith versions every edit of an assistant ([assistants](https://docs.langchain.com/langsmith/assistants)) | Every change kept; each run names the version it ran |
 | Trying one first | GitHub's staged mode previews without acting ([staged](https://github.github.com/gh-aw/reference/staged-mode/)); Dagster previews a sensor tick ([testing](https://dagster.io/docs/guides/automate/sensors/testing-sensors)) | Run now, which never uses up a schedule time or an event, replays the latest event |
 | Attention | Codex shows an unread mark when a run needs you ([automations](https://learn.chatgpt.com/docs/automations?surface=app)); Devin mails always, on failure or on success ([automations](https://docs.devin.ai/product-guides/automations)) | A chat line when something was found or failed; Needs you only for decisions |
@@ -212,9 +236,13 @@ the time limit (time reads the same on every engine), and an alert when an expec
 ## Directions
 
 **A. Agents live with the project's work (recommended).** As drawn: runs appear in Work while they
-run, the agents sit folded at the end of Work and on their own page, results come to chat, and Monitor
-carries the cross-project view. Agents are something a project does, so they live where you look at
-what it is doing, folded so they never compete with current work.
+run, one **Agents · 4** row at the end of Work and **Agents…** in the project menu open their page,
+results come to chat, and Monitor carries the cross-project view. Agents are something a project does,
+so they live where you look at what it is doing, in one row that never competes with current work.
+
+**A′. Menu only (the design review's alternative).** The same, without the row in Work: agents are
+reached from the project menu, chat lines and Monitor. Work stays purely about current work, at the
+cost of agents being harder to find for someone who has never made one.
 
 **B. Agents in project settings.** The same pages, reached from the project's settings instead of Work;
 runs stay out of Work and show only in Monitor and chat. Quieter, and close to where the Weekly review
@@ -235,33 +263,34 @@ Approving the design approves the recommendations; any can be changed first.
 | Decision | Recommendation | Alternatives |
 | --- | --- | --- |
 | What an agent is | A free brief, triggers and limits; it can name any skill, script or file in the repository; three editable examples | Fixed kinds with fields; or files in the repository (C) |
-| What a run is | A sandboxed helper worker with your sign-ins withheld and an allow-listed door | A tool-free model call like the improvement review: cheaper, cannot run a check |
-| Act or report | Reports only until step 5, then a per-agent choice with pull requests held for your merge | Allow acting sooner |
+| What a run is | A sandboxed helper worker, kept under its agent rather than as a task, with your sign-ins withheld and no `alt` verbs | A task (reuses the task page, but every task reader would need to skip runs); or a tool-free model call like the improvement review: cheaper, cannot run a check |
+| Act or report | Reports only until step 6, then a per-agent choice with pull requests held for your merge | Allow acting sooner |
 | Spend | A weekly budget per project (2 h), a limit per run (20 min), the 90% reserve | Per-run limit only; or a token cap |
 | Attention | Chat lines only when it found something or failed; Needs you only for decisions | Every run in chat; or a daily digest line |
-| Where they live | With the project's work (A) | Project settings (B) |
+| Where they live | With the project's work (A) | Menu only (A′); project settings (B) |
+| How L3 creates or changes one | An offer card your press saves | L3 saves it on your say, with a confirming line |
 | Weekly review | Separate, sharing the clock | A built-in agent now |
-| Order of steps | Schedule and Run now first; Altitude events; GitHub; suggestions; acting | Events in step 1 |
+| Order of steps | Schedule and Run now first; Monitor; Altitude events; GitHub; suggestions; acting | Events in step 1 |
 
 ## Screens
 
 Boards in this folder at 390×844 (phone) and 1440×900 (desktop), written by `gen.py`: `DesktopWork`,
 `PhoneWork` (the project's task list), `DesktopAgents`, `PhoneAgents` (all agents), `DesktopAgent`,
-`PhoneAgent` (one agent), `DesktopEdit`, `PhoneEdit` (the form), `DesktopChat`, `PhoneChat`,
-`DesktopMonitor`, `PhoneMonitor`, `PhoneRetire`, and every state at both widths: `States` and
-`PhoneStates`. The boards draw the full design; the steps say when each part arrives.
+`PhoneAgent` (one agent), `DesktopRun`, `PhoneRun` (one run), `DesktopEdit`, `PhoneEdit` (the form),
+`DesktopChat`, `PhoneChat`, `DesktopMonitor`, `PhoneMonitor`, `PhoneRetire`, and every state at both
+widths: `States` and `PhoneStates`. The boards draw the full design; the steps say when each part
+arrives.
 
 ### Work
 
 Work keeps answering "what is happening in this project?". A waiting or running run is a row in
 **Current** with the ordinary dot and chevron: the agent's name, then "Agent run · PR #812 · 2 of 20
-min" or "Agent run · waiting for a free task slot"; it counts as current and in flight like any task
-and opens the run's page. Finished runs do not enter Done this week; their history is on the agent's
-page. After Done this week, a fold **Agents · 4 · 1 running** (closed by default, as Done this week)
-opens to one row per agent, its trigger and latest news ("Weekdays at 07:00 · found something 2 h
-ago", "When a pull request merges · running", "Fridays at 17:00 · paused"), each opening the agent's
-page, then **All agents** · **New agent**. With no agents the fold is absent and New agent is on the
-Agents page and in the project menu (**Agents…**).
+min", "Agent run · waiting for a free task slot" or "Agent run · waiting for Review each merge"; it opens
+the run's page. Runs are not tasks: the header's "N tasks in flight" and Done this week leave them out,
+and a finished run leaves Work, its history being on the agent's page. After Done this week, one row
+**Agents · 4** with a chevron opens the Agents page; it names no agents, so nothing in Current is said
+twice. With no agents the row is absent, and the project menu's **Agents…**, after **Project
+settings…**, is always there.
 
 ### All agents
 
@@ -272,7 +301,7 @@ latest news, with a cue before it when one applies (a pulsing dot running, a pau
 
 - "Weekdays at 07:00 · Found something 2 h ago"
 - "When a pull request merges · Running, 2 of 20 min"
-- "Mondays at 08:00 · Waiting for a free task slot"
+- "Mondays at 08:00 · Waiting for Review each merge"
 - "Fridays at 17:00 · Paused"
 - "When you run it · Never run"
 
@@ -289,9 +318,11 @@ rows ("Retired Oct 19 · 23 runs"), each opening its read-only page.
 
 1. **Status card.** On: "Next: tomorrow at 07:00" (a schedule) or "Runs when a pull request merges"
    (events only) with **Run now** and **Pause**. Running: a spinner, "Running · 4 of 20 min", an
-   underlined **Open** to the run, and **Stop**. Waiting: "Waiting for a free task slot" with **Stop**.
-   Paused: a pause mark and "Paused" (or "Paused itself after 3 failed runs"), with
-   **Resume** and **Run now**. Pause and Resume answer at once; the line changes with them.
+   underlined **Open** to the run, **Stop** and **Pause** (Pause lets the run finish and fires nothing
+   after it). Waiting: "Waiting for a free task slot" or "Waiting for Review each merge" with **Stop**.
+   Paused: a pause mark and "Paused" (or "Paused itself after 3 failed runs"), with **Resume** and
+   **Run now**. New: "Not on yet" with **Run now** and **Turn on**. Pause, Resume and Turn on answer at
+   once; the line changes with them.
 2. **Recent runs.** The last ten, newest first: the outcome in semibold, date and time, minutes and
    tokens, and its line beneath, opening the run's page. An event run's line starts with what fired it
    ("For PR #810, #811 and #812: …"). Skipped runs show their reason and have no page or chevron. Dots:
@@ -301,24 +332,36 @@ rows ("Retired Oct 19 · 23 runs"), each opening its read-only page.
    you when it finds something · Default model · Stops after 20 min", and a bordered **Edit**.
 4. **Retire agent**: "It won't run again. Past runs stay readable." and an outlined red **Retire…**.
 
+### One run
+
+`/projects/<name>/agents/<id>/runs/<n>`, **‹ Dependency check** back, the title "Run · Today 07:00".
+A line says what fired it ("On its weekday schedule", "Run now by you", "For PR #812"), the model, and
+minutes and tokens once it has ended. While running: "Running · 4 of 20 min" with **Stop**, then the
+live session as a task's (the same transcript component, read only). Ended: the outcome in semibold
+with its dot, then the full report as text (its one-line summary is what lists and chat show); under
+it, folded, **Brief it ran**, the version as it was then, and **Session**, the transcript. A run has no
+message box, review boxes, terminal or questions.
+
 ### The form
 
 **Edit** opens `/projects/<name>/agents/<id>/edit`; **New agent** opens `/projects/<name>/agents/new`,
 empty, with "Start from an example:" and three underlined examples that fill every field. Fields:
 **Name**; **What it does** (hint "Write it as you would brief a task. It can use anything in the
-repository, such as a skill or script."); **Runs when**; **Tell me in chat** (When it finds something ·
-Every run · Never; segmented on desktop, stacked on phone); **Model** (the model button of §3.6.1);
-**Each run stops after** (10 min · 20 min · 1 hour). **Save** or **Create agent**, and **Cancel**.
+repository."); **Runs when**; **Tell me in chat** (When it finds something · Every run · Never;
+segmented on desktop, stacked on phone); **Model** (the model button of §3.6.1); **Each run stops
+after** (10 min · 20 min · 1 hour). **Save** or **Create agent**, and **Cancel**. A new agent is saved
+paused and its page opens, with Run now and Turn on.
 
 **Runs when** is a bordered list, one trigger per row with an icon (a clock for a schedule, a bolt for
 an event), its words and a Remove button (44px on phone). A schedule row opens to seven day toggles
-(M T W T F S S, 40px targets on phone, on one line) and a time; an event row reads "A pull request merges" over
-"Its run reads that pull request.". **+ Add a trigger** opens a menu: On a schedule; In Altitude: A pull
-request merges · A task finishes · An incident is filed; On GitHub: An issue is opened · Checks fail on
-the main branch · A release is published. The menu lists only what the installed step supports. With
-an event trigger, the hint "Events that arrive during a run go to its next run together." follows the
-list. With no trigger the list reads "Only when you run it". New agents start with a weekday 07:00
-schedule.
+(M T W T F S S, 40px targets on phone, on one line) and a time; with no day on, the row says "Pick at
+least one day." and Save waits for one. An event row reads "A pull request merges" over "Its run reads
+that pull request.". **+ Add a trigger** opens a menu: On a schedule; In Altitude: A pull request
+merges · A task finishes · An incident is filed; On GitHub: An issue is opened · Checks fail on the
+main branch · A release is published. Until events arrive (step 3) it is **+ Add a schedule**, with no
+menu. With an event trigger, the hint "Events that arrive during a run go to its next run together."
+follows the list. Removing the last trigger leaves "Only when you run it". New agents start with a
+weekday 07:00 schedule.
 
 Without a name or brief, Create agent looks unavailable and, pressed, focuses the first empty field
 with "Give it a name and a brief.". Leaving with unsaved changes asks "Discard your changes?" with
@@ -330,29 +373,38 @@ retired agent's page has its title, "Retired Oct 19", its runs and its definitio
 
 ### In chat
 
-Result lines are system lines (§3.4) at the time the run ended, led by the agent's name, with **Open**:
+Result lines are system lines (§3.4) at the time the run ended, one line on desktop, led by the
+agent's name, with **Open**:
 
-- "**Dependency check** found something: 2 packages have security fixes (requests, urllib3)." accent dot
+- "**Dependency check** found something: 2 packages have security fixes." accent dot
 - "**Review each merge** found something on PR #809: the upload limit moved without its test."
-- "**Dependency check** found nothing: every dependency is current." only with Every run
+- "**Dependency check** found nothing." only with Every run
 - "**Dependency check** couldn't finish: `make audit` is not a target." danger dot, unless Never
 - "**Dependency check** stopped at its 20-minute limit." danger dot, unless Never
 - "**Dependency check** stopped by you." only with Every run
 - "**Dependency check** paused itself: 3 runs in a row couldn't finish." danger dot, always
 
-The line is at most 200 characters from the run's own summary, made plain as improvement lines are.
-Changes made through L3 add one line from the record: Created (with the brief), "Changed Dependency
-check: runs at 06:00 · Edit" (a changed brief shows its first two lines), "Paused Dependency check ·
-Resume", "Retired Dependency check". L3's own reply stays short, since the line carries the details.
+The text after the name is at most 120 characters from the run's own summary, made plain as improvement
+lines are; the report itself is one press away.
 
-### Monitor
+When you ask L3 for an agent or a change, its short reply carries the **offer card** (see L3 manages
+them): a bordered card under the reply with "New agent" or "Change to Dependency check" in muted text,
+the name in semibold, the triggers and Tell me on one muted line, the brief clamped to three lines with
+**Show all**, and **Create agent** (primary) or **Save change**, then **Edit first**. A change shows
+only what changes ("Runs at 06:00 instead of 07:00"; a new brief in full). Pressed: the button spins,
+then the card reads "Created · Open" or "Saved · Open" in place. Refused (the agent changed since):
+"Not saved: Dependency check changed since this offer." and the card's buttons go. Lapsed after seven
+days: "This offer lapsed." with no buttons. Pause, resume, retire and stop through L3 add one quiet
+line from the record: "Paused Dependency check · Resume", "Retired Dependency check".
 
-After Sessions, **Agents (N)** lists every agent that is on or ran in the last seven days, across
-projects, one row each with a chevron: "<project> · <name>" with what comes next right-aligned ("Next
-tomorrow 07:00", "Running 2 of 20 min", "Waiting for a slot", "Paused", "On merges") and the latest
-result muted beneath ("Found something on PR #809 · yesterday · 6 min · 3.9M tokens"). A running run is
-also a Sessions row "<project> / <name> · agent". The section shares Monitor's loading and failed read;
-no agents, no section.
+### Monitor (step 2)
+
+A running run is a **Sessions** row like any session: "<project> / <name>" with the chip **Agent**,
+engine, model and context. After Sessions, **Agents (N)** lists every agent that is on or ran in the
+last seven days, across projects, one row each with a chevron: "<project> · <name>", what comes next
+right-aligned ("Next tomorrow 07:00", "On merges", "Paused", "Running"), and the latest finished
+result muted beneath ("Found something on PR #809 · yesterday · 6 min · 3.9M tokens"). The section
+shares Monitor's loading and failed read; no agents, no section.
 
 ### States
 
@@ -361,74 +413,86 @@ no agents, no section.
 | Agents page | Loading / read failed | A spinner named Loading agents…; "Could not load agents." and Retry |
 | Agents page | Empty | The line, the budget select and **New agent** |
 | Budget | Saving / refused / spent | The choice shows at once with Saving…; refused: back to the saved value, "Not saved: <reason>" and Retry; spent: "2 h used this week · agents wait until Monday" in amber |
-| Status | Run now pending / refused | "Starting…" until the run is read; refused: Run now again with its reason ("This week's budget is used.") |
-| Status | Waiting / Stop pressed | "Waiting for a free task slot" with Stop; "Stopping…" until the end is read |
+| Status | New / Run now pending / refused | "Not on yet" with Run now and Turn on; "Starting…" until the run is read; refused: Run now again with its reason ("Only 12 min of this week's budget is left.") |
+| Status | Waiting / running / Stop pressed | "Waiting for a free task slot" or "Waiting for Review each merge" with Stop; Running with Stop and Pause; "Stopping…" until the end is read |
 | Status | Pause pending / refused / paused itself | The line and button change at once; refused: they return with "Not saved: <reason>" and Retry; paused itself: its reason in the line |
-| Runs | None / several events | "No runs yet."; one run's line names every event it took |
-| Form | Saving / refused / unsaved / incomplete | Save shows a spinner; refused keeps the edit with "Not saved: <reason>" and Retry; the Discard dialog; "Give it a name and a brief." |
-| Triggers | Add / none | The trigger menu; "Only when you run it" |
+| Runs | None / several events / late / skipped | "No runs yet."; one run's line names every event it took; "Oct 13, 07:00, ran at 09:14"; "No free slot for 6 hours" with no chevron |
+| Run page | Running / ended / couldn't finish / loading / read failed | The live session and Stop; the report with Brief it ran and Session folded; the reason in the report's place; a spinner; "Could not load this run." and Retry |
+| Form | Saving / refused / unsaved / incomplete / no day | Save shows a spinner; refused keeps the edit with "Not saved: <reason>" and Retry; the Discard dialog; "Give it a name and a brief."; "Pick at least one day." |
+| Triggers | Add / none | The trigger menu (from step 3; before it, + Add a schedule); "Only when you run it" |
+| Offer | Shown / saving / created / refused / lapsed | The card; a spinner in the button; "Created · Open"; "Not saved: …"; "This offer lapsed." |
 | Retire | Pending / refused | "Retiring…" with Cancel unavailable; refused: the reason under the buttons, Cancel works |
 | Page | Retired | Title, "Retired Oct 19", runs, definition as text |
-| Work | Run waiting / running / no agents | Rows in Current; the Agents fold absent |
+| Work | Run waiting / running / no agents | Rows in Current; the Agents row absent, Agents… in the menu |
 | Chat | Each ending | The lines above |
 
 ## Steps
 
 Each step is its own held pull request and comes back to you before it is built.
 
-1. **Agents on a schedule or run by hand, reporting only (this task's increment).** The Agents page,
-   agent page and form with schedule triggers; Run now from the page and through L3; runs as helper
-   workers with your sign-ins withheld and an allow-listed door; the previous report as input; brief
-   versions; the weekly budget, per-run limit and reserve; pausing itself after three failures, said in
-   chat; Work's run rows and Agents fold; chat lines; Monitor's section; docs and tests.
-2. **Altitude events.** A pull request merges, a task finishes, an incident is filed; events that wait
-   and go together; Run now on the latest event; the paused-itself item in Needs you.
-3. **GitHub.** One read-only GitHub reader per project, run by Altitude with your sign-in and never
+1. **Agents on a schedule or run by hand, reporting only (this task's increment).** The record and its
+   versions; schedule triggers on the shared clock with **+ Add a schedule**; Run now; runs under their
+   agent with the run page, the previous report as input, the restricted launch and no `alt` verbs; the
+   weekly budget, per-run limit and reserve; pausing itself after three failures, said in chat; the
+   Agents page, agent page, form and retire; Work's run rows and Agents row, the menu's Agents…; chat
+   lines; L3's verbs and offer cards; docs and tests. It merges after the separate change that hides
+   sign-ins from sandboxed jobs.
+2. **Monitor.** Runs among Sessions and the Agents section.
+3. **Altitude events.** A pull request merges, a task finishes, an incident is filed, with the trigger
+   menu; events that wait and go together; Run now on the latest event; the paused-itself item in Needs
+   you.
+4. **GitHub.** One read-only GitHub reader per project, run by Altitude with your sign-in and never
    inside a run, polling for opened issues, failing checks on the main branch and releases; the same
    reader gives runs read-only access to private issues and pull requests. Events fire only for authors
-   with write access unless you widen it, and a run fired by anyone else's text has no network. It is a
-   new security boundary, so it gets its own review.
-4. **Suggestions.** A run may propose up to three tasks, shown on the improvement suggestion card in
+   with write access, and whether strangers' text can ever reach a run is decided here. It is a new
+   security boundary, so it gets its own review.
+5. **Suggestions.** A run may propose up to three tasks, shown on the improvement suggestion card in
    chat and under Suggestions in Needs you, with Make a task and Dismiss; tasks made from one show
    "from <agent>" in Work. The Weekly review appears among the agents as a built-in entry.
-5. **Acting.** A per-agent choice to open pull requests, each held for your merge as a review card, and
+6. **Acting.** A per-agent choice to open pull requests, each held for your merge as a review card, and
    to list issues for L3 to file.
 
 ## How the first step is built
 
-- **Record.** `<project>/agents.json` holds each agent (name, brief, triggers, model and effort, tell,
-  limit, state, the reason it paused), the weekly budget, every change with the brief as it was (who,
-  when, source message or press), and per trigger the last claimed due time. A run is a task carrying
-  `agent: {id, version, trigger}` with the trigger's key; its history is read from those tasks, so no
-  second run store exists.
+- **Record.** `<project>/project-agents.json` holds each agent (name, brief, triggers, model and effort,
+  tell, limit, state, the reason it paused), the weekly budget, every change with the brief as it was
+  (who, when, source message or press), per trigger the last claimed due time, and the runs (id,
+  version, trigger key, state, times, usage, report line). Each run's report, prompt and session
+  folder live in `project-agents/<id>/<run>/`. The code says "project agent" throughout, never a bare
+  "agent", which already names a task's worker session and the engines' own agent definitions.
 - **Clock.** One function returns the latest due time not yet claimed; `improve.weekly` uses it in place
   of its own Monday arithmetic, which is removed. The project tick claims due triggers durably, then
   creates their runs; while Altitude waits to activate a change, a claim waits for a later tick, as
-  Weekly's does. A claim for an agent already running is recorded as a skip.
-- **Run.** `tasks.new` with the run template (`templates/agent-run.md`: the brief, the trigger, the
-  previous report, the result contract, the limit) and the agent's model pin. The worker launches with
-  the L1 persona and no GitHub token, in the sandbox every task uses, whose credential hiding comes
-  from the separate change it depends on. The task door admits only `alt task status` and `alt task done --digest
-  --found|--nothing-found` for a run. Dispatch checks the budget and the routed engine's reserve before
-  launch (`route.improvement_reserve` becomes one engine-parameterised check, used by both). The daemon
-  stops a run at its limit. Runs are marked as runs in `alt task list` and L3's state digest, enter
-  Work's Current only while waiting or running, archive like finished tasks and push no branch.
-- **Chat.** Archival's task-linked line becomes the agent's line, written by Altitude and posted as Tell
-  me allows.
-- **Interfaces.** `alt agent list|show|new|set|pause|resume|retire|run|stop` on L3's socket and the
-  operator's CLI; `GET /api/agents/<project>` and `POST /api/agents` presses with a request id from a
-  paired device; Monitor's `agents` rows; the project view's run rows and agents fold.
+  Weekly's does. A claim for an agent with a run waiting or running is recorded as a skip.
+- **Run.** A worker job of its own kind (`project-agent-run`), launched by the dispatcher's worker path
+  with the run template (`templates/project-agent-run.md`: the brief, the trigger, the previous report,
+  the result shape, the limit), the L1 persona, the agent's model pin, Claude restricted as reviews run
+  and nothing of the operator's engine folder linked, and no GitHub token. It counts toward the
+  machine's task cap and starts only in a free slot, tasks first. Its door answers only the engine
+  sign-in. Dispatch checks the budget against the run's whole limit and the routed engine's reserve
+  before launch (`route.improvement_reserve` becomes one engine-parameterised check, used by both). The
+  daemon stops a run at its limit; its final answer is read and validated as its report.
+- **Chat.** The result line is written by Altitude from the run record and posted as Tell me allows.
+  `alt agent offer` stores a definition on L3's reply; the press, a paired-device request with an id,
+  saves exactly that definition.
+- **Interfaces.** `alt agent list|show|offer|pause|resume|retire|run|stop` on L3's socket;
+  `alt agent new|set` for the operator's own CLI only; `GET /api/agents/<project>` and `POST /api/agents`
+  presses with a request id from a paired device; the project view's run rows and Agents row.
 - **Docs.** ARCHITECTURE (a Project agents section), CLI, OPERATIONS (configuring agents), SPEC (Work,
-  a new Agents section, Monitor, chat lines), the L3 persona's verbs, the changelog.
-- **Tests.** The schedule rule (due, missed, turned on late, paused, still running, activation wait)
-  with Weekly's cases unchanged; budget and reserve skips on each engine; run creation and its inputs;
-  the door's allow-list (every other verb refused, enumerated from the parser); no GitHub token in the
-  launch; the limit stop; pausing after three failures; versions;
-  result routing; L3 authority; the API; and phone and desktop walkthroughs of every step-1 state with
-  fictional fixtures; engine calls stay at the fixture seam.
+  the project menu, a new Agents section, chat lines and the offer card), the L3 persona's verbs, the
+  changelog.
+- **Tests.** The schedule rule (due, missed, turned on late, paused, waiting, running, activation wait)
+  with Weekly's cases unchanged; budget fit and reserve skips on each engine, unknown readings included;
+  the wait order and six-hour skip; run creation and its inputs; the launch's restricted settings, empty
+  linked folder and missing GitHub token; the door refusing every request but sign-in; the limit stop;
+  pausing after three triggered failures and not after Run now; versions; that task lists, counts, the
+  Weekly review's finished tasks and recovery never see a run; offers (saved only by the press, refused
+  when stale, lapsed); L3 authority; the API; and phone and desktop walkthroughs of every step-1 state
+  with fictional fixtures; engine calls stay at the fixture seam.
 
 ### Mac verification
 
 The schedule lives in the service's own timer, so no launchd job is added. The Mac still owes: a run
-launches under Seatbelt with no GitHub token in its job's input, its door refuses a verb outside the allow-list, and the limit stop ends its job. These are
+launches under Seatbelt with no GitHub token in its job's input and nothing of the operator's engine
+folder linked, its door refuses everything but sign-in, and the limit stop ends its job. These are
 listed in the pull request for L3 to file.
