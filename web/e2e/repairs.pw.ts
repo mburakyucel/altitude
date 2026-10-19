@@ -12,6 +12,9 @@ import { walkthrough } from "./walkthrough";
 
 type Json = Record<string, unknown>;
 const id = (digit: string) => digit.repeat(32);
+
+// An overview or monitor read still in flight at teardown would find its response disposed.
+test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "wait" }); });
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
 const APP = { id: id("a"), title: "The page does not load on my phone", route: "app", engine: "claude", started: ago(12), ended: null, outcome: null, status: "working" };
