@@ -32,11 +32,13 @@ images again and Edit returns the caption to the field and the images to the pic
 response shows Unconfirmed with Copy to draft (the caption) and no send Retry; a read that shows the
 message settles it. Navigation remains available. No artificial percentage implies upload progress.
 
-Saved thumbnails stay with their caption and open in a full-image modal on phone/desktop, with
+When Altitude's record takes the message over, each saved thumbnail starts from the picture that was
+sent and switches to the saved copy once that loads, so the image never blinks to a placeholder. Saved
+thumbnails stay with their caption and open in a full-image modal on phone/desktop, with
 Fit/Zoom, scrolling, Close/Escape and focus return. A viewer opened on a queued project image stays
 open, with its zoom, while history admission replaces the queued row; closing it then focuses that
 image's stored thumbnail, or its Retry or placeholder while the new row reads. Leaving the page
-closes the viewer. Loading, missing and denied reads keep an
+closes the viewer. Loading (of an image the page did not just send, or of a queued project message once its turn begins), missing and denied reads keep an
 image-sized placeholder, readable message text and Retry that only repeats the read. A queued
 project image retains its own caption and Remove until delivery starts. Unclaimed task image messages
 offer the same Remove as text; removal replaces the caption and thumbnails with Message removed and
