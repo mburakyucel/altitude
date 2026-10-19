@@ -34,8 +34,9 @@ def interrupted(n: int) -> dict:
         folder = next((found for found in folders() if found not in before), None)
         mutmut = bool(folder) and any("/venv/bin/mutmut run" in line for line in naming(folder))
         time.sleep(1)
-    planted = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(900)", f"{folder}/planted"],
-                               start_new_session=True) if mutmut else None
+    # Named as a test's leftover names it: through TMPDIR, the run's resolved folder (/tmp is /private/tmp here).
+    planted = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(900)",
+                                f"{os.path.realpath(folder)}/planted"], start_new_session=True) if mutmut else None
     time.sleep(15)
     during = naming(folder) if folder else []
     run.send_signal(signal.SIGINT)
@@ -46,10 +47,11 @@ def interrupted(n: int) -> dict:
         code = "did not end"
     time.sleep(2)
     ended = planted is not None and planted.poll() is not None
+    after = naming(folder) if folder else None
     if planted is not None and not ended:
         planted.kill()
     return {"folder": folder, "mutmut": mutmut, "during": during, "exit": code, "planted_ended": ended,
-            "folder_left": bool(folder) and os.path.exists(folder), "after": naming(folder) if folder else None}
+            "folder_left": bool(folder) and os.path.exists(folder), "after": after}
 
 
 if __name__ == "__main__":
