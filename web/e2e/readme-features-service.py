@@ -61,7 +61,7 @@ def main():
             server.l3_verb_request(PROJECT, {"kind": "alt", "args": ["task", "new", "--title", CREATED, "-"],
                                              "stdin": "Hold cursors issued during the v2 switch until it completes."})
             return {"text": "Started it, with the empty searches at the switch in its brief.", "session_id": "readme-l3"}
-        return {"text": "Noted.", "session_id": "readme-l3"}
+        raise AssertionError(f"the example's coordinator has no scripted answer for: {prompt[:200]}")
     engines.claude_print = coordinator
 
     # Proposal review: the synonyms editor's owner shows its design and the other engine's review before building it.

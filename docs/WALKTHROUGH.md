@@ -131,7 +131,7 @@ each shows the one screen that proves it.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-create-phone.webp">
-  <img src="images/feature-create.webp" alt="The coordinator answers that searches started at the index switch can come back empty and offers Create task for holding cursors during the switch; after the press, the reply shows Task created and the new task's card." width="860">
+  <img src="images/feature-create.webp" alt="The coordinator answers that searches started at the index switch can come back empty and offers Create task for holding cursors during the switch; after the press, the reply shows Task created and the coordinator answers that it started the task, with the new task's card." width="860">
 </picture>
 
 **Approve the design before it is built.** The synonyms editor's owner shows its proposal with the other

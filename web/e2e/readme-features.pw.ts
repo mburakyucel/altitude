@@ -36,6 +36,9 @@ test("a created task, a proposal review, the task view, review before merge, a r
   const created = chat.locator(".task-card").filter({ hasText: "Hold cursors during the index switch" });
   await expect(created).toBeVisible();
   await expect(chat.getByRole("button", { name: "Task created", exact: true })).toBeVisible();
+  // The coordinator's turn has ended: its reply shows and it no longer answers.
+  await expect(chat.getByText("Started it, with the empty searches at the switch in its brief.", { exact: true })).toBeVisible();
+  await expect(chat.getByRole("status", { name: "L3 is answering" })).toBeHidden();
   await capture("create-2-created");
 
   // The synonyms editor's owner asks to build its design; Needs you shows the proposal, its document and its review.

@@ -44,7 +44,8 @@ def browser() -> pathlib.Path:
     """Playwright's headless shell, from the folder `pnpm ui` and the validation runner install it into."""
     folder = pathlib.Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
                           or pathlib.Path(os.environ.get("ALTITUDE_HOME", pathlib.Path.home() / ".altitude")) / "browsers")
-    found = sorted(folder.glob("chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell"))
+    found = sorted(folder.glob("chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell"),
+                   key=lambda shell: int(shell.parts[-3].rsplit("-", 1)[1]))  # the newest build
     if not found:
         sys.exit(f"no Chromium headless shell under {folder}; run pnpm exec playwright install chromium in web/")
     return found[-1]
