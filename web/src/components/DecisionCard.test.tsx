@@ -197,6 +197,37 @@ describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () =
     mount(<QuestionSet decisions={[{ ...question, pr: null }]} chat />);
     expect(screen.queryByRole("link", { name: /^View PR/ })).toBeNull();
   });
+  it("the held PR's merge cards show its pictures between the text and the review, with Before and After", async () => {
+    const side = (name: string) => ({ url: `/api/shown/atlas/gate/pr/7/files/${name}.png`, width: 4, height: 3 });
+    const pr_images = { available: true, not_shown: ["docs/logo.svg"], pictures: [
+      { path: "docs/hero.png", name: "hero.png", change: "changed", before: side("a"), after: side("b") },
+      { path: "docs/new.png", name: "new.png", change: "added", before: null, after: side("d") },
+      { path: "docs/gone.png", name: "gone.png", change: "removed", before: side("c"), after: null },
+      { path: "docs/more.png", name: "more.png", change: "removed", before: side("e"), after: null }] };
+    const review = DecisionSchema.parse({ ...base, kind: "review", pr: 7, question: "Review PR #7 before merge", pr_images, review: { subject: "changes", ...done, findings: 0 } });
+    const { container, unmount } = mount(<ReviewDecision decision={review} />);
+    expect(container.querySelector(".decision-question ~ .pr-pictures ~ .question-review")).not.toBeNull();
+    expect(screen.getByRole("img", { name: "hero.png, after" })).toHaveAttribute("src", side("b").url);
+    expect(screen.getByRole("img", { name: "gone.png, removed" })).toHaveAttribute("src", side("c").url);
+    expect(screen.getByText("New")).toBeVisible();
+    expect(screen.getByText("Removed")).toBeVisible();
+    expect(screen.queryByText("docs/more.png")).toBeNull();
+    expect(screen.getByText("Also changed: docs/logo.svg")).toBeVisible();
+    screen.getByRole("button", { name: "Before" }).click();
+    expect(await screen.findByRole("img", { name: "hero.png, before" })).toHaveAttribute("src", side("a").url);
+    expect(screen.getByRole("button", { name: "Before" })).toHaveAttribute("aria-pressed", "true");
+    screen.getByRole("button", { name: "Show 1 more picture" }).click();
+    expect(await screen.findByText("docs/more.png")).toBeVisible();
+    unmount();
+    // The owner's merge question shows the same pictures; gone copies are one closed card; a text-only PR shows none.
+    const question = DecisionSchema.parse({ ...base, question: "Merge the fix?", pr: 7, pr_images: { ...pr_images, available: false } });
+    const asked = mount(<QuestionSet decisions={[question]} chat />);
+    expect(screen.getByText("Preview unavailable")).toBeVisible();
+    expect(screen.queryByRole("img")).toBeNull();
+    asked.unmount();
+    const plain = mount(<ReviewDecision decision={{ ...review, pr_images: null }} />);
+    expect(plain.container.querySelector(".pr-pictures")).toBeNull();
+  });
   it("a question that is neither a proposal nor a merge approval has no line", () => {
     const { container, unmount } = mount(<QuestionSet decisions={[DecisionSchema.parse({ ...base, question: "Where should the backup live?" })]} />);
     expect(container.querySelector(".question-review")).toBeNull();
