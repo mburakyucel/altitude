@@ -215,6 +215,54 @@ describe("Adversarial review", () => {
     expect(app.posts()).toEqual([{ project: "atlas", slug: "index", action: "withdraw", review_id: "review-two" }]);
   });
 
+  it("a skip shows from the press on the review and its merge question; a refusal puts both back with Retry", async () => {
+    const open = ReviewSchema.parse({ ...completed, id: "review-open", requested_by: "operator", unresolved: ["one"],
+      dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs the storage owner's decision." }, completed.dispositions[1]] });
+    const question = { project: "atlas", slug: "index", title: "Keep pagination stable", id: "merge", revision: 1, status: "open", audience: "operator",
+      asked_by: "l2", asked: "2026-09-22T12:30:00Z", question: "Merge PR #7?", pr: 7, review: { subject: "changes", id: "review-open", state: "completed", findings: 2, open: 1, reconciled: true } };
+    let answer!: (response: Response) => void;
+    const app = setup({ ...withReviews(open), state: "blocked", question, questions: [question], question_group: { id: "g1", revision: 1, questions: [question] } } as typeof empty,
+      () => new Promise<Response>((resolve) => { answer = resolve; }));
+    const line = (state: string) => screen.queryByRole("link", { name: `Implementation review · ${state}` });
+    await waitFor(() => expect(line("done, 1 open finding")).toBeVisible());
+    await app.user.click(card("review-open").getByRole("button", { name: "Show implementation review details" }));
+    await app.user.click(card("review-open").getByRole("button", { name: "Skip review" }));
+    await app.user.click(within(card("review-open").getByRole("group", { name: "Skip review" })).getByRole("button", { name: "Skip review" }));
+    expect(await card("review-open").findByText("Skipped by you")).toBeVisible();
+    expect(line("skipped by you")).toBeVisible();
+    expect(line("done, 1 open finding")).toBeNull();
+    await act(async () => answer(json({ error: "Altitude is busy." }, 503)));
+    expect(await screen.findByText(/^Not saved: Altitude is busy\./)).toBeVisible();
+    expect(line("done, 1 open finding")).toBeVisible();
+    expect(card("review-open").queryByText("Skipped by you")).toBeNull();
+    await app.user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(app.posts()).toHaveLength(2);
+  });
+
+  it("a skip Altitude saved despite a lost reply claims no refusal, and its findings leave the merge gate once", async () => {
+    const earlier = ReviewSchema.parse({ ...completed, id: "review-earlier", requested_by: "operator", unresolved: ["one"],
+      dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs the storage owner's decision." }, completed.dispositions[1]] });
+    const latest = ReviewSchema.parse({ ...earlier, id: "review-open", requested_at: "2026-09-22T13:00:00Z" });
+    let answer!: (response: Response) => void;
+    const app = setup({ ...withReviews(earlier, latest), state: "blocked" } as typeof empty, () => new Promise<Response>((resolve) => { answer = resolve; }));
+    const gate = () => screen.queryAllByText("1 open in an earlier review, blocks merge");
+    await waitFor(() => expect(gate().length).toBeGreaterThan(0));
+    await app.user.click(card("review-open").getByRole("button", { name: "Show implementation review details" }));
+    await app.user.click(card("review-open").getByRole("button", { name: "Skip review" }));
+    await app.user.click(within(card("review-open").getByRole("group", { name: "Skip review" })).getByRole("button", { name: "Skip review" }));
+    expect((await card("review-open").findAllByText(/Skipped by you/))[0]).toBeVisible();
+    expect(gate().length).toBeGreaterThan(0);
+    // A read lands after Altitude saved the skip but before its reply: the skipped findings already left its count.
+    await app.update({ ...withReviews(earlier, ReviewSchema.parse({ ...latest, state: "withdrawn", withdrawn_by: "operator", can_withdraw: false })), state: "blocked" } as typeof empty);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(gate().length).toBeGreaterThan(0);
+    await act(async () => answer(json({ error: "Altitude is busy." }, 503)));
+    await app.settled();
+    expect(screen.queryByText(/^Not saved/)).toBeNull();
+    expect(card("review-open").getAllByText(/Skipped by you/)[0]).toBeVisible();
+    expect(gate().length).toBeGreaterThan(0);
+  });
+
   it("requires a successful status read after an uncertain POST and preserves the draft", async () => {
     const app = setup(empty, () => { app.failRead(true); return json({ error: "lost receipt" }, 502); });
     const field = await screen.findByLabelText("Message the L2");

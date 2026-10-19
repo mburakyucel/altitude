@@ -84,25 +84,40 @@ test("posted cards, endings and the running line take their presses and appear u
   await press(ending.getByRole("button", { name: "Hide", exact: true }));
   await expect(ending.locator(".irc-details")).toBeHidden();
 
-  // Dismiss folds the suggestion with Undo; Undo brings its buttons back.
+  // Dismiss folds the suggestion at the press, its Undo waiting for the save; Undo unfolds it at the press.
+  const undo = checks.getByRole("button", { name: "Undo", exact: true });
+  const dismissing = await hold(page);
   await press(dismiss(checks));
-  await walk.state("04-dismissed-with-undo", {
-    visible: [checks.getByText(/^Dismissed/), checks.getByRole("button", { name: "Undo", exact: true })],
-    hidden: [make(checks), dismiss(checks), checks.getByText("Two reports listed a check as passed without its log.")],
+  await walk.state("04-dismissed-at-the-press", {
+    visible: [checks.getByText(/^Dismissed/), saving(checks)],
+    hidden: [make(checks), dismiss(checks), undo, checks.getByText("Two reports listed a check as passed without its log.")],
   });
-  await press(checks.getByRole("button", { name: "Undo", exact: true }));
-  await expect(make(checks)).toBeVisible();
-  await expect(checks.getByRole("button", { name: "Undo", exact: true })).toBeHidden();
+  await dismissing();
+  await walk.state("04b-dismissed-with-undo", { visible: [checks.getByText(/^Dismissed/), undo], hidden: [saving(checks), make(checks)] });
+  const undoing = await hold(page);
+  await press(undo);
+  await walk.state("04c-undone-at-the-press", { visible: [make(checks), dismiss(checks), saving(checks)], hidden: [undo, checks.getByText(/^Dismissed/)] });
+  await expect(dismiss(checks)).toBeDisabled();
+  await undoing();
+  await expect(saving(checks)).toBeHidden();
+  await expect(dismiss(checks)).toBeEnabled();
 
-  // A press that fails to save says so in place and keeps the buttons.
+  // A refused Dismiss unfolds again, saying why with Retry.
   const failing = await hold(page, (route) => route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"fictional failure"}' }));
   await press(dismiss(checks));
-  await expect(saving(checks)).toBeVisible();
+  await expect(checks.getByText(/^Dismissed/)).toBeVisible();
   await failing();
+  const retry = checks.getByRole("alert").getByRole("button", { name: "Retry", exact: true });
   await walk.state("05-press-not-saved", {
-    visible: [checks.getByRole("alert").filter({ hasText: "Not saved. Try again." }), make(checks), dismiss(checks)],
+    visible: [checks.getByRole("alert").filter({ hasText: "Not saved: fictional failure" }), retry, make(checks), dismiss(checks)],
     hidden: [saving(checks), checks.getByText(/^Dismissed/)],
   });
+  // Retry dismisses it; Undo brings it back for the presses below.
+  await press(retry);
+  await expect(undo).toBeVisible();
+  await expect(checks.getByRole("alert")).toBeHidden();
+  await press(undo);
+  await expect(dismiss(checks)).toBeEnabled();
 
   // Make a task: a spinner while it saves, then L3 is opening its task.
   const saved = await hold(page);
