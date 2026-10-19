@@ -42,7 +42,7 @@ class RepairCase(AltitudeCase):
 
     def setUp(self):
         super().setUp()
-        self.addCleanup(shutil.rmtree, repair.DIR, True)
+        self.addCleanup(shutil.rmtree, repair.home(), True)
         self.private_ledgers()
         self.patch(platform, "process_table", return_value={os.getpid(): (1, [])})
         self.patch(installation, "doctor", return_value={"checks": PASSING})
@@ -72,7 +72,7 @@ class TerminalRepair(RepairCase):
         self.assertIn("Altitude from source · service running", printed)
         self.assertIn("Starting a repair with Claude in this terminal. It acts as you and asks before each step", printed)
         [row] = repair.records()
-        folder = repair.DIR / row["id"]
+        folder = repair.home() / row["id"]
         seen = json.loads(self.log.read_text())
         # The engine's own interactive session, in the repair's folder, told to read its brief first.
         self.assertEqual(seen["argv"][1:], [f"You are a repair agent for this Altitude installation. Read "
@@ -108,7 +108,7 @@ class TerminalRepair(RepairCase):
         self.assertEqual(code, 3)
         [row] = repair.records()
         self.assertEqual(row["title"], "Repair")
-        self.assertIn("did not describe the problem; ask them what is wrong", (repair.DIR / row["id"] / "brief.md").read_text())
+        self.assertIn("did not describe the problem; ask them what is wrong", (repair.home() / row["id"] / "brief.md").read_text())
         repair.check_ended()
         self.assertEqual(repair.record(row["id"])["outcome"], "no_report")
 
@@ -117,7 +117,7 @@ class TerminalRepair(RepairCase):
         self.start(None)
         [row] = repair.records()
         self.assertEqual(row["title"], "Failed update to 0.9.0")
-        brief = (repair.DIR / row["id"] / "brief.md").read_text()
+        brief = (repair.home() / row["id"] / "brief.md").read_text()
         self.assertIn("the update to v0.9.0 did not finish; its cause is under Altitude's records below.", brief)
         self.assertIn("The failed update's cause:\n\n```text\nThe download failed its certificate check.\n```", brief)
 
@@ -129,7 +129,7 @@ class TerminalRepair(RepairCase):
         self.patch(installation, "describe_doctor", return_value="detail with ``` a fence\nand ```` a longer one")
         self.start()
         [row] = repair.records()
-        brief = (repair.DIR / row["id"] / "brief.md").read_text()
+        brief = (repair.home() / row["id"] / "brief.md").read_text()
         self.assertNotIn("IGNORE YOUR RULES", brief, "a fault's free text is never in the brief")
         self.assertIn("dispatch · last 2999-01-01T00:00:00+00:00 · demo/fix-login · 2 time(s) · incident I-1", brief)
         self.assertIn("`````text\ndetail with ``` a fence\nand ```` a longer one\n`````", brief)
@@ -181,7 +181,7 @@ class OneAtATime(RepairCase):
         repair.running()  # makes the lock file
         holder = subprocess.Popen([sys.executable, "-c", "import fcntl, sys, time\nf = open(sys.argv[1], 'rb')\n"
                                    "fcntl.flock(f, fcntl.LOCK_EX)\nprint('held', flush=True)\ntime.sleep(60)",
-                                   str(repair.DIR / "lock")], stdout=subprocess.PIPE, text=True)
+                                   str(repair.home() / "lock")], stdout=subprocess.PIPE, text=True)
         self.addCleanup(holder.stdout.close)
         self.addCleanup(holder.kill)
         self.assertEqual(holder.stdout.readline().strip(), "held")
@@ -234,8 +234,8 @@ class OneAtATime(RepairCase):
     def test_the_check_waits_for_the_running_repair_and_settles_an_interrupted_one(self):
         interrupted, live = "a" * 32, "b" * 32
         for ident in (interrupted, live):
-            (repair.DIR / ident).mkdir(parents=True)
-            (repair.DIR / ident / "repair.json").write_text(json.dumps({
+            (repair.home() / ident).mkdir(parents=True)
+            (repair.home() / ident / "repair.json").write_text(json.dumps({
                 "id": ident, "route": "terminal", "title": "Repair", "engine": "claude", "started": "2026-10-19T00:00:00+00:00",
                 "ended": None, "report": None, "update": None, "check": None, "outcome": None}))
         self.patch(repair, "running", return_value={"id": live, "route": "terminal"})
@@ -271,13 +271,13 @@ class Outcome(RepairCase):
         self.setenv("ALTITUDE_REPAIR", "c" * 32)
         with self.assertRaisesRegex(repair.Refused, "record is missing"):
             repair.report("w", "c", "r")
-        self.assertFalse((repair.DIR / ("c" * 32)).exists())
-        (repair.DIR / ("c" * 32)).mkdir(parents=True)
-        (repair.DIR / ("c" * 32) / "repair.json").write_text(json.dumps({"id": "c" * 32, "ended": None}))
+        self.assertFalse((repair.home() / ("c" * 32)).exists())
+        (repair.home() / ("c" * 32)).mkdir(parents=True)
+        (repair.home() / ("c" * 32) / "repair.json").write_text(json.dumps({"id": "c" * 32, "ended": None}))
         with self.assertRaisesRegex(repair.Refused, "what was wrong, what changed and what remains"):
             repair.report("w", " ", "r")
         self.assertEqual(repair.report("w", "c", "r", "Open the page")["report"]["try"], "Open the page")
-        (repair.DIR / ("c" * 32) / "repair.json").write_text(json.dumps({"id": "c" * 32, "ended": "2026-10-19T01:00:00+00:00"}))
+        (repair.home() / ("c" * 32) / "repair.json").write_text(json.dumps({"id": "c" * 32, "ended": "2026-10-19T01:00:00+00:00"}))
         with self.assertRaisesRegex(repair.Refused, "already ended"):
             repair.report("w", "c", "r")
 
@@ -312,11 +312,11 @@ class RepairPages(RepairCase):
         # A link planted in a repair's place is never followed: its brief reads as absent and a linked record as none.
         outside = self.tmp / "outside.md"
         outside.write_text("not Altitude's brief\n")
-        brief = repair.DIR / row["id"] / "brief.md"
+        brief = repair.home() / row["id"] / "brief.md"
         brief.unlink()
         brief.symlink_to(outside)
         self.assertIsNone(get(f"/api/repairs/{row['id']}")[1]["brief"])
-        linked = repair.DIR / ("0" * 32)
-        linked.symlink_to(repair.DIR / row["id"])
+        linked = repair.home() / ("0" * 32)
+        linked.symlink_to(repair.home() / row["id"])
         self.assertEqual(get(f"/api/repairs/{linked.name}")[0], 404)
         self.assertEqual([item["id"] for item in get("/api/repairs")[1]["repairs"]], [row["id"]])

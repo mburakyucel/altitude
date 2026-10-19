@@ -13,7 +13,7 @@ def main():
     with config.add_project("atlas", path=repo):
         pass
     ident = uuid.uuid4().hex
-    folder = repair.DIR / ident
+    folder = repair.home() / ident
     folder.mkdir(parents=True)
     S.atomic_write(folder / "brief.md", "# Repair brief\n\nFictional brief.\n")
     S.write_json(folder / "repair.json", {

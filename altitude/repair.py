@@ -20,7 +20,6 @@ from pathlib import Path
 
 from . import config, state as S, storage
 
-DIR = config.ROOT / "repairs"
 ONLY_YOU = "Only you can start a repair, from your own terminal."
 ALREADY = "A repair is already running. Stop it there first."
 #: The outcomes Altitude's check sets once a repair has ended.
@@ -51,8 +50,13 @@ def refusal(groups: list[str] | None = None) -> str | None:
     return None
 
 
+def home() -> Path:
+    """Where repairs keep their records, under Altitude's home as it is now."""
+    return config.ROOT / "repairs"
+
+
 def _lock():
-    return storage.runtime_lock(DIR / "lock")
+    return storage.runtime_lock(home() / "lock")
 
 
 def running() -> dict | None:
@@ -62,7 +66,7 @@ def running() -> dict | None:
         try:
             fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
         except BlockingIOError:
-            return S.read_json(DIR / "running.json", None) or {"id": None, "route": "terminal"}
+            return S.read_json(home() / "running.json", None) or {"id": None, "route": "terminal"}
     return None
 
 
@@ -79,14 +83,14 @@ def _held(ident: str, route: str):
                 time.sleep(0.05)
         else:
             raise Refused(ALREADY)
-        S.write_json(DIR / "running.json", {"id": ident, "route": route})
+        S.write_json(home() / "running.json", {"id": ident, "route": route})
         yield handle.fileno()
 
 
 def _folder(ident: str) -> Path:
     if not isinstance(ident, str) or not re.fullmatch(r"[0-9a-f]{32}", ident):
         raise KeyError(ident)
-    return DIR / ident
+    return home() / ident
 
 
 def record(ident: str) -> dict:
@@ -114,7 +118,7 @@ def _changing(ident: str):
 def records() -> list[dict]:
     """Every repair on this computer, newest first."""
     found = []
-    for folder in DIR.iterdir() if DIR.is_dir() else ():
+    for folder in home().iterdir() if home().is_dir() else ():
         try:
             found.append(record(folder.name))
         except (KeyError, ValueError):
@@ -384,7 +388,7 @@ def settle(ident: str) -> dict:
 def check_ended() -> None:
     """The service's tick: check every repair that has ended and has no outcome yet. A terminal repair ends without the
     service, which may itself be down, so the check follows at the next tick after its end or after the next start."""
-    if not DIR.is_dir():
+    if not home().is_dir():
         return
     now = running()
     if now and now.get("id") is None:
