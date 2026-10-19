@@ -524,18 +524,19 @@ def shown_view(project: str, slug: str, shown: dict, identity: str, revision: in
 
 
 def _pr_tip(task: dict) -> tuple[int, str, str] | None:
-    """The task's current PR with the head and base its delivery or adoption recorded."""
+    """The task's current PR with the head and base commit its delivery or adoption recorded."""
     number = (task.get("prs") or [None])[-1]
     for record in (task.get("delivery"), task.get("adopted_pr")):
         head, base = (record or {}).get("head"), (record or {}).get("base")
         if (number and (record or {}).get("number") == number and isinstance(head, str) and isinstance(base, str)
-                and re.fullmatch(r"[0-9a-f]{40}", head) and re.fullmatch(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+", base)):
+                and re.fullmatch(r"[0-9a-f]{40}", head) and re.fullmatch(r"[0-9a-f]{40}", base)):
             return number, head, base
     return None
 
 
 def _capture_pr_images(project: str, number: int, head: str, base: str) -> tuple[dict, dict[str, bytes]]:
-    """The pictures PR `number` adds, replaces or removes between its merge base and `head`, read as Git objects from
+    """The pictures PR `number` adds, replaces or removes between `head` and its merge base with the recorded `base`
+    commit, read as Git objects from
     the project's repository, so nothing a worktree holds decides what is shown. Each copy passes the shown-image
     checks; a picture of another type, a link, or one past the shown limits is listed as `not_shown`."""
     root = config.project_path(project)
@@ -545,7 +546,7 @@ def _capture_pr_images(project: str, number: int, head: str, base: str) -> tuple
         return subprocess.run(["git", *args], cwd=root, env=env, input=data, capture_output=True, timeout=60,
                               check=True).stdout
 
-    merge_base = git("merge-base", f"refs/remotes/origin/{base}", head).decode().strip()
+    merge_base = git("merge-base", base, head).decode().strip()
     fields = git("diff", "--raw", "-z", "--no-abbrev", "-M", "--no-ext-diff", "--no-textconv", merge_base, head).split(b"\0")
     pictures, not_shown, index = [], [], 0
     while index < len(fields) and fields[index].startswith(b":"):
@@ -557,7 +558,7 @@ def _capture_pr_images(project: str, number: int, head: str, base: str) -> tuple
             if present]
         if not any(Path(path).suffix.lower() in _PICTURE_SUFFIXES for *_, path in sides):
             continue
-        if (len(pictures) == SHOWN_IMAGE_COUNT or any(mode not in ("100644", "100755") or _SHOWN_TYPES.get(
+        if (sum(len(kept) for *_, kept in pictures) + len(sides) > SHOWN_IMAGE_COUNT or any(mode not in ("100644", "100755") or _SHOWN_TYPES.get(
                 Path(path).suffix.lower()) in (None, "md", "txt") for _, mode, _, path in sides)):
             not_shown.append(paths[-1])
             continue
@@ -604,7 +605,7 @@ def _capture_pr_images(project: str, number: int, head: str, base: str) -> tuple
 
 def pr_images(project: str, slug: str, task: dict) -> dict | None:
     """The pictures record of the task's current PR head, captured once into the task's shown copies and kept beside
-    them; a head whose diff cannot be read keeps an empty record, so it is not read again on every view."""
+    them. A head whose diff cannot be read now is marked unreadable and saves nothing, so a later view reads it again."""
     tip = _pr_tip(task)
     if not tip:
         return None
@@ -618,8 +619,7 @@ def pr_images(project: str, slug: str, task: dict) -> dict | None:
             try:
                 record, files = _capture_pr_images(project, number, head, base)
             except (OSError, ValueError, UnicodeError, subprocess.SubprocessError, git_policy.GitPolicyError):
-                record = {"pr": number, "head": head, "images": []}
-                record, files = {**record, "id": _record_hash(record)}, {}
+                return {"pr": number, "head": head, "images": [], "unreadable": True}
             _save_files(project, slug, {**files, name: json.dumps(record, sort_keys=True).encode()})
     except (OSError, ValueError):
         return None
@@ -631,6 +631,8 @@ def pr_images_view(project: str, task: dict) -> dict | None:
     replaced pictures first, then new and removed ones, and the paths it cannot show; None for a PR that changes no
     pictures."""
     record = pr_images(project, task["slug"], task)
+    if record and record.get("unreadable"):
+        return {"available": False, "pictures": [], "not_shown": []}
     if not record or not (record["images"] or record.get("not_shown")):
         return None
     api = shown_api(project, task["slug"], "pr", record["pr"])

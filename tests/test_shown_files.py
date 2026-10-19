@@ -491,8 +491,8 @@ class TestShownFiles(AltitudeCase):
                          (3, ["docs/images/tour.png"]))
 
     def deliver(self, *changes):
-        """Main with pictures and a text file, then the PR's head with `changes` applied; the task's delivery
-        records PR #7 at that head."""
+        """Main with pictures and a text file, then the PR's head with `changes` applied; main moves on with a picture
+        of its own, and the task's delivery records PR #7 at that head over main's commit, as landing does."""
         site = self.repo / "site"
         site.mkdir()
         for name, data in (("hero.png", png(1, 4, 3)), ("gone.png", png(2)), ("moved.gif", GIF),
@@ -507,8 +507,13 @@ class TestShownFiles(AltitudeCase):
         git("add", "-A", "site", cwd=self.worktree)
         git("commit", "-q", "-m", "pictures", cwd=self.worktree)
         head = git("rev-parse", "HEAD", cwd=self.worktree).strip()
+        (site / "later.png").write_bytes(png(9))
+        git("add", "site", cwd=self.repo)
+        git("commit", "-q", "-m", "later", cwd=self.repo)
+        git("push", "-q", "origin", "main", cwd=self.repo)
+        base = git("rev-parse", "origin/main", cwd=self.repo).strip()
         task = S.load_task(self.project, self.slug)
-        task.update(state="reported", prs=[7], delivery={"number": 7, "head": head, "base": "main", "branch": "b"})
+        task.update(state="reported", prs=[7], delivery={"number": 7, "head": head, "base": base, "branch": "b"})
         S.save_task(self.project, task)
         return head
 
@@ -565,15 +570,18 @@ class TestShownFiles(AltitudeCase):
         self.assertEqual(self.request("GET", pictures["site/gone.png"]["before"]["url"])[0], 200,
                          "the current PR's pictures stay readable from the conversation")
 
-    def test_a_text_only_or_unreadable_pr_shows_no_pictures(self):
+    def test_a_text_only_pr_shows_no_pictures_and_an_unreadable_one_says_so_until_it_reads(self):
         head = self.deliver(lambda site: (site / "notes.md").write_text("more\n"))
         self.assertIsNone(T.review_row(self.project, S.load_task(self.project, self.slug))["pr_images"])
-        task = S.load_task(self.project, self.slug)
-        task["delivery"]["head"] = "f" * 40  # a head the repository does not hold
-        S.save_task(self.project, task)
-        self.assertIsNone(T.review_row(self.project, task)["pr_images"])
-        self.assertTrue(self.saved(f"pr-7-{'f' * 40}.json").exists(), "an unreadable head is not read again")
         self.assertTrue(self.saved(f"pr-7-{head}.json").exists())
+        task = S.load_task(self.project, self.slug)
+        task["delivery"]["head"] = "f" * 40  # a head the repository does not hold yet
+        S.save_task(self.project, task)
+        self.assertEqual(T.review_row(self.project, task)["pr_images"], {"available": False, "pictures": [], "not_shown": []})
+        self.assertFalse(self.saved(f"pr-7-{'f' * 40}.json").exists(), "a failed read is tried again on the next view")
+        task["delivery"]["base"] = "main"  # a branch name is not a recorded base commit
+        task["delivery"]["head"] = head
+        self.assertIsNone(T.review_row(self.project, task)["pr_images"])
 
     def test_moving_files_to_another_member_revises_the_earlier_one_without_them(self):
         first = self.publish(recommendation="Build as shown", recommendation_label="Build")

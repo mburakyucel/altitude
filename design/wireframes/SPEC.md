@@ -1125,7 +1125,7 @@ Git LFS pointer is not a picture and is named there too.
 | --- | --- |
 | Loading | The frame is a flat grey block without its expand badge, as a shown thumbnail loads (§3.9.1); path and switch already in place. |
 | Failed | The frame holds a broken-image icon, **Image unavailable** and **Retry**; the switch still works. |
-| Copies missing or resized | One closed card in the pictures' place: a broken-picture icon, **Pictures in this PR**, **Preview unavailable**; not a control. The merge controls are unchanged. |
+| Copies missing or resized, or the PR not readable yet | One closed card in the pictures' place: a broken-picture icon, **Pictures in this PR**, **Preview unavailable**; not a control. The merge controls are unchanged. |
 
 The pictures inform the decision and bind nothing: **Approve merge** sends what it always sent and is checked against
 the current PR and hold as before. The pictures follow the PR's recorded head: a new head brings its own on the

@@ -50,7 +50,8 @@ def main():
         git("commit", "-q", "-m", title, cwd=worktree)
         T.set_hold_merge("atlas", slug, "Operator review of the finished change")
         row = S.load_task("atlas", slug)
-        row.update(delivery={"number": number, "head": git("rev-parse", "HEAD", cwd=worktree).strip(), "base": "main",
+        row.update(delivery={"number": number, "head": git("rev-parse", "HEAD", cwd=worktree).strip(),
+                             "base": git("rev-parse", "origin/main", cwd=repo).strip(),
                              "branch": f"worktree-{slug}", "at": S.now()}, prs=[number])
         S.save_task("atlas", row)
         return slug, worktree, row

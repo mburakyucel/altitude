@@ -3464,13 +3464,14 @@ checks presence and size; reads verify each hash, so changed content of the same
 reader's unavailable state).
 
 A held PR's merge card carries the pictures the PR changes. `tasks.pr_images` reads the current PR's
-recorded head and base from its delivery or adoption and, once per head, lists the diff from the merge
-base with Git's raw output: blob ids, modes and paths, with renames paired and no diff drivers or
+recorded head and base commit from its delivery or adoption and, once per head, lists the diff from their
+merge base with Git's raw output: blob ids, modes and paths, with renames paired and no diff drivers or
 textconv. It reads the blobs as Git objects from the project's repository, never the worktree, so later
 edits, a moved branch or a link change nothing shown. Each picture passes the shown-image checks and
 limits; another type, a link, a missing object or one past the limits is listed as `not_shown`. Copies
-are content-named in the same `shown/` folder beside a hashed record, `pr-<number>-<head>.json`, which
-also records an unreadable head as empty so no view reads it again. `question_view` (for an open
+are content-named in the same `shown/` folder beside a hashed record, `pr-<number>-<head>.json`. A head
+whose diff cannot be read saves nothing: its card shows the pictures as unavailable, and the next view
+reads it again. `question_view` (for an open
 question about the held PR) and `review_row` project `pr_images`: one entry per path with the change
 (changed first, then added, then removed), the before and after copies' URLs and sizes, the `not_shown` paths and
 whether every copy is present; a PR without pictures projects none. The shown-files API serves them at
