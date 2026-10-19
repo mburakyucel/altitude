@@ -226,11 +226,13 @@ def held_for(pid: int) -> list[str]:
 
 @row
 def awake_clock():
-    """A job's time limit counts awake time, as systemd's monotonic limit does: the supervisor waits on Python's
-    monotonic clock, which on macOS is the kernel's uptime clock that stops while the Mac sleeps. On a Mac that has
-    slept since it started, the clock that keeps counting through sleep is ahead by the time slept."""
+    """Supporting evidence that a job's time limit counts awake time, as systemd's monotonic limit does: the
+    supervisor's limit is `Popen.wait`'s timeout, which counts Python's monotonic clock, on macOS the kernel's uptime
+    clock that stops while the Mac sleeps. It starts no job and crosses no sleep. On a Mac that has slept since it
+    started, the clock that keeps counting through sleep is ahead by the time slept."""
     if not DARWIN:
         return None
+    check(subprocess._time is time.monotonic, "Popen.wait's timeout no longer counts time.monotonic")
     clock = time.get_clock_info("monotonic").implementation
     monotonic, awake = time.monotonic(), time.clock_gettime(time.CLOCK_UPTIME_RAW)
     slept = time.clock_gettime(time.CLOCK_MONOTONIC) - awake

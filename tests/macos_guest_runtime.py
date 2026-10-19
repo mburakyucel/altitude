@@ -628,7 +628,10 @@ def row_quiet_point() -> dict:
         raise Failed(f"{error}: installed {installed()}, service {before} then {service_pid()}, healthy {healthy()}, "
                      f"attempt {record().get('attempt')}") from None
     second = wait("the second request's answer", lambda: ran(later, "alt task validate"), timeout=120)
-    after_update = lambda row: datetime.fromisoformat(row["started"]).timestamp() >= attempt["started"]  # noqa: E731
+    # The restarted service's start, to the second; a run it started begins at or after it.
+    activated = datetime.strptime(shell(f"ps -o lstart= -p {service_pid()}").stdout.strip(),
+                                  "%a %b %d %H:%M:%S %Y").timestamp()
+    after_update = lambda row: datetime.fromisoformat(row["started"]).timestamp() >= activated  # noqa: E731
     facts = {"installed": version, "newer": newer, "waiting": waiting, "doctor": doctor,
              "second": {key: second.get(key) for key in ("exit", "stderr")},
              "second_runs": [{key: r.get(key) for key in ("n", "started", "exit")} for r in machine(later)
@@ -637,7 +640,7 @@ def row_quiet_point() -> dict:
              "attempt_after_run_s": round(attempt["started"] - datetime.fromisoformat(ended["finished"]).timestamp(), 1),
              "attempt": wait("the attempt's outcome", lambda: record()["attempt"].get("state") != "running"
                              and record()["attempt"], timeout=60),
-             "now": installed(), "service": {"before": before, "after": service_pid()},
+             "now": installed(), "service": {"before": before, "after": service_pid(), "started": activated},
              "worker_kept": {"job": job_running(unit), "unit": worker_unit(running) == unit,
                              "state": task(running).get("state")}}
     stopped_cleanly(later)
@@ -646,7 +649,7 @@ def row_quiet_point() -> dict:
                                  f"waiting for {held}."
                        and "restarts soon to apply an update" in second.get("stderr", "") and second.get("exit") == 0
                        and bool(facts["second_runs"]) and all(after_update(r) for r in facts["second_runs"])
-                       and ended.get("exit") == 0 and facts["attempt_after_run_s"] < 45
+                       and ended.get("exit") == 0 and 0 <= facts["attempt_after_run_s"] < 45
                        and facts["attempt"].get("state") == "succeeded" and facts["attempt"].get("automatic") is True
                        and facts["now"] == newer and facts["worker_kept"] == {"job": True, "unit": True,
                                                                                "state": "running"})
@@ -658,12 +661,13 @@ def row_scratch() -> dict:
     folder is gone once the task is done, and a command the worker left running writes nothing afterwards, neither
     in Altitude's home nor in a recreated scratch folder."""
     late = ROOT / "late-write.txt"
+    started = TEMP / "late-writer-started"
     slug = new_task("Scratch through done", "Fictional task that drafts in its scratch folder and completes.\n"
                     "FIXTURE-RUN: echo \"$ALTITUDE_SCRATCH\"; printf '# Progress\\nFictional draft.\\n' "
                     ">\"$ALTITUDE_SCRATCH/progress.md\" && alt task save progress \"$ALTITUDE_SCRATCH/progress.md\"\n"
                     "FIXTURE-RUN: printf '# Shown\\n' >shown.md && alt task reply --show shown.md 'A fictional shown "
                     "file' && rm shown.md\n"
-                    "FIXTURE-RUN: nohup /bin/sh -c 'sleep 20; mkdir -p \"$ALTITUDE_SCRATCH\" && echo late "
+                    f"FIXTURE-RUN: nohup /bin/sh -c 'touch {started}; sleep 20; mkdir -p \"$ALTITUDE_SCRATCH\" && echo late "
                     f">\"$ALTITUDE_SCRATCH/late.txt\"; echo late >{late}' >/dev/null 2>&1 &\n"
                     "FIXTURE-RUN: alt task done \"$ALTITUDE_TASK\" --digest 'Fictional outcome'\n")
     drafted = wait("the drafts", lambda: ran(slug, "save progress"), timeout=90)
@@ -674,13 +678,14 @@ def row_scratch() -> dict:
                     timeout=120)
     facts = {"task": slug, "scratch": str(scratch), "drafted": drafted["exit"], "shown": shown["exit"],
              "done": completed["exit"], "state": json.loads(archived.read_text()).get("state"),
-             "progress_kept": (archived.parent / "progress.md").exists(), "scratch_at_done": scratch.exists()}
+             "progress_kept": (archived.parent / "progress.md").exists(), "scratch_at_done": scratch.exists(),
+             "writer_started": started.exists()}
     time.sleep(30)  # past the left-running command's write
     facts["late"] = {"scratch": sorted(path.name for path in scratch.iterdir()) if scratch.exists() else None,
                      "home": late.exists()}
     facts["passed"] = (facts["drafted"] == facts["shown"] == facts["done"] == 0 and facts["state"] == "done"
                        and facts["progress_kept"] and not facts["scratch_at_done"]
-                       and facts["late"]["scratch"] in (None, ["late.txt"]) and not facts["late"]["home"])
+                       and facts["writer_started"] and facts["late"] == {"scratch": None, "home": False})
     return facts
 
 
@@ -799,14 +804,15 @@ def row_coordinator_channel() -> dict:
     worker = [json.loads(line) for line in wait("the worker's attempt", lambda: ran(slug, str(probe)),
                                                 timeout=90)["stdout"].splitlines()]
     stopped_cleanly(slug)
-    # Refused by the service's admission, or by the caller's sandbox before it connects.
-    refused = lambda answer: "error" in answer or (answer.get("answer") or {}).get("error") == (  # noqa: E731
-        "this socket serves only the project's running coordinator turn")
+    # The service's own answers: an empty request past admission is an unknown read; one refused never reaches it.
+    admitted = lambda answer: answer.get("answer") == {"error": "unknown L3 read"}  # noqa: E731
+    refused = lambda answer: answer.get("answer") == {  # noqa: E731
+        "error": "this socket serves only the project's running coordinator turn"}
     mode = lambda path: oct(path.stat().st_mode & 0o777)  # noqa: E731
     facts = {"coordinator": answers, "worker": worker, "folder_mode": mode(folder),
              "socket_modes": {name: mode(path) for name, path in sockets.items()},
              "socket_bytes": {name: len(str(path).encode()) for name, path in sockets.items()}}
-    facts["passed"] = (not refused(answers[0]) and refused(answers[1])
+    facts["passed"] = (admitted(answers[0]) and refused(answers[1])
                        and answers[2]["cwd"].startswith(f"{folder}/l3-codex-") and refused(worker[0])
                        and facts["folder_mode"] == "0o700" and max(facts["socket_bytes"].values()) <= 103
                        and all(path.stat().st_uid == UID for path in sockets.values()))
