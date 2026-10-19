@@ -83,3 +83,19 @@ a.run{color:inherit;text-decoration:none}.run .chev{margin-top:4px}
 .dlg .bt{gap:10px}
 .m .btns .btn,.m .status .btn{height:44px}
 .m .status{flex-wrap:wrap}
+.trig{border:1px solid var(--border);border-radius:var(--radius-control);background:var(--card)}
+.trig .tr{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--hairline);font-size:14px}
+.trig .tr:first-child{border-top:0}
+.trig .tr .tx{flex:1;min-width:0}
+.trig .tr .tx small{display:block;color:var(--text-muted);font-size:12.5px;margin-top:2px}
+.trig .tr .i{color:var(--text-muted);flex:none}
+.trig .tr .x{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;color:var(--text-muted);flex:none}
+.trig .tr.open{display:block}.trig .tr.open .row1{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.trig .add{padding:8px 12px;border-top:1px solid var(--hairline)}
+.m .trig .tr .x,.phonesheet .trig .tr .x{width:44px;height:44px}
+.menu-mock .gh{padding:8px 12px 4px;font-size:12px;color:var(--text-muted);font-weight:600}
+.m .trig .days,.phonesheet .trig .days{gap:4px}
+.m .trig .days span,.phonesheet .trig .days span{width:40px;height:40px}
+.m .trig .tr.open,.phonesheet .trig .tr.open{padding:10px 4px}
+.m .trig .days .time,.phonesheet .trig .days .time{width:100%;height:40px}
+.phonesheet .status{flex-wrap:wrap}
