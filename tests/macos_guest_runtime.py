@@ -19,6 +19,7 @@ import io
 import json
 import os
 import re
+import shlex
 import ssl
 import subprocess
 import sys
@@ -37,6 +38,7 @@ PROJECT = "fictional"
 SHARED = Path("/Users/Shared/altitude-vm")
 SOURCE = SHARED / "source"
 FIXTURE = SHARED / "fixture"
+EVIDENCE = SHARED / "evidence"  # copied back to the host with the rows' record
 TEMP = Path("/private/tmp/altitude-fixture")  # writable inside a worker's sandbox too
 LOG = TEMP / "log.jsonl"
 GH_STATE = TEMP / "gh"
@@ -229,7 +231,33 @@ def page(path: str, body: dict | None = None, timeout: float = 60):
         headers={"Content-Type": "application/json",
                  "X-Altitude-Key": (HOME / ".config/altitude/access/machine.key").read_text().strip()})
     context = ssl.create_default_context(cafile=str(HOME / ".config/altitude/tls/ca.crt"))
-    return urllib.request.urlopen(request, context=context, timeout=timeout)
+    try:
+        return urllib.request.urlopen(request, context=context, timeout=timeout)
+    except urllib.error.HTTPError as error:
+        raise Failed(f"{path} answered {error.code}: {error.read()[:300]!r}") from None
+
+
+def call(path: str, body: dict | None = None):
+    """`page`'s answer as JSON."""
+    with page(path, body) as response:
+        return json.loads(response.read() or b"null")
+
+
+def transcript(terminal: str, marker: str) -> str:
+    """The project terminal's output from its start until a line begins with MARKER, or what came within the stream's
+    read timeout."""
+    seen = ""
+    try:
+        with page(f"/api/terminal/{PROJECT}/stream?id={terminal}&offset=0", timeout=10) as response:
+            for raw in response:
+                line = raw.decode(errors="replace").strip()
+                if line.startswith("data:") and "data" in (event := json.loads(line[5:]) or {}):
+                    seen += base64.b64decode(event["data"]).decode(errors="replace")
+                if f"\n{marker}" in seen.replace("\r", ""):
+                    break
+    except OSError:  # the stream's read timed out
+        pass
+    return seen[-2000:]
 
 
 class Safari:
@@ -245,8 +273,10 @@ class Safari:
         self.window = self.call("POST", "", {"capabilities": {"alwaysMatch": {"browserName": "safari"}}})["sessionId"]
         code = re.search(r"Pairing code: (\S+)", alt("pair", project=False))[1]
         self.go(f"/projects#pair={code}")
-        wait("Safari to pair", lambda: "#pair=" not in self.call("GET", "/url")
-             and "Pair this device" not in self.text("body"), timeout=60)
+        # Asked of the service: a page still loading shows no pairing screen either.
+        wait("Safari to pair", lambda: "#pair=" not in self.call("GET", "/url") and self.call("POST", "/execute/async", {
+            "script": "const done = arguments[arguments.length - 1]; fetch('/api/access').then(answer => answer.json())"
+                      ".then(access => done(access.paired === true), () => done(false))", "args": []}), timeout=60)
 
     def call(self, method: str, path: str, body: dict | None = None):
         session = self.WEBDRIVER if self.window is None else f"{self.WEBDRIVER}/{self.window}{path}"
@@ -278,6 +308,34 @@ class Safari:
                     return seen
         raise Failed(f"timed out after {timeout:.0f} s waiting for Safari at {path} to show {expected!r}; "
                      f"it showed {seen!r}")
+
+    def click(self, xpath: str) -> None:
+        """A real click, through WebDriver, on XPATH's first element."""
+        found = self.call("POST", "/element", {"using": "xpath", "value": xpath})
+        self.call("POST", f"/element/{next(iter(found.values()))}/click", {})
+
+    def press(self, key: str) -> None:
+        """KEY typed at whatever has the focus, as the keyboard types it."""
+        self.call("POST", "/actions", {"actions": [{"type": "key", "id": "keyboard", "actions": [
+            {"type": "keyDown", "value": key}, {"type": "keyUp", "value": key}]}]})
+
+    def fetch(self, path: str, body: dict | None = None) -> dict:
+        """The service's answer to the page's own request, a POST of BODY when given: its status and JSON."""
+        found = self.call("POST", "/execute/async", {"script": (
+            "const done = arguments[arguments.length - 1]; fetch(arguments[0], arguments[1] ? {method: 'POST', "
+            "headers: {'Content-Type': 'application/json'}, body: JSON.stringify(arguments[1])} : {})"
+            ".then(async (answer) => done({status: answer.status, text: await answer.text()}), "
+            "(error) => done({status: 0, text: String(error)}))"), "args": [path, body]})
+        try:
+            found["json"] = json.loads(found["text"])
+        except ValueError:
+            pass
+        return found
+
+    def screenshot(self, name: str) -> None:
+        """The window as Safari renders it, kept with the phase's evidence."""
+        EVIDENCE.mkdir(parents=True, exist_ok=True)
+        (EVIDENCE / f"{name}.png").write_bytes(base64.b64decode(self.call("GET", "/screenshot")))
 
     def __enter__(self):
         return self
@@ -778,10 +836,6 @@ def row_terminal_hold() -> dict:
     newer = re.sub(r"(\d+)$", lambda m: str(int(m[1]) + 1), version)
     relabelled(os.environ["LANE_VERSION"], newer)
 
-    def call(path: str, body: dict | None = None):
-        with page(path, body) as response:
-            return json.loads(response.read() or b"null")
-
     held_by = f"the browser terminal open in {PROJECT}"
     before = service_pid()
     call("/api/terminal-access", {"enabled": True})
@@ -856,13 +910,10 @@ def row_scratch() -> dict:
 
 
 def row_operator_step() -> dict:
-    """#1017: a command the coordinator hands the operator waits in Needs you as the named task's turn; run to its end
-    in the project terminal as Open in terminal runs it, its notice clears the step and wakes the coordinator, while a
-    terminal closed before its command ends leaves the step waiting."""
-    def call(path: str, body: dict | None = None):
-        with page(path, body) as response:
-            return json.loads(response.read() or b"null")
-
+    """#1017: a command the coordinator hands the operator waits in Needs you as the named task's turn, as Safari
+    renders it on Needs you, the task's Work row and its page; Open in terminal clicked there types it in the project
+    terminal, and Enter runs it to its end. Its notice clears the step and wakes the coordinator, while a terminal
+    closed before its command ends leaves the step waiting. Each state is kept as a screenshot."""
     def steps() -> list[dict]:
         return [item for item in call("/api/overview").get("queue", []) if item.get("kind") == "step"]
 
@@ -874,23 +925,9 @@ def row_operator_step() -> dict:
     def hand(command: str) -> str:
         """Open in terminal: the project terminal opened, the command handed to it, then typed with Enter."""
         opened = call(f"/api/terminal/{PROJECT}/open", {})
-        call(f"/api/terminal/{PROJECT}/command", {"id": opened["id"], "text": command})
+        call(f"/api/terminal/{PROJECT}/command", {"id": opened["id"], "text": command, "bracketed": False})
         call(f"/api/terminal/{PROJECT}/input", {"id": opened["id"], "data": command + "\r"})
         return opened["id"]
-
-    def transcript(terminal: str, marker: str) -> str:
-        seen = ""
-        try:
-            with page(f"/api/terminal/{PROJECT}/stream?id={terminal}&offset=0", timeout=10) as response:
-                for raw in response:
-                    line = raw.decode(errors="replace").strip()
-                    if line.startswith("data:") and "data" in (event := json.loads(line[5:]) or {}):
-                        seen += base64.b64decode(event["data"]).decode(errors="replace")
-                    if f"\n{marker}" in seen.replace("\r", ""):
-                        break
-        except OSError:  # the stream's read timed out
-            pass
-        return seen[-2000:]
 
     def close(terminal: str) -> None:
         call(f"/api/terminal/{PROJECT}/close", {"id": terminal})
@@ -902,17 +939,44 @@ def row_operator_step() -> dict:
     call("/api/terminal-access", {"enabled": True})
     facts: dict = {"task": slug, "before": alt("task", "status", slug)["waiting"]}
     finished = "sleep 3; echo fictional-step-done"
-    card = publish("Run the fictional step", finished)
-    facts.update(card={key: card.get(key) for key in ("id", "question", "tasks", "asked_by")},
-                 during=alt("task", "status", slug)["waiting"])
-    mark = len(lines(LOG))
-    terminal = hand(finished)
-    facts["transcript"] = transcript(terminal, "fictional-step-done")
-    facts["cleared"] = bool(wait("the notice to clear the step", lambda: not any(item["id"] == card["id"]
-                                                                                 for item in steps()), timeout=60))
-    facts["coordinator_turns"] = len(wait("the coordinator's turn", lambda: [
-        entry for entry in lines(LOG)[mark:] if entry.get("role") == "l3" and "end" in entry], timeout=120))
-    facts["after"] = alt("task", "status", slug)["waiting"]
+    work, conversation = f"/projects/{PROJECT}?tab=work", f"/projects/{PROJECT}/tasks/{slug}"
+    card_path = f"//article[@aria-label='Command for {PROJECT}']"
+    with Safari() as safari:
+        card = publish("Run the fictional step", finished)
+        facts.update(card={key: card.get(key) for key in ("id", "question", "tasks", "asked_by")},
+                     during=alt("task", "status", slug)["waiting"])
+        shown = {"card": safari.shows("/", f'article[aria-label="Command for {PROJECT}"]', "Run the fictional step"),
+                 "needs_you": safari.text("body")}
+        safari.screenshot("operator-step-1-needs-you")
+        shown["row"] = safari.shows(work, "main", "Your turn · Run the fictional step")
+        safari.screenshot("operator-step-2-work-row")
+        shown["page"] = safari.shows(conversation, "main", "Your turn · a command from L3")
+        safari.screenshot("operator-step-3-task-page")
+        safari.shows("/", f'article[aria-label="Command for {PROJECT}"]', "Open in terminal")
+        safari.click(f"{card_path}//button[contains(., 'Open in terminal')]")
+        shown["terminal_url"] = wait("the project terminal's page", lambda: (url := safari.call("GET", "/url")).endswith(
+            f"/projects/{PROJECT}/terminal") and url, timeout=30)
+        terminal = wait("the project terminal", lambda: call(f"/api/terminal/{PROJECT}").get("id"), timeout=30)
+        shown["typed"] = wait("the command typed at its prompt", lambda: finished in (
+            typed := safari.text(".terminal-screen .xterm-rows")) and typed, timeout=30)
+        safari.screenshot("operator-step-4-typed")
+        mark = len(lines(LOG))
+        safari.click("//div[contains(@class, 'terminal-screen')]")
+        safari.press("\ue007")  # Enter
+        facts["transcript"] = transcript(terminal, "fictional-step-done")
+        safari.screenshot("operator-step-5-ran")
+        facts["cleared"] = bool(wait("the notice to clear the step", lambda: not any(item["id"] == card["id"]
+                                                                                     for item in steps()), timeout=60))
+        facts["coordinator_turns"] = len(wait("the coordinator's turn", lambda: [
+            entry for entry in lines(LOG)[mark:] if entry.get("role") == "l3" and "end" in entry], timeout=120))
+        facts["after"] = alt("task", "status", slug)["waiting"]
+        shown["needs_you_after"] = safari.shows("/", "main", "Nothing needs you.")
+        safari.screenshot("operator-step-6-needs-you-after")
+        safari.go(work)
+        time.sleep(4)
+        shown["row_after"] = safari.text("main")
+        safari.screenshot("operator-step-7-work-row-after")
+    facts["shown"] = shown
     close(terminal)
     unfinished = "sleep 60; echo fictional-late-step-done"
     kept = publish("Run the long fictional step", unfinished)
@@ -922,11 +986,131 @@ def row_operator_step() -> dict:
     time.sleep(5)  # past the notice that the terminal ended first
     facts["kept_after_close"] = any(item["id"] == kept["id"] for item in steps())
     coordinator(f"FIXTURE-RUN: alt project step --withdraw {kept['id']} --reason 'Fixture row complete'")
-    facts["passed"] = (slug in json.dumps(card.get("tasks")) and "Run the fictional step" in (facts["during"] or "")
+    rendered = (f"1 step in {PROJECT}" in shown["needs_you"] and "Open in terminal" in shown["card"]
+                and "This leaves Needs you once the command finishes in the project terminal." in shown["card"]
+                and "Your turn · a command from L3" in shown["page"]
+                and "Your turn · Run the fictional step" not in shown["row_after"])
+    facts["passed"] = (rendered and slug in json.dumps(card.get("tasks")) and "Run the fictional step" in (facts["during"] or "")
                        and "Run the fictional step" not in (facts["before"] or "")
                        and "\nfictional-step-done" in facts["transcript"].replace("\r", "") and facts["cleared"]
                        and facts["coordinator_turns"] >= 1 and "Run the fictional step" not in (facts["after"] or "")
                        and facts["kept_after_close"])
+    return facts
+
+
+HIDDEN = 90  # seconds the terminal's tab stays behind another while its shell writes
+
+
+def row_terminal_return() -> dict:
+    """#1071: the project terminal in Safari, its tab hidden behind another while the shell writes, takes up the same
+    shell once shown again, each hidden line on screen once and no Reconnecting left, and its prompt takes typing."""
+    def script(source: str):
+        return safari.call("POST", "/execute/sync", {"script": source, "args": []})
+
+    call("/api/terminal-access", {"enabled": True})
+    facts: dict = {}
+    with Safari() as safari:
+        safari.go(f"/projects/{PROJECT}/terminal")
+        terminal = wait("the project terminal", lambda: call(f"/api/terminal/{PROJECT}").get("id"), timeout=30)
+        wait("its prompt", lambda: "%" in safari.text(".terminal-screen .xterm-rows"), timeout=30)
+        script("window.__seen = []; document.addEventListener('visibilitychange', "
+               "() => window.__seen.push(document.visibilityState)); return true;")
+        own = safari.call("GET", "/window")
+        safari.call("POST", "/window", {"handle": safari.call("POST", "/window/new", {"type": "tab"})["handle"]})
+        call(f"/api/terminal/{PROJECT}/input", {"id": terminal, "data": "sleep 20; for n in 1 2 3; do echo "
+                                                                         "fictional-hidden-$n; done\r"})
+        time.sleep(HIDDEN)
+        safari.call("DELETE", "/window")
+        safari.call("POST", "/window", {"handle": own})
+        facts["visibility"] = wait("the tab shown again", lambda: (seen := script("return window.__seen;"))
+                                   and seen[-1] == "visible" and seen, timeout=30)
+        shown = wait("the hidden lines on screen", lambda: "fictional-hidden-3" in (
+            text := safari.text(".terminal-screen .xterm-rows")) and text, timeout=30)
+        facts.update(same=call(f"/api/terminal/{PROJECT}").get("id") == terminal,
+                     lines=[shown.count(f"fictional-hidden-{n}") for n in (1, 2, 3)],
+                     reconnecting="Reconnecting" in safari.text("body"))
+        safari.screenshot("terminal-return-1-shown-again")
+        safari.click("//div[contains(@class, 'terminal-screen')]")
+        for key in "echo fictional-back":
+            safari.press(key)
+        safari.press("")  # Enter
+        facts["typed"] = "\nfictional-back" in transcript(terminal, "fictional-back").replace("\r", "")
+        safari.screenshot("terminal-return-2-typed")
+    call(f"/api/terminal/{PROJECT}/close", {"id": terminal})
+    facts["passed"] = ("hidden" in facts["visibility"] and facts["same"] and facts["lines"] == [1, 1, 1]
+                       and not facts["reconnecting"] and facts["typed"])
+    return facts
+
+
+def row_agent_refusal() -> dict:
+    """#1053: Safari on the account's desktop, outside Altitude's jobs, is admitted on a POST, while the same paired
+    cookie in a command of a worker's job is refused with 403, since libproc names one of Altitude's own jobs as the
+    connection's holder; and the worker can list a browser's profile folder neither by the home nor through the data
+    volume."""
+    profile = HOME / "Library/Application Support/Firefox"
+    (profile / "Profiles").mkdir(parents=True, exist_ok=True)
+    request = ("fetch('/api/terminal-access', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
+               "body: JSON.stringify({enabled: true})}).then(answer => done(answer.status), error => done(String(error)))")
+    with Safari() as safari:
+        safari.go("/projects")
+        admitted = safari.call("POST", "/execute/async", {
+            "script": "const done = arguments[arguments.length - 1]; " + request, "args": []})
+        cookie = "; ".join(f"{item['name']}={item['value']}" for item in safari.call("GET", "/cookie"))
+    post = (f"curl -sk -o \"$TMPDIR/answer\" -w '%{{http_code}}\\n' -X POST -H 'Content-Type: application/json' "
+            f"-H {shlex.quote('Cookie: ' + cookie)} --data '{{\"enabled\": true}}' {origin()}/api/terminal-access; "
+            "cat \"$TMPDIR/answer\"")
+    listing = "; ".join(f"ls {shlex.quote(str(path))} >/dev/null 2>&1 && echo listed || echo refused"
+                        for path in (profile, "/System/Volumes/Data" + str(profile)))
+    slug = new_task("Posts with a paired cookie", "Fictional task whose worker holds a paired device's cookie.\n"
+                    f"FIXTURE-RUN: {post}\nFIXTURE-RUN: {listing}\n")
+    ran = wait("the worker's commands", lambda: [entry for entry in turns(slug) if "command" in entry][1:] and
+               [entry for entry in turns(slug) if "command" in entry], timeout=120)
+    answer, listed = (entry["stdout"] for entry in ran[:2])
+    facts = {"task": slug, "safari_post": admitted, "worker_post": answer.strip(), "worker_listing": listed.split()}
+    facts["passed"] = (admitted == 200 and answer.startswith("403\n")
+                       and "Altitude's own agents cannot act with a paired device's sign-in." in answer
+                       and facts["worker_listing"] == ["refused", "refused"])
+    return facts
+
+
+def row_codex_sign_in() -> dict:
+    """#1058: a Codex worker in Altitude's Seatbelt, with Codex's own sandbox off, signs in with the access token
+    Altitude hands it and runs a tool in its worktree, holding neither the operator's sign-in file nor the refresh
+    token. Once the operator's token is past half its life, the worker's request for a fresh one goes through the
+    task door: altd has Codex refresh the operator's sign-in outside every sandbox and hands the worker the new
+    token."""
+    auth = HOME / ".codex/auth.json"
+    saved = auth.read_text()
+    go = TEMP / f"refresh-{int(time.time())}"
+    probe = ('printf "env=%s folder=%s\\n" "$(env | grep -c fictional-refresh)" '
+             '"$(grep -rl fictional-refresh "$CODEX_HOME" 2>/dev/null | wc -l | tr -d " ")"; '
+             'cat "$HOME/.codex/auth.json" >/dev/null 2>&1 && echo read-operator || echo refused-operator')
+    slug = new_task("Signs in with a handed-over token", "Fictional task whose worker refreshes its sign-in.\n"
+                    "FIXTURE-RUN: git status --short --branch\n"
+                    f"FIXTURE-RUN: {probe}\nFIXTURE-WAIT: {go}\nFIXTURE-REFRESH: unauthorized\n")
+    try:
+        ran = wait("the worker's commands", lambda: [entry for entry in turns(slug) if "command" in entry][1:] and
+                   [entry for entry in turns(slug) if "command" in entry], timeout=120)
+        now = int(time.time())
+        claims = base64.urlsafe_b64encode(json.dumps({"iat": now - 3000, "exp": now + 600}).encode()).decode().rstrip("=")
+        stored = json.loads(saved)
+        stored["tokens"]["access_token"] = f"e30.{claims}.fixture"  # a fictional token five-sixths through its life
+        auth.write_text(json.dumps(stored))
+        go.touch()
+        refreshed = wait("the worker's refresh", lambda: next((entry["refresh"] for entry in turns(slug)
+                                                               if "refresh" in entry), None), timeout=120)
+        facts = {"task": slug, "login": next((entry["login"] for entry in turns(slug) if "login" in entry), None),
+                 "tool": ran[0]["stdout"].strip(), "held": ran[1]["stdout"].split(), "refresh": refreshed,
+                 "refreshed_outside": [entry for entry in lines(LOG) if entry.get("role") == "sign-in"],
+                 "stored": json.loads(auth.read_text())["tokens"]["access_token"]}
+    finally:
+        auth.write_text(saved)
+    facts["passed"] = (facts["login"] == {"type": "chatgptAuthTokens", "accessToken": "fictional-access",
+                                          "chatgptAccountId": "fictional-account", "chatgptPlanType": None}
+                       and ran[0]["exit"] == 0 and facts["tool"].startswith("## ")
+                       and facts["held"] == ["env=0", "folder=0", "refused-operator"]
+                       and refreshed.get("accessToken") == "fictional-refreshed" and facts["stored"] == "fictional-refreshed"
+                       and bool(facts["refreshed_outside"]) and refreshed.get("chatgptAccountId") == "fictional-account")
     return facts
 
 
@@ -1096,12 +1280,244 @@ def row_sign_in() -> dict:
 
 
 STATE: dict = {}
+REPAIRS = ROOT / "repairs"
+REPORT = ('"$HOME/.local/bin/alt" repair report --wrong "A fictional fault" --changed "Nothing; a fixture" '
+          '--remains "Nothing"')
+
+
+def repair(ident: str) -> dict:
+    try:
+        return json.loads((REPAIRS / ident / "repair.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def repairs() -> dict[str, dict]:
+    return {path.parent.name: repair(path.parent.name) for path in REPAIRS.glob("*/repair.json")}
+
+
+def repair_turns(ident: str) -> list[dict]:
+    """What the fixture engine recorded inside this repair: its arguments, its brief's headings and its commands."""
+    return [entry for entry in lines(LOG) if entry.get("repair") == ident]
+
+
+def terminal_repair(command: list[str]) -> dict:
+    """COMMAND, a repair in the operator's own shell, outside Altitude's jobs, and the repair it started."""
+    before = set(repairs())
+    result = subprocess.run(command, capture_output=True, text=True, timeout=120, env=OPERATOR,
+                            stdin=subprocess.DEVNULL)
+    STEPS.append({"command": command[1:], "exit": result.returncode, "stdout": result.stdout[-2000:],
+                  "stderr": result.stderr[-2000:]})
+    ident = next(iter(set(repairs()) - before), None)
+    entries = repair_turns(ident) if ident else []
+    return {"exit": result.returncode, "said": result.stdout.splitlines()[:3], "id": ident,
+            "terminal": [entry["argv"] for entry in entries if entry.get("terminal")],
+            "headings": next((entry["headings"] for entry in entries if "headings" in entry), []),
+            "commands": [entry["exit"] for entry in entries if "command" in entry]}
+
+
+def started(facts: dict) -> bool:
+    """A repair began in the terminal with the operator's coding agent, opening with the brief Altitude wrote."""
+    return (facts["exit"] == 0 and any(line.startswith("Starting a repair with Codex in this terminal")
+                                       for line in facts["said"])
+            and len(facts["terminal"]) == 1 and len(facts["terminal"][0]) == 1
+            and {"# Repair brief", "## What is wrong", "## Altitude's records"} <= set(facts["headings"]))
+
+
+def row_repair_terminal() -> dict:
+    """#1056: `alt repair` in the operator's own shell starts the coding agent with a brief built from Altitude's
+    records; once it has reported and ended, the service's check records its outcome, and Settings' About lists it
+    with its page, as Safari renders them."""
+    facts = terminal_repair([str(ALT), "repair", "--engine", "codex", "--problem",
+                             f"A fictional problem, from a terminal.\nFIXTURE-RUN: {REPORT}"])
+    ident = facts["id"]
+    facts["outcome"] = wait("the service's check of the repair", lambda: repair(ident).get("outcome"), timeout=120)
+    facts["report"] = repair(ident).get("report")
+    with Safari() as safari:
+        facts["about"] = safari.shows("/settings", f'a[href="/repairs/{ident}"]', "From a terminal")
+        safari.screenshot("repair-1-about")
+        safari.click(f"//a[@href='/repairs/{ident}']")
+        facts["page"] = safari.shows(f"/repairs/{ident}", "main", "A fictional fault")
+        safari.screenshot("repair-2-page")
+    shown = {"repaired": "Repaired", "confirm": "Confirm yourself"}.get(facts["outcome"])
+    facts["passed"] = (started(facts) and facts["commands"] == [0] and bool(facts["report"]) and shown is not None
+                       and shown in facts["about"] and "A fictional problem, from a terminal." in facts["about"])
+    return facts
+
+
+def row_repair_page_terminal() -> dict:
+    """#1056: `alt repair` typed in Altitude's page terminal, a launchd job of its own, is refused, also with an empty
+    environment, where only the job's coalition names it as one of Altitude's jobs; no repair starts."""
+    before = set(repairs())
+    call("/api/terminal-access", {"enabled": True})
+    terminal = call(f"/api/terminal/{PROJECT}/open", {})["id"]
+    commands = ('echo "variables-$(env | grep -c "^ALTITUDE_")"; "$HOME/.local/bin/alt" repair --problem "From the page"; '
+                'echo "plain-exit-$?"; env -i HOME="$HOME" PATH=/opt/homebrew/bin:/usr/bin:/bin '
+                '"$HOME/.local/bin/alt" repair --problem "From the page"; echo "clean-exit-$?"')
+    call(f"/api/terminal/{PROJECT}/input", {"id": terminal, "data": commands + "\r"})
+    seen = transcript(terminal, "clean-exit-").replace("\r", "")
+    call(f"/api/terminal/{PROJECT}/close", {"id": terminal})
+    output = [line for line in seen.splitlines() if not line.lstrip().startswith(("echo", "env -i"))
+              and "--problem" not in line]
+    facts = {"unit": f"altitude-terminal-{terminal}.service", "output": output[-8:],
+             "refusals": seen.count("Only you can start a repair, from your own terminal."),
+             "started": sorted(set(repairs()) - before)}
+    facts["passed"] = (facts["refusals"] >= 2 and "\nplain-exit-1" in seen and "\nclean-exit-1" in seen
+                       and not facts["started"])
+    return facts
+
+
+def row_repair_installer() -> dict:
+    """#1056: `python3.12 install.py --repair`, the release's own installer, loads the installed release and starts a
+    repair of it in the operator's shell."""
+    version = os.environ["LANE_VERSION"]
+    repository = Path(os.environ["LANE_LATEST"]).parent.parent.relative_to(SHARED / "root/repos")
+    installer = SHARED / "root" / repository / "releases/download" / version / "install.py"
+    facts = terminal_repair([PYTHON, str(installer), "--repair"])
+    facts["record"] = {key: repair(facts["id"]).get(key) for key in ("route", "version", "engine")} if facts["id"] else {}
+    facts["outcome"] = wait("the service's check of the repair", lambda: repair(facts["id"]).get("outcome"), timeout=120)
+    facts["passed"] = (started(facts) and facts["record"] == {"route": "terminal", "version": version, "engine": "codex"}
+                       and facts["outcome"] == "no_report")
+    return facts
+
+
+LEFT = "dev.fixture.left-running"
+AGENT_PLIST = HOME / f"Library/LaunchAgents/{LEFT}.plist"
+#: The agent's command that leaves a launch agent of its own running outside the repair's job.
+LEAVE = (f"p={AGENT_PLIST}; mkdir -p \"$(dirname \"$p\")\" && plutil -create xml1 \"$p\" && "
+         f"plutil -insert Label -string {LEFT} \"$p\" && plutil -insert ProgramArguments -array \"$p\" && "
+         "plutil -insert ProgramArguments -string /bin/sleep -append \"$p\" && "
+         "plutil -insert ProgramArguments -string 6002 -append \"$p\" && launchctl bootstrap gui/$(id -u) \"$p\"")
+
+
+def app_repair(safari: "Safari", problem: str) -> str:
+    """A repair started from the paired page, once its first turn's commands have run."""
+    answer = safari.fetch("/api/repairs", {"problem": problem, "request": os.urandom(8).hex()})
+    ident = (answer.get("json") or {}).get("id")
+    if answer["status"] != 200 or not ident:
+        raise Failed(f"the page's repair did not start: {answer['status']} {answer['text'][:300]}")
+    commands = len(directives(problem))
+    wait("the repair's first turn", lambda: len([entry for entry in repair_turns(ident) if "command" in entry])
+         >= commands, timeout=90)
+    return ident
+
+
+def directives(problem: str) -> list[str]:
+    return [line for line in problem.splitlines() if line.startswith("FIXTURE-RUN:")]
+
+
+def kept(ident: str, sleeper: str) -> dict:
+    """What of a repair runs now: its job, the agent's background command in it and the recorder."""
+    return {"job": job_running(repair(ident).get("unit", "")), "sleeper": len(processes(f"sleep {sleeper}")),
+            "recorder": [line.split()[0] for line in processes(f"recorder.py {REPAIRS / ident}")]}
+
+
+def row_repair_app() -> dict:
+    """#1065, #1078: a repair started from the page runs the agent headless with full access in a launchd job of its
+    own and resumes the same session for a message; the job, the agent's background command in its coalition and the
+    recorder outlive a restart of the service and a reinstall of the installation; Stop ends every process in the job,
+    and Left running names the launch agent the agent started outside it, on the page Safari renders."""
+    problem = (f"A fictional problem, from the app.\nFIXTURE-RUN: /bin/sleep 6001 >/dev/null 2>&1 &\nFIXTURE-RUN: {LEAVE}")
+    facts: dict = {}
+    try:
+        with Safari() as safari:
+            ident = app_repair(safari, problem)
+            facts["id"], facts["unit"] = ident, repair(ident).get("unit")
+            facts["started"] = kept(ident, "6001")
+            safari.fetch(f"/api/repairs/{ident}/message", {"text": "A fictional message.", "request": os.urandom(8).hex()})
+            argv = wait("the session resumed for the message", lambda: (found := [entry["argv"] for entry in
+                        repair_turns(ident) if "argv" in entry and not entry.get("terminal")])[1:] and found, timeout=90)
+            facts["argv"] = argv
+            facts["sessions"] = [entry["session"] for entry in repair_turns(ident) if "session" in entry and "argv" in entry]
+            facts["restart"] = restart()
+            facts["after_restart"] = kept(ident, "6001")
+            version = json.loads((HOME / ".local/share/altitude/current/release.json").read_text())["version"]
+            newer = re.sub(r"(\d+)$", lambda m: str(int(m[1]) + 1), version)
+            archive = relabelled(os.environ["LANE_VERSION"], newer)
+            sha = hashlib.sha256(archive.read_bytes()).hexdigest()
+            before = service_pid()
+            alt("update", "--archive", str(archive), "--sha256", sha, project=False, timeout=300)
+            wait(f"the service to run {newer}", lambda: json.loads((HOME / ".local/share/altitude/current/release.json")
+                                                                   .read_text())["version"] == newer
+                 and (service_pid() or before) != before and healthy(), timeout=180)
+            facts["reinstalled"] = newer
+            facts["after_reinstall"] = kept(ident, "6001")
+            stopped = safari.fetch(f"/api/repairs/{ident}/stop", {"request": os.urandom(8).hex()})
+            facts["stop"] = stopped["status"]
+            wait("the repair's job to end", lambda: not job_running(facts["unit"]) and not processes("sleep 6001"),
+                 timeout=60)
+            facts["after_stop"] = kept(ident, "6001")
+            facts["outcome"] = wait("the service's check of the repair", lambda: repair(ident).get("outcome"), timeout=120)
+            facts["end"] = repair(ident).get("end")
+            facts["left_running"] = repair(ident).get("left_running")
+            facts["page"] = safari.shows(f"/repairs/{ident}", "main", LEFT)
+            safari.screenshot("repair-3-app-stopped")
+    finally:
+        shell(f"launchctl bootout gui/{UID}/{LEFT}; rm -f {AGENT_PLIST}; pkill -f 'sleep 600[12]'")
+    first, resumed = facts["argv"][0], facts["argv"][1]
+    facts["passed"] = (facts["started"]["job"] and facts["started"]["sleeper"] == 1 and len(facts["started"]["recorder"]) == 1
+                       and 'sandbox_mode="danger-full-access"' in first and 'approval_policy="never"' in first
+                       and resumed[:2] == ["exec", "resume"] and resumed[-2] == facts["sessions"][0]
+                       and facts["after_restart"] == facts["started"] and facts["after_reinstall"] == facts["started"]
+                       and facts["stop"] == 200 and facts["after_stop"] == {"job": False, "sleeper": 0, "recorder": []}
+                       and facts["end"] == "stop" and {"kind": "launch agent", "name": LEFT} in (facts["left_running"] or []))
+    return facts
+
+
+def row_repair_deadline() -> dict:
+    """#1078: a repair from the page whose two hours are up ends, with every process in its job."""
+    with Safari() as safari:
+        ident = app_repair(safari, "A fictional problem that runs out of time.\nFIXTURE-RUN: /bin/sleep 6003 >/dev/null 2>&1 &")
+    facts = {"id": ident, "started": kept(ident, "6003")}
+    # The recorder reads the deadline from the record, which the service changes only under its lock.
+    script = ("import fcntl,json,os,sys; f=sys.argv[1]; l=os.open(os.path.join(os.path.dirname(f),'record.lock'),os.O_RDONLY);"
+              "fcntl.flock(l,fcntl.LOCK_EX); r=json.load(open(f)); r['deadline']='2000-01-01T00:00:00+00:00';"
+              "open(f+'.lane','w').write(json.dumps(r)); os.replace(f+'.lane',f)")
+    subprocess.run([PYTHON, "-c", script, str(REPAIRS / ident / "repair.json")], check=True, timeout=30)
+    wait("the repair to end at its deadline", lambda: repair(ident).get("ended"), timeout=60)
+    wait("its job to end", lambda: not job_running(repair(ident).get("unit", "")) and not processes("sleep 6003"), timeout=60)
+    facts.update(end=repair(ident).get("end"), after=kept(ident, "6003"))
+    shell("pkill -f 'sleep 6003'")
+    facts["passed"] = (facts["started"]["job"] and facts["started"]["sleeper"] == 1 and facts["end"] == "time"
+                       and facts["after"] == {"job": False, "sleeper": 0, "recorder": []})
+    return facts
+
+
+def row_repair_logout() -> dict:
+    """#1078: a repair from the page stops with the account's session at logout, and the one-repair lock is free after
+    the next login, so the next repair starts."""
+    with Safari() as safari:
+        ident = app_repair(safari, "A fictional problem at logout.\nFIXTURE-RUN: /bin/sleep 6004 >/dev/null 2>&1 &")
+    facts: dict = {"id": ident, "started": kept(ident, "6004")}
+    before = service_pid()
+    facts["logout"] = shell("sudo -n killall loginwindow").returncode
+    wait("the service to stop with the session", lambda: service_pid() is None, timeout=90, every=1)
+    wait("the next login to start the service", lambda: (service_pid() or before) != before and healthy(), timeout=180)
+    facts["after"] = kept(ident, "6004")
+    try:  # the service settles it at a tick after its start, ticks being 30 s apart
+        facts["ended"] = wait("the logged-out repair's end", lambda: repair(ident).get("end"), timeout=150)
+    except Failed:  # whatever still holds the one-repair lock says why
+        facts["ended"] = None
+        facts["lock"] = shell(f"lsof {REPAIRS}/lock").stdout.splitlines()
+    facts["next"] = terminal_repair([str(ALT), "repair", "--engine", "codex", "--problem",
+                                     f"A fictional problem after the logout.\nFIXTURE-RUN: {REPORT}"])
+    shell(f"pkill -f 'sleep 6004'; kill {' '.join(facts['after']['recorder'])}")
+    facts["passed"] = (facts["started"]["job"] and facts["started"]["sleeper"] == 1
+                       and facts["after"] == {"job": False, "sleeper": 0, "recorder": []}
+                       and facts["ended"] == "interrupted" and started(facts["next"]))
+    return facts
+
+
 ROWS = {"coordinator-stop": row_coordinator_stop, "failed-turn": row_failed_turn, "status-unknown": row_status_unknown,
         "validation-restart": row_validation_restart, "grants": row_grants, "contention": row_contention,
         "incident": row_incident, "schedule": row_schedule, "quiet-point": row_quiet_point,
         "terminal-hold": row_terminal_hold,
-        "scratch": row_scratch, "operator-step": row_operator_step,
-        "coordinator-channel": row_coordinator_channel, "logout-login": row_logout_login, "sign-in": row_sign_in}
+        "scratch": row_scratch, "operator-step": row_operator_step, "terminal-return": row_terminal_return,
+        "coordinator-channel": row_coordinator_channel, "logout-login": row_logout_login, "sign-in": row_sign_in,
+        "agent-refusal": row_agent_refusal, "codex-sign-in": row_codex_sign_in,
+        "repair-terminal": row_repair_terminal, "repair-page-terminal": row_repair_page_terminal,
+        "repair-installer": row_repair_installer, "repair-app": row_repair_app, "repair-deadline": row_repair_deadline,
+        "repair-logout": row_repair_logout}
 
 
 def rows(names: list[str]) -> int:
