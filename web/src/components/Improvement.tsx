@@ -1,8 +1,8 @@
 import { Fragment, useState } from "react";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, sendImprovement } from "../data/api";
-import type { ImprovementRun, ImprovementSuggestion, TaskRow } from "../data/api";
+import { ApiError, sendImprovement, useSaveSuggestion, useSuggestionChanges, useSuggestionRefusals } from "../data/api";
+import type { ImprovementRun, ImprovementSuggestion, SuggestionChange, TaskRow } from "../data/api";
 import { clockText, dayText, stampText } from "../data/observed";
 import { Icon } from "./Choice";
 import { Stamp } from "./Stamp";
@@ -12,10 +12,11 @@ import { TaskCards } from "./TaskCard";
  * Improvement suggestions (design/wireframes/improvement-review/PROPOSAL.md, "Where suggestions appear"): a running
  * review is a system line with Stop, an ending is a system line with Show, and a posted review is one card, in the
  * project's chat and, while it waits for a decision or a task, under Suggestions in Needs you. Every state is read
- * from the record; a press saves, then waits for the fresh record before its spinner leaves.
+ * from the record; a press saves, then waits for the fresh record before its spinner leaves. Dismiss and Undo are the
+ * operator's own choice, so the suggestion folds or unfolds at the press, in chat and Needs you alike (SPEC.md §1.1).
  */
 
-type Action = "stop" | "accept" | "dismiss" | "undo" | "retry";
+type Action = "stop" | "accept" | "retry";
 
 /** One press at a time per view: what is saving, and the one that failed. */
 function usePress(project: string) {
@@ -130,12 +131,20 @@ function SeenIn({ project, seen }: { project: string; seen: ImprovementSuggestio
   );
 }
 
-function Suggestion({ project, suggestion, tasks, busy, failed, press }: {
+function Suggestion({ project, suggestion, tasks, busy, failed, press, choosing, refused, choose }: {
   project: string;
   suggestion: ImprovementSuggestion;
   tasks: Map<string, TaskRow>;
+  /** Dismiss or Undo on its way, and the latest one refused, with its reason. */
+  choosing: boolean;
+  refused?: { change: SuggestionChange; error: Error };
+  choose: (action: SuggestionChange["action"]) => void;
 } & ReturnType<typeof usePress>) {
   const { ref, state } = suggestion;
+  // A refusal shows while the record, read again after it, still lacks the change: one saved despite a lost reply needs no word.
+  const unsaved = refused && (refused.change.action === "dismiss" ? state === "undecided" : state === "dismissed" && suggestion.undo);
+  const notSaved = unsaved ? <p className="irc-error text-danger" role="alert">Not saved: {refused.error.message}{" "}
+    <button type="button" className="link" onClick={() => choose(refused.change.action)}>Retry</button></p> : null;
   const chip = <span className="chip" data-tone={suggestion.target === "How agents work" ? "held" : undefined}>{suggestion.target}</span>;
   const title = `${suggestion.n}. ${suggestion.title}`;
   if (state === "dismissed" || state === "not decided") {
@@ -145,14 +154,14 @@ function Suggestion({ project, suggestion, tasks, busy, failed, press }: {
         <span className="irc-title">{title}</span>
         <span className="irc-meta">
           {state === "dismissed" ? "Dismissed" : "Not decided"}
-          {suggestion.undo ? <> · {busy === `${ref}:undo` ? <span className="spinner" role="status" aria-label="Saving" />
-            : <button type="button" className="link" disabled={Boolean(busy)} onClick={() => void press(`${ref}:undo`, "undo", ref)}>Undo</button>}</> : null}
+          {suggestion.undo ? <> · {choosing ? <span className="spinner" role="status" aria-label="Saving" />
+            : <button type="button" className="link" disabled={Boolean(busy)} onClick={() => choose("undo")}>Undo</button>}</> : null}
         </span>
-        {failed === `${ref}:undo` ? <p className="irc-error text-danger" role="alert">Not saved. Try again.</p> : null}
+        {notSaved}
       </section>
     );
   }
-  const saving = busy === `${ref}:accept` || busy === `${ref}:dismiss`;
+  const saving = busy === `${ref}:accept`;
   return (
     <section className="irc-sg" aria-label={title}>
       <div>{chip}</div>
@@ -163,18 +172,17 @@ function Suggestion({ project, suggestion, tasks, busy, failed, press }: {
       {state === "undecided" ? (
         <>
           <div className="irc-actions">
-            <button type="button" className="btn irc-make" disabled={Boolean(busy)} aria-busy={busy === `${ref}:accept` || undefined}
+            <button type="button" className="btn irc-make" disabled={Boolean(busy) || choosing} aria-busy={busy === `${ref}:accept` || undefined}
               onClick={() => void press(`${ref}:accept`, "accept", ref)}>
               {busy === `${ref}:accept` ? <span className="spinner" role="status" aria-label="Saving" /> : null}
               <span className="irc-label">Make a task</span>
             </button>
-            <button type="button" className="btn irc-dismiss" disabled={Boolean(busy)} aria-busy={busy === `${ref}:dismiss` || undefined}
-              data-dim={saving && busy !== `${ref}:dismiss` || undefined} onClick={() => void press(`${ref}:dismiss`, "dismiss", ref)}>
-              {busy === `${ref}:dismiss` ? <span className="spinner" role="status" aria-label="Saving" /> : null}
+            <button type="button" className="btn irc-dismiss" disabled={Boolean(busy) || choosing} data-dim={saving || undefined} onClick={() => choose("dismiss")}>
               <span className="irc-label">Dismiss</span>
             </button>
+            {choosing ? <span className="spinner" role="status" aria-label="Saving" /> : null}
           </div>
-          {failed === `${ref}:accept` || failed === `${ref}:dismiss` ? <p className="irc-error text-danger" role="alert">Not saved. Try again.</p> : null}
+          {failed === `${ref}:accept` ? <p className="irc-error text-danger" role="alert">Not saved. Try again.</p> : notSaved}
         </>
       ) : suggestion.task ? (
         <TaskCards project={project} slugs={[suggestion.task]} tasks={tasks} />
@@ -200,6 +208,9 @@ export function ImprovementCard({ project, run, tasks, linked = false }: {
   linked?: boolean;
 }) {
   const press = usePress(project);
+  const choice = useSaveSuggestion();
+  const choosing = useSuggestionChanges();
+  const refusals = useSuggestionRefusals();
   const [details, setDetails] = useState(false);
   return (
     <article className="irc" id={linked ? undefined : `improvement-${run.id}`} data-improvement={run.id} aria-label={`Improvement suggestions, ${run.tasks} tasks from ${run.window}`}>
@@ -210,7 +221,9 @@ export function ImprovementCard({ project, run, tasks, linked = false }: {
       </header>
       <p className="irc-window">{run.tasks} tasks from {run.window}</p>
       {run.suggestions.map((suggestion) => (
-        <Suggestion key={suggestion.ref} project={project} suggestion={suggestion} tasks={tasks} {...press} />
+        <Suggestion key={suggestion.ref} project={project} suggestion={suggestion} tasks={tasks} {...press}
+          choosing={choosing.some((change) => change.project === project && change.ref === suggestion.ref)}
+          refused={refusals.get(`${project}/${suggestion.ref}`)} choose={(action) => choice.mutate({ project, ref: suggestion.ref, action })} />
       ))}
       {linked ? null : (
         <footer className="irc-foot">

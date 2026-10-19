@@ -136,10 +136,10 @@ test("Voice settings loading, denied save and retry keep the persisted selection
     const browser = card(page, "Browser recognition");
     await expect(inUse(page, "This computer")).toBeVisible();
     await use(page, "Use browser recognition").click();
-    await walk.state("03-saving-controls-locked", { visible: [browser.getByRole("button", { name: "Saving…" }), inUse(page, "This computer")], hidden: [page.getByRole("alert")] });
+    await walk.state("03-saving-controls-locked", { visible: [browser.getByRole("status", { name: "Saving…" }), inUse(page, "Browser recognition")], hidden: [page.getByRole("alert"), inUse(page, "This computer")] });
     await expect(use(page, "Use your speech service")).toHaveAttribute("aria-disabled", "true");
     releaseSave();
-    await walk.state("04-denied-keeps-saved-choice", { visible: [browser.getByRole("alert").filter({ hasText: "Fixture settings update denied" }), page.getByRole("button", { name: "Retry", exact: true }), inUse(page, "This computer")], hidden: [browser.getByRole("button", { name: "Saving…" })] });
+    await walk.state("04-denied-keeps-saved-choice", { visible: [browser.getByRole("alert").filter({ hasText: "Fixture settings update denied" }), page.getByRole("button", { name: "Retry", exact: true }), inUse(page, "This computer")], hidden: [browser.getByRole("status", { name: "Saving…" }), inUse(page, "Browser recognition")] });
     expect((await savedVoice(request)).backend).toBe("host");
     failSave = false;
     await page.getByRole("button", { name: "Retry", exact: true }).click();

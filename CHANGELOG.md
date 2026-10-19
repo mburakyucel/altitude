@@ -36,6 +36,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Settings change the moment you press: the Terminal, Validation runs, update and Weekly suggestions
   switches, project routing, the coordinator and New tasks model picks, and removing a device. If
   Altitude refuses, the setting goes back and says why, with Retry.
+- Choosing how voice is transcribed, dismissing an improvement suggestion or undoing that, and skipping a
+  review show their result the moment you press, in chat and Needs you alike. If Altitude refuses, it goes
+  back and says why, with Retry.
 - A device whose alert subscription stopped working, such as one made before Altitude's alert key
   changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
   old subscription. The warning about it shows only on the device it concerns, and only

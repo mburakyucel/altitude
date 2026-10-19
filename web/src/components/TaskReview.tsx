@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, taskReview } from "../data/api";
+import { ApiError, taskReview, useReviewSkipRefusals, useSkipReview } from "../data/api";
 import type { Decision, Review, ReviewAction, ReviewSubject, TaskView } from "../data/api";
 import { InlineProse, ProseAt } from "./Prose";
 import { Stamp } from "./Stamp";
@@ -97,6 +97,8 @@ function Summary({ review, iteration, name, action, extra, empty, footer, held }
   </>;
 }
 
+const DENIED = "You do not have permission to request or change this review.";
+
 export function useTaskReview(project: string, task: TaskView, refresh: () => Promise<unknown>, disabled: boolean, onRequested: () => void) {
   const client = useQueryClient();
   const [uncertain, setUncertain] = useState(false);
@@ -128,7 +130,7 @@ export function useTaskReview(project: string, task: TaskView, refresh: () => Pr
     },
     onError: async (failure) => {
       if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500) {
-        setError(failure.status === 403 || failure.status === 401 ? "You do not have permission to request or change this review." : failure.message);
+        setError(failure.status === 403 || failure.status === 401 ? DENIED : failure.message);
         await client.invalidateQueries({ queryKey: ["task", project, task.slug] });
       } else {
         setUncertain(true);
@@ -137,14 +139,29 @@ export function useTaskReview(project: string, task: TaskView, refresh: () => Pr
       }
     },
   });
-  return { disabled: disabled || mutation.isPending || checking || uncertain, pending: mutation.isPending,
-    error, uncertain, checking, check,
-    run: (action: ReviewAction, review?: Review, subject?: ReviewSubject) => { setError(""); mutation.mutate({ action, review, subject }); },
+  // Skip review shows as skipped from the press (useSkipReview). A refusal says why here, with Retry, while the
+  // record, read again after it, still offers that skip: a skip saved despite a lost reply needs no word.
+  const skip = useSkipReview();
+  const refusals = useReviewSkipRefusals();
+  const refused = [...refusals].reverse().flatMap(({ change, error }) => {
+    const review = change.project === project && change.slug === task.slug ? task.review?.history.find((entry) => entry.id === change.id) : undefined;
+    return review?.can_withdraw ? [{ review, denied: error instanceof ApiError && [401, 403].includes(error.status), error }] : [];
+  })[0];
+  const run = (action: ReviewAction, review?: Review, subject?: ReviewSubject) => {
+    setError("");
+    if (action === "withdraw" && review) skip.mutate({ project, slug: task.slug, id: review.id, subject: review.subject, unresolved: review.unresolved.length, at: new Date().toISOString() });
+    else mutation.mutate({ action, review, subject });
+  };
+  return { disabled: disabled || mutation.isPending || skip.isPending || checking || uncertain, pending: mutation.isPending,
+    error, uncertain, checking, check, run, refused: refused && { ...refused, retry: () => run("withdraw", refused.review) },
   };
 }
 export type ReviewControls = ReturnType<typeof useTaskReview>;
 
 export function ReviewFeedback({ controls }: { controls: ReviewControls }) {
+  if (controls.refused && !controls.error && !controls.pending) return <p className="text-meta text-danger task-review-feedback" role="alert">
+    {controls.refused.denied ? DENIED : <>Not saved: {controls.refused.error.message}{" "}<button type="button" className="link" onClick={controls.refused.retry}>Retry</button></>}
+  </p>;
   if (!controls.error && !controls.pending) return null;
   return <p className="text-meta task-review-feedback" role={controls.error ? "alert" : "status"}>
     {controls.error || "Saving review request…"}{" "}

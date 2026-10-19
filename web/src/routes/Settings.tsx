@@ -155,8 +155,9 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   useEffect(() => synchronize(saved), [saved, synchronize]);
   const [save, setSave] = useState<VoiceSave | null>(null);
   const [hostBusy, setHostBusy] = useState<HostAction | null>(null);
-  const active = baseline.backend;
   const saving = save?.status === "saving";
+  // A choice on its way is In use from the press; a refusal puts the mark back on the saved one.
+  const active = saving ? save.backend : baseline.backend;
   const busy = saving || hostBusy !== null;
   // A control that disappears after a press hands focus to its successor (a CSS selector inside the page).
   const section = useRef<HTMLElement>(null);
@@ -184,6 +185,8 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   };
   const use = (backend: VoiceBackend) => {
     if (active === "service" && confirming !== backend) { setConfirming(backend); setSave(null); setFocus(`[data-action="use-${backend}"]`); return; }
+    // The pressed button leaves with the press, so its card's heading takes focus.
+    setFocus(`#voice-${backend}`);
     void submit({ backend, selection: committed.current.selection }, `use-${backend}`);
   };
   const saveService = () => {
@@ -227,6 +230,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
         <div className="voice-option-head">
           <h3 id={`voice-${backend}`} tabIndex={-1}>{labels[backend]}</h3>
           {active === backend ? <span className="voice-in-use"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4.5 10.5 8 14l7.5-8" /></svg>In use</span> : null}
+          {saving && save.backend === backend && save.action !== "service" ? <StatusMark label="Saving…" /> : null}
         </div>
         <p className="text-muted text-meta">{explanations[backend]}</p>
         {backend === "service" && saved.error ? <p role="alert" className="text-meta text-danger">{INVALID_SERVICE}</p> : null}
@@ -256,7 +260,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
           </details>
           <a className="service-help" href="https://github.com/mburakyucel/altitude/blob/main/docs/SETUP.md#your-speech-service" target="_blank" rel="noreferrer">How to run one</a>
           {edited ? <div className="voice-actions">
-            {button("service", active === "service" ? "Save" : "Use this service", saveService, { primary: true })}
+            {button("service", baseline.backend === "service" ? "Save" : "Use this service", saveService, { primary: true })}
             {button("cancel-service", "Cancel", () => { commit(saved); reset(saved); setSave(null); setFocus(active === "service" ? "#voice-url" : '[data-action="open-service"]'); })}
           </div> : null}
         </form> : null}

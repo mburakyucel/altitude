@@ -32,6 +32,7 @@ test("adversarial review walks every state in task details and the conversation"
   let denied = false;
   let lost = false;
   let saving = false;
+  let refuse = false;
   const posts: Record<string, unknown>[] = [];
   let finishPost: (() => void) | undefined;
   const messages = [{ id: "intro", role: "l2", text: "The cursor validation is ready. I’m checking the expiration and empty-page cases.", at: "2026-09-22T10:24:00Z" }];
@@ -47,6 +48,7 @@ test("adversarial review walks every state in task details and the conversation"
     posts.push(body);
     if (denied) { await route.fulfill({ status: 403, json: { error: "denied" } }); return; }
     if (saving) await new Promise<void>((resolve) => { finishPost = resolve; });
+    if (refuse) { await route.fulfill({ status: 503, json: { error: "Altitude is busy." } }); return; }
     existing = true;
     if (body.action === "request") Object.assign(review, { state: "requested", requested_by: "operator", waiting: "owner", can_again: false, can_withdraw: true, error: null });
     if (body.action === "cancel") Object.assign(review, { state: "cancelled", can_cancel: false, can_again: true });
@@ -130,10 +132,19 @@ test("adversarial review walks every state in task details and the conversation"
   await toggle.click();
   await card.getByRole("button", { name: "Skip review" }).click();
   await walk.state("19-skip-confirmation", { visible: [card.getByText(/no longer blocks merging/), card.getByRole("group", { name: "Skip review" })], hidden: [card.getByRole("textbox")] });
+  // The review reads skipped from the press; a refusal puts it back, saying why with Retry.
+  saving = true; refuse = true;
   await card.getByRole("group", { name: "Skip review" }).getByRole("button", { name: "Skip review" }).click();
   await expect.poll(() => posts.length).toBe(4);
   expect(posts[3]).toEqual({ project: project.name, slug: task.slug, action: "withdraw", review_id: review.id });
-  await walk.state("20-skipped", { visible: [card.getByText("· skipped"), card.getByText("Skipped by you")], hidden: [card.getByRole("group", { name: "Skip review" })] });
+  await walk.state("20a-skipped-at-the-press", { visible: [card.getByText("· skipped"), card.getByText("Skipped by you")], hidden: [card.getByRole("group", { name: "Skip review" }), page.getByRole("alert")] });
+  finishPost!(); saving = false;
+  const refused = page.getByRole("alert").filter({ hasText: "Not saved: Altitude is busy." });
+  await walk.state("20b-skip-refused", { visible: [refused, refused.getByRole("button", { name: "Retry", exact: true }), card.getByText(/2 findings, both resolved/)], hidden: [card.getByText("Skipped by you")] });
+  refuse = false;
+  await refused.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect.poll(() => posts.length).toBe(5);
+  await walk.state("20-skipped", { visible: [card.getByText("· skipped"), card.getByText("Skipped by you")], hidden: [card.getByRole("group", { name: "Skip review" }), page.getByRole("alert")] });
   await expect(field).toHaveValue("Keep the existing pagination contract.");
 
   existing = false; why = "No reviewer is available.";
