@@ -1106,8 +1106,8 @@ secondary), then one bordered tile per picture, stacked, full card width up to 4
 replaced pictures first, then new ones, then removed ones, each group in path order. A tile is a frame 240 px tall on
 desktop and 160 px on phone, the picture fitted whole and centred on the page colour (never cropped or enlarged), with
 the expand badge; the frame is a button ("Open image overview.png") opening the gallery, which holds each picture at
-the side its tile shows and names it with that side in its header (**overview.png · Before**, **banner.png ·
-Removed**). Under the frame, at least 44 px tall, the picture's path in 12.5px muted monospace on one line, cut at
+the side its tile shows and names it with that side first in its header, so a cut name keeps it (**Before ·
+overview.png**, **Removed · banner.png**). Under the frame, at least 44 px tall, the picture's path in 12.5px muted monospace on one line, cut at
 its start so the file name stays, the full path as its tooltip; at the right:
 
 | Picture | Right of the path | Frame |

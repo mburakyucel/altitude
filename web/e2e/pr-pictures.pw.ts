@@ -51,7 +51,7 @@ test("the generated merge card shows the PR's pictures with before and after, an
   // A picture opens the gallery at the side it shows; Back closes it to the card.
   await overview.getByRole("button", { name: "Open image overview.png" }).click();
   const viewer = page.getByRole("dialog");
-  await walk.state("04-gallery", { visible: [viewer, viewer.getByText("overview.png · Before"), viewer.getByText("1 / 4")], hidden: [] });
+  await walk.state("04-gallery", { visible: [viewer, viewer.getByText("Before · overview.png"), viewer.getByText("1 / 4")], hidden: [] });
   await page.goBack();
   await expect(viewer).toBeHidden();
   await expect(overview.getByRole("button", { name: "Before", pressed: true })).toBeVisible();

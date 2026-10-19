@@ -29,7 +29,7 @@ export function PrPictures({ pictures }: { pictures: PrImages }) {
   const open = (index: number) => gallery(items.map((picture) => {
     const shown = side(picture);
     const image = picture[shown]!;
-    return { key: image.url, name: `${picture.name} · ${picture.change === "changed" ? shown === "before" ? "Before" : "After" : picture.after ? "New" : "Removed"}`, url: image.url };
+    return { key: image.url, name: `${picture.change === "changed" ? shown === "before" ? "Before" : "After" : picture.after ? "New" : "Removed"} · ${picture.name}`, url: image.url };
   }), index);
   const more = items.length - FIRST;
   return <section className="pr-pictures" aria-label="Pictures in this PR">
