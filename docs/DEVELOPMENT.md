@@ -714,8 +714,9 @@ make ui-simulator STEPS="profile home-screen"   # only these steps, from navigat
   keychains and other Simulator devices are never touched; the CA goes with the phone.
 - **Relay.** The run still cannot reach the Simulator service. It reaches the phone's Safari through a
   Unix socket in its own `TMPDIR`, named by `SIMULATOR_INSPECTOR`. altd relays Safari's Web Inspector
-  protocol (the binary-plist protocol Safari's Develop menu uses) and filters it: only Safari's web pages
-  are listed, other inspectable processes in the phone are hidden, a request about anything else (another
+  protocol (the binary-plist protocol Safari's Develop menu uses) and filters it: only the web pages of
+  Safari and of the Home Screen app (`com.apple.webapp`, which runs every web app added from Safari) are
+  listed, under the same rules, other inspectable processes in the phone are hidden, a request about anything else (another
   process, a page not listed, an automation session) closes the connection, and a page whose address is on
   Altitude's port is hidden and closes any connection inspecting it. A run holds at most four connections
   at once, and a message that stops arriving partway closes its connection after 30 seconds. The page's
@@ -739,7 +740,9 @@ make ui-simulator STEPS="profile home-screen"   # only these steps, from navigat
   as it ends, completed or not reachable with the reason, with a screenshot. altd returns the record and
   screenshots to the run; for a Home Screen walk it adds the web clip iOS made, read from the run's phone's
   data: the clip's title, address and full-screen setting and its stored icon. After each walk altd closes
-  Safari, the Home Screen app and Settings, so none keeps a connection to the run's pages. The walks wait
+  Safari and Settings, so neither keeps a connection to the run's pages. The Home Screen app a walk opened
+  stays open for the run to inspect, and altd closes it before the next walk; a run that inspects it leaves
+  its page before stopping the service it serves, since an open app keeps the change stream open. The walks wait
   for each control a bounded time and unwrap no missing value, so the test runner ends its walk rather
   than crashing. A walk has seven minutes; past that altd interrupts `xcodebuild` as Ctrl-C does, so it
   stops its runner itself. A runner that crashes, does not finish or does not build ends the walk as a
@@ -795,7 +798,10 @@ unless `STEPS` (its `--steps`) names some, separated by spaces or commas:
   SHA-256 are recorded. The icon must open the app with Safari not in front, already paired with no
   new device: iOS copies Safari's cookies to a web app when it adds it, so the app keeps Safari's
   pairing. Safari's pairing cookie lasts as long as a paired device's, as the server sets it, so it
-  survives the walks closing Safari.
+  survives the walks closing Safari. The walkthrough then inspects the Home Screen app the task's walk
+  left open, which must be standalone (`navigator.standalone`), runs the voice journey below there as well
+  (`home-voice-…` snapshots, `home-dictation.json`, `home-voice-report.json`, the app's console in
+  `home-console.log`) and leaves the app; a console error in the app fails the step.
 
 The profile and Home Screen steps record a row per walk step and per check of what it showed:
 completed, not reachable with the reason, or failed with what differed, and a failed `runner` row when
@@ -1018,7 +1024,7 @@ Device results name their evidence class; a result in one class never stands in 
 | --- | --- | --- | --- |
 | Chromium phone/desktop | `make check` (required) | Application behavior, layouts and interaction states on both viewports | Any Safari or iOS behavior |
 | Emulated iPhone WebKit | `make ui-ios` (opt-in) | The same walkthroughs in Playwright's WebKit engine with iPhone metrics, touch and user agent | iOS Safari, Home Screen mode, real microphone/speech, icon selection or certificate trust |
-| iOS Simulator on a Mac | `make ui-simulator` (opt-in, [iOS Simulator runs](#ios-simulator-runs)) | iOS Safari's rendering, layout, viewport and WebKit APIs (such as `webkitSpeechRecognition`) in a scripted phone-layout journey with fixture engines; iOS accepting a CA and server certificate from Altitude's generator over HTTPS without a warning once the CA is trusted, for a loopback address; Add to Home Screen at the root and a nested address: the sheet's title, the stored icon against the approved one pixel for pixel, the start address, the app opening on its own, paired with the cookies iOS copies from Safari; the setup page's profile through Download, Allow, Profile Downloaded, its name and SHA-256, Install and Certificate Trust Settings, then HTTPS without a warning; on the recorded Xcode, iOS runtime and iPhone model | A finger's touch, pairing a Home Screen app added before Safari was paired, real audio capture or dictation, a passcode during Install, a private-network address, the operator's own CA and network, other iOS versions; physical-iPhone acceptance |
+| iOS Simulator on a Mac | `make ui-simulator` (opt-in, [iOS Simulator runs](#ios-simulator-runs)) | iOS Safari's rendering, layout, viewport and WebKit APIs (such as `webkitSpeechRecognition`) in a scripted phone-layout journey with fixture engines; iOS accepting a CA and server certificate from Altitude's generator over HTTPS without a warning once the CA is trusted, for a loopback address; Add to Home Screen at the root and a nested address: the sheet's title, the stored icon against the approved one pixel for pixel, the start address, the app opening on its own, paired with the cookies iOS copies from Safari, and the voice journey in it; the setup page's profile through Download, Allow, Profile Downloaded, its name and SHA-256, Install and Certificate Trust Settings, then HTTPS without a warning; on the recorded Xcode, iOS runtime and iPhone model | A finger's touch, pairing a Home Screen app added before Safari was paired, real audio capture or dictation, a passcode during Install, a private-network address, the operator's own CA and network, other iOS versions; physical-iPhone acceptance |
 | Physical iPhone | Operator observation; [voice troubleshooting](OPERATIONS.md#on-iphone) reports | Native capture, trust, installed icon, Home Screen lifecycle | Other devices or OS versions |
 
 Run the emulated iPhone lane for changes to phone-facing behavior such as voice, pairing, Home
