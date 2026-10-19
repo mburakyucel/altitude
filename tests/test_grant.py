@@ -997,12 +997,18 @@ class TestOperatorGrant(AltitudeCase):
         # The rule admits the call; altd still refuses it without the task's current grant.
         self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
 
-    def test_a_grant_leaves_the_codex_sandbox_unchanged_and_its_bus_denied(self):
-        before = engines.codex_sandbox(self.worktree)
+    def test_a_grant_leaves_a_workers_launch_unchanged_and_its_bus_hidden(self):
+        def launch(engine):
+            return engines.common.implementation(engine).prepare_worker(
+                "t", "brief", cwd=self.worktree, scratch=self.tmp / "scratch", job_root=self.tmp / "l2-engine",
+                persona=None, model=None, settings=None, effort=None, resume=None, images=())
+        self.patch(engines.claude, "claude_agents", return_value=[])
+        before = [launch(engine) for engine in ("claude", "codex")]
         self.granted()
-        self.assertEqual(engines.codex_sandbox(self.worktree), before)
+        self.assertEqual([launch(engine) for engine in ("claude", "codex")], before)
+        sandbox = " ".join(platform.bubblewrap_profile([str(self.worktree)], temporary=str(self.tmp)))
         for path in platform.job_control_paths():
-            self.assertIn(f'{json.dumps(str(path))}="deny"', next(a for a in before if ".filesystem=" in a))
+            self.assertIn(f"--tmpfs {path}", sandbox)
 
     def running(self, pool, started, release):
         future = pool.submit(self.run_command, f"touch {started}; while [ ! -e {release} ]; do sleep .02; done; exit 3")

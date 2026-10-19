@@ -15,6 +15,10 @@ class ContainerWorkflow(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
+        self.codex_signed_in()
+        # Jobs run through the fixture launcher below, in Altitude's sandbox whatever the host's bubblewrap allows.
+        self.patch(platform, "sandbox_tool", return_value={"enabled": True, "command": None, "scoped": True,
+                                                           "detail": "test sandbox"})
         self.units = {}
         self.patch(platform, "job_command", side_effect=self.command)
         self.patch(platform, "job_active", side_effect=self.active)

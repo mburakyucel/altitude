@@ -4,7 +4,6 @@ import json
 import subprocess
 import sys
 import time
-import tomllib
 from pathlib import Path
 from unittest import mock
 
@@ -33,6 +32,7 @@ class TaskToolCache(AltitudeCase):
         self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=False)
+        self.codex_signed_in()
         for host in ("linux", "darwin"):
             for engine in ("claude", "codex"):
                 task = T.new(self.project, f"{host} {engine} cache", "Fictional worker")
@@ -42,11 +42,9 @@ class TaskToolCache(AltitudeCase):
                 for resume in (False, True):
                     with self.subTest(host=host, engine=engine, resume=resume):
                         # The real driver runs an engine that writes every cache, starts its session and fails.
-                        arguments = self.tmp / "engine-arguments.json"
                         native = self.tmp / "engine"
                         native.write_text(f"#!{sys.executable}\n" + (
                             "import json, os, pathlib, sys\n"
-                            f"pathlib.Path({str(arguments)!r}).write_text(json.dumps(sys.argv[1:]))\n"
                             "for key in ('XDG_CACHE_HOME','npm_config_cache','npm_config_store_dir','PIP_CACHE_DIR'):\n"
                             " p=pathlib.Path(os.environ[key]); p.mkdir(parents=True,exist_ok=True); (p/'fixture').write_text('ok')\n"
                             "def out(message):\n"
@@ -54,7 +52,7 @@ class TaskToolCache(AltitudeCase):
                             "if sys.argv[1:2] == ['app-server']:\n"
                             " for raw in sys.stdin:\n"
                             "  message = json.loads(raw); method = message.get('method')\n"
-                            "  if method == 'initialize': out({'id': message['id'], 'result': {}})\n"
+                            "  if method in ('initialize', 'account/login/start'): out({'id': message['id'], 'result': {}})\n"
                             "  elif method in ('thread/start', 'thread/resume'):\n"
                             "   out({'id': message['id'], 'result': {'thread': {'id': 'session'}}})\n"
                             "  elif method == 'turn/start':\n"
@@ -74,13 +72,12 @@ class TaskToolCache(AltitudeCase):
                             for key in ("XDG_CACHE_HOME", "npm_config_cache", "npm_config_store_dir", "PIP_CACHE_DIR"):
                                 caches[key] = Path(child_env[key])
                                 self.assertTrue(caches[key].is_relative_to(scratch.resolve() / "tool-cache"))
-                                if engine == "claude":
-                                    self.assertTrue(any(caches[key].is_relative_to(path) for path in kw["writable"]))
-                            if engine == "claude":  # the task's own Claude folder is its one root in Altitude's home
-                                self.assertEqual([path for path in kw["writable"]
-                                                  if config.ROOT.resolve().is_relative_to(Path(path).resolve())
-                                                  or Path(path).resolve().is_relative_to(config.ROOT.resolve())],
-                                                 [Path(root) / "claude"], kw["writable"])
+                                self.assertTrue(any(caches[key].is_relative_to(path) for path in kw["writable"]))
+                            # the task's own engine folder is its one root in Altitude's home
+                            self.assertEqual([path for path in kw["writable"]
+                                              if config.ROOT.resolve().is_relative_to(Path(path).resolve())
+                                              or Path(path).resolve().is_relative_to(config.ROOT.resolve())],
+                                             [Path(root) / engine], kw["writable"])
                             self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", child_env)
                             return ["/usr/bin/env", "-i", *(f"{k}={v}" for k,v in child_env.items()), *argv]
                         with mock.patch.object(platform.sys, "platform", host), \
@@ -101,15 +98,6 @@ class TaskToolCache(AltitudeCase):
                             self.assertEqual((row["sessionId"], row["state"]), ("session", "failed"))
                         for key, cache in caches.items():
                             self.assertEqual((cache / "fixture").read_text(), "ok", key)
-                        if engine == "codex":
-                            argv = json.loads(arguments.read_text())
-                            settings = [argv[n + 1] for n,part in enumerate(argv[:-1]) if part == "-c"]
-                            policy = tomllib.loads("\n".join(setting for setting in settings if setting.startswith("permissions.")))
-                            roots = policy["permissions"]["altitude-task"]["workspace_roots"]
-                            for cache in caches.values():
-                                self.assertTrue(any(cache.is_relative_to(path) for path in roots))
-                            self.assertFalse(any(config.ROOT.resolve().is_relative_to(path)
-                                                 or Path(path).is_relative_to(config.ROOT.resolve()) for path in roots), roots)
 
     def scratch(self, slug):
         return config.task_scratch(self.project, slug)

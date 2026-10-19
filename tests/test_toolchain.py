@@ -126,6 +126,7 @@ class TestToolchain(AltitudeCase):
         self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=False)
+        self.codex_signed_in()
         check_tools = (
             "import json, os, subprocess, sys\n"
             "assert os.environ['ALTITUDE_TASK'] == 'toolchain-task'\n"
@@ -147,7 +148,7 @@ class TestToolchain(AltitudeCase):
                 "for raw in sys.stdin:\n"
                 "    message = json.loads(raw)\n"
                 "    method, params = message.get('method'), message.get('params') or {}\n"
-                "    if method == 'initialize':\n"
+                "    if method in ('initialize', 'account/login/start'):\n"
                 "        out({'id': message['id'], 'result': {}})\n"
                 "    elif method in ('thread/start', 'thread/resume'):\n"
                 "        assert (method == 'thread/resume') == resume and params.get('threadId') == (resume and 'session' or None)\n"

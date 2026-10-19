@@ -173,25 +173,18 @@ class TestPrerequisites(OnboardingCase):
             one = self.items(gh=True, signed={"claude": False}, installed={"claude": False})
         self.assertEqual(one["agents"]["label"], "Install a coding agent: Claude")
 
-    def test_the_agent_sandbox_row_follows_the_agents_that_need_it(self):
+    def test_the_agent_sandbox_row_is_unmet_until_installed_whichever_agents_are_set_up(self):
         missing = {"enabled": False, "command": "sudo apt install bubblewrap", "scoped": True, "detail": "Install bubblewrap"}
         fresh = self.items(gh=True, signed={"claude": False, "codex": False}, installed={"claude": False, "codex": False},
                            sandbox=missing)
         self.assertEqual(list(fresh), ["github", "agents", "sandbox", "git"])
         self.assertEqual((fresh["sandbox"]["label"], fresh["sandbox"]["state"], fresh["sandbox"]["command"]),
                          ("Agent sandbox", "unmet", "sudo apt install bubblewrap"))
-        confined = self.items(gh=True, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": False},
-                              sandbox=missing)
-        self.assertEqual(confined["sandbox"]["state"], "unmet", "a job Altitude confines cannot start without it")
-        own = self.items(gh=True, signed={"claude": False, "codex": True}, installed={"claude": False, "codex": True},
-                         sandbox=missing)
-        self.assertEqual(own["sandbox"]["state"], "optional", "an agent with its own sandbox does not need it")
-        mixed = self.items(gh=True, signed={"claude": False, "codex": True}, installed={"claude": True, "codex": True},
-                           sandbox=missing)
-        self.assertEqual(mixed["sandbox"]["state"], "optional", "a signed-in agent with its own sandbox is enough, as setup judges")
-        waiting = self.items(gh=True, signed={"claude": False, "codex": False}, installed={"claude": True, "codex": False},
-                             sandbox=missing)
-        self.assertEqual(waiting["sandbox"]["state"], "unmet", "the only installed agent is confined")
+        for engine in ("claude", "codex"):
+            with self.subTest(engine=engine):
+                only = {"claude": engine == "claude", "codex": engine == "codex"}
+                self.assertEqual(self.items(gh=True, signed=only, installed=only, sandbox=missing)["sandbox"]["state"],
+                                 "unmet", "every agent's jobs run in Altitude's sandbox")
         unknown = self.items(gh=True, signed={"claude": True, "codex": True}, installed={"claude": True, "codex": True},
                              sandbox={**missing, "command": None})
         self.assertIn("package manager", unknown["sandbox"]["detail"])

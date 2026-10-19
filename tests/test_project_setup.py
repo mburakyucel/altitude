@@ -573,10 +573,9 @@ class ProjectSetup(AltitudeCase):
             self.assertIn("Sign in to Claude (Coding tools)", detail())
         sandbox = {"enabled": False, "command": "sudo apt install bubblewrap", "scoped": True, "detail": "fixture"}
         with mock.patch.object(platform, "sandbox_tool", return_value=sandbox):
-            with mock.patch.object(route, "routed_engines", return_value=["claude"]):
-                self.assertIn("Install the agent sandbox (Coding tools)", detail())
-            with mock.patch.object(route, "routed_engines", return_value=["codex"]):
-                self.assertEqual(self.step("coordinator")["status"], "pending", "an agent with its own sandbox is ready")
+            for engine in ("claude", "codex"):
+                with mock.patch.object(route, "routed_engines", return_value=[engine]):
+                    self.assertIn("Install the agent sandbox (Coding tools)", detail())
         with mock.patch.object(engines, "sign_in", return_value={"signed_in": None, "command": "fixture login"}):
             self.assertEqual(self.step("coordinator")["status"], "pending", "a status command that cannot answer holds nothing")
 

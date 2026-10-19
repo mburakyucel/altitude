@@ -195,8 +195,15 @@ def _saved(path) -> dict | None:
 
 def handle(project: str, slug: str, attempt: int, body: dict) -> dict:
     """Apply one admitted request from the task's current worker job, once. Identity comes from the admission; the
-    body names only the change."""
+    body names only the change. A `sign-in` request changes nothing and is answered afresh every time, never kept:
+    its answer is an access token for the worker's engine (`engines.worker_sign_in`)."""
     fields = {key: value for key, value in body.items() if key not in ("project", "slug", "attempt", "kind", "request")}
+    if body.get("kind") == "sign-in":
+        if fields:
+            raise ValueError("Unsupported sign-in fields.")
+        from . import engines
+        from .dispatch import l2_engine
+        return engines.worker_sign_in(l2_engine(S.load_task(project, slug)))
     return once(project, slug, body.get("request"), _change(project, slug, attempt, body.get("kind"), fields))
 
 

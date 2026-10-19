@@ -30,7 +30,7 @@ if sys.argv[1:2] == ['exec']:  # isolated coordinator: one prompt, streamed exec
 for raw in sys.stdin:  # Codex app-server: JSON-RPC over stdio
     message = json.loads(raw)
     method, identity, params = message.get('method'), message.get('id'), message.get('params') or {}
-    if method == 'initialize':
+    if method in ('initialize', 'account/login/start'):
         out({'id':identity, 'result':{}})
     elif method in ('thread/start', 'thread/resume'):
         session = params.get('threadId') or str(uuid.uuid4())

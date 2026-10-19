@@ -413,7 +413,7 @@ class TestCoordinatorJob(AltitudeCase):
         with mock.patch.object(engines.common.subprocess, "Popen",
                                side_effect=RuntimeError("fixture: execution intercepted")) as popen:
             with self.assertRaisesRegex(RuntimeError, "intercepted"):
-                engines.codex_exec("Probe evidence", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=37)
+                engines.codex_exec("Probe evidence", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.repo, timeout=37)
         cmd = popen.call_args.args[0]
         self.assertEqual(cmd[0], platform.SYSTEMD_RUN)
         for flag in ("--property=RuntimeMaxSec=37", "--property=KillMode=control-group"):
