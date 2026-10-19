@@ -1,8 +1,8 @@
-"""One finished, fictional terminal repair, written where `alt repair` keeps its records and served over HTTP."""
+"""One finished, fictional terminal repair, written where `alt repair` keeps its records; the real API serves it."""
 import uuid
 
 from service_support import configure, serve
-from altitude import config, repair, server, state as S
+from altitude import config, repair, state as S
 
 
 def main():
@@ -24,13 +24,7 @@ def main():
         "check": {"at": S.now(), "version": None, "running": None, "matches": None, "failing": []},
         "outcome": "confirm"})
 
-    class Handler(server.Handler):
-        def do_GET(self):
-            if self.path == "/fixture/repair":
-                return self._json({"id": ident})
-            return super().do_GET()
-
-    serve(Handler)
+    serve()
 
 
 if __name__ == "__main__":

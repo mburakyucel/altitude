@@ -48,7 +48,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       .replace(":questionId", encodeURIComponent(task?.question?.id ?? ""))
       .replace(":revision", String(task?.question?.revision ?? ""))
       .replace(":messageId", encodeURIComponent(reply))
-      .replace(":id", repair ? (await (await request.get("/fixture/repair")).json()).id : "")
+      .replace(":id", repair ? (await (await request.get("/api/repairs")).json()).repairs[0].id : "")
       .replace("*", "__ui_unknown_route__");
     if (file) {
       const { paths } = await (await request.get("/fixture/files")).json();

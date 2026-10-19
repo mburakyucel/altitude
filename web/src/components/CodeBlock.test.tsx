@@ -19,7 +19,6 @@ describe("run commands", () => {
     }
     expect(runCommand(" \n ")).toEqual({ refused: "Not offered for the terminal: the command is empty." });
   });
-
 });
 
 describe("code blocks in prose", () => {
