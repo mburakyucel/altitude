@@ -133,12 +133,12 @@ LISTING = {
          "minRuntimeVersion": 1703936},
         {"identifier": "type.iPad", "name": "iPad Pro", "productFamily": "iPad", "minRuntimeVersion": 1769472}]}
 
-SAFARI_APP, OTHER_APP = "PID:1", "PID:2"
+SAFARI_APP, OTHER_APP, WEB_APP = "PID:1", "PID:2", "PID:4"
 
 
 class FakeInspector:
-    """The phone's Web Inspector: Safari with a page on a fixture port, one on Altitude's port and a script context,
-    and another inspectable process. It records every request it receives."""
+    """The phone's Web Inspector: Safari and the Home Screen app, each with a page on a fixture port, one on Altitude's
+    port and a script context, and another inspectable process. It records every request it receives."""
 
     def __init__(self, path: Path, port: int):
         self.port, self.received, self.connections = port, [], []
@@ -178,8 +178,8 @@ class FakeInspector:
             self.threads.append(threading.Thread(target=self._serve, args=(connection,), daemon=True))
             self.threads[-1].start()
 
-    def listing(self, connection):
-        sim._write(connection, "_rpc_applicationSentListing:", {"WIRApplicationIdentifierKey": SAFARI_APP, "WIRListingKey": {
+    def listing(self, connection, app=SAFARI_APP):
+        sim._write(connection, "_rpc_applicationSentListing:", {"WIRApplicationIdentifierKey": app, "WIRListingKey": {
             key: {"WIRPageIdentifierKey": int(key), "WIRTypeKey": kind, "WIRURLKey": url}
             for key, (kind, url) in self.pages.items()}})
 
@@ -201,22 +201,25 @@ class FakeInspector:
                         SAFARI_APP: {"WIRApplicationIdentifierKey": SAFARI_APP,
                                      "WIRApplicationBundleIdentifierKey": sim.SAFARI},
                         OTHER_APP: {"WIRApplicationIdentifierKey": OTHER_APP,
-                                    "WIRApplicationBundleIdentifierKey": "com.apple.amsengagementd"}}})
+                                    "WIRApplicationBundleIdentifierKey": "com.apple.amsengagementd"},
+                        WEB_APP: {"WIRApplicationIdentifierKey": WEB_APP,
+                                  "WIRApplicationBundleIdentifierKey": sim.WEB_APP}}})
                     sim._write(connection, "_rpc_applicationConnected:", {
                         "WIRApplicationIdentifierKey": "PID:3", "WIRApplicationBundleIdentifierKey": "com.apple.Preferences"})
                 elif selector == "_rpc_forwardGetListing:":
-                    self.listing(connection)
+                    self.listing(connection, argument["WIRApplicationIdentifierKey"])
                 elif selector == "_rpc_forwardSocketSetup:":
                     for destination in ("someone-else", argument["WIRSenderKey"]):
                         sim._write(connection, "_rpc_applicationSentData:", {
-                            "WIRApplicationIdentifierKey": SAFARI_APP, "WIRDestinationKey": destination,
+                            "WIRApplicationIdentifierKey": argument["WIRApplicationIdentifierKey"], "WIRDestinationKey": destination,
                             "WIRMessageDataKey": json.dumps({"method": "Target.targetCreated", "params": {
                                 "targetInfo": {"targetId": f"page-{destination}"}}}).encode()})
                 elif selector == "_rpc_forwardSocketData:":
                     outer = json.loads(argument["WIRSocketDataKey"])
                     inner = json.loads(outer["params"]["message"])
                     sim._write(connection, "_rpc_applicationSentData:", {
-                        "WIRApplicationIdentifierKey": SAFARI_APP, "WIRDestinationKey": argument["WIRSenderKey"],
+                        "WIRApplicationIdentifierKey": argument["WIRApplicationIdentifierKey"],
+                        "WIRDestinationKey": argument["WIRSenderKey"],
                         "WIRMessageDataKey": json.dumps({"method": "Target.dispatchMessageFromTarget", "params": {
                             "message": json.dumps({"id": inner["id"], "result": {"method": inner["method"]}})}}).encode()})
         except (OSError, ValueError):
@@ -281,16 +284,16 @@ class RelayCase(TestCase):
         client.send("_rpc_reportIdentifier:")
         client.send("_rpc_getConnectedApplications:")
         apps = client.until("_rpc_reportConnectedApplicationList:")["WIRApplicationDictionaryKey"]
-        self.assertEqual(set(apps), {SAFARI_APP}, "only Safari is listed")
+        self.assertEqual(set(apps), {SAFARI_APP, WEB_APP}, "only Safari and the Home Screen app are listed")
         return client
 
     def received(self):
         return [selector for selector, _ in self.phone.received]
 
-    def attach(self, client, page=1):
-        client.send("_rpc_forwardGetListing:", {"WIRApplicationIdentifierKey": SAFARI_APP})
+    def attach(self, client, page=1, app=SAFARI_APP):
+        client.send("_rpc_forwardGetListing:", {"WIRApplicationIdentifierKey": app})
         listing = client.until("_rpc_applicationSentListing:")["WIRListingKey"]
-        client.send("_rpc_forwardSocketSetup:", {"WIRApplicationIdentifierKey": SAFARI_APP, "WIRPageIdentifierKey": page,
+        client.send("_rpc_forwardSocketSetup:", {"WIRApplicationIdentifierKey": app, "WIRPageIdentifierKey": page,
                                                  "WIRSenderKey": "sender"})
         return listing
 
@@ -309,6 +312,23 @@ class TestRelay(RelayCase):
                                                             {"id": 7, "method": "Runtime.evaluate"})}}).encode()})
         reply = json.loads(client.until("_rpc_applicationSentData:")["WIRMessageDataKey"])
         self.assertEqual(json.loads(reply["params"]["message"]), {"id": 7, "result": {"method": "Runtime.evaluate"}})
+
+    def test_the_home_screen_apps_web_pages_pass_under_safaris_rules(self):
+        client = self.client()
+        listing = self.attach(client, app=WEB_APP)
+        self.assertEqual(set(listing), {"1"}, "Altitude's page and the script context are hidden")
+        data = client.until("_rpc_applicationSentData:")
+        self.assertEqual((data["WIRApplicationIdentifierKey"], data["WIRDestinationKey"]), (WEB_APP, "sender"))
+        for page in (2, 3):
+            with self.subTest(page=page):
+                client = self.client()
+                client.send("_rpc_forwardGetListing:", {"WIRApplicationIdentifierKey": WEB_APP})
+                client.until("_rpc_applicationSentListing:")
+                before = len(self.phone.received)
+                client.send("_rpc_forwardSocketSetup:", {"WIRApplicationIdentifierKey": WEB_APP,
+                                                         "WIRPageIdentifierKey": page, "WIRSenderKey": "s"})
+                self.assertTrue(client.closed())
+                self.assertEqual(self.phone.received[before:], [])
 
     def test_requests_beyond_safaris_pages_close_the_connection_without_reaching_the_phone(self):
         refusals = {
@@ -555,7 +575,7 @@ json.dump(answers, open(os.path.join(os.environ["VALIDATION_RESULTS"], "walks.js
         [area_name] = {Path(relay["socket"]).parent.name[3:]}
         self.assertEqual(relay["socket"], str(self.tmp / f"av-{area_name}" / "simulator.sock"),
                          "the relay's socket is in the run's own temporary folder")
-        self.assertEqual((relay["apps"], relay["opened"]), ([SAFARI_APP], {"error": ""}))
+        self.assertEqual((relay["apps"], relay["opened"]), ([SAFARI_APP, WEB_APP], {"error": ""}))
         self.assertEqual(relay["https"], str(self.tmp / f"av-{area_name}" / "https"),
                          "the HTTPS identity is in the run's own temporary folder")
         self.assertEqual(relay["files"], ["ca.crt", "server.crt", "server.key"], "the CA's key is gone before the run")
@@ -613,8 +633,10 @@ json.dump(answers, open(os.path.join(os.environ["VALIDATION_RESULTS"], "walks.js
             self.assertIn(f"-DVTSimulatorSetLocation={area / 'simulator'}", call, "only the run's own device set")
             self.assertTrue(call[call.index("-xctestrun") + 1].startswith(str(area / "walks" / "build")))
         simctl = [call[3:] for call in self.calls() if call[:3] == ["simctl", "--set", str(area / "simulator")]]
-        closed = [call[2] for call in simctl if call[0] == "terminate"]
-        self.assertEqual(closed, list(sim.APPS) * 3, "every walk closes the apps it used")
+        walking = [f"close {call[5]}" if call[3:4] == ["terminate"] else "walk" for call in self.calls()
+                   if call[:2] == ["xcodebuild", "test-without-building"] or call[3:4] == ["terminate"]]
+        self.assertEqual(walking, [f"close {sim.WEB_APP}", "walk", *(f"close {app}" for app in sim.APPS)] * 3,
+                         "each walk closes the Home Screen app before it, and Safari and Settings after it")
         self.assertTrue(all(call[1] == udid for call in simctl if call[0] == "terminate"))
         self.assertEqual(self.runs(), [], "the walks' build and evidence go with the run area")
 
