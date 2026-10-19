@@ -6,7 +6,8 @@ import { readAlertState } from "./alerts";
 import { finishPending, forgetPending, handBack, overlayOverview, overlayProject, overlayTask, startPending, usePending } from "./pending";
 import type { PendingAnswer, PendingWrite } from "./pending";
 import { forgetRecovery } from "./recovery";
-import { useOptimisticMutation } from "./useOptimisticMutation";
+import { useSave, useSaving } from "./saves";
+import { useRequest } from "./useRequest";
 
 /**
  * The one place the UI talks to altd. One fetch wrapper, one zod schema per endpoint
@@ -14,7 +15,8 @@ import { useOptimisticMutation } from "./useOptimisticMutation";
  * strings stay plain strings so a new server value never breaks the page), one query hook
  * per GET endpoint (20s polling, faster for active conversations), one change stream that refreshes
  * task, decision and project queries as their records move, and a mutation for every POST. Answers and
- * approvals show at the press through the pending writes in ./pending, overlaid on the reads.
+ * approvals show at the press through the pending writes in ./pending, and settings through the saves in
+ * ./saves, both overlaid on the reads.
  *
  * Paths are interpolated raw (no encodeURIComponent): the server matches path parts without
  * percent-decoding, and project/task names are slugs.
@@ -130,8 +132,16 @@ export async function checkTrust(): Promise<TrustCheck> {
   return "unknown";
 }
 
+/** Paired devices; one being removed has already left the list. */
 export function useDevices() {
-  return useQuery({ queryKey: ["devices"], queryFn: async () => DevicesSchema.parse(await api("/api/devices")) });
+  const removing = useSaving<string>(["devices"]);
+  const select = useCallback((data: Devices) => removing.length ? { ...data, devices: data.devices.filter((device) => !removing.includes(device.id)) } : data, [removing]);
+  return useQuery({ queryKey: ["devices"], queryFn: async () => DevicesSchema.parse(await api("/api/devices")), select });
+}
+
+/** Remove a device by id. The list is read again, so removing this browser reaches the pairing screen at once. */
+export function useRemoveDevice() {
+  return useSave<string, Devices>(["devices"], revokeDevice, (client) => client.invalidateQueries({ queryKey: ["devices"] }));
 }
 
 export async function makePairingCode(): Promise<PairingCode> {
@@ -640,12 +650,23 @@ export type ImprovementSettings = z.infer<typeof ImprovementSettingsSchema>;
 
 /** Kept under the project's key, so the press refetch and the change stream refresh it with the project. */
 export function useImprovementSettings(project: string) {
+  const saving = useSaving<WeeklyChange>(["project", project, "improvement"]);
+  const select = useCallback((data: ImprovementSettings) => saving.reduce((view, change) => ({ ...view, weekly: change.on }), data), [saving]);
   return useQuery({
     queryKey: ["project", project, "improvement"],
     queryFn: async () => ImprovementSettingsSchema.parse(await api(`/api/improve/${encodeURIComponent(project)}`)),
     enabled: Boolean(project),
     refetchInterval: pollInterval,
+    select,
   });
+}
+
+type WeeklyChange = { on: boolean; terms?: string };
+/** Weekly on or off; the save ends once the project's read shows it, which the change stream also refreshes. */
+export function useSaveWeekly(project: string) {
+  return useSave<WeeklyChange, unknown>(["project", project, "improvement"],
+    ({ on, terms }) => sendImprovementSetting(project, { action: "weekly", on }, terms),
+    (client) => client.refetchQueries({ queryKey: ["project", project] }));
 }
 
 /** Weekly on or off, or Get suggestions now; `terms` is the sheet version the operator's Turn on agreed to. */
@@ -1061,9 +1082,22 @@ const MachineSchema = z.object({
 });
 export type Machine = z.infer<typeof MachineSchema>;
 
-/** The operator's name and where system incidents are published, if anywhere. */
+/** The operator's name and where system incidents are published, if anywhere; a switch on its way shows at once. */
 export function useMachine() {
-  return useQuery({ queryKey: ["machine"], queryFn: async () => MachineSchema.parse(await api("/api/machine")), refetchOnWindowFocus: false });
+  const saving = useSaving<MachineChange>(["machine"]);
+  const select = useCallback((data: Machine) => saving.reduce<Machine>((machine, change) => ({ ...machine, ...change }), data), [saving]);
+  return useQuery({ queryKey: ["machine"], queryFn: async () => MachineSchema.parse(await api("/api/machine")), refetchOnWindowFocus: false, select });
+}
+
+type MachineChange = { terminal: boolean } | { validation: boolean };
+
+/** Turn the operator's terminal or the agents' validation runs on or off for this computer. */
+export function useMachineSwitch(setting: "terminal" | "validation") {
+  return useSave<MachineChange, Machine>(["machine"], (change) => "terminal" in change ? saveTerminalAccess(change.terminal) : saveValidationAccess(change.validation),
+    async (client, machine) => {
+      client.setQueryData(["machine"], machine);
+      if (setting === "terminal") await client.invalidateQueries({ queryKey: ["terminal"] });
+    });
 }
 
 /**
@@ -1355,12 +1389,34 @@ export const overviewQuery = {
   queryFn: async () => OverviewSchema.parse(await api("/api/overview")),
 };
 
-/** Needs you, the badge and every page read the overview with the operator's writes on their way laid over it. */
-export function useOverview() {
+/** A setting the overview carries, on its way: an update switch, or New tasks with the value the picker showed. */
+type UpdateChange = { update: { check: boolean } | { automatic: boolean } };
+type NewTasksChange = { new_tasks: Choice; expected: Choice };
+type OverviewChange = UpdateChange | NewTasksChange;
+const applyOverview = (data: Overview, change: OverviewChange): Overview => "update" in change
+  ? data.update ? { ...data, update: { ...data.update, ...change.update } } : data
+  : data.new_tasks ? { ...data, new_tasks: { ...data.new_tasks, value: change.new_tasks, unavailable: null } } : data;
+
+/**
+ * Needs you, the badge and every page read the overview with the operator's writes on their way laid over it.
+ * A view that mounts often reads the shell's copy without fetching it again (`refetchOnMount` false).
+ */
+export function useOverview(refetchOnMount = true) {
   const client = useQueryClient();
   const pending = usePending();
-  const select = useCallback((data: Overview) => overlayOverview(client, data, pending), [client, pending]);
-  return useQuery({ ...overviewQuery, refetchInterval: pollInterval, select });
+  const saving = useSaving<OverviewChange>(["overview"]);
+  const select = useCallback((data: Overview) => saving.reduce(applyOverview, overlayOverview(client, data, pending)), [client, pending, saving]);
+  return useQuery({ ...overviewQuery, refetchInterval: pollInterval, refetchOnMount, select });
+}
+
+/** Check for new versions, or install them automatically; the response carries the machine and the update. */
+export function useSaveUpdates() {
+  return useSave<UpdateChange, Machine & { update: Update | null }>(["overview"],
+    ({ update }) => "automatic" in update ? saveUpdateAutomatic(update.automatic) : saveUpdateCheck(update.check),
+    (client, { update, ...machine }) => {
+      client.setQueryData(["machine"], machine);
+      client.setQueryData<Overview>(["overview"], (overview) => overview && { ...overview, update });
+    });
 }
 
 /** The overview as Altitude saved it: alerts count what the record asks, never what a send on its way hides. */
@@ -1743,15 +1799,6 @@ export interface TaskActionInput {
   observed?: { attempt: number | null; agent_id: string | null; session_id: string | null; block_id: string | null };
 }
 
-export function useTaskAction(project: string) {
-  return useOptimisticMutation<TaskActionInput, unknown, ProjectView>({
-    mutationFn: (input) => post("/api/task/action", input),
-    queryKey: ["project", project],
-    update: () => undefined,
-    failureMessage: "Task action failed.",
-  });
-}
-
 export interface ProjectAddInput {
   name: string;
   path?: string;
@@ -1892,7 +1939,7 @@ export async function taskReview(input: { project: string; slug: string; action:
 
 export function useL3Reset(project: string) {
   const queryClient = useQueryClient();
-  return useOptimisticMutation<void, unknown, ChatView>({
+  return useRequest({
     // The Rotate button lives on a card rendered from ["project", project] (session id, context
     // %, turns) — invalidating only ["chat", project] leaves the card showing the dead session.
     mutationFn: async () => {
@@ -1901,7 +1948,6 @@ export function useL3Reset(project: string) {
       return out;
     },
     queryKey: ["chat", project],
-    update: () => undefined,
     failureMessage: "Couldn't reset the L3 session.",
   });
 }
@@ -1926,11 +1972,9 @@ export function useSendNow(project: string, slug?: string) {
 
 /** Save New tasks; `expected` is the value the dialog showed, so a change made elsewhere is refused, not overwritten. */
 export function useSaveNewTasks() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { value: Choice; expected: Choice }) => NewTasksSchema.parse(await post("/api/new-tasks", input)),
-    onSuccess: (result) => client.setQueryData<Overview>(["overview"], (old) => old && { ...old, new_tasks: result }),
-  });
+  return useSave<NewTasksChange, NewTasks>(["overview"],
+    async ({ new_tasks, expected }) => NewTasksSchema.parse(await post("/api/new-tasks", { value: new_tasks, expected })),
+    (client, result) => { client.setQueryData<Overview>(["overview"], (old) => old && { ...old, new_tasks: result }); });
 }
 
 
@@ -1975,49 +2019,58 @@ const ProjectDefaultsSchema = ChoiceOptionsSchema.extend({
 });
 export type ProjectDefaults = z.infer<typeof ProjectDefaultsSchema>;
 
+/** The project's settings, with each one on its way shown as chosen. */
 export function useProjectDefaults(project: string) {
+  const saving = useSaving<DefaultChange>(["defaults", project]);
+  const select = useCallback((data: ProjectDefaults) => saving.reduce((view, { setting, value }) => withDefault(view, setting, value), data), [saving]);
   return useQuery({
     queryKey: ["defaults", project],
     queryFn: async () => ProjectDefaultsSchema.parse(await api(`/api/defaults/${project}`)),
     enabled: Boolean(project),
     retry: false,
     refetchOnMount: "always",
+    select,
   });
 }
 
 /** The project settings a page or button saves whole, apart from the per-engine model and effort. */
 const PROJECT_FIELDS = ["l2_preference", "l2_engine", "l3_choice"] as const;
 
+type DefaultChange = { setting: string; value: string | Choice | null; expected?: string | Choice | null };
+
+/** One project setting set to `value`; the per-engine model and effort live in their role's rows. */
+function withDefault(old: ProjectDefaults, setting: string, value: string | Choice | null): ProjectDefaults {
+  // Only Altitude can say whether a new coordinator pick is unavailable.
+  if (setting === "l3_choice") return { ...old, l3_choice: value as Choice, l3_unavailable: null };
+  if ((PROJECT_FIELDS as readonly string[]).includes(setting)) return { ...old, [setting]: value };
+  return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({
+    ...e,
+    model: e.model.setting === setting ? { ...e.model, value: value as string | null } : e.model,
+    effort: e.effort.setting === setting ? { ...e.effort, value: value as string | null } : e.effort,
+  })) })) };
+}
+
 /**
- * One saved project setting; each field owns its mutation so its Saving/Saved/error state stays beside it.
- * `expected`, when given, is the value shown: a change made elsewhere meanwhile is refused with 409.
+ * One saved project setting. `expected`, when given, is the value shown: a change made elsewhere meanwhile is
+ * refused with 409. The read shows the change from the press; the answer merges only the acknowledged field, so a
+ * slower response to another field's save cannot restore its old value.
  */
 export function useSetDefault(project: string) {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { setting: string; value: string | Choice; expected?: string | Choice }) =>
-      ProjectDefaultsSchema.parse(await post("/api/defaults", { project, ...input })),
-    onMutate: () => client.cancelQueries({ queryKey: ["defaults", project] }),
-    // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
-    onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
+  return useSave<DefaultChange, ProjectDefaults>(["defaults", project],
+    async (input) => ProjectDefaultsSchema.parse(await post("/api/defaults", { project, ...input })),
+    (client, result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
       if (!old) return result;
       if (setting === "l3_choice") return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable };
-      if ((PROJECT_FIELDS as readonly string[]).includes(setting)) return { ...old, [setting]: result[setting as typeof PROJECT_FIELDS[number]] };
+      if ((PROJECT_FIELDS as readonly string[]).includes(setting)) return withDefault(old, setting, result[setting as typeof PROJECT_FIELDS[number]] ?? null);
       const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
-      return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({
-        ...e,
-        model: e.model.setting === setting ? { ...e.model, value: saved?.value ?? null } : e.model,
-        effort: e.effort.setting === setting ? { ...e.effort, value: saved?.value ?? null } : e.effort,
-      })) })) };
-    }),
-  });
+      return withDefault(old, setting, saved?.value ?? null);
+    }));
 }
 
 export function useRestart() {
-  return useOptimisticMutation<void, unknown, Overview>({
+  return useRequest({
     mutationFn: () => post("/api/restart", {}),
     queryKey: ["overview"],
-    update: () => undefined,
     failureMessage: "Couldn't start the restart.",
   });
 }

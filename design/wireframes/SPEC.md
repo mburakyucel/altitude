@@ -100,12 +100,14 @@ accessible description; pressing them never performs the unavailable action. Tas
 sentences repeating their state chip, question card or composer. Live session follow state uses
 its existing control and a quiet dot; recorded historical boundaries stay readable.
 
-**Actions answer at once.** A press that saves the operator's own choice (an answer, an approval, a message)
-shows its designed result immediately, in the component the design specifies for it, marked only by the
-pending state that component already has (a message's Waiting clock); it settles in place when Altitude
-confirms, with no flash, reorder or duplicate, and a reload or another device shows the same because it
-comes from the saved record. A refused save puts the screen back as it was, with the choice kept, **Not
-sent** and Retry; a save whose outcome is unknown stays Waiting until Altitude's next read settles it. A
+**Actions answer at once.** A press that saves the operator's own choice (an answer, an approval, a message,
+a setting's switch, select or model pick, removing a device) shows its designed result immediately, in the
+component the design specifies for it and everywhere else it appears, marked only by the pending state that
+component already has (a message's Waiting clock; a setting holding still with Saving…); it settles in place
+when Altitude confirms, with no flash, reorder or duplicate, and a reload or another device shows the same
+because it comes from the saved record. A refused save puts the screen back as it was and says why with
+Retry: a message keeps its choice with **Not sent**, a setting returns to its saved value with **Not
+saved**; a message whose outcome is unknown stays Waiting until Altitude's next read settles it. A
 press that asks Altitude to do something it must carry out or decide (stop, switch, review, update, create a
 task, remove a queued message) shows that work's in-progress state at once and its result when Altitude
 observes it. No action shows a provisional rendering first and the designed one later.
@@ -779,8 +781,9 @@ returns focus to the button. Names, headings and levels come from the engine sea
 - Changing the model keeps the effort when the new engine runs it, otherwise the effort becomes Default
   (coordinator, New tasks) or the engine's task default (a task). Changing effort never changes the model.
 - **Coordinator and New tasks** save each pick at once; the panel stays open so the other half can
-  follow. Saving shows a progress mark in the pressed row and the next press waits. A failure names the
-  pick, "Could not save Sonnet · High. <reason> Retry", and the check stays on the saved row; denial
+  follow. The check and the button show the pick at once, everywhere they appear; saving shows a progress
+  mark in the pressed row and the next press waits. A failure names the pick, "Could not save Sonnet ·
+  High. <reason> Retry", and the check returns to the saved row; denial
   gives the reason without Retry; a conflict says "Changed in another window. Reload".
 - **A task** has no Auto and no unpinned row. Browsing requests nothing. Picks in either column make
   one pending choice: the picked rows get an accent outline and an open ring, the running ones keep a
@@ -2091,8 +2094,9 @@ A **Devices** row shows how many devices are paired and opens `/settings/devices
 browsers, each with its name ("Safari on iPhone", "Home Screen app on iPhone", "Chrome on Mac"), a
 **This device** badge beside the current one, and "Paired <date> · last used <date>". **Remove** asks
 once in the row ("It will need a new code to open Altitude again.", or "This browser will need…" for
-the current one) with **Cancel**, focused, and a red **Remove device**; Escape cancels. Removing the
-current device shows §3.16. Below,
+the current one) with **Cancel**, focused, and a red **Remove device**; Escape cancels. **Remove device**
+takes the row away at once; a refused removal brings it back with "Not removed: <reason>" and **Retry**.
+Removing the current device shows §3.16. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes. On the other device, open <HTTPS address> and type it." (without HTTPS: "type it on the Pair this
 device screen."), the address's QR code with "Scan with a phone to open Altitude.", "Before trusting the
@@ -2133,20 +2137,20 @@ host-local and remote addresses and private-window pairing. It names no trust st
 `web/e2e/certificate.pw.ts` walks the card, every sharing state, platform navigation, downloads,
 identity checks and verification instructions at both widths. Listening is inapplicable to this flow.
 A **Terminal** switch row (off after install) says "Every paired browser can run commands as you
-on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
-change, disables itself while saving and shows the server's reason under the copy on failure; turning
-it off closes every open terminal.
+on this computer. Terminals close when Altitude restarts or when you turn this off." It moves at the
+press and stays disabled until the save lands; a refused change moves it back with "Not saved: <reason>"
+and **Retry** under the copy; turning it off closes every open terminal.
 A **Validation runs** switch row (on after install) follows it and says "Agents test installs,
 containers and browsers in throwaway containers on this computer, and each run is recorded on its task.
 Turning this off stops a running one." It saves like Terminal; turning it off stops the running run and
-refuses new ones. Where Terminal is unavailable its switch looks off and disabled; its accessible description and a press reveal "Not available here: <reason>." Where this computer cannot run validation the row is absent. `web/e2e/validation-switch.pw.ts` walks on, off, a refused change and
-the absent row at both widths.
+refuses new ones. Where Terminal is unavailable its switch looks off and disabled; its accessible description and a press reveal "Not available here: <reason>." Where this computer cannot run validation the row is absent. `web/e2e/validation-switch.pw.ts` walks on, off at the press, a refused
+change with Retry and the absent row at both widths.
 An installed copy adds a **Version** row: the installed version, with "· <version> is available · What’s new" with the copyable `alt update` command; while an automatic update is pending, "· <version> waits for <a> and <b>" or, with nothing in the way, "· <version> installs automatically". A **Check for
 new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
 release. Nothing else is sent. Turning this off also stops automatic updates." An **Automatic
 updates** switch (on after install) says "Install new versions at the next quiet moment. Turn this
-off to be asked before installing." Both save on change,
-disable while saving, show **Saving…**, and retain the prior setting with an inline error if denied.
+off to be asked before installing." Both move at the press and
+stay disabled with **Saving…** until the save lands; a refused change moves back with "Not saved: <reason>" and **Retry**.
 Turning checks off hides the newer release and notice and disables Automatic updates, retaining
 its saved preference for when checks resume. A failed update retains **Try again** in About even
 after dismissing its banner. Source deployments omit these rows; containers show their image-managed
@@ -2337,8 +2341,8 @@ The project page `/settings/projects/<name>` has a labelled **Settings** back bu
   Turn on above Cancel; centered at 1440px): **Turn on improvement suggestions for <name>?**, what the
   model reads and how much of the plan it uses, then **Cancel** (focused) and the primary **Turn on**,
   which agrees and completes the press. Cancel, Escape and the scrim change nothing. A switch change
-  shows Saving… under the card with the controls disabled; a refusal shows its reason in red and the
-  switch returns to its saved value. When the terms change, chat says "Improvement suggestions are off
+  moves the switch at once and shows Saving… under the card with the controls disabled; a refusal shows
+  "Not saved: <reason>" in red with **Retry**, and the switch returns to its saved value. When the terms change, chat says "Improvement suggestions are off
   until you agree to the new terms in settings.", linking here.
 - **Project**: **Setup** with its status, opening §3.12, and **Remove project** ("Detach L3. Files
   and history stay; its settings here don't.") with an outlined red **Remove…**. This section stays
@@ -2364,9 +2368,9 @@ and has focus; Escape, × and the scrim cancel. The red **Remove <name>** sends 
 | --- | --- |
 | Loading | A spinner named Loading settings…; the Project section is usable. |
 | Read failed | Could not load settings and Retry; the Project section is usable. |
-| Saving | That field or select is disabled with a spinner named Saving…; other fields stay editable. |
+| Saving | That field or select shows the new choice at once, disabled, with a spinner named Saving…; other fields stay editable. |
 | Saved | That field shows the persisted value and a check named Saved. |
-| Failed/denied save | Server explanation and Retry save; the field keeps the saved value. |
+| Failed/denied save | "Not saved: <reason>" and Retry; the field returns to the saved value. |
 
 Maintained boards: Settings/MobileSettings, VoiceSettings/MobileVoiceSettings and SettingsStates.
 Application walkthroughs: `web/e2e/voice-settings.pw.ts` at 390×844 and 1440×900, including navigation,

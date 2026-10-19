@@ -75,11 +75,12 @@ test("the sheet comes first, Turn on completes the press, and each Weekly and ru
   await expect(sheet).toBeHidden();
   await expect(running).toBeHidden();
 
-  // Turn on agrees and turns Weekly on: Saving… with the controls disabled, then its next Monday.
+  // Turn on agrees and turns Weekly on at once: Saving… with the controls disabled, then its next Monday.
   await press(weekly);
   const saved = await hold(page);
   await press(turnOn);
   await walk.state("04-turn-on-saving", { visible: [area.getByText("Saving…", { exact: true })], hidden: [sheet] });
+  await expect(weekly).toBeChecked();
   await expect(weekly).toBeDisabled();
   await saved();
   await walk.state("05-weekly-on", { visible: [next, now, reads], hidden: [offLine, area.getByText("Saving…", { exact: true })] });
@@ -91,14 +92,16 @@ test("the sheet comes first, Turn on completes the press, and each Weekly and ru
   await press(stop);
   await walk.state("07-stopped-button-returns", { visible: [now, reads], hidden: [running, stop] });
 
-  // A refused change shows its reason in red and the switch stays where it was saved.
+  // A refused change shows its reason in red with Retry, and the switch goes back to where it was saved.
   const refused = await hold(page, (route) => route.fulfill({ status: 409, contentType: "application/json",
     body: JSON.stringify({ error: "Another window changed this setting." }) }));
   await press(weekly);
+  await expect(weekly).not.toBeChecked();
   await refused();
-  await walk.state("08-refused-in-red", { visible: [area.getByRole("alert").filter({ hasText: "Another window changed this setting." }), next], hidden: [offLine] });
+  const retry = area.getByRole("button", { name: "Retry", exact: true });
+  await walk.state("08-refused-in-red", { visible: [area.getByRole("alert").filter({ hasText: "Not saved: Another window changed this setting." }), retry, next], hidden: [offLine] });
   await expect(weekly).toBeChecked();
-  await press(weekly);
+  await press(retry);
   await walk.state("09-weekly-off", { visible: [offLine], hidden: [next, area.getByRole("alert"), sheet] });
   await expect(weekly).not.toBeChecked();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

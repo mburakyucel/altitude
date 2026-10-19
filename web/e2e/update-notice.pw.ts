@@ -230,13 +230,14 @@ test("Settings shows the version, the command that installs a newer one and the 
   state.update = { ...state.update, waiting_for: [waiting] };
   await page.reload();
   refuseAutomatic = true;
+  const retry = page.getByRole("alert").getByRole("button", { name: "Retry", exact: true });
   await walk.state("13b-automatic-change-denied", {
-    action: () => autoToggle.click(), visible: [page.getByRole("alert").getByText("Change refused.")], hidden: [],
+    action: () => autoToggle.click(), visible: [page.getByRole("alert").getByText(/^Not saved: Change refused\./), retry], hidden: [],
   });
   await expect(autoToggle).toBeChecked();
   refuseAutomatic = false;
   await walk.state("13c-automatic-off-prompts", {
-    action: () => autoToggle.click(), visible: [notice.getByRole("button", { name: "Update", exact: true })], hidden: [page.getByRole("alert")],
+    action: () => retry.click(), visible: [notice.getByRole("button", { name: "Update", exact: true })], hidden: [page.getByRole("alert")],
   });
   await expect(autoToggle).not.toBeChecked();
   let releaseSave!: () => void;
@@ -245,6 +246,8 @@ test("Settings shows the version, the command that installs a newer one and the 
     await walk.state("13d-automatic-saving", {
       action: () => autoToggle.click(), visible: [page.getByRole("status", { name: "Saving…", exact: true })], hidden: [],
     });
+    // The switch shows the change at the press and holds still until it lands.
+    await expect(autoToggle).toBeChecked();
     await expect(autoToggle).toBeDisabled();
     await expect(toggle).toBeDisabled();
   } finally {

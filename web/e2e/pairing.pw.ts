@@ -186,6 +186,38 @@ test("a code pairs the browser, and removing it in Settings returns it to the pa
   expect(devices.devices.map((device: { name: string }) => device.name)).toEqual(["Playwright browser"]);
 });
 
+test("removing another device takes its row away at the press; a refused removal brings it back with Retry", async ({ page, browser, request }, info) => {
+  const walk = walkthrough(page, info);
+  await walk.open("/");
+  await pairWith(page, await code(request));
+  const devices = async () => (await (await request.get("/api/devices")).json()).devices as { id: string; name: string }[];
+  const before = await devices();
+  const phone = await browser.newContext({ userAgent: IPHONE, ignoreHTTPSErrors: true, baseURL: new URL(page.url()).origin });
+  try {
+    const other = await phone.newPage();
+    await other.goto("/");
+    await pairWith(other, await code(request));
+  } finally { await phone.close(); }
+  const { name } = (await devices()).find((device) => !before.some((known) => known.id === device.id))!;
+  await page.goto("/settings/devices");
+  const list = page.getByRole("list", { name: "Paired devices" });
+  const row = list.getByRole("listitem").filter({ hasText: name });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/devices/revoke", async (route) => { await held; await route.fulfill({ status: 503, json: { error: "Altitude is busy." } }); }, { times: 1 });
+  await row.getByRole("button", { name: "Remove", exact: true }).click();
+  await row.getByRole("button", { name: "Remove device", exact: true }).click();
+  await walk.state("07-removal-at-the-press", { visible: [list.getByText("This device")], hidden: [list.getByText(name, { exact: true })] });
+  release();
+  const refused = row.getByRole("alert").filter({ hasText: "Not removed: Altitude is busy." });
+  await walk.state("08-removal-refused", { visible: [list.getByText(name, { exact: true }), refused, refused.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
+  await walk.state("09-removed-by-retry", {
+    action: () => refused.getByRole("button", { name: "Retry", exact: true }).click(),
+    visible: [list.getByText("This device")], hidden: [list.getByText(name, { exact: true })],
+  });
+  await expect.poll(async () => (await devices()).length).toBe(before.length);
+});
+
 test("Settings shows the address-only QR and the full certificate SHA-256 beside a real pairing code", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await walk.open("/");

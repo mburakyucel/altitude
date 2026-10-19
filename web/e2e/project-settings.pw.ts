@@ -70,20 +70,22 @@ test("Tasks routing Prefer and Only save, survive reload and restore Auto", asyn
     }).toEqual([preferred.value, null]);
     await expect(select).toHaveValue(`only:${preferred.value}`);
 
+    // The pick shows at the press while Altitude holds the save; a denied one goes back with the reason and Retry.
     deny = true;
     await select.selectOption("");
     await expect(select).toBeDisabled();
-    await walk.state("04-saving", { visible: [card.getByRole("status", { name: "Saving…", exact: true })], hidden: [] });
+    await expect(select).toHaveValue("");
+    await walk.state("04-saving-shows-the-pick", { visible: [card.getByRole("status", { name: "Saving…", exact: true })], hidden: [card.getByRole("alert")] });
     release();
     await walk.state("05-denied-keeps-saved", {
-      visible: [card.getByRole("alert").filter({ hasText: "Changing settings is denied." })],
+      visible: [card.getByRole("alert").filter({ hasText: "Not saved: Changing settings is denied." }), card.getByRole("button", { name: "Retry", exact: true })],
       hidden: [card.getByRole("status", { name: "Saving…", exact: true })],
     });
     await expect(select).toHaveValue(`only:${preferred.value}`);
     expect((await defaults(request, project.name)).l2_engine).toBe(preferred.value);
     deny = false;
     await walk.state("06-auto-restored", {
-      action: () => select.selectOption(""),
+      action: () => card.getByRole("button", { name: "Retry", exact: true }).click(),
       visible: [select], hidden: [card.getByRole("alert"), card.getByRole("status", { name: "Saving…", exact: true })],
     });
     await expect(select).toHaveValue("");

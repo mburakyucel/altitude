@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ApiError, overviewQuery, useProjectDefaults, useSaveNewTasks, useSetDefault } from "../data/api";
+import { ApiError, useOverview, useProjectDefaults, useSaveNewTasks, useSetDefault } from "../data/api";
 import type { Choice, ChoiceOptions } from "../data/api";
 import { effortLabel, modelName } from "./Models";
 import type { Transfer } from "./TaskTransfer";
@@ -174,7 +173,7 @@ type Role = "l3" | "tasks";
 /** One role's saved choice, its catalog and its save, read from the views that already carry them. */
 function useRoleChoice(role: Role, project: string | undefined) {
   // The shell already polls the overview; mounting a button reads that copy rather than fetching it again.
-  const overview = useQuery({ ...overviewQuery, refetchOnMount: false });
+  const overview = useOverview(false);
   const defaults = useProjectDefaults(role === "l3" ? project ?? "" : "");
   const saveL3 = useSetDefault(project ?? "");
   const saveTasks = useSaveNewTasks();
@@ -185,21 +184,23 @@ function useRoleChoice(role: Role, project: string | undefined) {
     : { saved: tasks?.value ?? null, options: tasks ?? undefined, engines: (overview.data?.engines ?? []) as Engines,
         unavailable: tasks?.unavailable, failed: overview.isError || (Boolean(overview.data) && !tasks), reload: () => void overview.refetch() };
   const save = role === "l3" ? saveL3 : saveTasks;
+  // The pick this role's latest save carried: its row turns while it saves, and a failure names it.
+  const picked = (role === "l3" ? saveL3.variables?.value : saveTasks.variables?.new_tasks) as Choice | undefined;
   const submit = (value: Choice) => {
     if (save.isPending) return;
     if (role === "l3") saveL3.mutate({ setting: "l3_choice", value, expected: state.saved });
-    else saveTasks.mutate({ value, expected: state.saved });
+    else saveTasks.mutate({ new_tasks: value, expected: state.saved });
   };
   const projectEfforts = role === "l3" ? defaults.data?.roles.find((r) => r.role === "l3")?.engines : undefined;
-  return { ...state, save, submit, projectEfforts, only: tasks?.only ?? [] };
+  return { ...state, save, picked, submit, projectEfforts, only: tasks?.only ?? [] };
 }
 
 /** What a role's button and panel show and how a pick saves; effort lists only what the chosen engine runs. */
 function useRoleControls(role: Role, project: string | undefined) {
   const choice = useRoleChoice(role, project);
+  // The saved choice already shows a pick on its way (SPEC.md §1.1); the picked row keeps its spinner until it lands.
   const { saved, options, engines, save, submit } = choice;
-  const pendingValue = save.isPending ? (save.variables?.value as Choice) : undefined;
-  const shown = pendingValue !== undefined ? pendingValue : saved;
+  const pendingValue = save.isPending ? choice.picked : undefined;
   const label = (engine: string) => engines.find((e) => engineId(e) === engine)?.label ?? engine;
   const order = engines.length ? engines.map(engineId) : [...new Set((options?.models ?? []).map((m) => m.engine))];
   // Each model appears once, under its own name; a saved engine-only or custom choice keeps its own row.
@@ -226,16 +227,16 @@ function useRoleControls(role: Role, project: string | undefined) {
     const base = { ...(saved?.engine ? { engine: saved.engine } : {}), ...(saved?.model ? { model: saved.model } : {}) };
     submit(base.engine || effort ? { ...base, ...(effort ? { effort } : {}) } : null);
   };
-  const modelText = !options ? "…" : choice.unavailable && saved?.engine ? `${modelName(saved, options, engines)} unavailable · Auto meanwhile` : modelName(shown, options, engines);
-  const effortText = !options ? "…" : shown?.effort ? effortLabel(shown.effort, options) : "Default";
+  const modelText = !options ? "…" : choice.unavailable && saved?.engine ? `${modelName(saved, options, engines)} unavailable · Auto meanwhile` : modelName(saved, options, engines);
+  const effortText = !options ? "…" : saved?.effort ? effortLabel(saved.effort, options) : "Default";
   const choiceText = (value: Choice) => `${modelName(value, options, engines)} · ${value?.effort ? effortLabel(value.effort, options) : "Default effort"}`;
   // Default means "not pinned": its row says what that runs, so a project setting is never hidden behind it.
-  const projectEfforts = (choice.projectEfforts ?? []).filter((f) => !shown?.engine || f.engine === shown.engine);
+  const projectEfforts = (choice.projectEfforts ?? []).filter((f) => !saved?.engine || f.engine === saved.engine);
   const set = projectEfforts.find((f) => f.effort.value);
   const defaultMeta = role === "tasks" ? "Project setting or built-in"
-    : set ? `Project · ${shown?.engine ? effortLabel(set.effort.value!, options) : "setting"}`
-    : shown?.engine ? `${label(shown.engine)}’s own` : undefined;
-  return { ...choice, shown, pendingValue, groups, levels, pickModel, pickEffort, modelText, effortText, choiceText, defaultMeta, label };
+    : set ? `Project · ${saved?.engine ? effortLabel(set.effort.value!, options) : "setting"}`
+    : saved?.engine ? `${label(saved.engine)}’s own` : undefined;
+  return { ...choice, shown: saved, pendingValue, groups, levels, pickModel, pickEffort, modelText, effortText, choiceText, defaultMeta, label };
 }
 type RoleControls = ReturnType<typeof useRoleControls>;
 
@@ -248,9 +249,9 @@ function RoleNotes({ c, role }: { c: RoleControls; role: Role }) {
   return <>
     {c.unavailable && saved?.engine ? <p className="model-menu-note" data-tone="warn" role="status">Unavailable · Auto meanwhile: {c.unavailable}</p> : null}
     {kept.map((row) => <p key={row.project} className="model-menu-note">{row.project} runs tasks only on {c.label(row.engine)}.</p>)}
-    {save.error ? <p role="alert" className="model-menu-note" data-tone="danger">{conflict ? "Changed in another window." : `Could not save ${c.choiceText(save.variables?.value as Choice)}. ${save.error.message}`}{" "}
+    {save.error ? <p role="alert" className="model-menu-note" data-tone="danger">{conflict ? "Changed in another window." : `Could not save ${c.choiceText(c.picked ?? null)}. ${save.error.message}`}{" "}
       {denied ? null : <button type="button" className="link" onClick={() => {
-        if (conflict) { save.reset(); c.reload(); } else if (save.variables) c.submit(save.variables.value as Choice);
+        if (conflict) { save.reset(); c.reload(); } else if (c.picked !== undefined) c.submit(c.picked);
       }}>{conflict ? "Reload" : "Retry"}</button>}</p> : null}
   </>;
 }
