@@ -1401,8 +1401,8 @@ def phase_online(guest: Guest, repository: str, results: Path, record: dict, inp
     guest.ssh(f"cat > {SHARED}/marionette.py", stdin=MARIONETTE)
 
     def chrome(label: str) -> dict:
-        """Chrome, started on the desktop with a profile of its own, loading Altitude's address: the title it shows,
-        and whether it refused the certificate (net error -202, ERR_CERT_AUTHORITY_INVALID)."""
+        """Chrome, started on the desktop with a profile of its own, loading Altitude's address: its exit status, the
+        title it shows, and whether that page's load failed for the certificate (ERR_CERT_AUTHORITY_INVALID)."""
         out = f"{SHARED}/chrome-{label}"
         desktop.agent(f"chrome-{label}", ["/bin/sh", "-c", (
             f"{quote('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')} --headless=new --no-first-run "
@@ -1414,8 +1414,10 @@ def phase_online(guest: Guest, repository: str, results: Path, record: dict, inp
         (results / f"chrome-{label}.html").write_text(page)
         (results / f"chrome-{label}.err").write_text(errors)
         title = re.search(r"<title>(.*?)</title>", page, re.S)
-        return {"ended": ended, "title": title and title.group(1).strip(),
-                "refused": "ERR_CERT_AUTHORITY_INVALID" in page + errors or "net_error -202" in errors}
+        status = guest.ssh(f"cat {out}.exit", check=False).stdout.strip()
+        # The headless command handler's own line for the page it dumps, not a background request's handshake.
+        return {"ended": ended, "exit": status or None, "title": title and title.group(1).strip(),
+                "refused": "Page load failed: net::ERR_CERT_AUTHORITY_INVALID" in errors}
 
     def firefox(label: str) -> dict:
         """Firefox, started headless on the desktop with a new profile and Marionette, opening Altitude's address."""
@@ -1445,7 +1447,8 @@ def phase_online(guest: Guest, repository: str, results: Path, record: dict, inp
     record["cases"] = {
         "github-install": {"passed": True, "release": tag},
         "python-3.13": {"passed": True, "runtime": record["runtime"]},
-        "chrome-trust": {"passed": accepted and before["chrome"]["refused"] and before["chrome"]["title"] != "Altitude"
+        "chrome-trust": {"passed": accepted and before["chrome"]["ended"] and before["chrome"]["refused"]
+                         and before["chrome"]["title"] != "Altitude"
                          and after["chrome"]["ended"] and after["chrome"]["title"] == "Altitude"
                          and not after["chrome"]["refused"]},
         "firefox-trust": {"passed": accepted and before["firefox"].get("error") == "insecure certificate"
