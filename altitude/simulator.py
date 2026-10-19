@@ -6,12 +6,14 @@ device runs any program its clients ask for as the operator's account. Each run'
 in the runner's part of the run area, never in the operator's own devices. The set is the record of what to remove, so
 removal after the run, or at the next start after an interruption, needs no device names.
 The run reaches the phone's Web Inspector only through a Unix socket in its own temporary folder. The relay passes
-Safari's web pages and nothing else on the phone: other inspectable processes are hidden, any other request closes the
-connection, and a page whose address is on Altitude's port is hidden and closes a connection attached to it. Its
+the web pages of Safari and of the Home Screen app and nothing else on the phone: other inspectable processes are
+hidden, any other request closes the connection, and a page whose address is on Altitude's port is hidden and closes a
+connection attached to it. Its
 own requests open an http(s) loopback address in Safari, the way a run puts its first page on the phone, and walk one
 of two fixed native walks at such an address: Add to Home Screen, or a device setup page's profile through Settings.
 altd builds the walks (`walks/`, Apple's UI testing) from its own code into the run area, outside the candidate's
-folders, and returns each walk's steps and screenshots to the run.
+folders, and returns each walk's steps and screenshots to the run. The Home Screen app a walk opens stays open until
+the next walk, so the run can inspect it.
 The phone trusts one CA of the run's own, made by Altitude's certificate generator, so the run can serve it HTTPS.
 See docs/DEVELOPMENT.md#ios-simulator-runs.
 """
@@ -36,7 +38,9 @@ from . import platform, tls
 
 XCRUN = "/usr/bin/xcrun"
 SAFARI = "com.apple.mobilesafari"
-APPS = (SAFARI, "com.apple.webapp", "com.apple.Preferences")   # what a walk opens, closed when it ends
+WEB_APP = "com.apple.webapp"     # the Home Screen app, which iOS runs for every web app added from Safari
+INSPECTED = (SAFARI, WEB_APP)    # whose web pages the relay passes
+APPS = (SAFARI, "com.apple.Preferences")   # what a walk opens, closed when it ends; the Home Screen app when it starts
 BOOT_SECONDS = 300
 RECORD_STOP = 10                 # seconds for a screen recording to finish its file once asked to stop
 FRAME_LIMIT = 64 << 20            # bytes in one inspector message; a page snapshot is a few MiB
@@ -54,7 +58,7 @@ XCODEBUILD_STOP = 60             # seconds for xcodebuild to end its test runner
 FILE_LIMIT = 16 << 20            # bytes in one screenshot or icon returned to the run
 UNAVAILABLE = "--simulator needs a Mac with Xcode and an installed iOS Simulator runtime"
 
-#: What the run may ask of the phone. `_rpc_forward*` requests name a Safari application, and a page or sender the
+#: What the run may ask of the phone. `_rpc_forward*` requests name an INSPECTED application, and a page or sender the
 #: relay has passed; any other request, such as an automation session, closes the connection.
 FROM_RUN = {"_rpc_reportIdentifier:", "_rpc_getConnectedApplications:", "_rpc_forwardGetListing:",
             "_rpc_forwardSocketSetup:", "_rpc_forwardSocketData:", "_rpc_forwardDidClose:"}
@@ -143,10 +147,12 @@ class Phone:
 
     def walk(self, name: str, url: str) -> tuple[dict, dict]:
         """Walk `name` (WALKS) at `url` with Apple's UI testing. Returns the walk's record, its steps and what it saw, with an `error` when the runner failed or
-        did not finish, and its screenshots by name; the Home Screen walk adds the web clip it made. The apps the walk
-        used are closed after it, so none keeps a connection to the run's pages."""
+        did not finish, and its screenshots by name; the Home Screen walk adds the web clip it made. Safari and Settings
+        are closed after it, so neither keeps a connection to the run's pages; the Home Screen app it opened stays for
+        the run to inspect, and is closed before the next walk."""
         with self.walking:
             tests = self._build()
+            _close(self.devices, self.udid, (WEB_APP,))
             self.count += 1
             folder = self.walks / f"{self.count}-{name}"
             (folder / "files").mkdir(parents=True)
@@ -159,11 +165,7 @@ class Phone:
                                   "-parallel-testing-enabled", "NO", "-resultBundlePath", str(folder / "result.xcresult"),
                                   f"-DVTSimulatorSetLocation={self.devices}"], folder / "xcodebuild.log", WALK_SECONDS,
                                  env)
-            for app in APPS:
-                try:
-                    _simctl(self.devices, "terminate", self.udid, app, timeout=30)
-                except (OSError, RuntimeError, subprocess.SubprocessError):
-                    pass   # not running
+            _close(self.devices, self.udid, APPS)
             try:
                 record = json.loads((folder / "files" / "walk.json").read_text())
             except (OSError, ValueError):
@@ -237,6 +239,14 @@ class Recording:
         except OSError as exc:
             return f"the screen recording did not stop: {exc}"
         return None
+
+
+def _close(devices: Path, udid: str, apps: tuple) -> None:
+    for app in apps:
+        try:
+            _simctl(devices, "terminate", udid, app, timeout=30)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            pass   # not running
 
 
 def _xcodebuild(args: list[str], log: Path, seconds: float, env: dict | None = None) -> str | None:
@@ -367,8 +377,8 @@ class _Session:
         self.run, self.phone, self.port, self.open_url, self.walk = run, phone, port, open_url, walk
         self.lock = threading.Lock()
         self.sending = threading.Lock()  # both directions' threads write to the run
-        self.apps: set = set()          # Safari's application identifiers
-        self.pages: dict = {}           # application -> {page: address}, Safari's web pages only
+        self.apps: set = set()          # the INSPECTED applications' identifiers
+        self.pages: dict = {}           # application -> {page: address}, their web pages only
         self.senders: dict = {}         # sender -> (application, page) set up through this connection
 
     def serve(self) -> None:
@@ -446,10 +456,10 @@ class _Session:
             if selector == "_rpc_reportConnectedApplicationList:":
                 apps = argument.get("WIRApplicationDictionaryKey") or {}
                 self.apps = {key for key, app in apps.items() if isinstance(app, dict)
-                             and app.get("WIRApplicationBundleIdentifierKey") == SAFARI}
+                             and app.get("WIRApplicationBundleIdentifierKey") in INSPECTED}
                 argument = {**argument, "WIRApplicationDictionaryKey": {key: apps[key] for key in self.apps}}
             elif selector in ("_rpc_applicationConnected:", "_rpc_applicationUpdated:"):
-                if argument.get("WIRApplicationBundleIdentifierKey") != SAFARI:
+                if argument.get("WIRApplicationBundleIdentifierKey") not in INSPECTED:
                     return True
                 self.apps.add(argument.get("WIRApplicationIdentifierKey"))
             elif selector == "_rpc_applicationDisconnected:":

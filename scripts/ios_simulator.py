@@ -13,7 +13,8 @@ Then these steps, in this order, each selectable with --steps (`make ui-simulato
   the CA served; then Altitude served with that CA's certificate loads without a warning, its pairing screen's trust
   check finds the CA trusted, and the phone pairs;
 - home-screen: altd's native Add to Home Screen walk at the app's root and at a task's address: the sheet's title,
-  the Home Screen icon against the approved one pixel for pixel, the web app opening on its own and pairing.
+  the Home Screen icon against the approved one pixel for pixel, the web app opening on its own and pairing; then the
+  dictation journey again in the Home Screen app the walk left open.
 
 It keeps a page snapshot or screenshot at each step, Safari's console, the browser's versions and the voice diagnostic
 report. A step that does not reach its state, horizontal overflow, a console error, a certificate warning, an untrusted
@@ -52,6 +53,7 @@ FAILURES = (OSError, RuntimeError, TimeoutError, ValueError, KeyError)
 sys.path.insert(0, str(REPO))
 from altitude import access, tls
 SAFARI = "com.apple.mobilesafari"
+WEB_APP = "com.apple.webapp"   # the Home Screen app
 OPEN, OPENED = "_rpc_altitudeOpenURL:", "_rpc_altitudeOpenedURL:"
 WALK, WALKED = "_rpc_altitudeWalk:", "_rpc_altitudeWalked:"
 STEPS = ("navigation", "dictation", "https", "profile", "home-screen")
@@ -62,9 +64,11 @@ CERTIFICATE_ALERT = re.compile(r"ALERT_(BAD_CERTIFICATE|CERTIFICATE|UNKNOWN_CA)"
 
 
 class Safari:
-    """A Web Inspector client for one Safari page, through the relay's socket."""
+    """A Web Inspector client for one page of Safari, or of the app whose bundle is `bundle`, through the relay's
+    socket."""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, bundle: str = SAFARI):
+        self.bundle = bundle
         self.sock = socket.socket(socket.AF_UNIX)
         self.sock.connect(path)
         self.sock.settimeout(0.2)
@@ -152,13 +156,13 @@ class Safari:
         return json.loads(answer["walk"]), answer.get("files", {})
 
     def attach(self, prefix: str, seconds: float = 60) -> None:
-        """Inspect Safari's page whose address starts with `prefix`."""
+        """Inspect the app's page whose address starts with `prefix`."""
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             # Asked each time: a Safari launched just now registers with the inspector after the first answer.
             self.send("_rpc_getConnectedApplications:", {})
             for app, row in list(self.apps.items()):
-                if row.get("WIRApplicationBundleIdentifierKey") == SAFARI:
+                if row.get("WIRApplicationBundleIdentifierKey") == self.bundle:
                     self.send("_rpc_forwardGetListing:", {"WIRApplicationIdentifierKey": app})
             for _ in range(5):
                 self.pump()
@@ -168,7 +172,7 @@ class Safari:
                 break
         else:
             seen = sorted(str(row.get("WIRURLKey")) for pages in self.listing.values() for row in pages.values())
-            raise TimeoutError(f"Safari listed no page at {prefix} (applications "
+            raise TimeoutError(f"{self.bundle} listed no page at {prefix} (applications "
                                f"{sorted(str(a.get('WIRApplicationBundleIdentifierKey')) for a in self.apps.values())}, "
                                f"pages {seen})")
         self.app, key = page
@@ -176,7 +180,7 @@ class Safari:
         self.sender = str(uuid.uuid4()).upper()
         self.send("_rpc_forwardSocketSetup:", {"WIRApplicationIdentifierKey": self.app, "WIRPageIdentifierKey": self.page,
                                                "WIRSenderKey": self.sender, "WIRAutomaticallyPause": False})
-        self.until(lambda: self.target, seconds, "Safari gave no page target")
+        self.until(lambda: self.target, seconds, f"{self.bundle} gave no page target")
 
     def call(self, method: str, params: dict, seconds: float = 30) -> dict:
         ident, self.next_id = self.next_id, self.next_id + 1
@@ -392,9 +396,10 @@ STATE = """({phase: [...document.querySelectorAll('.composer')].map(c => c.datas
   streams: window.__voice && __voice.streams.map(s => s.getTracks().map(t => t.readyState))})"""
 
 
-def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> list[dict]:
+def dictation(safari: Safari, url: str, work: str, task: str, results: Path, prefix: str = "") -> list[dict]:
     """Issue #698's journey with diagnostics on: dictate, cancel with the X and tap the microphone again, three times
-    in the project's composer and three in a task's, without reloading; then the diagnostic report."""
+    in the project's composer and three in a task's, without reloading; then the diagnostic report. Its files' and
+    steps' names start with `prefix`."""
     steps = []
     rounds = []
 
@@ -402,6 +407,7 @@ def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> 
         safari.evaluate(f"history.pushState(null, '', {json.dumps(path)}); dispatchEvent(new PopStateEvent('popstate')); 0")
 
     def snap(name: str, what: str) -> None:
+        name = prefix + name
         safari.snapshot(results / f"{name}.png")
         steps.append({"step": name, "url": safari.evaluate("location.href"), "reached": what})
 
@@ -410,12 +416,13 @@ def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> 
             return safari.wait(HELPERS + f"(v => v instanceof Node || v)(fits() && ({expression}))", what, seconds)
         except TimeoutError:
             # Where it stopped: the composer, the stand-ins' log and the audio graphs, never the draft's words.
-            (results / "dictation-failure.json").write_text(json.dumps(safari.evaluate(HELPERS + STATE), indent=2) + "\n")
-            safari.snapshot(results / "dictation-failure.png")
+            (results / f"{prefix}dictation-failure.json").write_text(
+                json.dumps(safari.evaluate(HELPERS + STATE), indent=2) + "\n")
+            safari.snapshot(results / f"{prefix}dictation-failure.png")
             if not reporting:
                 reporting.append(True)
                 try:
-                    (results / "dictation-failure-report.json").write_text(read_report())
+                    (results / f"{prefix}dictation-failure-report.json").write_text(read_report())
                 except (RuntimeError, TimeoutError) as exc:
                     print(f"ios_simulator: no diagnostic report after the failure: {exc}", file=sys.stderr)
             raise
@@ -500,16 +507,16 @@ def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> 
 
     report = read_report()
     snap("voice-4-diagnostic-report", "the voice diagnostic report")
-    (results / "voice-report.json").write_text(report)
+    (results / f"{prefix}voice-report.json").write_text(report)
     if "Typed" in report or "words" in report:
         raise RuntimeError("the diagnostic report contains draft or dictated text")
     events = json.loads(report)["events"]
     listening = sum(e["event"] == "capture.listening" for e in events)
     samples = [e.get("source") for e in events if e["event"] == "waveform.sample" and e.get("signal")]
     heard = {source for source in samples if samples.count(source) >= 2}
-    (results / "dictation.json").write_text(json.dumps({"rounds": rounds, "keyboard": keyboard,
-                                                        "captures": listening, "graphs with signal": len(heard)},
-                                                       indent=2) + "\n")
+    (results / f"{prefix}dictation.json").write_text(json.dumps({"rounds": rounds, "keyboard": keyboard,
+                                                                 "captures": listening, "graphs with signal": len(heard)},
+                                                                indent=2) + "\n")
     if listening != 6 or len(heard) != 6:
         raise RuntimeError(f"the report shows {listening} captures and {len(heard)} waveform graphs with signal in two "
                            "samples, not 6")
@@ -618,40 +625,67 @@ def home_screen(run: Run) -> None:
     """Add to Home Screen at the app's root and at a task's address, through altd's native walk. The sheet offers the
     title Altitude as a web app; the Home Screen icon iOS stored shows the approved Climb icon pixel for pixel; the clip
     opens the manifest's start address full screen; and the icon opens Altitude on its own, without Safari, already
-    paired: iOS copies Safari's cookies to the app it adds, so no device pairs anew."""
+    paired: iOS copies Safari's cookies to the app it adds, so no device pairs anew. Then the dictation journey runs
+    again in the Home Screen app the last walk left open."""
     approved = (REPO / "web" / "public" / "apple-touch-icon.png").read_bytes()
-    for label, path in (("root", "/"), ("task", run.task)):
-        prefix = f"home-{label}"
-        devices = len(api(run, "/api/devices")["devices"])
-        record, rows, files = walked(run, "home-screen", run.url + path, prefix, HOME_WALK)
-        seen, clip, icon = record.get("seen", {}), record.get("clip", {}), files.get("web-clip-icon.png")
-        reached = {row["step"] for row in rows if row.get("status") == "completed"}
-        if "home-screen" in reached:
-            failures = [f"{what} is {value!r}" for what, value, wanted in (
-                ("the sheet's title", seen.get("sheet title"), "Altitude"),
-                ("Open as Web App", seen.get("open as web app"), "1"), ("the clip's title", clip.get("Title"), "Altitude"),
-                ("the clip's address", clip.get("URL"), run.url + "/"),
-                ("the clip's full screen", clip.get("FullScreen"), True)) if value != wanted]
-            try:
-                if not icon or pixels(icon) != pixels(approved):
-                    failures.append("the Home Screen icon's pixels differ from the approved icon" if icon else
-                                    "iOS stored no Home Screen icon")
-            except ValueError as exc:
-                failures.append(f"the Home Screen icon cannot be read: {exc}")
-            rows.append(check("web-clip", failures, "the title Altitude as a web app, the approved icon pixel for "
-                                                    "pixel, and the manifest's start address"))
-        else:
-            rows.append(unreached("web-clip"))
-        if "paired" in reached:
-            added = len(api(run, "/api/devices")["devices"]) - devices
-            rows.append(check("standalone-app", [] if seen.get("safari") == "not in front" and added == 0 else
-                              [f"Safari {seen.get('safari')}; {added} new device(s)"],
-                              "the app opened paired with Safari's device, with Safari not in front"))
-        else:
-            rows.append(unreached("standalone-app"))
-        finish(run, prefix, rows, f"Add to Home Screen at {path}: the icon, title and standalone app",
-               clip=clip, icon={"approved sha256": hashlib.sha256(approved).hexdigest(),
-                                "stored sha256": icon and hashlib.sha256(icon).hexdigest()})
+    app, stuck, errors = Safari(run.inspector, WEB_APP), None, []
+    try:
+        for label, path in (("root", "/"), ("task", run.task)):
+            prefix = f"home-{label}"
+            devices = len(api(run, "/api/devices")["devices"])
+            record, rows, files = walked(run, "home-screen", run.url + path, prefix, HOME_WALK)
+            seen, clip, icon = record.get("seen", {}), record.get("clip", {}), files.get("web-clip-icon.png")
+            reached = {row["step"] for row in rows if row.get("status") == "completed"}
+            if "home-screen" in reached:
+                failures = [f"{what} is {value!r}" for what, value, wanted in (
+                    ("the sheet's title", seen.get("sheet title"), "Altitude"),
+                    ("Open as Web App", seen.get("open as web app"), "1"),
+                    ("the clip's title", clip.get("Title"), "Altitude"),
+                    ("the clip's address", clip.get("URL"), run.url + "/"),
+                    ("the clip's full screen", clip.get("FullScreen"), True)) if value != wanted]
+                try:
+                    if not icon or pixels(icon) != pixels(approved):
+                        failures.append("the Home Screen icon's pixels differ from the approved icon" if icon else
+                                        "iOS stored no Home Screen icon")
+                except ValueError as exc:
+                    failures.append(f"the Home Screen icon cannot be read: {exc}")
+                rows.append(check("web-clip", failures, "the title Altitude as a web app, the approved icon pixel for "
+                                                        "pixel, and the manifest's start address"))
+            else:
+                rows.append(unreached("web-clip"))
+            if "paired" in reached:
+                added = len(api(run, "/api/devices")["devices"]) - devices
+                rows.append(check("standalone-app", [] if seen.get("safari") == "not in front" and added == 0 else
+                                  [f"Safari {seen.get('safari')}; {added} new device(s)"],
+                                  "the app opened paired with Safari's device, with Safari not in front"))
+            else:
+                rows.append(unreached("standalone-app"))
+            finish(run, prefix, rows, f"Add to Home Screen at {path}: the icon, title and standalone app",
+                   clip=clip, icon={"approved sha256": hashlib.sha256(approved).hexdigest(),
+                                    "stored sha256": icon and hashlib.sha256(icon).hexdigest()})
+        app.attach(run.url)
+        app.wait("document.readyState === 'complete'", "the Home Screen app's page")
+        if app.evaluate("navigator.standalone") is not True:
+            raise RuntimeError("the Home Screen app's page is not standalone")
+        run.steps.extend(dictation(app, run.url, run.work, run.task, run.results, prefix="home-"))
+    finally:
+        # The app a walk opened keeps the service's change stream open: it is left, also after a failure, so the
+        # service can stop. A failure's own error stands; leaving the app fails only an otherwise passing step.
+        try:
+            if app.page is None:
+                app.attach(run.url, seconds=15)
+            leave(app, "about:blank")
+            app.wait("location.href === 'about:blank'", "a blank page in the Home Screen app")
+        except FAILURES as exc:
+            stuck = exc
+        app.sock.close()
+        errors = [m for m in app.console if m.get("level") == "error"]
+        (run.results / "home-console.log").write_text("".join(
+            f"{m.get('level')}: {m.get('text')} ({m.get('url', '')}:{m.get('line', '')})\n" for m in app.console))
+    if stuck:
+        raise RuntimeError(f"the Home Screen app was not left: {stuck}")
+    if errors:
+        raise RuntimeError(f"the Home Screen app logged {len(errors)} console error(s); see home-console.log")
 
 
 class Secure:
