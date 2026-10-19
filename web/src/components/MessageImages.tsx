@@ -48,13 +48,14 @@ export function ImageViewerHost({ scope, children }: { scope: string; children: 
 /** One private read owns its object URL. Neither retry nor opening the viewer resends a message. */
 function StoredImage({ project, image, preview, open }: { project: string; image: MessageImage; preview?: string; open: () => void }) {
   const container = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined");
+  // A message this page just sent starts from the picture it sent, so nothing blinks between Send and the saved
+  // thumbnail (SPEC.md §1.1 Actions answer at once). The image's own read replaces it, and its error still shows,
+  // so that read starts at once, on screen or not.
+  const [held, setHeld] = useState(preview);
+  const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined" || Boolean(preview));
   const [attempt, setAttempt] = useState(0);
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
-  // A message this page just sent starts from the picture it sent, so nothing blinks between Send and the saved
-  // thumbnail (SPEC.md §1.1 Actions answer at once). The image's own read replaces it, and its error still shows.
-  const [held, setHeld] = useState(preview);
   const key = `${project}/${image.id}`;
   useEffect(() => {
     if (visible || !container.current) return;
@@ -168,13 +169,16 @@ function ImageViewer({ images, start, onClose }: { images: GalleryImage[]; start
   </dialog>, document.body);
 }
 
-/** A saved message's thumbnails; `previews` are the pictures this page sent with it, in order, while it still holds them. */
+/**
+ * A saved message's thumbnails; `previews` are the pictures this page sent with it while it still holds them. The
+ * server keeps them in order and saves all or none, though it may shorten a name, so they match by position.
+ */
 export function MessageImages({ project, images, previews }: { project: string; images?: MessageImage[] | null; previews?: ImagePreview[] }) {
   const open = useGallery();
   if (!images?.length) return null;
   const gallery = images.map((image) => ({ key: `${project}/${image.id}`, name: image.name, url: `/api/images/${project}/${encodeURIComponent(image.id)}` }));
   return <div className="message-images" aria-label="Message images">{images.map((image, index) =>
-    <StoredImage key={image.id} project={project} image={image} preview={previews?.[index]?.name === image.name ? previews[index]!.url : undefined}
+    <StoredImage key={image.id} project={project} image={image} preview={previews?.length === images.length ? previews[index]!.url : undefined}
       open={() => open(gallery, index)} />)}</div>;
 }
 

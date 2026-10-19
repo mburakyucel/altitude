@@ -426,7 +426,8 @@ describe("private image reads", () => {
       answer = () => resolve(status === 200 ? new Response("fictional raster", { headers: { "Content-Type": "image/png" } }) : json({}, status));
     })));
     const saved = { id: "abc", name: "screen.png", mime_type: "image/png", size: 12, width: 2, height: 2, source_message_id: "message" };
-    const sent = [{ name: "screen.png", url: "data:image/png;base64,AAAA" }];
+    // The server may shorten a name; the pictures match by position.
+    const sent = [{ name: `${"s".repeat(140)}.png`, url: "data:image/png;base64,AAAA" }];
     const shown = (previews = sent) => <ImageViewerHost scope="/"><MessageImages project="alpha" images={[saved]} previews={previews} /></ImageViewerHost>;
     const { unmount } = render(shown(), { wrapper: MemoryRouter });
     const picture = screen.getByRole("img", { name: "screen.png" });
@@ -445,10 +446,18 @@ describe("private image reads", () => {
     expect(screen.queryByRole("img")).toBeNull();
     refused.unmount();
 
-    // A picture that is not this image's is never shown in its place.
-    render(shown([{ name: "other.png", url: "data:image/png;base64,BBBB" }]), { wrapper: MemoryRouter });
+    // Pictures that are not this message's are never shown in its place.
+    const other = render(shown([...sent, { name: "other.png", url: "data:image/png;base64,BBBB" }]), { wrapper: MemoryRouter });
     expect(screen.getByText("Loading image…")).toBeInTheDocument();
     expect(screen.queryByRole("img")).toBeNull();
+    other.unmount();
+
+    // The held picture's own read starts off screen too, so the picture never outlives an unread image.
+    vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} });
+    const calls = vi.mocked(fetch).mock.calls.length;
+    render(shown(), { wrapper: MemoryRouter });
+    expect(screen.getByRole("img", { name: "screen.png" })).toHaveAttribute("src", "data:image/png;base64,AAAA");
+    expect(vi.mocked(fetch).mock.calls.length).toBe(calls + 1);
   });
 
   it("keeps an open viewer and its zoom when the opener's row is replaced, then focuses the replacement", async () => {

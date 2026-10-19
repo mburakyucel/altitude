@@ -38,7 +38,7 @@ thumbnails stay with their caption and open in a full-image modal on phone/deskt
 Fit/Zoom, scrolling, Close/Escape and focus return. A viewer opened on a queued project image stays
 open, with its zoom, while history admission replaces the queued row; closing it then focuses that
 image's stored thumbnail, or its Retry or placeholder while the new row reads. Leaving the page
-closes the viewer. Loading (of an image the page did not just send), missing and denied reads keep an
+closes the viewer. Loading (of an image the page did not just send, or of a queued project message once its turn begins), missing and denied reads keep an
 image-sized placeholder, readable message text and Retry that only repeats the read. A queued
 project image retains its own caption and Remove until delivery starts. Unclaimed task image messages
 offer the same Remove as text; removal replaces the caption and thumbnails with Message removed and
