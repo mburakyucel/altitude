@@ -673,8 +673,9 @@ def row_quiet_point() -> dict:
     """#1003: an automatic update offered while a validation run holds the machine waits for that run and names it
     in `alt doctor`, the page's notice and Settings' About; a new validation request is told Altitude restarts soon
     and runs only after the restart; once the run ends the update installs itself, the page saying so while its
-    download is held, and the service restarts into it while the validating task's worker stays in its turn, the
-    page then saying it updated."""
+    download is held, when a new task waits for dispatch and the operator's chat message for a coordinator turn,
+    and the service restarts into it while the validating task's worker stays in its turn, the page then saying it
+    updated and the waiting task and message starting."""
     record = lambda: json.loads((ROOT / "update.json").read_text())  # noqa: E731
     installed = lambda: json.loads((HOME / ".local/share/altitude/current/release.json").read_text())["version"]  # noqa: E731
     settings = ROOT / "settings.json"
@@ -708,6 +709,16 @@ def row_quiet_point() -> dict:
                            and record()["attempt"], timeout=120)
             page_shows["installing"] = safari.shows("/projects", Safari.NOTICE, f"Installing Altitude {newer}… Altitude "
                                                     "restarts when it is ready.", timeout=30)
+            # While it installs, a new task is not dispatched and the operator's chat message waits for no turn.
+            mark = len(lines(LOG))
+            fenced = alt("task", "new", "--title", "Created while an update installs", "--engine", "codex", "-",
+                         stdin="Fictional task created while an update installs.\n")["slug"]
+            with page("/api/chat", {"project": PROJECT, "text": "FIXTURE-RUN: echo chat-after-update"}) as response:
+                chat = json.loads(response.read())
+            time.sleep(10)
+            installing = {"task": task(fenced).get("state"), "task_turns": len(turns(fenced)),
+                          "chat_queued": bool(chat.get("queued")),
+                          "coordinator_turns": len([entry for entry in lines(LOG)[mark:] if entry.get("role") == "l3"])}
         finally:
             release()
         try:
@@ -717,13 +728,18 @@ def row_quiet_point() -> dict:
             raise Failed(f"{error}: installed {installed()}, service {before} then {service_pid()}, healthy {healthy()}, "
                          f"attempt {record().get('attempt')}") from None
         page_shows["updated"] = safari.shows("/projects", Safari.NOTICE, f"Updated to {newer}.", timeout=90)
+    installing["after_restart"] = {
+        "task_turn": bool(wait("the fenced task's first turn", lambda: turns(fenced), timeout=120)),
+        "chat_ran": bool(wait("the queued chat message's turn", lambda: any(
+            entry.get("role") == "l3" and entry.get("command") == "echo chat-after-update" for entry in lines(LOG)[mark:]),
+            timeout=120))}
     second = wait("the second request's answer", lambda: ran(later, "alt task validate"), timeout=120)
     # The restarted service's start, to the second; a run it started begins at or after it.
     activated = datetime.strptime(shell(f"ps -o lstart= -p {service_pid()}").stdout.strip(),
                                   "%a %b %d %H:%M:%S %Y").timestamp()
     after_update = lambda row: datetime.fromisoformat(row["started"]).timestamp() >= activated  # noqa: E731
     facts = {"installed": version, "newer": newer, "waiting": waiting, "doctor": doctor, "page": page_shows,
-             "second": {key: second.get(key) for key in ("exit", "stderr")},
+             "while_installing": installing, "second": {key: second.get(key) for key in ("exit", "stderr")},
              "second_runs": [{key: r.get(key) for key in ("n", "started", "exit")} for r in machine(later)
                              if r.get("purpose") == "validation"],
              "run": {key: ended.get(key) for key in ("n", "ended", "exit", "finished")},
@@ -733,10 +749,13 @@ def row_quiet_point() -> dict:
              "now": installed(), "service": {"before": before, "after": service_pid(), "started": activated},
              "worker_kept": {"job": job_running(unit), "unit": worker_unit(running) == unit,
                              "state": task(running).get("state")}}
+    stopped_cleanly(fenced)
     stopped_cleanly(later)
     stopped_cleanly(running)
     facts["passed"] = (doctor == f"Update: Altitude {newer} installs automatically at the next quiet moment; "
                                  f"waiting for {held_by}."
+                       and installing == {"task": "queued", "task_turns": 0, "chat_queued": True, "coordinator_turns": 0,
+                                          "after_restart": {"task_turn": True, "chat_ran": True}}
                        and "restarts soon to apply an update" in second.get("stderr", "") and second.get("exit") == 0
                        and bool(facts["second_runs"]) and all(after_update(r) for r in facts["second_runs"])
                        and ended.get("exit") == 0 and 0 <= facts["attempt_after_run_s"] < 45
