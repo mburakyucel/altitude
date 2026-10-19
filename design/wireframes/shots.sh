@@ -7,6 +7,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/shots"
 chrome=${CHROME:-/usr/bin/google-chrome}
+profile="$out/.profile"  # Chrome's own, since Altitude's sandboxes hide the browsers' profiles
 mkdir -p "$out"
 for board in "$here"/*.html; do
   name=$(basename "$board" .html)
@@ -15,7 +16,7 @@ for board in "$here"/*.html; do
   for theme in light dark; do
     png="$out/$name.png"; url="file://$board"
     if [ "$theme" = dark ]; then png="$out/$name.dark.png"; url="$url?dark"; fi
-    "$chrome" --headless --disable-gpu --no-sandbox --hide-scrollbars --force-device-scale-factor=1 \
+    "$chrome" --user-data-dir="$profile" --headless --disable-gpu --no-sandbox --hide-scrollbars --force-device-scale-factor=1 \
       --window-size="$size" --virtual-time-budget=8000 \
       --screenshot="$png" "$url" >/dev/null 2>&1
     if [ -s "$png" ]; then

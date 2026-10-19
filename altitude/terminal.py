@@ -564,15 +564,11 @@ def describe(record: dict, place: str) -> str:
 
 
 def owner_connection(peer: tuple, local: tuple, unit: str) -> bool:
-    """Whether this connection's client end is held by a process in `unit`, the task's current worker job. The
-    process and socket facts come from the platform seam; a connection that cannot be traced is not the owner's."""
+    """Whether this host attributes the connection's client end to `unit`, a task's current worker job. The facts
+    come from the platform seam; a connection that cannot be traced is no owner's."""
     try:
-        target = platform.client_socket(_spellings(_address(peer[0])), peer[1], _spellings(_address(local[0])), local[1])
-        if target is None:
-            return False
-        table = platform.process_table()
-        return any(unit in groups and platform.holds(pid, target) for pid, (_, groups) in table.items())
-    except (OSError, ValueError):
+        return any(unit in groups for groups, _ in _attribution(peer, local) or ())
+    except (OSError, ValueError, struct.error):
         return False
 
 
@@ -601,42 +597,24 @@ def _this_host(ip) -> bool:
     return True
 
 
-def _owned(table: dict[int, tuple[int, list[str]]]) -> set[int]:
-    """The Altitude processes: altd, its descendants (L3 turns) and every process in an Altitude service unit
-    (workers, terminal shells)."""
-    owned = {pid for pid, (_, groups) in table.items() if any(ALTITUDE_UNIT.fullmatch(part) for part in groups)}
-    children: dict[int, list[int]] = {}
-    for pid, (parent, _) in table.items():
-        children.setdefault(parent, []).append(pid)
-    frontier = [os.getpid()]
-    descendants = {os.getpid()}
-    while frontier:
-        for child in children.get(frontier.pop(), []):
-            if child not in descendants:
-                descendants.add(child)
-                frontier.append(child)
-    return owned | descendants
+def _attribution(peer: tuple, local: tuple) -> list[tuple[list[str], bool]] | None:
+    return platform.client_groups(_spellings(_address(peer[0])), peer[1], _spellings(_address(local[0])), local[1])
 
 
 def agent_connection(peer: tuple, local: tuple) -> bool:
     """Whether this connection comes from Altitude itself rather than the operator's browser.
 
     A connection from another host is the operator's (Altitude has no login: reaching it is the access). A
-    client address that belongs to this host is local however it is spelled, and its socket must be found
-    in a process outside Altitude and in none of altd, anything it started, or anything in an Altitude
-    service unit. A client whose descriptors cannot be read is not identified, so an agent process that
-    hides its descriptors is refused.
-    Limits: a process an agent starts outside these units, through the user service manager or a scheduler,
-    is not recognised, and a worker whose engine runs without an OS sandbox can already change the
-    operator's files directly. The process and socket facts come from the platform seam."""
+    client address that belongs to this host is local however it is spelled, and the platform seam names what
+    the client end belongs to: an agent's when any attribution is altd, anything it started, or anything in an
+    Altitude service unit, and unidentified, so refused, when nothing can be named.
+    Limits: a process running outside these units (a forwarder in front of altd, or a program an agent gets
+    started outside its sandbox) is not recognised, and a worker whose engine runs without an OS sandbox can
+    already change the operator's files directly."""
     try:
-        target = platform.client_socket(_spellings(_address(peer[0])), peer[1], _spellings(_address(local[0])), local[1])
-        if target is None:
+        found = _attribution(peer, local)
+        if found is None:
             return _this_host(_address(peer[0]))
-        table = platform.process_table()
-        owned = _owned(table)
-        if any(platform.holds(pid, target) for pid in owned):
-            return True
-        return not any(platform.holds(pid, target) for pid in set(table) - owned)
-    except (OSError, ValueError):
+        return not found or any(ours or any(ALTITUDE_UNIT.fullmatch(part) for part in groups) for groups, ours in found)
+    except (OSError, ValueError, struct.error):  # struct.error: a reply the kernel cut short
         return True

@@ -541,8 +541,8 @@ Every request passes the same checks before routing. Without TLS the `Host` must
 at the certificate. Every POST must come from Altitude's own page or from a client that is no page:
 `Sec-Fetch-Site`, when present, must be `same-origin` or `none`, and an `Origin` must name the
 request's `Host`. The `alt` CLI sends neither header; another site open in the operator's browser
-cannot make it send an action. The Vite dev proxy gives the dev page's own requests altd's origin and
-leaves any other page's origin in place. A JSON body is at most 1 MiB; image messages, voice
+cannot make it send an action. The Vite dev server proxies only to the altd `ALTITUDE_DEV_API` names; it
+gives the dev page's own requests that altd's origin and leaves any other page's origin in place. A JSON body is at most 1 MiB; image messages, voice
 recordings and a task worker's own requests ([task door](#task-door)) have their own limits.
 A client that sends no complete request line and headers within thirty seconds loses its connection. An internal error's text reaches only the CLI and paired
 devices; any other client gets a fixed message, and altd's log keeps the details. The web app's pages refuse to be framed by any page
@@ -557,7 +557,8 @@ restart script send it as `X-Altitude-Key`, each only to an altd that proves its
 (the system trust store for an external certificate). The key is compared in constant time. Only the operator's
 account can read it, and no Altitude sandbox can: the Codex worker, coordinator and reviewer profiles
 and Altitude's own sandbox around every Claude job deny the access and TLS folders (`platform.secret_places`), so
-the key proves a caller is the operator's own CLI rather than a confined agent. `key.json` records the key's
+the key proves a caller is the operator's own CLI rather than a confined agent. The same rule hides the common
+browsers' profile folders, which hold every site's sign-in, a paired device's cookie among them. `key.json` records the key's
 generation: when altd starts with a key from an earlier generation, whose sandboxes could still read
 this folder, it replaces the key, drops a pairing code in flight and notes the agent jobs then running
 (task workers, coordinator turns and reviews); once all of them have ended, the tick replaces the key once
@@ -607,6 +608,32 @@ single-use code. Refused links return to the blank manual field with recovery th
 launcher. Successful redemption opens First run, or the existing app when projects exist. Server
 authentication, origin checks, cookies and the manual code's lifetime/replacement policy are unchanged.
 
+### Altitude's own agents
+
+Altitude records what a paired device sends as the operator's, and grants, merges and answers rest on
+it, so no agent may send it. Every POST without this machine's key that does not come through the
+[task door](#task-door) is refused with 403, before its body is read, when it comes from one of Altitude's
+own agents: chat and task messages, answers, decisions, task actions and reviews, settings, devices,
+sign-in, trust, pairing, voice and any route added later. The page's reads are not refused. The
+machine key keeps its routes, since no sandbox can read it; the terminal, voice, device sharing, update
+and validation controls refuse an agent even with it. One check decides, once per connection, for all of
+them: `terminal.agent_connection`, which names the process that opened the connection's client end
+([Operator terminal](#operator-terminal) describes how). A container installation infers nothing: its
+clients arrive through the published port, and the browser that holds the cookie is on the host.
+
+The check has known limits. A process running outside Altitude's units is not recognized, however it
+was started, and can act with any credential it can read. A forwarder on this machine in front of altd
+(an SSH tunnel, a reverse proxy, a container installation's published port, a dev server) holds the
+socket altd sees, so a worker connecting through it looks like the operator's browser. A cookie copied
+to another device is that device's. A worker whose engine runs without an OS sandbox can change the
+operator's files directly. On Linux the check relies on workers being unable to move to another control
+group, which their sandboxes mount read-only. Where nothing can be named, every local client is refused,
+the operator's own browser on this computer included, while a browser on another device keeps working:
+a host without cgroup2 at `/sys/fs/cgroup`, an altd in the root group, or a browser started in altd's
+own control group, as from the terminal that runs `alt serve` in the foreground. A development backend
+an agent starts refuses that agent's own browser the same way; the browser harness's services mark
+their clients as the operator's (`web/e2e/service_support.py`).
+
 ### Linux and macOS
 
 Everything above the platform seam is the same on both hosts. These are the behaviors that differ;
@@ -618,12 +645,12 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
 | A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
-| Claude confinement | also Altitude's bubblewrap sandbox: writes only under its roots, never reads Altitude's credentials, sees only its own processes, an empty per-user runtime folder and its own `/tmp`, and, on Linux 6.12 or newer, no abstract socket it did not make; a sandbox cannot start inside it | also Altitude's Seatbelt profile: writes only under its roots, never reads macOS's [private places](DEVELOPMENT.md#macos-private-places), signals only its own processes, reaches Unix sockets only in its own folders, no launchd control, Simulator service, app launches or Apple Events; browser checks run in validation | Isolation and landing |
+| Claude confinement | also Altitude's bubblewrap sandbox: writes only under its roots, never reads Altitude's credentials or the common browsers' profiles, sees only its own processes, an empty per-user runtime folder and its own `/tmp`, and, on Linux 6.12 or newer, no abstract socket it did not make; a sandbox cannot start inside it | also Altitude's Seatbelt profile: writes only under its roots, never reads macOS's [private places](DEVELOPMENT.md#macos-private-places), signals only its own processes, reaches Unix sockets only in its own folders, no launchd control, Simulator service, app launches or Apple Events; browser checks run in validation | Isolation and landing |
 | Codex confinement | Codex's own sandbox (bwrap), denied the per-user runtime folder and the shared temporary folders | Codex's own sandbox (Seatbelt), which denies macOS's private places and admits neither the Simulator service, app launches nor Apple Events; the two profiles cannot nest | Isolation and landing |
 | Candidate browser checks, both engines | `alt task validate` runs the disposable rootless container with Chromium's own sandbox (two layers) | `alt task validate` runs a job under the validation Seatbelt profile with Chromium's inner sandbox off because profiles cannot nest (one layer, fictional fixtures only); stock engines need no custom runtime | [Browser verification](DEVELOPMENT.md#browser-verification) |
 | Operator-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
-| Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
+| Agent check | the kernel's record of the control group that opened the socket (sock_diag), resolved under `/sys/fs/cgroup` | this user's processes' sockets (libproc) and job coalitions | Altitude's own agents, Operator terminal |
 | Coordinator socket admission | in the per-user runtime folder; the peer's pidfd (Linux 6.5 or newer) and cgroup | beside Altitude's private configuration; the peer's audit token, pinned by its pid version, and its job coalition | Isolation and landing |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
 | Native libraries, tools | system packages (apt, dnf, pacman or zypper) | Homebrew; OpenSSL 3 from PATH or Homebrew's `openssl@3` | Setup |
@@ -1496,7 +1523,7 @@ bubblewrap on Linux (`platform.job_command`): it may signal only processes in it
 and write only under its own roots (a task worker's worktree, the worktree's Git directories except their
 [read-only parts](#isolation-and-landing) and its scratch folder; a coordinator turn's runtime folder and Altitude's
 home), the job's own Claude folder and its own temporary folder, and never reads
-Altitude's credentials. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
+Altitude's credentials or the common browsers' profiles. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
 or the launcher's job folders, which hold each job's piped input and relay its output;
 launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
@@ -1825,25 +1852,24 @@ provider, where it stays after Altitude forgets it. A password typed at a prompt
 Every terminal request is refused unless it comes from a paired browser on Altitude's own page and
 not from Altitude itself. Its reads and streams pass the same-page rule every POST passes (see
 [Responsibilities](#responsibilities)), and its POST bodies must be `application/json`. This stops
-another site open in the operator's browser from typing into a shell. Then `terminal.agent_connection`,
-asked once per connection since a connection keeps its client socket, finds the client end of the TCP
-connection in
-`/proc/net/tcp{,6}` on Linux, or among this user's processes' sockets on macOS, in both address families
-since an IPv6 socket can reach an IPv4 address. A
-client whose row is missing is refused when its address belongs to this host (it can be bound). A
-local client is allowed only when a process outside Altitude visibly holds
-that socket and none of altd, anything altd started or any process in an `altitude*.service` unit
+another site open in the operator's browser from typing into a shell. Then the [agent
+check](#altitudes-own-agents) every action shares, `terminal.agent_connection`, asks the platform what
+opened the client end of the TCP connection, in both address families since an IPv6 socket can reach an
+IPv4 address. On Linux the kernel records the control group that created each socket (sock_diag), read
+once and resolved to its path under `/sys/fs/cgroup`; handing the socket to another process or hiding
+descriptors changes nothing. On macOS every one of this user's processes that holds the socket counts
+(libproc), with its job coalition. The connection is Altitude's when any of them is altd, anything altd
+started (on Linux altd's own control group or one below it) or anything in an `altitude*.service` unit
 (workers, coordinator turns, reviews, machine commands, terminal shells; on macOS the job coalition
-recorded under that unit name) does.
-A holder whose descriptors or unit cannot be read identifies nothing, so an agent process that hides
-its descriptors is refused. A client on another host is the operator's browser. The Vite dev server
-does not proxy any path altd could route to the terminal (`terminalRequest` reads the raw path as
-altd does, and also its decoded, dot-resolved form; a path with `;` parameters is not proxied), because altd would see the proxy as the client. This stops a worker from
-using the terminal to leave its sandbox and bypass the operator-grant flow. The check has known
-limits. A process an agent starts outside those units, through the user service manager or a
-scheduler, is not recognized. A forwarder on this machine in front of altd (an SSH tunnel, a reverse
-proxy, a container's published port) holds the socket altd sees, so a worker connecting through it
-looks like the operator's browser, so the operator keeps the terminal off while one serves Altitude.
+recorded under that unit name). A local client that names nothing is refused: no socket row, no recorded
+group, the root group, a group that has gone, a host without cgroup2 at `/sys/fs/cgroup`, a failed
+query, or on macOS a socket no visible process holds. A client on another host is the operator's
+browser. The Vite dev server does not proxy any path altd could route to the terminal
+(`terminalRequest` reads the raw path as altd does, and also its decoded, dot-resolved form; a path with
+`;` parameters is not proxied), because altd would see the proxy as the client. This stops a worker from
+using the terminal to leave its sandbox and bypass the operator-grant flow. The check's
+[limits](#altitudes-own-agents) apply here too, so the operator keeps the terminal off while a forwarder
+serves Altitude.
 Every paired browser can use the terminal once it is
 on. That is the same trust as its other
 operator controls, and the Settings copy says so. That includes `sudo`: a paired browser whose user knows

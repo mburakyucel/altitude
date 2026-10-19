@@ -6,19 +6,23 @@ its job hangs up, then kills, that session. The agent and owner checks read a fi
 needs a particular process layout, and the real one for a real connection.
 """
 import base64
+import errno
 import http.client
 import json
 import os
-import shutil
+import re
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
 import time
+import unittest
 from pathlib import Path
+from unittest import mock
 
-from tests.support import AltitudeCase, local_terminal_launch, local_terminal_stop, make_repo, terminal_session as session
+from tests.support import NATIVE_PLATFORM, AltitudeCase, local_terminal_launch, local_terminal_stop, make_repo, terminal_session as session
 from altitude import config, dispatch, engines, installation, l3, platform, server, state as S, tasks as T, terminal
 
 SHELL = ["bash", "--noprofile", "--norc"]
@@ -903,57 +907,74 @@ class TestTerminalJob(AltitudeCase):
         self.assertTrue(terminal.ALTITUDE_UNIT.fullmatch("altitude-terminal-x.service"))  # its processes are Altitude's
 
 
-def fake_proc(root: Path, processes: dict[int, tuple[int, str, list[int]]], connections: list[tuple[str, str, int]],
-              family: str = "") -> None:
-    """A /proc tree: pid -> (parent, cgroup path, socket inodes held), plus tcp rows (client, server, inode)."""
-    (root / "net").mkdir(parents=True)
-    rows = ["  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"]
-    rows += [f"   0: {client} {server_} 01 00000000:00000000 00:00000000 00000000  1000        0 {inode}"
-             for client, server_, inode in connections]
-    (root / "net" / f"tcp{family}").write_text("\n".join(rows) + "\n")
-    for pid, (parent, cgroup, inodes) in processes.items():
-        (root / str(pid) / "fd").mkdir(parents=True)
-        (root / str(pid) / "stat").write_text(f"{pid} (some (odd) name) S {parent} 1 1 0\n")
-        (root / str(pid) / "cgroup").write_text(f"0::{cgroup}\n")
-        for n, inode in enumerate(inodes):
-            os.symlink(f"socket:[{inode}]", root / str(pid) / "fd" / str(n + 3))
-
-
 class TestAgentRefusal(AltitudeCase):
-    host = "linux"  # systemd and procfs fixtures
+    host = "linux"  # the kernel's socket and control-group records, as fixtures
 
     PEER, LOCAL = ("127.0.0.1", 51000), ("127.0.0.1", 8443)
+    APPS = "user.slice/user-1000.slice/user@1000.service/app.slice"
+    ALTD = f"{APPS}/altitude.service"
 
     def setUp(self):
         super().setUp()
+        self.cgroups = self.tmp / "cgroup"
+        self.cgroups.mkdir()
+        (self.cgroups / "cgroup.controllers").write_text("cpu memory pids\n")
+        self.patch(platform, "CGROUPS", self.cgroups)
         self.proc = self.tmp / "proc"
+        (self.proc / "self").mkdir(parents=True)
+        (self.proc / "self/cgroup").write_text(f"0::/{self.ALTD}\n")
         self.patch(platform, "PROC", self.proc)
-        self.client = platform._hex_address(*self.PEER)[0]
-        self.server = platform._hex_address(*self.LOCAL)[0]
-        self.altd = os.getpid()
+        self.sockets: dict[tuple, int] = {}
+        self.patch(platform, "_socket_group", side_effect=lambda *end: self.sockets.get(end))
 
-    def layout(self, holder_cgroup: str, holder_parent: int = 1) -> bool:
-        fake_proc(self.proc, {
-            self.altd: (1, "/user.slice/user-1000.slice/user@1000.service/app.slice/altitude.service", [5]),
-            4000: (holder_parent, holder_cgroup, [777]),
-        }, [(self.client, self.server, 777)])
+    def group(self, path: str) -> int:
+        """A control group in the fixture tree, by its id: its folder's inode, as the kernel's id is."""
+        folder = self.cgroups / path
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder.stat().st_ino
+
+    def connect(self, group: int, peer=PEER, local=LOCAL) -> None:
+        self.sockets[(peer[0], peer[1], local[0], local[1])] = group
+
+    def from_group(self, path: str) -> bool:
+        self.sockets.clear()
+        self.connect(self.group(path))
         return terminal.agent_connection(self.PEER, self.LOCAL)
 
     def test_the_operators_browser_is_allowed(self):
-        self.assertFalse(self.layout("/user.slice/user-1000.slice/user@1000.service/app.slice/app-chrome-1.scope"))
+        self.assertFalse(self.from_group(f"{self.APPS}/app-chrome-1.scope"))
+        self.assertFalse(self.from_group(f"{self.APPS}/snap.firefox.firefox-2.scope"))
 
-    def test_a_worker_unit_is_refused(self):
+    def test_a_worker_unit_and_any_group_below_it_is_refused(self):
         for unit in ("altitude-codex-abc.service", "altitude-claude-1b2c.service", "altitude-review-x.service"):
-            with self.subTest(unit=unit):
-                shutil.rmtree(self.proc, ignore_errors=True)
-                self.assertTrue(self.layout(f"/user.slice/user@1000.service/app.slice/{unit}/sub"))
+            for path in (f"{self.APPS}/{unit}", f"{self.APPS}/{unit}/sub/deeper"):
+                with self.subTest(path=path):
+                    self.assertTrue(self.from_group(path))
 
-    def test_a_process_altd_started_is_refused(self):  # an L3 turn runs as altd's child, in altd's own group
-        self.assertTrue(self.layout("/user.slice/user@1000.service/app.slice/other.scope", holder_parent=self.altd))
+    def test_altd_and_anything_it_started_is_refused(self):  # an L3 turn runs as altd's child, in altd's own group
+        self.patch(terminal, "ALTITUDE_UNIT", re.compile("no-unit-matches"))
+        for path in (self.ALTD, f"{self.ALTD}/turn"):
+            with self.subTest(path=path):
+                self.assertTrue(self.from_group(path))
+        self.assertFalse(self.from_group(f"{self.APPS}/app-chrome-1.scope"))
+
+    def test_a_socket_whose_group_cannot_be_named_is_refused(self):
+        vanished = self.group(f"{self.APPS}/app-gone.scope")
+        (self.cgroups / self.APPS / "app-gone.scope").rmdir()
+        for name, group in (("missing record", 0), ("root group", self.cgroups.stat().st_ino), ("vanished", vanished)):
+            with self.subTest(name):
+                self.sockets.clear()
+                self.connect(group)
+                self.assertTrue(terminal.agent_connection(self.PEER, self.LOCAL))
+        browser = f"{self.APPS}/app-chrome-1.scope"
+        (self.cgroups / "cgroup.controllers").unlink()  # no cgroup2 hierarchy at its place
+        self.assertTrue(self.from_group(browser))
+
+    def test_without_its_own_unified_group_every_group_counts_as_altds(self):
+        (self.proc / "self/cgroup").write_text("1:name=systemd:/legacy\n")
+        self.assertTrue(self.from_group(f"{self.APPS}/app-chrome-1.scope"))
 
     def test_an_unidentified_local_client_is_refused_and_a_remote_one_allowed(self):
-        fake_proc(self.proc, {self.altd: (1, "/altitude.service", [])}, [])
-        (self.proc / "net" / "tcp6").write_text("  sl  local_address rem_address\n")
         # Loopback binds for real; the offline guard forbids binding anything else, which no host here owns.
         this_host = terminal._this_host
         self.patch(terminal, "_this_host", side_effect=lambda ip: this_host(ip) if ip.is_loopback else False)
@@ -964,61 +985,112 @@ class TestAgentRefusal(AltitudeCase):
         self.assertFalse(terminal.agent_connection(("203.0.113.20", 51000), ("192.168.1.5", 8443)))
 
     def test_a_client_on_the_other_address_family_is_still_identified(self):
-        # A review found an IPv6 client reaching an IPv4 address was missed in tcp and passed as remote.
-        mapped = lambda address: platform._hex_address(f"::ffff:{address[0]}", address[1])[0]
-        for cgroup, refused in (("/app.slice/altitude-codex-a.service", True), ("/app.slice/app-chrome-1.scope", False)):
-            with self.subTest(cgroup=cgroup):
-                shutil.rmtree(self.proc, ignore_errors=True)
-                fake_proc(self.proc, {self.altd: (1, "/altitude.service", []), 4000: (1, cgroup, [31])},
-                          [(mapped(self.PEER), mapped(self.LOCAL), 31)], family="6")
-                (self.proc / "net" / "tcp").write_text("  sl  local_address rem_address\n")
+        # A review found an IPv6 client reaching an IPv4 address was missed in one family and passed as remote.
+        mapped = lambda address: (f"::ffff:{address[0]}", address[1])
+        for path, refused in ((f"{self.APPS}/altitude-codex-a.service", True), (f"{self.APPS}/app-chrome-1.scope", False)):
+            with self.subTest(path=path):
+                self.sockets.clear()
+                self.connect(self.group(path), mapped(self.PEER), mapped(self.LOCAL))
                 self.assertEqual(terminal.agent_connection(self.PEER, self.LOCAL), refused)
+                self.assertEqual(terminal.agent_connection(mapped(self.PEER), mapped(self.LOCAL)), refused)
 
-    def test_a_holder_whose_descriptors_cannot_be_read_is_not_identified(self):
-        # A review found an agent process that hides its descriptors (made undumpable) passed the check.
-        for cgroup in ("/app.slice/altitude-codex-a.service", "/app.slice/app-chrome-1.scope"):
-            with self.subTest(cgroup=cgroup):
-                shutil.rmtree(self.proc, ignore_errors=True)
-                fake_proc(self.proc, {self.altd: (1, "/altitude.service", []), 4000: (1, cgroup, [777])},
-                          [(self.client, self.server, 777)])
-                (self.proc / "4000" / "fd").chmod(0)
-                self.addCleanup((self.proc / "4000" / "fd").chmod, 0o700)
-                self.assertTrue(terminal.agent_connection(self.PEER, self.LOCAL))
-                (self.proc / "4000" / "fd").chmod(0o700)
-
-    def test_a_holder_whose_unit_cannot_be_read_is_not_identified(self):
-        fake_proc(self.proc, {self.altd: (1, "/altitude.service", []), 4000: (1, "/app.slice/app-chrome-1.scope", [777])},
-                  [(self.client, self.server, 777)])
-        (self.proc / "4000" / "cgroup").unlink()
-        self.assertTrue(terminal.agent_connection(self.PEER, self.LOCAL))
-
-    def test_an_unreadable_process_table_is_refused(self):
-        self.assertTrue(terminal.agent_connection(self.PEER, self.LOCAL))  # the fixture tree does not exist
-
-    def test_ipv6_rows_are_matched(self):
+    def test_ipv6_clients_are_identified(self):
         peer, local = ("::1", 51000), ("::1", 8443)
-        fake_proc(self.proc, {4000: (1, "/app.slice/altitude-codex-a.service", [9])},
-                  [(platform._hex_address(*peer)[0], platform._hex_address(*local)[0], 9)], family="6")
+        self.connect(self.group(f"{self.APPS}/altitude-codex-a.service"), peer, local)
         self.assertTrue(terminal.agent_connection(peer, local))
+        self.sockets.clear()
+        self.connect(self.group(f"{self.APPS}/app-chrome-1.scope"), peer, local)
+        self.assertFalse(terminal.agent_connection(peer, local))
 
-    def test_a_real_connection_from_altd_itself_is_refused(self):
-        self.patch(platform, "PROC", Path("/proc"))
-        listener = socket.create_server(("127.0.0.1", 0))
-        self.addCleanup(listener.close)
-        client = socket.create_connection(listener.getsockname())
-        self.addCleanup(client.close)
-        accepted, peer = listener.accept()
-        self.addCleanup(accepted.close)
-        self.assertTrue(terminal.agent_connection(peer, accepted.getsockname()))
+    def test_a_failed_query_is_refused_and_no_owners(self):
+        self.patch(platform, "_socket_group", side_effect=OSError(errno.EPERM, "fixture"))
+        self.assertTrue(terminal.agent_connection(self.PEER, self.LOCAL))
+        self.assertFalse(terminal.owner_connection(self.PEER, self.LOCAL, "altitude-claude-owner.service"))
 
-
-    def test_only_a_process_in_the_owners_worker_job_is_the_owner(self):
-        worker = "/user.slice/user-1000.slice/user@1000.service/app.slice/altitude-claude-owner.service"
-        fake_proc(self.proc, {4000: (1, worker, [777]), 4001: (1, worker.replace("owner", "other"), [778])},
-                  [(self.client, self.server, 777)])
+    def test_only_a_socket_from_the_owners_worker_job_is_the_owners(self):
+        self.connect(self.group(f"{self.APPS}/altitude-claude-owner.service/engine"))
+        self.group(f"{self.APPS}/altitude-claude-other.service")
         self.assertTrue(terminal.owner_connection(self.PEER, self.LOCAL, "altitude-claude-owner.service"))
         self.assertFalse(terminal.owner_connection(self.PEER, self.LOCAL, "altitude-claude-other.service"))
         self.assertFalse(terminal.owner_connection(("127.0.0.1", 51001), self.LOCAL, "altitude-claude-owner.service"))
+
+
+class TestSocketDiagReplies(AltitudeCase):
+    """The kernel's sock_diag replies, as bytes: whatever arrives, a reply that names no group fails closed."""
+    host = "linux"
+
+    def reply(self, *, kind=20, attributes=b"", length=None, error=None) -> bytes:
+        if error is not None:
+            body = struct.pack("=i", -error) + bytes(16)
+        else:
+            body = bytes(72) + attributes  # inet_diag_msg, then its attributes
+        return struct.pack("=IHHII", length or 16 + len(body), 2 if error is not None else kind, 0, 1, 0) + body
+
+    @staticmethod
+    def attribute(kind: int, payload: bytes) -> bytes:
+        size = 4 + len(payload)
+        return struct.pack("=HH", size, kind) + payload + bytes(-size % 4)
+
+    def kernel(self, reply: bytes) -> list[bytes]:
+        """The netlink socket answers `reply` to whatever is sent; returns what was sent."""
+        sent = []
+
+        class Diag:
+            def __init__(self, *args): pass
+            def __enter__(self): return self
+            def __exit__(self, *exc): return False
+            def settimeout(self, _seconds): pass
+            def send(self, data): sent.append(data)
+            def recv(self, _size): return reply
+
+        self.patch(platform.socket, "socket", Diag)
+        return sent
+
+    def test_the_request_names_the_exact_connection(self):
+        sent = self.kernel(self.reply(error=errno.ENOENT))
+        self.assertIsNone(platform._socket_group("127.0.0.1", 51000, "127.0.0.1", 8443))
+        header, request = sent[0][:16], sent[0][16:]
+        self.assertEqual(struct.unpack("=IHHII", header)[:3], (16 + 56, 20, 1))
+        self.assertEqual(request[0], socket.AF_INET)
+        self.assertEqual(request[8:12], struct.pack("!HH", 51000, 8443))
+        self.assertEqual(request[12:16] + request[28:32], socket.inet_aton("127.0.0.1") * 2)
+
+    def test_a_recorded_group_is_read_past_other_attributes(self):
+        self.kernel(self.reply(attributes=self.attribute(1, b"x" * 5) + self.attribute(21, struct.pack("=Q", 4242))))
+        self.assertEqual(platform._socket_group("127.0.0.1", 51000, "127.0.0.1", 8443), 4242)
+
+    def test_every_reply_that_names_no_group_is_refused(self):
+        peer, local = ("127.0.0.1", 51000), ("127.0.0.1", 8443)
+        for name, reply in (("no group recorded", self.reply(attributes=self.attribute(1, b"abcd"))),
+                            ("an empty attribute", self.reply(attributes=struct.pack("=HH", 0, 21))),
+                            ("a refused query", self.reply(error=errno.EPERM)),
+                            ("a reply cut short", self.reply()[:10]), ("a header cut short", b"\0" * 4),
+                            ("a length past the reply", self.reply(length=400, attributes=self.attribute(1, b"abcd")))):
+            with self.subTest(name):
+                self.kernel(reply)
+                self.assertTrue(terminal.agent_connection(peer, local))
+                self.assertFalse(terminal.owner_connection(peer, local, "altitude-a.service"))
+
+
+@unittest.skipUnless(NATIVE_PLATFORM == "linux", "the Linux kernel's own socket records")
+class TestKernelAttribution(unittest.TestCase):
+    def test_a_real_connection_is_attributed_to_the_process_that_opened_it(self):
+        for family, address in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+            with self.subTest(address=address):
+                try:
+                    listener = socket.create_server((address, 0), family=family)
+                except OSError:  # a host without IPv6 loopback
+                    continue
+                self.addCleanup(listener.close)
+                client = socket.create_connection(listener.getsockname()[:2])
+                self.addCleanup(client.close)
+                accepted, peer = listener.accept()
+                self.addCleanup(accepted.close)
+                own = next(line[3:] for line in Path("/proc/self/cgroup").read_text().splitlines() if line.startswith("0::"))
+                found = platform.client_groups([peer[0]], peer[1], [address], accepted.getsockname()[1])
+                self.assertEqual(found, [([part for part in own.split("/") if part], True)])
+                self.assertTrue(terminal.agent_connection(peer, accepted.getsockname()))
+                self.assertIsNone(platform.client_groups([peer[0]], peer[1] ^ 1, [address], accepted.getsockname()[1]))
 
 
 class TestTerminalHttp(TerminalCase):
