@@ -881,7 +881,7 @@ def terminal(run: Run) -> None:
         safari.evaluate("document.activeElement.blur(); 0")
         safari.evaluate(f"document.cookie = '{access.COOKIE}={run.device}; path=/; max-age={access.COOKIE_SECONDS}'; 0")
         leave(safari, run.url + run.work + "?tab=work")
-        safari.wait(HELPERS + run.task_link(), "the project's work again")
+        safari.wait(HELPERS + f"!!{run.task_link()}", "the project's work again")
         run.steps.append({"step": "terminal", "walk": rows, "url": url, "restart_requests_cut": len(expected),
                           "reached": "the task and project terminals with the soft keyboard, scrollback, a reload, the "
                                      "key row's Enter and a restart"})
