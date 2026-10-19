@@ -28,7 +28,10 @@ interrupts two mutation runs, whose cleanup lists processes with `ps`, from pack
 repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
 `incident`, `update` and `session` install the release into the account's own home with a scripted fictional engine
 and the tests' fake GitHub CLI, then drive the guest's own service through the revision's tests/macos_guest_runtime.py
-rows.
+rows. `online`, run only when named, is the one phase whose guest keeps its network: the guest downloads
+Homebrew's python@3.13 and Google Chrome and Firefox from their publishers, installs the latest published release
+through the public command from GitHub itself, whose service must run on Python 3.13, and Chrome and Firefox must
+refuse Altitude's address before `alt trust` on the desktop and open it after.
 `--published` downloads the published baseline, and the candidate when it names one, on this Mac, checked against
 their SHA256SUMS and tags; without a published candidate it builds one from the source revision under the baseline's
 next minor version. It runs only `published`: after an outside process writes caches into the installed baseline, the
@@ -922,6 +925,58 @@ for _ in 0..<60 {
 """
 
 
+class Desktop:
+    """The account's desktop session in GUEST, used as the person logged in there uses it: programs started there,
+    Terminal windows and macOS's password window. The password is the automatic login's, which the lane wrote when it
+    made the account; STEP records commands' output in RESULTS, and the password is removed from it."""
+
+    def __init__(self, guest: Guest, results: Path, step):
+        self.guest, self.results, self.step = guest, results, step
+        self.password = from_kcpassword(base64.b64decode(guest.ssh("sudo -n base64 -i /etc/kcpassword").stdout))
+        guest.ssh(f"cat > {SHARED}/windows.swift", stdin=WINDOWS)
+
+    def within(self, seconds: int, check: str) -> bool:
+        return any(self.guest.ssh(check, check=False).returncode == 0 or time.sleep(2) for _ in range(seconds // 2))
+
+    def agent(self, name: str, arguments: list[str]) -> None:
+        """ARGUMENTS run once in the account's desktop session, as a program the person logged in there starts."""
+        definition = self.results / f"lane.{name}.plist"
+        definition.write_bytes(plistlib.dumps({"Label": f"lane.{name}", "RunAtLoad": True, "ProgramArguments": arguments}))
+        self.guest.copy(definition, f"{SHARED}/lane.{name}.plist")
+        self.guest.ssh(f"launchctl bootstrap gui/{ACCOUNT_UID} {SHARED}/lane.{name}.plist")
+
+    def terminal(self, name: str, command: str) -> tuple[str, str]:
+        """COMMAND opened as a person opens it: Terminal comes to the front running it in a window. Its transcript
+        and, once it ends, its exit status."""
+        log, script = f"{SHARED}/{name}.log", f"{SHARED}/{name}.command"
+        self.guest.ssh(f"cat > {script} && chmod 755 {script}",
+                       stdin=f"#!/bin/zsh\n/usr/bin/script -q {log} /bin/zsh -c {quote(command)}\necho $? > {log}.exit\n")
+        self.agent(name, ["/usr/bin/open", "-a", "Terminal", script])
+        return log, f"{log}.exit"
+
+    def authorize(self, name: str) -> dict | None:
+        """macOS's password window, once it shows: clicked, as a person brings it to the front, then the password."""
+        self.agent(name, ["/usr/bin/swift", f"{SHARED}/windows.swift", f"{SHARED}/{name}.json"])
+        if not self.within(150, f"grep -q Width {SHARED}/{name}.json"):
+            return None
+        window = max(json.loads(self.guest.ssh(f"cat {SHARED}/{name}.json").stdout),
+                     key=lambda bounds: bounds["Width"] * bounds["Height"])
+        self.guest.command(f"click {window['X'] + window['Width'] / 2:.0f} {window['Y'] + window['Height'] / 2:.0f}")
+        self.guest.expect("clicked", 30)
+        time.sleep(1)
+        self.guest.command(f"type {self.password}")
+        self.guest.expect("typed", 30)
+        return window
+
+    def transcript(self, name: str, log: str, done: str) -> str:
+        ended = self.within(120, f"test -s {done}")
+        answered = self.step(name, f"cat {log}; echo; echo exit $(cat {done})")
+        for path in self.results.glob("*.log"):
+            if self.password in (text := path.read_text(errors="replace")):
+                path.write_text(text.replace(self.password, "[the account's password]"))
+        return answered.stdout.replace("\r", "") if ended and self.password not in answered.stdout else ""
+
+
 def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unchanged: str, printed: str) -> dict:
     """#1006 checks 1 and 2 for Safari: on the account's desktop, `alt trust` run in Terminal, as the installer runs it
     there too, and answered y on the guest's keyboard raises macOS's own password window; clicked and given the
@@ -932,49 +987,9 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
     password is the automatic login's, which the lane wrote when it made the account; it is removed from the
     evidence."""
     address, used = printed.split("#pair=")[0].removesuffix("/projects"), printed.split("#pair=")[1]
-    password = from_kcpassword(base64.b64decode(guest.ssh("sudo -n base64 -i /etc/kcpassword").stdout))
-    guest.ssh(f"cat > {SHARED}/windows.swift", stdin=WINDOWS)
-
-    def within(seconds: int, check: str) -> bool:
-        return any(guest.ssh(check, check=False).returncode == 0 or time.sleep(2) for _ in range(seconds // 2))
-
-    def agent(name: str, arguments: list[str]) -> None:
-        """ARGUMENTS run once in the account's desktop session, as a program the person logged in there starts."""
-        definition = results / f"lane.{name}.plist"
-        definition.write_bytes(plistlib.dumps({"Label": f"lane.{name}", "RunAtLoad": True, "ProgramArguments": arguments}))
-        guest.copy(definition, f"{SHARED}/lane.{name}.plist")
-        guest.ssh(f"launchctl bootstrap gui/{ACCOUNT_UID} {SHARED}/lane.{name}.plist")
-
-    def terminal(name: str, command: str) -> tuple[str, str]:
-        """COMMAND opened as a person opens it: Terminal comes to the front running it in a window. Its transcript
-        and, once it ends, its exit status."""
-        log, script = f"{SHARED}/{name}.log", f"{SHARED}/{name}.command"
-        guest.ssh(f"cat > {script} && chmod 755 {script}",
-                  stdin=f"#!/bin/zsh\n/usr/bin/script -q {log} /bin/zsh -c {quote(command)}\necho $? > {log}.exit\n")
-        agent(name, ["/usr/bin/open", "-a", "Terminal", script])
-        return log, f"{log}.exit"
-
-    def authorize(name: str) -> dict | None:
-        """macOS's password window, once it shows: clicked, as a person brings it to the front, then the password."""
-        agent(name, ["/usr/bin/swift", f"{SHARED}/windows.swift", f"{SHARED}/{name}.json"])
-        if not within(150, f"grep -q Width {SHARED}/{name}.json"):
-            return None
-        window = max(json.loads(guest.ssh(f"cat {SHARED}/{name}.json").stdout),
-                     key=lambda bounds: bounds["Width"] * bounds["Height"])
-        guest.command(f"click {window['X'] + window['Width'] / 2:.0f} {window['Y'] + window['Height'] / 2:.0f}")
-        guest.expect("clicked", 30)
-        time.sleep(1)
-        guest.command(f"type {password}")
-        guest.expect("typed", 30)
-        return window
-
-    def transcript(name: str, log: str, done: str) -> str:
-        ended = within(120, f"test -s {done}")
-        answered = step(name, f"cat {log}; echo; echo exit $(cat {done})")
-        for path in results.glob("*.log"):
-            if password in (text := path.read_text(errors="replace")):
-                path.write_text(text.replace(password, "[the account's password]"))
-        return answered.stdout.replace("\r", "") if ended and password not in answered.stdout else ""
+    desktop = Desktop(guest, results, step)
+    within, agent, terminal, authorize, transcript = (desktop.within, desktop.agent, desktop.terminal,
+                                                      desktop.authorize, desktop.transcript)
 
     def driver(method: str, path: str, body: dict | None = None):
         """One request to Safari's own WebDriver in the desktop session: its answer's value."""
@@ -1267,6 +1282,178 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
                        "trust-ssh": trust_ssh, "undo-sha256": {"passed": undone.returncode == 0},
                        "trust-desktop": trust_desktop, "pair-safari": {"passed": trust_desktop["pairing"]},
                        "address-vpn": {"passed": trust_desktop["vpn"]}}
+
+
+# The browsers the online phase downloads from their publishers, and the team each one's Developer ID signature names.
+BROWSERS = {"Google Chrome": ("https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg", "EQHXZ8M8AV"),
+            "Firefox": ("https://download.mozilla.org/?product=firefox-latest-ssl&os=osx&lang=en-US", "43AQ936H96")}
+
+# A Marionette client, Firefox's own remote protocol: opens ARGV[1] in a new session and prints whether the
+# navigation succeeded or the error Firefox gave, and then the page's title and text.
+MARIONETTE = r"""import json, socket, sys, time
+for _ in range(90):
+    try:
+        sock = socket.create_connection(("127.0.0.1", 2828), timeout=120)
+        break
+    except OSError:
+        time.sleep(1)
+else:
+    sys.exit(json.dumps({"error": "Marionette did not answer"}))
+buffer, ident = b"", 0
+def read():
+    global buffer
+    while b":" not in buffer:
+        chunk = sock.recv(65536)
+        if not chunk:
+            raise SystemExit(json.dumps({"error": "Marionette closed the connection"}))
+        buffer += chunk
+    size, _, buffer = buffer.partition(b":")
+    while len(buffer) < int(size):
+        chunk = sock.recv(65536)
+        if not chunk:
+            raise SystemExit(json.dumps({"error": "Marionette closed the connection"}))
+        buffer += chunk
+    message, buffer = buffer[:int(size)], buffer[int(size):]
+    return json.loads(message)
+def call(name, parameters):
+    global ident
+    ident += 1
+    body = json.dumps([0, ident, name, parameters]).encode()
+    sock.sendall(str(len(body)).encode() + b":" + body)
+    _, _, error, result = read()
+    return (error or {}).get("error"), (result or {}).get("value")
+read()
+call("WebDriver:NewSession", {"capabilities": {"alwaysMatch": {"acceptInsecureCerts": False}}})
+error, _ = call("WebDriver:Navigate", {"url": sys.argv[1]})
+seen = {"error": error}
+for _ in range(20):
+    seen["title"] = call("WebDriver:GetTitle", {})[1]
+    seen["text"] = call("WebDriver:ExecuteScript", {"script": "return document.body ? document.body.innerText : ''",
+                                                    "args": []})[1]
+    if error or "Pair this device" in (seen["text"] or ""):
+        break
+    time.sleep(1)
+print(json.dumps(seen))
+"""
+
+
+def phase_online(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """The checks that need the internet, in the one phase whose guest keeps its network (#1006, #225, #226):
+    Homebrew's python@3.13, and Google Chrome and Firefox from their publishers, downloaded in the guest; then the
+    latest published release installed through the public command from GitHub itself, whose service must run on
+    Python 3.13; then, on the account's desktop, Chrome and Firefox must refuse Altitude's address before `alt trust`
+    and open it after. REPOSITORY is the checkout's GitHub repository."""
+    add_github_cli(guest, record)
+    steps = record["steps"] = []
+    alt = f"/Users/{ACCOUNT}/.local/bin/alt"
+    github = repository
+
+    def step(name: str, command: str, timeout: int = 120) -> subprocess.CompletedProcess:
+        result = guest.ssh(f"zsh -lc {quote(command)}", timeout=timeout, check=False)
+        (results / f"{len(steps) + 1:02d}-{name}.log").write_text(f"$ {command}\n# exit {result.returncode}\n"
+                                                                    f"{result.stdout}{result.stderr}")
+        steps.append({"step": name, "exit": result.returncode})
+        return result
+
+    def check(condition: bool, what: str) -> None:
+        steps[-1]["passed"] = bool(condition)
+        if not condition:
+            raise Stop(f"{steps[-1]['step']}: {what}")
+
+    python = step("python3.13", "brew install python@3.13 >/dev/null && python3.13 --version", timeout=540)
+    check(python.returncode == 0 and python.stdout.startswith("Python 3.13."), "python@3.13 did not install")
+    record["browsers"] = {}
+    for app, (url, team) in BROWSERS.items():
+        name, bundle = app.split()[-1].lower(), f"/Applications/{app}.app"
+        image, mount = f"{SHARED}/{name}.dmg", f"{SHARED}/{name}-image"
+        got = step(f"{name}-download", f"curl -fsSL --max-time 600 -o {image} {quote(url)} && stat -f %z {image} && "
+                                       f"hdiutil attach -quiet -nobrowse -readonly -mountpoint {mount} {image} && "
+                                       f"ditto {quote(f'{mount}/{app}.app')} {quote(bundle)} && "
+                                       f"hdiutil detach -quiet {mount} && rm {image}", timeout=900)
+        check(got.returncode == 0, f"{app} did not download and install")
+        signed = step(f"{name}-signature", f"codesign --verify --deep {quote(bundle)} && "
+                                           f"spctl --assess --type execute {quote(bundle)} && "
+                                           f"codesign -dv {quote(bundle)} 2>&1 | sed -n 's/^TeamIdentifier=//p' && "
+                                           f"defaults read {quote(bundle + '/Contents/Info')} CFBundleShortVersionString")
+        check(signed.returncode == 0 and signed.stdout.split()[:1] == [team], f"{app} is not signed by its publisher")
+        record["browsers"][app] = {"version": signed.stdout.split()[-1], "team": team,
+                                   "bytes": int(got.stdout.split()[0])}
+    latest = step("latest", f"curl -fsSI {github}/releases/latest | tr -d '\\r' | sed -n 's|^location: .*/releases/tag/||Ip'")
+    tag = latest.stdout.strip()
+    check(latest.returncode == 0 and re.fullmatch(r"v\d+\.\d+\.\d+", tag), f"no latest release: {tag!r}")
+    # The documented command as a person runs it: GitHub's own servers and the guest's own certificate store.
+    installed = step("install", f"curl --proto '=https' --tlsv1.2 -fsSL {github}/releases/latest/download/install.sh | sh",
+                     timeout=600)
+    check(installed.returncode == 0 and f"Altitude {tag} is installed" in installed.stdout, "the installer failed")
+    origin = re.search(r"^Address: (https://\S+:\d+) ", installed.stdout, re.M).group(1)
+    health = f"curl -fsS --max-time 10 --cacert ~/.config/altitude/tls/ca.crt {origin}/api/health"
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline and guest.ssh(f"zsh -lc {quote(health)} >/dev/null", check=False).returncode:
+        time.sleep(5)
+    # The Python the service's process runs: the framework it loaded.
+    runtime = step("runtime", f"pid=$({health} | python3.13 -c 'import json, sys; print(json.load(sys.stdin)[\"pid\"])')"
+                              " && lsof -a -p $pid -d txt -Fn | sed -n 's/^n//p' | grep -m1 'Python.framework/Versions/'")
+    check(runtime.returncode == 0 and "/Python.framework/Versions/3.13/" in runtime.stdout,
+          "the service does not run on Python 3.13")
+    record["release"], record["runtime"] = tag, runtime.stdout.strip()
+
+    desktop = Desktop(guest, results, step)
+    guest.ssh(f"cat > {SHARED}/marionette.py", stdin=MARIONETTE)
+
+    def chrome(label: str) -> dict:
+        """Chrome, started on the desktop with a profile of its own, loading Altitude's address: its exit status, the
+        title it shows, and whether that page's load failed for the certificate (ERR_CERT_AUTHORITY_INVALID)."""
+        out = f"{SHARED}/chrome-{label}"
+        desktop.agent(f"chrome-{label}", ["/bin/sh", "-c", (
+            f"{quote('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')} --headless=new --no-first-run "
+            f"--no-default-browser-check --user-data-dir={out}.profile --enable-logging=stderr --virtual-time-budget=10000 "
+            f"--dump-dom {quote(origin + '/')} >{out}.html 2>{out}.err; echo $? >{out}.exit")])
+        ended = desktop.within(180, f"test -s {out}.exit")
+        page = guest.ssh(f"cat {out}.html", check=False).stdout
+        errors = guest.ssh(f"cat {out}.err", check=False).stdout
+        (results / f"chrome-{label}.html").write_text(page)
+        (results / f"chrome-{label}.err").write_text(errors)
+        title = re.search(r"<title>(.*?)</title>", page, re.S)
+        status = guest.ssh(f"cat {out}.exit", check=False).stdout.strip()
+        # The headless command handler's own line for the page it dumps, not a background request's handshake.
+        return {"ended": ended, "exit": status or None, "title": title and title.group(1).strip(),
+                "refused": "Page load failed: net::ERR_CERT_AUTHORITY_INVALID" in errors}
+
+    def firefox(label: str) -> dict:
+        """Firefox, started headless on the desktop with a new profile and Marionette, opening Altitude's address."""
+        profile = f"{SHARED}/firefox-{label}"
+        guest.ssh(f"mkdir -p {profile}")
+        desktop.agent(f"firefox-{label}", ["/Applications/Firefox.app/Contents/MacOS/firefox", "--headless",
+                                           "--marionette", "--no-remote", "--profile", profile])
+        seen = step(f"firefox-{label}", f"python3.13 -I {SHARED}/marionette.py {quote(origin + '/')}", timeout=240)
+        guest.ssh(f"launchctl bootout gui/{ACCOUNT_UID}/lane.firefox-{label}", check=False)
+        desktop.within(30, "! pgrep -x firefox")
+        try:
+            return json.loads(seen.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return {"error": f"no answer: {seen.stderr.strip()[-300:]}"}
+
+    before = {"chrome": chrome("before"), "firefox": firefox("before")}
+    log, done = desktop.terminal("trust-desktop", f"{alt} trust")
+    window = None
+    if desktop.within(120, f"grep -q 'Trust it?' {log}"):
+        guest.command("type y")
+        guest.expect("typed", 30)
+        window = desktop.authorize("trust-window")
+    trusted = desktop.transcript("trust-desktop", log, done)
+    after = {"chrome": chrome("after"), "firefox": firefox("after")}
+    record["trust"] = {"window": window, "before": before, "after": after}
+    accepted = bool(window) and trusted.endswith("exit 0\n")
+    record["cases"] = {
+        "github-install": {"passed": True, "release": tag},
+        "python-3.13": {"passed": True, "runtime": record["runtime"]},
+        "chrome-trust": {"passed": accepted and before["chrome"]["ended"] and before["chrome"]["refused"]
+                         and before["chrome"]["title"] != "Altitude"
+                         and after["chrome"]["ended"] and after["chrome"]["title"] == "Altitude"
+                         and not after["chrome"]["refused"]},
+        "firefox-trust": {"passed": accepted and before["firefox"].get("error") == "insecure certificate"
+                          and not after["firefox"].get("error") and after["firefox"].get("title") == "Altitude"
+                          and "Pair this device" in (after["firefox"].get("text") or "")}}
 
 
 # The confinement rows that must refuse private places without macOS asking, and how their details say so.
@@ -1648,13 +1835,15 @@ def phase_session(guest: Guest, repository: str, results: Path, record: dict, in
     runtime(guest, repository, results, record, inputs, "session")
 
 
-# `fresh` starts from the fresh image, every other phase from prerequisites; `published` runs only with --published.
+# `fresh` starts from the fresh image, every other phase from prerequisites.
 PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login,
           "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home,
           "mutation": phase_mutation, "source": phase_source,
           "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "update": phase_update,
           "session": phase_session,
-          "published": phase_published}
+          "published": phase_published, "online": phase_online}
+# The phases a run includes only when named: `published` with --published, `online` with --phase online.
+NAMED = ("published", "online")
 # The phases that install the release built from the source, and those that also read the revision's files.
 BUILT = ("fresh", "prerequisites", "lifecycle", "login", *RUNTIME_ROWS)
 SOURCED = ("privacy", "jobs", "read-only-home", "mutation", *RUNTIME_ROWS)
@@ -1689,11 +1878,17 @@ def run_phase(name: str, inputs: Path, results: Path, record: dict, commits: str
         guest = Guest(work / "guest", work, folder / "vm.log")
         guest.wait_ssh(300)
         phase["guest"] = guest.ssh("sw_vers -productVersion; sw_vers -buildVersion").stdout.split()
-        note(f"{name}: checking the guest's network, then unplugging it")
-        isolate(guest, phase)
+        if name == "online":
+            note(f"{name}: checking the guest's network, which stays plugged in")
+            phase["reachable"] = {"online": reachable(guest)}
+            if not phase["reachable"]["online"]["internet"]:
+                raise Stop(f"the online guest does not reach the internet: {phase['reachable']}")
+        else:
+            note(f"{name}: checking the guest's network, then unplugging it")
+            isolate(guest, phase)
         guest.ssh(f"sudo -n mkdir -p {SHARED} && sudo -n chown {ACCOUNT} {SHARED}")
-        repository = None
-        if (inputs / "release").is_dir():
+        repository = record.get("github") if name == "online" else None
+        if (inputs / "release").is_dir() and name != "online":
             # The built release, answered as github.com on the guest's loopback.
             serve = work / "serve"
             serve.mkdir()
@@ -1707,7 +1902,7 @@ def run_phase(name: str, inputs: Path, results: Path, record: dict, commits: str
         PHASES[name](guest, repository, folder, phase, inputs, commits)
         phase["guest_load"] = guest.ssh("sysctl -n vm.loadavg").stdout.split()[1:4]
         phase["reachable"]["after"] = reachable(guest)
-        if any(phase["reachable"]["after"].values()):
+        if name != "online" and any(phase["reachable"]["after"].values()):
             raise Stop(f"the guest was not isolated at the end: {phase['reachable']}")
         phase["passed"] = all(case["passed"] for case in phase["cases"].values())
     except Exception as error:  # the phase failed; the clone is still deleted and the record written
@@ -1759,6 +1954,8 @@ def lane(results: Path, commit: str | None, phases: list[str], releases: tuple[s
             build(commit, work, results / "build.log")
         if set(phases) & set(SOURCED):
             run("git", "archive", "-o", work / "source.tar", commit, cwd=SCRIPTS.parent)
+        if "online" in phases:
+            record["github"] = repository()
         if "source" in phases:
             note("bundling the source commit and this Mac's Node, pnpm and web packages for the source phase")
             source_inputs(commit, work)
@@ -1798,7 +1995,7 @@ def main() -> int:
     run_parser.add_argument("results", type=Path)
     run_parser.add_argument("--source", default="HEAD", help="committed revision to build and test (default: HEAD)")
     run_parser.add_argument("--phase", choices=[name for name in PHASES if name != "published"], action="append",
-                            help="run only this phase (repeatable)")
+                            help="run only this phase (repeatable); `online` runs only when named")
     run_parser.add_argument("--published", metavar="BASELINE[..CANDIDATE]",
                             help="run only the published phase, updating the published BASELINE to the published "
                                  "CANDIDATE or, without one, to the source revision built under BASELINE's next minor")
@@ -1834,7 +2031,7 @@ def main() -> int:
                 print(f"{args.source} is not a commit in this repository.", file=sys.stderr)
                 return 2
             return lane(args.results.resolve(), resolved.stdout.strip(),
-                        ["published"] if releases else args.phase or [name for name in PHASES if name != "published"],
+                        ["published"] if releases else args.phase or [name for name in PHASES if name not in NAMED],
                         releases)
     except Stop as error:
         print(f"Stopped: {error}", file=sys.stderr)

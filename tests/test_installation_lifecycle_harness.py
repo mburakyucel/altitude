@@ -1378,6 +1378,17 @@ class TestInstallationMacosVm(AltitudeCase):
             self.assertIn(error, stderr.getvalue())
             lock.assert_not_called()
 
+    def test_online_runs_only_when_named(self):
+        from scripts import installation_macos_vm as vm
+        for argv, phases in (([], [name for name in vm.PHASES if name not in ("published", "online")]),
+                             (["--phase", "online"], ["online"])):
+            with mock.patch.object(vm.sys, "argv", ["installation_macos_vm.py", "run", str(self.tmp / "r"), *argv]), \
+                    mock.patch.object(vm.sys, "platform", "darwin"), mock.patch.object(vm.platform, "machine", return_value="arm64"), \
+                    mock.patch.object(vm, "watch_disk"), mock.patch.object(vm.signal, "signal"), \
+                    mock.patch.object(vm, "lock"), mock.patch.object(vm, "lane", return_value=0) as lane:
+                self.assertEqual(vm.main(), 0)
+            self.assertEqual(lane.call_args.args[2], phases)
+
     def test_published_run_downloads_both_releases_and_builds_nothing(self):
         from scripts import installation_macos_vm as vm
         tags = {"v0.3.0": "a" * 40, "v0.4.0": "b" * 40}
