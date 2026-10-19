@@ -844,12 +844,95 @@ def row_logout_login() -> dict:
     return facts
 
 
+def row_sign_in() -> dict:
+    """#1025 checks 2 and 3: Altitude signs itself into Claude from Settings › Prerequisites under the account's own
+    service, with the tests' fictional `claude setup-token` screen as the Claude CLI. The token is saved where only
+    Altitude reads it, at mode 0600 with a save time from this sign-in, and appears in no answer or log; no sign-in
+    folder, command or process the command started remains after a finished, a cancelled or a sign-in interrupted by
+    a service restart."""
+    binary, store, setup_log = HOME / ".local/bin/claude", HOME / ".config/altitude/access", TEMP / "setup-token.json"
+    # Each setup leaves a process of its own running (`child`), which Altitude must end with the setup.
+    binary.write_text(f"#!/bin/sh\n[ \"$1\" = setup-token ] || exit 1\nFAKE_SETUP=child FAKE_SETUP_LOG={setup_log} "
+                      f"exec {PYTHON} -B {SOURCE}/tests/fake_token_setup.py \"$@\"\n")
+    binary.chmod(0o755)
+    # The fixture's token, written there as joined string literals.
+    token = "".join(re.findall(r'"([^"]*)"', re.search(r"^TOKEN = (.+)$", (SOURCE / "tests/fake_token_setup.py")
+                                                         .read_text(), re.M)[1]))
+    answers, facts, children = [], {}, Path(f"{setup_log}.child")
+
+    def call(body: dict | None = None) -> dict:
+        answers.append(json.loads(page("/api/sign-in/claude", body).read()))
+        return answers[-1]
+
+    def start() -> tuple[dict, int]:
+        children.unlink(missing_ok=True)
+        opened = call({"action": "start"})
+        return opened, int(children.read_text())
+
+    def running(pid: int) -> list[int]:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return []
+        return [pid]
+
+    leftovers = lambda: sorted(path.name for path in store.glob("claude.setup.*"))  # noqa: E731
+    command = lambda: processes("fake_token_setup.py")  # noqa: E731
+    gone = lambda what, check: wait(what, lambda: check() == [] or None, timeout=30) and check()  # noqa: E731
+    try:
+        started = time.time()
+        opened, child = start()
+        call({"action": "finish", "attempt": opened["attempt"], "code": "fixture-code#fixture-state"})
+        wait("the saved sign-in", lambda: call()["saved"], timeout=90)
+        saved = store / "claude.token"
+        row = next((item for item in json.loads(page("/api/prerequisites").read())["items"]
+                    if item.get("key") == "claude"), {})
+        facts["finished"] = {"state": opened.get("state"), "link": bool(opened.get("link")),
+                             "mode": oct(saved.stat().st_mode & 0o777), "fresh": saved.stat().st_mtime >= started - 1,
+                             "matches": saved.read_text().strip() == token, "row": row.get("label"),
+                             "setup_env": json.loads(setup_log.read_text()).get("env") or {},
+                             "folders": gone("the finished sign-in's folder to go", leftovers),
+                             "command": gone("the finished sign-in's command to end", command),
+                             "child": gone("the finished sign-in's own process to end", lambda: running(child))}
+        cancelled, child = start()
+        call({"action": "cancel", "attempt": cancelled["attempt"]})
+        facts["cancelled"] = {"state": cancelled.get("state"),
+                              "folders": gone("the cancelled sign-in's folder to go", leftovers),
+                              "command": gone("the cancelled sign-in's command to end", command),
+                              "child": gone("the cancelled sign-in's own process to end", lambda: running(child))}
+        interrupted, child = start()
+        during = {"folders": leftovers(), "command": bool(command()), "child": running(child) == [child]}
+        facts["restart"] = {"state": interrupted.get("state"), "during": during, "service": restart(),
+                            "folders": leftovers(), "command": command(),
+                            "child": gone("the interrupted sign-in's own process to end", lambda: running(child)),
+                            "saved": call()["saved"] is not None}
+        logs = "".join(path.read_text(errors="replace") for path in (HOME / "Library/Logs/altitude").rglob("*")
+                       if path.is_file())
+        facts["token_shown"] = {"answers": any(token in json.dumps(answer) for answer in answers), "logs": token in logs}
+    finally:
+        binary.unlink(missing_ok=True)
+        (store / "claude.token").unlink(missing_ok=True)
+    finished, cancelled, restarted = facts["finished"], facts["cancelled"], facts["restart"]
+    facts["passed"] = (finished["state"] == "waiting" and finished["link"] and finished["mode"] == "0o600"
+                       and finished["fresh"] and finished["matches"] and finished["row"] == "Claude signed in"
+                       and finished["folders"] == [] == finished["command"] == finished["child"]
+                       and finished["setup_env"].get("CLAUDE_CONFIG_DIR", "").startswith(f"{store}/claude.setup.")
+                       and not finished["setup_env"].get("CLAUDE_CODE_OAUTH_TOKEN")
+                       and cancelled["state"] == "waiting"
+                       and cancelled["folders"] == [] == cancelled["command"] == cancelled["child"]
+                       and restarted["state"] == "waiting" and restarted["during"]["folders"]
+                       and restarted["during"]["command"] and restarted["during"]["child"]
+                       and restarted["folders"] == [] == restarted["command"] == restarted["child"]
+                       and restarted["saved"] and facts["token_shown"] == {"answers": False, "logs": False})
+    return facts
+
+
 STATE: dict = {}
 ROWS = {"coordinator-stop": row_coordinator_stop, "failed-turn": row_failed_turn, "status-unknown": row_status_unknown,
         "validation-restart": row_validation_restart, "grants": row_grants, "contention": row_contention,
         "incident": row_incident, "schedule": row_schedule, "quiet-point": row_quiet_point,
         "scratch": row_scratch, "operator-step": row_operator_step,
-        "coordinator-channel": row_coordinator_channel, "logout-login": row_logout_login}
+        "coordinator-channel": row_coordinator_channel, "logout-login": row_logout_login, "sign-in": row_sign_in}
 
 
 def rows(names: list[str]) -> int:
