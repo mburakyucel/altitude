@@ -5,6 +5,28 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+## v0.10.0 — 2026-10-19
+
+Feature release of the early preview.
+
+- A step you already approved in your own words, such as "publish the release once its checks
+  pass", is no longer asked again: the coordinator grants the task's request from that message,
+  limited to exactly what it says. Taking that approval back ends every permission resting on it,
+  stops a command still running under one, and no later request can use it.
+- A task asking for a permission the project's standing rules already give gets it on the first
+  try, because Altitude writes the request from those rules instead of the task copying them.
+- On Linux, validation runs work after the computer restarts without running Podman by hand first,
+  and a run that cannot clean up says why.
+
+Updating from v0.8.0 or older: if the update stops because "the only extra files look like generated
+Python caches", run `alt recover --generated-bytecode && alt update` once; on v0.6.0 or older, use
+the standalone repair in [generated-cache recovery](https://github.com/mburakyucel/altitude/blob/main/docs/OPERATIONS.md#generated-cache-recovery).
+Updating from v0.9.0 needs nothing.
+
+Known limits: the update from v0.9.0 to this release is the first real-installation proof of the
+cache fix (#1029), and first-browser pairing on a Mac (#926) still awaits confirmation on a real
+installation. Live providers are not part of release testing.
+
 ## v0.9.0 — 2026-10-16
 
 Feature release of the early preview.
