@@ -51,10 +51,10 @@ export function inputPiece(text: string): string {
  * reaches a terminal that replaced it. Input that fails may have arrived in part, so typing stops, with an
  * alert, until the operator has checked the screen.
  *
- * A chat `command` (SPEC.md §3.3) is typed as a paste once the screen has settled on the shell's prompt,
- * without Enter; when a program holds the foreground, or no prompt appears, a notice offers Copy instead. The
- * terminal first tells Altitude the command, so its reader (the task's owner, or the coordinator) hears once the
- * operator has run it; when that fails, the command is still typed and a notice asks the operator to reply in chat.
+ * A chat `command` (SPEC.md §3.3) is handed to Altitude once the screen has settled on the shell's prompt. Altitude
+ * types it, as a paste when the shell asked for one and without Enter, and follows it, so the terminal's reader (the
+ * task's owner, or the coordinator) hears once the operator has run it. When Altitude does not type it (a program holds
+ * the foreground, an earlier command waits for Enter on the line) or no prompt appears, a notice offers Copy instead.
  */
 export default function TerminalScreen({ project, task, id, keys, intro, reconnecting, command, onEnd, onReconnecting, onCommand }: {
   project: string;
@@ -74,6 +74,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
   const send = useRef<(data: string) => void>(() => undefined);
   const focus = useRef<() => void>(() => undefined);
   const pasteText = useRef<(text: string) => void>(() => undefined);
+  const xterm = useRef<XTerm | null>(null);
   const ctrlRef = useRef(false);
   const [ctrl, setCtrl] = useState(false);
   const stopped = useRef(false);
@@ -189,6 +190,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       unlatch();
       term.paste(text);
     };
+    xterm.current = term;
     host.current!.addEventListener("paste", unlatch, true);
     const input = term.onData((data) => send.current(data));
 
@@ -271,25 +273,20 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     };
   }, [project, task, id]); // eslint-disable-line react-hooks/exhaustive-deps -- the intro is drawn once
 
-  // Type the chat command once the prompt has settled, after checking no program holds the foreground,
-  // or refuse it: nothing is typed after PROMPT_WAIT_MS from the tap.
+  // Hand the chat command over once the prompt has settled, or refuse it: nothing is handed after PROMPT_WAIT_MS
+  // from the tap.
   useEffect(() => {
     if (!command) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let over = false;
-    let checking = false;
     const refuse = (reason: string) => {
-      over = true;
       clearTimeout(timer);
       clearTimeout(expiry);
       setHeld({ text: command.text, reason });
       report.current.onCommand?.();
     };
-    const expiry = setTimeout(() => refuse(
-      checking ? "Altitude couldn't check the terminal in time, so the command wasn't typed."
-        : output.current.seen ? "The terminal kept printing, so the command wasn't typed."
-          : "The terminal hasn't shown a prompt, so the command wasn't typed.",
-    ), command.at + PROMPT_WAIT_MS - Date.now());
+    const late = () => refuse(output.current.seen ? "The terminal kept printing, so the command wasn't typed."
+      : "The terminal hasn't shown a prompt, so the command wasn't typed.");
+    const expiry = setTimeout(late, command.at + PROMPT_WAIT_MS - Date.now());
     const attempt = async () => {
       const seen = output.current;
       const now = Date.now();
@@ -297,28 +294,23 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
         timer = setTimeout(() => void attempt(), seen.seen ? SETTLE_MS - (now - seen.at) : SETTLE_MS);
         return;
       }
-      if (stopped.current) return refuse("Typing is stopped, so the command wasn't typed.");
-      checking = true;
-      let current: TerminalStatus;
-      try {
-        current = await terminalStatus(project, task);
-      } catch {
-        if (!over) refuse("Altitude couldn't check the terminal, so the command wasn't typed.");
-        return;
-      }
-      if (over || current.id !== id || current.state !== "running") return;
       // A throttled timer can fire late; the deadline itself is what counts.
-      if (Date.now() >= command.at + PROMPT_WAIT_MS) return refuse("Altitude couldn't check the terminal in time, so the command wasn't typed.");
-      if (current.busy) return refuse(`${current.busy} is running, so the command wasn't typed.`);
-      over = true;
+      if (now >= command.at + PROMPT_WAIT_MS) return refuse("Too much time passed since the tap, so the command wasn't typed.");
+      if (stopped.current) return refuse("Typing is stopped, so the command wasn't typed.");
       clearTimeout(expiry);
       setHeld(null);
-      // The terminal's reader hears once the command has run; typing it does not depend on that, but the operator
-      // learns when the reader won't hear.
-      const told = await terminalSend(project, "command", { task, id, text: command.text }).then(() => true, () => false);
+      try {
+        await terminalSend(project, "command", { task, id, text: command.text, bracketed: xterm.current!.modes.bracketedPasteMode });
+      } catch (error) {
+        if (gone) return;
+        // An ended (404) or replaced (410) terminal reports its end on the stream.
+        if (error instanceof ApiError && (error.status === 404 || error.status === 410)) return report.current.onCommand?.();
+        // altd's own refusals say why; anything else may have typed part of it.
+        return refuse(error instanceof ApiError && error.status === 409 ? error.message
+          : "Altitude couldn't type the command. Check the screen before typing it yourself.");
+      }
       if (gone) return;
-      if (!told) setHeld({ text: command.text, reason: `Altitude couldn't tell ${task ? "the task's owner" : "the coordinator"} to watch this command, so reply in chat once it has run.` });
-      pasteText.current(command.text);
+      xterm.current!.scrollToBottom();
       focus.current();
       report.current.onCommand?.();
     };
@@ -326,7 +318,6 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     void attempt();
     return () => {
       gone = true;
-      over = true;
       clearTimeout(timer);
       clearTimeout(expiry);
     };

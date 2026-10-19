@@ -77,7 +77,7 @@ class Terminal:
     cond: threading.Condition = field(default_factory=threading.Condition)  # output and ending
     io: threading.Lock = field(default_factory=threading.Lock)  # the descriptor: held to use it or close it
     closing: bool = False  # Close was asked for: a waiting write gives up
-    #: The command the page typed from a `run` block: its text, then when Enter ran it and since when the shell has
+    #: The command altd typed from a `run` block: its text, then when Enter ran it and since when the shell has
     #: held the foreground again. Its reader (the task's owner, or the project's coordinator) hears once it has finished.
     command: dict | None = None
 
@@ -293,15 +293,33 @@ def _busy(term: Terminal) -> str | None:
     return platform.process_name(group) or "A command"
 
 
-def hand(project: str, slug: str | None, ident, text) -> None:
-    """Follow the command the page is typing from a `run` block, so the terminal's reader hears when it has run."""
-    if not isinstance(text, str) or not text.strip() or len(text) > INPUT_LIMIT:
+def hand(project: str, slug: str | None, ident, text, bracketed=False) -> None:
+    """Type the command the page hands over from a `run` block at the shell's prompt, without Enter, and follow it so
+    the terminal's reader hears when it has run. `bracketed` frames it as a paste, as the shell asked. Nothing is
+    typed while a program holds the foreground or a handed command still waits for Enter on the line: typed again,
+    it would join that copy and one Enter would run both."""
+    if not isinstance(text, str) or not text.strip() or len(text) > INPUT_LIMIT or not isinstance(bracketed, bool):
         raise TerminalError("Send the command as text.", 400)
     term = _running(project, slug, ident)
     # A later attempt's owner did not hand it; a project has one coordinator.
     attempt = None if slug is None else S.load_task(project, slug).get("attempt")
+    busy = _busy(term)
+    if busy:
+        raise TerminalError(f"{busy} is running, so the command wasn't typed.")
+    command = {"text": text, "attempt": attempt}
     with term.cond:
-        term.command = {"text": text, "attempt": attempt}
+        if term.command and "entered" not in term.command:
+            raise TerminalError(("This command is already typed at the prompt." if term.command["text"] == text else
+                                 "Another command is already typed at the prompt, so this one wasn't typed.")
+                                + " Press Enter to run it, or Ctrl+C to clear the line.")
+        term.command = command
+    try:
+        _send(term, f"\x1b[200~{text}\x1b[201~" if bracketed else text)
+    except TerminalError:
+        with term.cond:
+            if term.command is command:
+                term.command = None
+        raise
 
 
 def _typed(term: Terminal, data: str) -> None:
@@ -394,6 +412,11 @@ def write(project: str, slug: str | None, ident, data: str) -> None:
     if not isinstance(data, str) or len(data) > INPUT_LIMIT:
         raise TerminalError("Send terminal input as text.", 400)
     term = _running(project, slug, ident)
+    _send(term, data)
+    _typed(term, data)
+
+
+def _send(term: Terminal, data: str) -> None:
     raw = data.encode()
     deadline = time.monotonic() + WRITE_SECONDS
     with term.io:
@@ -410,7 +433,6 @@ def write(project: str, slug: str | None, ident, data: str) -> None:
             if time.monotonic() >= deadline:
                 raise TerminalError("The terminal is not reading input. Press Ctrl+C or close it.")
             select.select([], [term.fd], [], POLL_SECONDS)
-    _typed(term, data)
 
 
 def _winsize(fd: int, rows: int, cols: int) -> None:

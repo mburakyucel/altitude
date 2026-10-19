@@ -5,11 +5,11 @@ import { walkthrough } from "./walkthrough";
 /**
  * Chat commands (SPEC.md §3.3) against real shells: a `run` block in the task conversation and in project
  * chat opens that conversation's terminal with the command typed at the prompt and nothing run until
- * Enter. Walked at both widths: the command block, Copy and Copied, typed at the prompt, Enter (the phone's
- * Enter key) runs it, a
- * program in the foreground, output that never settles, the terminal off, a reload typing nothing, no
- * terminal for a finished task, the project terminal, a plain code block, an unsafe block and a refused
- * copy. The saved messages and the shell's profile are the only fixtures.
+ * Enter. Walked at both widths: the command block, Copy and Copied, typed at the prompt, opening it again
+ * while it waits for Enter, Enter (the phone's Enter key) runs it, a program in the foreground, output that
+ * never settles, Altitude out of reach, the terminal off, a reload typing nothing, no terminal for a finished
+ * task, the project terminal and opening its command again after a reload, a plain code block, an unsafe block
+ * and a refused copy. The saved messages and the shell's profile are the only fixtures.
  */
 test.use({ serviceScript: "terminal-service.py" });
 
@@ -22,6 +22,11 @@ async function terminalAccess(request: APIRequestContext, enabled: boolean) {
 async function settled(page: Page) {
   // Longer than the page's settle time: anything it would type has arrived.
   await page.waitForTimeout(1_000);
+}
+
+/** The screen's rows, as the operator reads them: a wrapped line is joined back into one. */
+async function screenText(page: Page) {
+  return (await page.locator(".terminal-screen .xterm-rows > div").allInnerTexts()).join("").replace(/\s+/g, " ");
 }
 
 test("a task's chat command opens its terminal typed, and runs only on Enter", { tag: "@chromium" }, async ({ page, request, context }, info) => {
@@ -56,6 +61,20 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
     visible: [output.getByText("echo ran-$((20+22))", { exact: false })],
     hidden: [output.getByText("ran-42", { exact: true })],
   });
+
+  // Opening it again while it waits for Enter types nothing: a second copy would join the first on the line,
+  // and one Enter would run both.
+  await conversation();
+  await openIt.click();
+  const typedAlready = panel.getByRole("status").filter({ hasText: "This command is already typed at the prompt. Press Enter to run it, or Ctrl+C to clear the line." });
+  await expect(typedAlready).toBeVisible({ timeout: 10_000 });
+  expect((await screenText(page)).split("echo ran-$((20+22))")).toHaveLength(2);
+  await walk.state("03b-already-typed", {
+    visible: [typedAlready, typedAlready.getByRole("button", { name: "Copy command" }), typedAlready.getByRole("button", { name: "Dismiss" })],
+    hidden: [output.getByText("ran-42", { exact: true })],
+  });
+  await typedAlready.getByRole("button", { name: "Dismiss" }).click();
+  await expect(typedAlready).toBeHidden();
 
   // On phone the key row's Enter runs it without focusing the screen, so the soft keyboard stays closed;
   // desktop has no key row, and the screen already has focus for the keyboard's Enter.
@@ -111,21 +130,20 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
   }).toPass({ timeout: 20_000 });
   await settled(page);
 
-  // When Altitude can't tell the owner, the command is still typed and the operator is asked to reply instead.
+  // Altitude out of reach types nothing, and the operator checks the screen before typing it themselves.
   await page.route("**/api/terminal/*/command", (route) => route.fulfill({
     status: 503, contentType: "application/json", body: JSON.stringify({ error: "Altitude is unreachable." }),
   }));
   await conversation();
   await openIt.click();
-  const untold = panel.getByRole("status").filter({ hasText: "couldn't tell the task's owner to watch this command, so reply in chat once it has run." });
-  await expect(untold).toBeVisible({ timeout: 10_000 });
-  await expect(output).toContainText(/\^C\s*prepare-index-migration \$ echo ran-\$\(\(20\+22\)\)/);
-  await walk.state("05c-owner-not-told", { visible: [untold, untold.getByRole("button", { name: "Dismiss" })], hidden: [] });
+  const untyped = panel.getByRole("status").filter({ hasText: "Altitude couldn't type the command. Check the screen before typing it yourself." });
+  await expect(untyped).toBeVisible({ timeout: 10_000 });
+  expect(await lastRow()).toMatch(/prepare-index-migration \$$/);
+  await walk.state("05c-not-typed", { visible: [untyped, untyped.getByRole("button", { name: "Copy command" })], hidden: [] });
   await page.unroute("**/api/terminal/*/command");
-  await untold.getByRole("button", { name: "Dismiss" }).click();
-  await expect(untold).toBeHidden();
+  await untyped.getByRole("button", { name: "Dismiss" }).click();
+  await expect(untyped).toBeHidden();
   await page.locator(".terminal-screen").click();
-  await page.keyboard.press("Control+C");
   await page.keyboard.type("clear");
   await page.keyboard.press("Enter");
   await settled(page);
@@ -197,6 +215,18 @@ test("a project chat command opens the project terminal; other blocks copy only"
     visible: [output.getByText("echo project-$((5*5))", { exact: false })],
     hidden: [output.getByText("project-25", { exact: true })],
   });
+
+  // After a reload, opening the command again while it waits for Enter types nothing: the project terminal
+  // knows it is on the line.
+  await walk.open("/projects/atlas");
+  await command.first().getByRole("button", { name: "Open in terminal" }).click();
+  await expect(page).toHaveURL(/\/projects\/atlas\/terminal$/);
+  const typedAlready = page.getByRole("region", { name: "Terminal" }).getByRole("status")
+    .filter({ hasText: "This command is already typed at the prompt. Press Enter to run it, or Ctrl+C to clear the line." });
+  await expect(typedAlready).toBeVisible({ timeout: 10_000 });
+  expect((await screenText(page)).split("echo project-$((5*5))")).toHaveLength(2);
+  await walk.state("13b-project-already-typed", { visible: [typedAlready, typedAlready.getByRole("button", { name: "Copy command" })], hidden: [] });
+  await page.locator(".terminal-screen").click();
   await page.keyboard.press("Enter");
   await walk.state("14-project-enter-runs", {
     visible: [output.getByText("project-25", { exact: true }), page.getByText("The coordinator can read this terminal's output, and what it reads reaches its AI provider.")],

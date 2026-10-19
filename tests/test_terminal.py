@@ -369,7 +369,7 @@ class TestTerminalLifecycle(TerminalCase):
 
 
 class TestHandedCommand(TerminalCase):
-    """A command the page typed from the owner's `run` block: the owner hears once the operator has run it."""
+    """A command altd typed from the owner's `run` block: the owner hears once the operator has run it."""
 
     def setUp(self):
         super().setUp()
@@ -378,7 +378,6 @@ class TestHandedCommand(TerminalCase):
 
     def hand(self, text):
         terminal.hand(self.project, self.slug, self.ident, text)
-        self.type(text, self.slug)
 
     def notices(self):
         return [row["text"] for row in T.pending(self.project, self.slug) if row.get("by") == "terminal"]
@@ -412,6 +411,56 @@ class TestHandedCommand(TerminalCase):
         self.hand("cd /")
         self.type("\r", self.slug)
         self.assertIn("looks finished", self.notice())
+
+    def test_a_command_is_typed_once_while_it_waits_for_enter(self):
+        # The operator opened a `run` block in the terminal again before running it: the second copy joined the first
+        # on the line (`alt doctoralt doctor`), and one Enter ran both.
+        self.output(self.slug, until="$ ")  # at the prompt, so the line is echoed once
+        self.hand("echo once-$((1+1))")
+        for text, refusal in (("echo once-$((1+1))", "This command is already typed at the prompt."),
+                              ("echo other", "Another command is already typed at the prompt, so this one wasn't typed.")):
+            with self.subTest(text=text), self.assertRaises(terminal.TerminalError) as caught:
+                self.hand(text)
+            self.assertEqual(caught.exception.status, 409)
+            self.assertEqual(str(caught.exception), f"{refusal} Press Enter to run it, or Ctrl+C to clear the line.")
+        self.type("\r", self.slug)
+        self.output(self.slug, until="once-2\r\n")
+        self.assertEqual(self.current(self.slug).command["text"], "echo once-$((1+1))")
+        self.assertIn("looks finished", self.notice())
+        self.hand("echo again")  # once it has run, the next one is typed
+        self.type("\r", self.slug)
+        self.output(self.slug, until="again\r\n")
+        self.assertEqual(terminal.output(self.project, self.slug)["text"].count("echo once-$((1+1))"), 1)
+
+    def test_ctrl_c_clears_the_way_for_the_command_to_be_typed_again(self):
+        self.hand("echo handed")
+        self.type("\x03", self.slug)
+        self.hand("echo handed")
+        self.assertEqual(self.current(self.slug).command, {"text": "echo handed", "attempt": 1})
+
+    def test_nothing_is_typed_or_followed_while_a_program_holds_the_foreground(self):
+        self.type("sleep 30\r", self.slug)
+        self.wait(lambda: terminal.status(self.project, self.slug)["busy"] == "sleep")
+        with self.assertRaises(terminal.TerminalError) as caught:
+            self.hand("echo handed")
+        self.assertEqual((caught.exception.status, str(caught.exception)), (409, "sleep is running, so the command wasn't typed."))
+        self.assertIsNone(self.current(self.slug).command)
+
+    def test_a_command_is_framed_as_a_paste_only_when_the_shell_asked(self):
+        with mock.patch.object(terminal, "_send") as send:
+            terminal.hand(self.project, self.slug, self.ident, "echo framed", bracketed=True)
+            self.type("\x03", self.slug)
+            terminal.hand(self.project, self.slug, self.ident, "echo plain")
+        self.assertEqual([call.args[1] for call in send.call_args_list], ["\x1b[200~echo framed\x1b[201~", "\x03", "echo plain"])
+        with self.assertRaises(terminal.TerminalError) as caught:
+            terminal.hand(self.project, self.slug, self.ident, "echo framed", bracketed="yes")
+        self.assertEqual(caught.exception.status, 400)
+
+    def test_a_command_that_could_not_be_typed_is_not_followed(self):
+        with mock.patch.object(terminal, "_send", side_effect=terminal.TerminalError("The terminal is not reading input.")):
+            with self.assertRaises(terminal.TerminalError):
+                self.hand("echo lost")
+        self.assertIsNone(self.current(self.slug).command)
 
     def test_ctrl_c_before_enter_drops_the_command_so_a_later_enter_is_not_it(self):
         self.hand("echo handed")
@@ -598,7 +647,7 @@ class TestHandedCommand(TerminalCase):
 
 
 class TestCoordinatorCommand(TerminalCase):
-    """A command the page typed from the coordinator's `run` block in project chat: the coordinator hears once it has
+    """A command altd typed from the coordinator's `run` block in project chat: the coordinator hears once it has
     run, as a queued turn."""
 
     def setUp(self):
@@ -617,7 +666,6 @@ class TestCoordinatorCommand(TerminalCase):
 
     def test_the_coordinator_hears_once_its_command_has_run(self):
         terminal.hand(self.project, None, self.ident, "echo handed-$((3*3))")
-        self.type("echo handed-$((3*3))")
         time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)  # typed but not run: nothing to report
         self.assertEqual(self.notices(), [])
         self.type("\r")
@@ -632,7 +680,7 @@ class TestCoordinatorCommand(TerminalCase):
     def test_the_notice_for_an_operator_step_clears_it_from_needs_you(self):
         step = T.publish_step(self.project, "Restore the checkout.\n\n```run\necho restored-$((2+2))\n```", [self.slug])
         terminal.hand(self.project, None, self.ident, "echo restored-$((2+2))")
-        self.type("echo restored-$((2+2))\r")
+        self.type("\r")
         text = self.notice()
         self.assertIn(f"It cleared that operator step from Needs you; once verified, tell the tasks it named ({self.slug})", text)
         self.wait(lambda: T.operator_steps(self.project) == [])  # cleared just after the notice is queued
@@ -649,7 +697,7 @@ class TestCoordinatorCommand(TerminalCase):
             raise OSError("fixture queue failure")
         self.patch(l3, "queue_message", side_effect=refuse)
         terminal.hand(self.project, None, self.ident, "echo kept")
-        self.type("echo kept\r")
+        self.type("\r")
         self.assertTrue(failed.wait(10))
         time.sleep(.2)
         self.assertEqual([row["id"] for row in T.operator_steps(self.project)], [step["id"]])
@@ -658,7 +706,7 @@ class TestCoordinatorCommand(TerminalCase):
         # Review finding: clearing on the ended-first notice emptied Needs you while the work was still blocked.
         step = T.publish_step(self.project, "Restore the checkout.\n\n```run\nsleep 30\n```", [self.slug])
         terminal.hand(self.project, None, self.ident, "sleep 30")
-        self.type("sleep 30\r")
+        self.type("\r")
         time.sleep(.5)
         term = self.current()
         terminal.close(self.project, None)
@@ -1160,9 +1208,10 @@ class TestTerminalHttp(TerminalCase):
         self.request("POST", f"{base}/resize", {**at, "cols": 90, "rows": 20})
         self.request("POST", f"{base}/resize", {**at, "cols": 0, "rows": 20}, status=400)
         self.request("POST", f"{base}/input", {"task": self.slug, "data": "ls\n"}, status=400)  # names no terminal
-        self.request("POST", f"{base}/command", {**at, "text": "echo 20 90"})
         self.request("POST", f"{base}/command", {**at, "text": ""}, status=400)
-        self.request("POST", f"{base}/input", {**at, "data": "stty size; exit 5\n"})
+        self.request("POST", f"{base}/command", {**at, "text": "stty size"}, status=400)  # says how to type it
+        self.request("POST", f"{base}/command", {**at, "text": "stty size; exit 5", "bracketed": False})
+        self.request("POST", f"{base}/input", {**at, "data": "\n"})
         connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=30)
         self.addCleanup(connection.close)
         connection.request("GET", f"{base}/stream?task={self.slug}&id={opened['id']}&offset=0")
