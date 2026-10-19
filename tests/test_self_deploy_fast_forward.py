@@ -118,6 +118,11 @@ class SelfDeployFastForward(AltitudeCase):
         self.assertEqual(git_policy.source_head(self.repo, "main"), self.head)
         with self.assertRaises(git_policy.FetchError):
             git_policy.deploy_source(self.repo, "main")
+        # A worker's file is found even where the checkout's own settings hide untracked files.
+        git("config", "status.showUntrackedFiles", "no", cwd=self.repo)
+        (self.repo / "untracked.txt").write_text("a worker's file\n")
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "uncommitted changes"):
+            git_policy.source_head(self.repo, "main")
 
     def test_a_commit_no_longer_on_the_branch_is_refused_and_never_deployed_backwards(self):
         tip = self.merged()

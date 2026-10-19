@@ -70,7 +70,7 @@ class TestStateSummary(AltitudeCase):
         self.assertNotIn("###", empty)
 
         queued = self.task("Queued work", "queued")
-        running = self.task("Running work", "running", attempt=2, prs=[7])
+        running = self.task("Running work", "running", attempt=2, prs=[7, 9], spend={"turns": 3})
         reported = self.task("Reported work", "reported", attempt=1)
         for_l3 = self.task("Waits for the coordinator", "blocked", waiting_on="l3", blocked_reason="Lease question")
         for_operator = self.task("Waits for the operator", "blocked", blocked_reason="Merge go")
@@ -97,9 +97,18 @@ class TestStateSummary(AltitudeCase):
         self.assertIn(f"- **{asked}** (0m; question q1 revision 2): Ship it? Recommended: Yes\n", text)
         self.assertNotIn("Settled already?", text)
         self.assertIn(f"- **{for_l3}** (0m): Lease question\n", text)
-        self.assertIn(f"- **{running}** Running work — 0m — attempt 2; PRs 7\n", text)
+        self.assertIn(f"- **{running}** Running work — 0m — attempt 2; PRs 7, 9; turns 3\n", text)
+        self.assertIn(f"- **{for_l3}** Waits for the coordinator — 0m — blocked: Lease question\n", text)
+        self.assertIn(f"- **{queued}** Queued work — 0m\n", text)
         self.assertEqual([line for line in text.splitlines() if line.startswith("### ")],
                          ["### blocked (4)", "### running (1)", "### reported (1)", "### queued (1)"])
+        # A state with no tasks leaves out its own heading only.
+        finished = S.load_task(self.project, running)
+        finished["state"] = "done"
+        S.save_task(self.project, finished)
+        later = self.placement(S.regen_state_md(self.project))
+        self.assertNotIn(running, later)
+        self.assertEqual((later[reported], later[queued]), ([("Tasks", "reported (1)")], [("Tasks", "queued (1)")]))
 
 
 if __name__ == "__main__":
