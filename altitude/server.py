@@ -968,7 +968,14 @@ def _on_l2_finished(project: str, item: dict) -> None:
                                    step=f"the L2 worker run (attempt {t.get('attempt')})")
             log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
-    v = verify.verify(project, slug)
+    step = f"[{project}/{slug}] report verification of the worker started {t.get('worker_started_at')}"
+    try:
+        v = verify.verify(project, slug)
+    except verify.Unreachable as e:
+        if _retry_next_tick(step, e):
+            return  # GitHub did not answer; the next tick hands the finished worker back for verification.
+        v = verify.fault(project, slug, e, T.report_owner(t))
+    _failing_since.pop(step, None)
     log(f"[{project}/{slug}] L2 finished; verdict {v['verdict']}; problems {v['problems']}")
     if v["verdict"] == "rate-limited":
         return  # The task stays as it is; the next tick hands the finished worker back for verification.
@@ -1264,8 +1271,9 @@ _refused: dict[str, str] = {}  # a tick step that keeps refusing → the fault d
 
 
 def _retry_next_tick(step: str, exc: BaseException) -> bool:
-    """Whether `step` failing with `exc` is only logged: a fetch (#602), or a command that timed out on a busy host
-    (#724), often succeeds on a later tick, so it is retried until the same step has kept failing for
+    """Whether `step` failing with `exc` is only logged: a fetch (#602), a command that timed out on a busy host
+    (#724), or a GitHub read the report verifier got no answer to (I-20261018-220735), often succeeds on a later
+    tick, so it is retried until the same step has kept failing for
     TICK_GRACE_SECONDS. Past that the caller files a system fault. A step that succeeds pops its `_failing_since`."""
     since = _failing_since.setdefault(step, time.monotonic())
     if time.monotonic() - since >= TICK_GRACE_SECONDS:
