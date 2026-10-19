@@ -410,8 +410,9 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
     split = False
     block_ended = False  # a message ended since the last text: the next text is a new paragraph
     streamed = ""  # text streamed since the last assistant message, which that message completes
+    start, lead = 0, ""  # where that streamed text begins in parts, and the paragraph break before it
 
-    def say(text: str, *, continues: bool = False) -> None:
+    def say(text: str, *, continues: bool = False) -> str:
         # Text after a tool call starts its own paragraph, alike in the stream and the stored reply.
         nonlocal block_ended
         chunk = ("\n\n" if block_ended and parts and not continues else "") + text
@@ -419,6 +420,7 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
         parts.append(chunk)
         if on_text:
             on_text(chunk)
+        return chunk
 
     failure = None
     safe_to_retry, rejected = True, None
@@ -443,8 +445,10 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
             elif typ == "stream_event":
                 delta = (o.get("event") or {}).get("delta") or {}
                 if delta.get("type") == "text_delta" and delta.get("text"):
+                    chunk = say(delta["text"])
+                    if not streamed:
+                        start, lead = len(parts) - 1, chunk[:len(chunk) - len(delta["text"])]
                     streamed += delta["text"]
-                    say(delta["text"])
             elif typ == "assistant":
                 out["turns"] += 1
                 msg = o.get("message") or {}
@@ -456,7 +460,9 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
                     if written[len(streamed):]:
                         say(written[len(streamed):], continues=bool(streamed))
                 elif written:
-                    say(written)
+                    # Claude rewrote a message after part of it streamed (a retried request or its fallback): the
+                    # stored reply keeps the message it finished, which the page shows once the turn ends.
+                    parts[start:] = [lead + written]
                 streamed, block_ended = "", True
                 if msg.get("model") and msg["model"] != "<synthetic>":
                     out["engine_model"] = msg["model"]

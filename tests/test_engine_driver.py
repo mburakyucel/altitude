@@ -512,6 +512,32 @@ class TestChatTurns(AltitudeCase):
         self.assertEqual(streamed, ["I follow you.", f"\n\n{answer}", "\n\nPress the offered ", "task if you want it."])
         self.assertEqual([tool["name"] for tool in result["tools"]], ["Grep", "Bash"])
 
+    def test_claude_keeps_the_finished_message_when_its_stream_disagrees(self):
+        """After Send now splits the reply, two streamed blocks of one message stay once, and a message Claude rewrote
+        after part of it streamed is stored as it finished, in its paragraph."""
+        def delta(text):
+            return {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": text}}}
+
+        def message(*content):
+            return {"type": "assistant", "message": {"model": "fake-model", "content": list(content)}}
+
+        tool = {"type": "tool_use", "id": "t1", "name": "Read", "input": {}}
+        events = [delta("First."), message({"type": "text", "text": "First."}), message(tool),
+                  {"type": "altitude.send", "message_id": "m1", "outcome": "delivered"},
+                  delta("Two blocks: "), delta("one, two."),
+                  message({"type": "text", "text": "Two blocks: "}, {"type": "text", "text": "one, two."}), message(tool),
+                  delta("Partial answ"), message({"type": "text", "text": "The whole answer, rewritten."}),
+                  {"type": "result", "subtype": "success", "is_error": False, "result": "The whole answer, rewritten.",
+                   "session_id": "s"}]
+        streamed, calls = [], []
+        with mock.patch.object(config, "CLAUDE_BIN", self.scripted("claude-rewritten", events)):
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home",
+                                          cwd=self.repo, timeout=30, on_text=streamed.append,
+                                          on_send=lambda *call: calls.append(call))
+        self.assertEqual(calls, [("m1", "delivered", "First.")])
+        self.assertEqual(result["text"], "Two blocks: one, two.\n\nThe whole answer, rewritten.")
+        self.assertEqual(streamed, ["First.", "Two blocks: ", "one, two.", "\n\nPartial answ"])
+
     def test_a_codex_turn_keeps_every_message_it_wrote_around_its_commands(self):
         def item(kind, **fields):
             return {"type": "item.completed", "item": {"id": f"item-{kind}-{len(fields)}", "type": kind, **fields}}
