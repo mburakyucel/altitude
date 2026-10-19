@@ -1770,9 +1770,10 @@ fresh `alt pair` code.
   the validation run of fictional/<task>`; another task's `alt task validate` is told Altitude restarts soon to
   apply an update and runs only after the restart. Within 45 seconds of the run's end the update starts; the
   newer archive is served as a named pipe that holds its download until Safari's notice reads `Installing Altitude
-  <newer>… Altitude restarts when it is ready.` Released, the update succeeds and the service restarts into the
-  newer version while the validating task's worker stays in its turn, and Safari's notice reads `Updated to
-  <newer>.` (`quiet-point`, #1003).
+  <newer>… Altitude restarts when it is ready.`; meanwhile a new task stays queued and the operator's chat message
+  is queued without a coordinator turn. Released, the update succeeds and the service restarts into the
+  newer version while the validating task's worker stays in its turn, Safari's notice reads `Updated to
+  <newer>.`, and the queued task and chat message start (`quiet-point`, #1003).
 - `terminal`: the coordinator hands the operator a fictional command naming a blocked task: it must wait in
   Needs you (`/api/overview`) as that task's turn. Opened in the project terminal as the page's Open in
   terminal opens it, through the same requests, the command runs to its end; its notice must clear the step,
@@ -1850,7 +1851,7 @@ stop. One guest runs at a time, and the runner stops whenever less than 10 GiB o
 free. Building the images takes about fifteen minutes after the restore image's download. On an
 unloaded Mac `fresh` and `prerequisites` take under half a minute each, `lifecycle` about five
 minutes, `login` just over three, `privacy` under one, `mutation` about one and a half, `workers` about five and a half, `grants` about four,
-`update` and `terminal` about five and a half, `incident`, `session` and `source` about two, `published` about one and a half and `online` about four; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
+`update` about seven, `terminal` about five and a half, `incident`, `session` and `source` about two, `published` about one and a half and `online` about four; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
 run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with
