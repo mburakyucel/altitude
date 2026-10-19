@@ -33,7 +33,8 @@ test("the typing indicator stays under a streamed reply until the turn ends, acr
   await convo.getByRole("button", { name: "Queue", exact: true }).click();
   await walk.state("02-queued-message-still-working", { visible: [first, typing, queued, convo.getByRole("button", { name: "Send now", exact: true })], hidden: [more] });
 
-  expect((await request.post("/fixture/more")).ok()).toBe(true);
+  // The fixture control: its first press lets the turn write more, its second ends the turn.
+  expect((await request.put("/fixture")).ok()).toBe(true);
   await walk.state("03-more-words-appended-still-working", { visible: [first, typing], hidden: [] });
   await expect(convo.locator(".reply").filter({ hasText: "Found the cause" }).locator("p")).toHaveCount(2);
   await expect(typing).toHaveCount(1);
@@ -43,7 +44,7 @@ test("the typing indicator stays under a streamed reply until the turn ends, acr
   await walk.state("04-reloaded-mid-turn", { visible: [convo.locator(".bubble").filter({ hasText: "Fix the indicator" }), typing, queued], hidden: [] });
   await expect(status).toContainText(answering);
 
-  expect((await request.post("/fixture/end")).ok()).toBe(true);
+  expect((await request.put("/fixture")).ok()).toBe(true);
   await walk.state("05-turn-ended", {
     visible: [first, convo.locator(".reply").filter({ hasText: "Queued note answered." })],
     hidden: [typing, queued],

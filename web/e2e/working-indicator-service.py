@@ -38,12 +38,11 @@ def main():
     engines.claude_print = answer
 
     class Handler(server.Handler):
-        def do_POST(self):
-            if self.path in ("/fixture/more", "/fixture/end"):
-                self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                (more if self.path == "/fixture/more" else end).set()
-                return self._json({"ok": True})
-            return super().do_POST()
+        # The fixture's one control reads nothing from the request, so it adds no request source to code scanning:
+        # the first press lets the turn write more, the second ends it.
+        def do_PUT(self):
+            (end if more.is_set() else more).set()
+            return self._json({"ok": True})
 
     serve(Handler, release=lambda: (more.set(), end.set()))
 
