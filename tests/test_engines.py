@@ -12,12 +12,12 @@ from altitude import config, dispatch, engines, platform, state as S, tasks as T
 
 
 def _unconfined(child: list[str]) -> list[str]:
-    """A Linux job's own command without Altitude's bubblewrap sandbox, which has its own tests and cannot start
-    inside another one."""
+    """A Linux job's own command without Altitude's bubblewrap sandbox and the scope it starts the command under,
+    which have their own tests (tests/test_session_sockets.py) and cannot start inside another sandbox."""
     if platform.BWRAP not in child:
         return child
     start = child.index(platform.BWRAP)
-    return child[:start] + child[child.index("--", start) + 1:]
+    return child[:start] + child[child.index(platform.ABSTRACT_SCOPE, start) + 1:]
 
 
 class _Input(io.BytesIO):

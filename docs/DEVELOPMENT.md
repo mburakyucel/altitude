@@ -28,9 +28,12 @@ With repository access, clone it, then use the commands below from its root.
 Owners and helpers run tests relevant to their changes during development. The required PR
 check runs the full suite; a local full run is available for investigation but is not a landing prerequisite.
 A Claude owner or helper on Linux runs these inside Altitude's bubblewrap sandbox, as on macOS inside its
-Seatbelt profile: tools write their caches to the task's scratch folder, and a program that starts a sandbox or
-container of its own (Chromium's sandbox, rootless Podman) cannot start there, so those checks run through
-`alt task validate`.
+Seatbelt profile: tools write their caches to the task's scratch folder, `/tmp` and `TMPDIR` are the job's own
+temporary folder, gone when the job ends, the desktop session's sockets (its agents, display and editor servers) are
+out of reach, and a program that starts a sandbox or container of its own (Chromium's sandbox, rootless Podman)
+cannot start there, so those checks run through `alt task validate`. The sandbox's own socket cases
+(`tests/test_session_sockets.py`) run real bubblewrap in the required check and the Linux validation image, which set
+`ALTITUDE_BUBBLEWRAP=required` so they fail there rather than skip.
 
 Use Python 3.12+, Node 22.22.2+ (22.x), 24.15+ (24.x) or 26+, and the pnpm version pinned in
 `web/package.json`. From the repository root:

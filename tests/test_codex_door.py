@@ -81,8 +81,7 @@ class TestCodexAdapter(AltitudeCase):
             ":root": "read",
             **{str(common / name): "read" for name in ("config", "config.worktree", "hooks", "info", "modules", "worktrees", "commondir", "gitdir")},
             **{str(record / name): "read" for name in ("commondir", "gitdir", "config.worktree")},
-            **{str(path): "deny" for path in (*platform.job_control_paths(), *platform.private_places(),
-                                               *platform.secret_places())}})
+            **dict.fromkeys(engines.codex.denied(), "deny")})
         self.assertTrue(profile["network"]["enabled"])
         self.assertNotIn("sandbox_mode", parsed, "legacy selection must not override the named profile")
         self.assertNotIn("sandbox_workspace_write", parsed)
@@ -95,10 +94,11 @@ class TestCodexAdapter(AltitudeCase):
                          {str(config.ROOT.resolve()): True})
 
     def test_control_socket_and_private_place_denials_cover_workers_and_the_coordinator(self):
-        """The service-manager sockets, macOS's private places, whose reads macOS charges to the job's Python, and
-        Altitude's own credentials: the CLI's key and pairing record, and the HTTPS keys."""
+        """The per-user runtime folder, where the service manager and desktop programs keep their sockets, the shared
+        temporary folders, where others keep theirs, macOS's private places, whose reads macOS charges to the job's
+        Python, and Altitude's own credentials: the CLI's key and pairing record, and the HTTPS keys."""
         runtime = Path(f"/run/user/{os.getuid()}")
-        endpoints = (runtime / "bus", runtime / "systemd/private")
+        endpoints = (runtime / "bus", runtime / "systemd/private", runtime / "fictional-session/socket")
         for folder in (access.DIR, config.TLS_DIR):
             folder.mkdir(parents=True, exist_ok=True)
         private = ("/Users/fictional/Desktop", "/Volumes")
@@ -109,11 +109,11 @@ class TestCodexAdapter(AltitudeCase):
         for settings in profiles:
             parsed = tomllib.loads("\n".join(settings))
             rules = parsed["permissions"][parsed["default_permissions"]]["filesystem"]
-            denied = {Path(path) for path, access in rules.items() if access == "deny"}
-            self.assertEqual(denied, {runtime / "bus", runtime / "systemd", *map(Path, private),
-                                      Path(os.path.realpath(access.DIR)), Path(os.path.realpath(config.TLS_DIR))})
+            denied = {path for path, access in rules.items() if access == "deny"}
+            self.assertEqual(denied, {str(runtime), *private, os.path.realpath(access.DIR),
+                                      os.path.realpath(config.TLS_DIR), ":slash_tmp", os.path.realpath("/var/tmp")})
             self.assertTrue(all(any(endpoint.is_relative_to(root) for root in denied) for endpoint in endpoints))
-            self.assertFalse(any((runtime / "unrelated").is_relative_to(root) for root in denied))
+            self.assertNotIn(":tmpdir", rules, "the job's own temporary folder stays the workspace's")
 
     def _launch(self, *, thread="thr-1", actual_settings=False, **kw):
         procs, real_popen = [], subprocess.Popen
@@ -175,9 +175,8 @@ class TestCodexAdapter(AltitudeCase):
         self.assertEqual(spec["env"], {"GH_TOKEN": "fixture-token"})
         settings = [spec["command"][i + 1] for i, arg in enumerate(spec["command"]) if arg == "-c"]
         rules = tomllib.loads("\n".join(settings))["permissions"]["altitude-task"]["filesystem"]
-        self.assertEqual({path for path, access in rules.items() if access == "deny"},
-                         {str(path) for path in (*platform.job_control_paths(), *platform.private_places(),
-                                                 *platform.secret_places())})
+        self.assertEqual({path for path, access in rules.items() if access == "deny"}, set(engines.codex.denied()))
+        self.assertIn(str(platform.job_control_paths()[0]), rules, "the session bus is in the denied runtime folder")
         # In the job's environment, without the bus, GitHub accepts the engine only after the driver exports the
         # token; an ambient token never reaches it, and the engine reads its turn, not the token.
         driver = command[2:]

@@ -114,8 +114,9 @@ class TestRequiredCheckWorkflow(AltitudeCase):
         self.assertIn('pnpm install --frozen-lockfile', install)
         self.assertIn('pnpm exec playwright install --with-deps chromium', install)
         converter = next(step for step in steps if step.startswith('name: Install fixture tools'))
-        self.assertIn('apt-get install -y --no-install-recommends ffmpeg liblcms2-2', converter)
+        self.assertIn('apt-get install -y --no-install-recommends bubblewrap ffmpeg liblcms2-2', converter)
         self.assertIn('libnss3-tools', converter)
+        self.assertIn('ALTITUDE_BUBBLEWRAP: required', self.workflow, "the sandbox's socket cases fail rather than skip")
         report = steps[-1]
         self.assertIn("if: failure() && matrix.suite == 'web'", report)
         self.assertIn('actions/upload-artifact@', report)

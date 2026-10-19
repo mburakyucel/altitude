@@ -11,6 +11,7 @@ import plistlib
 import shlex
 import signal
 import subprocess
+import re
 import sys
 from pathlib import Path
 from unittest import mock
@@ -340,12 +341,17 @@ class Jobs(DarwinCase):
 
     def test_job_commands_describe_the_job_the_launcher_starts(self):
         env = {"PATH": "/usr/bin:/bin", "ALTITUDE_TASK": "task"}
+        temporary = "/private/tmp/altitude-fictional"
+        self.patch(platform, "_job_temporary", return_value=temporary)
         spec = self.spec(platform.job_command("altitude-codex-w1.service", ["codex", "exec"], env, runtime_max=60))
         self.assertEqual(spec, {"label": "dev.altitude.job.altitude-codex-w1", "mode": "pipe", "command": ["codex", "exec"],
-                                "env": env, "runtime_max": 60, "profile": None})
+                                "env": {**env, "TMPDIR": temporary}, "runtime_max": 60, "temporary": temporary,
+                                "profile": None})
         spec = self.spec(platform.job_command("altitude-claude-c.service", ["claude"], env,
-                                              writable=(Path("/work/tree"), Path("/home/.altitude"))))
-        self.assertEqual(spec["profile"], platform.seatbelt_profile(["/work/tree", "/home/.altitude"]))
+                                              writable=(Path("/work/tree"), Path("/home/.altitude")),
+                                              sockets=(Path("/home/.config/altitude/x/ab12"),)))
+        self.assertEqual(spec["profile"], platform.seatbelt_profile(["/work/tree", "/home/.altitude"], temporary=temporary,
+                                                                    sockets=["/home/.config/altitude/x/ab12"]))
         log, status = self.tmp / "machine.log", self.tmp / "machine.exit"
         spec = self.spec(platform.logged_job_command("altitude-machine-p-1.service", "brew list", log=log, status=status,
                                                      env=env, timeout=300))
@@ -614,16 +620,32 @@ class Processes(DarwinCase):
 class Confinement(DarwinCase):
     def test_profile_allows_signals_only_inside_the_sandbox_and_writes_only_under_the_roots(self):
         self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
-        text = platform.seatbelt_profile(["/private/tmp/work tree", '/private/tmp/q"uote'])
+        text = platform.seatbelt_profile(["/private/tmp/work tree", '/private/tmp/q"uote'], temporary="/private/tmp/own")
         self.assertTrue(text.startswith("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))"
                                         "(deny file-write*)(allow file-write* "))
         for root in ('(subpath "/private/tmp/work tree")', '(subpath "/private/tmp/q\\"uote")',
                      '(subpath "/private/var/folders/ab/cd")', '(subpath "/dev")'):
             self.assertIn(root, text)
 
+    def test_profile_reaches_unix_sockets_only_in_its_own_folders_a_broker_and_the_systems(self):
+        """A desktop program's socket in the shared temporary folders (an agent's, a terminal multiplexer's, an
+        editor server's) could start a program outside the sandbox; the job reaches only its own."""
+        self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
+        text = platform.seatbelt_profile(["/private/tmp/work", "/Users/a/.claude.json*"], temporary="/private/tmp/own",
+                                         sockets=["/Users/a/.config/altitude/x/ab12"])
+        rule = re.search(r"\(deny network-outbound \(remote unix-socket\)\)\(allow network-outbound (.*?)\)\(deny file-read",
+                         text).group(1)
+        reached = re.findall(r'\(remote unix-socket \((subpath|path-literal) "([^"]*)"\)\)', rule)
+        self.assertEqual(reached, [("subpath", "/private/tmp/work"), ("subpath", "/private/tmp/own"),
+                                   ("path-literal", "/Users/a/.config/altitude/x/ab12"),
+                                   ("path-literal", "/private/var/run/mDNSResponder"),
+                                   ("path-literal", "/private/var/run/syslog")])
+        self.assertIn('(subpath "/private/var/folders/ab/cd")', text, "the shared folders stay writable as files")
+        self.assertLess(text.index("(deny network-outbound (remote unix-socket))"), text.index(platform.private_rule()))
+
     def test_profile_refuses_the_paths_that_run_programs_outside_it(self):
         self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
-        text = platform.seatbelt_profile(["/private/tmp/work"])
+        text = platform.seatbelt_profile(["/private/tmp/work"], temporary="/private/tmp/own")
         for rule in ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator.")'
                      ' (xpc-service-name-prefix "com.apple.CoreSimulator."))', "(deny lsopen)", "(deny appleevent-send)"):
             self.assertIn(rule, text)
@@ -646,7 +668,7 @@ class Confinement(DarwinCase):
         for place in places:
             self.assertIn(f'(subpath "{place}")', rule)
         inside = str(self.home / "Desktop" / "work")  # a root inside a private place stays refused
-        for text in (platform.seatbelt_profile([inside]),
+        for text in (platform.seatbelt_profile([inside], temporary=str(self.tmp)),
                      platform.validation_profile((Path(inside),), self.tmp / "unit.log", 8890)):
             self.assertTrue(text.endswith(rule + platform.SERVICE_ESCAPES), "a later allow would reopen them")
             self.assertLess(text.rindex(inside), text.index(rule))
@@ -683,7 +705,7 @@ class Confinement(DarwinCase):
             self.skipTest("Seatbelt is macOS's")
         library.sandbox_compile_string.restype = ctypes.c_void_p
         library.sandbox_compile_string.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p)]
-        for text in (platform.seatbelt_profile([str(self.tmp)]),
+        for text in (platform.seatbelt_profile([str(self.tmp)], temporary=str(self.tmp)),
                      platform.validation_profile((self.tmp / "work",), self.tmp / "unit.log", 8890)):
             error = ctypes.c_char_p()
             compiled = library.sandbox_compile_string(text.encode(), None, ctypes.byref(error))
@@ -737,6 +759,17 @@ class Supervisor(DarwinCase):
         self.assertEqual((self.job / "coalition").read_text(), "44")
         self.stopped.assert_called_with(44, spare=os.getpid())
         self.assertTrue((self.job / "started").exists())
+
+    def test_the_jobs_own_temporary_folder_goes_with_it(self):
+        temporary = self.tmp / "altitude-own"
+        temporary.mkdir()
+        self.assertEqual(self.supervise(["/bin/sh", "-c", 'echo kept > "$TMPDIR/file"'], temporary=str(temporary),
+                                        env={"PATH": "/usr/bin:/bin", "TMPDIR": str(temporary)}), 0)
+        self.assertFalse(temporary.exists())
+        self.stopped.return_value = False
+        temporary.mkdir()
+        self.assertEqual(self.supervise(["/usr/bin/true"], temporary=str(temporary)), 0)
+        self.assertTrue(temporary.exists(), "survivors may still use it")
 
     def test_the_time_limit_stops_the_command(self):
         def stop(coalition, spare):

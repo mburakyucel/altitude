@@ -176,7 +176,8 @@ def read_only_home(command: list[str], writable: tuple[Path, ...]) -> list[str]:
     suite's home lies in the temporary folder every Altitude sandbox admits, so this stands in for the worker's
     sandbox rather than running it."""
     if NATIVE_PLATFORM == "darwin":
-        return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile([str(root) for root in writable], [str(config.ROOT)]),
+        return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile([str(root) for root in writable], [str(config.ROOT)],
+                                                                       temporary=str(writable[0])),
                 *command]
     return [sys.executable, "-c", LANDLOCK_LAUNCHER, json.dumps([str(path) for path in (*writable, "/dev")]), *command]
 
@@ -590,7 +591,7 @@ class AltitudeCase(unittest.TestCase):
         installation = self.patch(engines, "installation", return_value={"available": None, "why": "test installation"})
         self.patch(engines.common, "installation", new=installation)
         self.patch(engines, "sign_in", side_effect=lambda engine: {"signed_in": True, "command": engines.SIGN_IN[engine][1]})
-        self.patch(platform, "sandbox_tool", return_value={"enabled": True, "command": None, "detail": "test sandbox"})
+        self.patch(platform, "sandbox_tool", return_value={"enabled": True, "command": None, "scoped": True, "detail": "test sandbox"})
         self.patch(monitor, "quota", return_value={"known": True})
 
     def private_ledgers(self) -> None:
