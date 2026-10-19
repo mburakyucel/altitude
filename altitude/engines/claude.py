@@ -408,6 +408,7 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
            "turns": 0, "structured": None, "error": None, "tools": []}
     parts: list[str] = []
     split = False
+    block_ended = False  # a message ended since the last text: the next text is a new paragraph
     failure = None
     safe_to_retry, rejected = True, None
     try:
@@ -431,10 +432,14 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
             elif typ == "stream_event":
                 delta = (o.get("event") or {}).get("delta") or {}
                 if delta.get("type") == "text_delta" and delta.get("text"):
-                    parts.append(delta["text"])
+                    # Text after a tool call starts its own paragraph, alike in the stream and the stored reply.
+                    text = ("\n\n" if block_ended and parts else "") + delta["text"]
+                    block_ended = False
+                    parts.append(text)
                     if on_text:
-                        on_text(delta["text"])
+                        on_text(text)
             elif typ == "assistant":
+                block_ended = True
                 out["turns"] += 1
                 msg = o.get("message") or {}
                 if msg.get("model") and msg["model"] != "<synthetic>":

@@ -436,6 +436,54 @@ class TestChatTurns(AltitudeCase):
         self.assertEqual(calls[0][2], "Waiting on the command.")
         self.assertEqual(result["text"], f"Read: {TEXT}")
 
+    def scripted(self, name: str, events: list[dict]) -> str:
+        """A fictional engine CLI that reads its input and prints `events` as its JSON stream."""
+        script = self.tmp / name
+        lines = "".join(json.dumps(event) + "\n" for event in events)
+        script.write_text(f"#!{sys.executable}\nimport sys\nsys.stdin.read()\nsys.stdout.write({lines!r})\n")
+        script.chmod(0o755)
+        return str(script)
+
+    def test_claude_text_around_a_tool_call_streams_and_stores_the_same_paragraphs(self):
+        """The operator's report: words, then a tool call, then more words, in one turn."""
+        def delta(text):
+            return {"type": "stream_event", "event": {"type": "content_block_delta", "index": 0,
+                                                      "delta": {"type": "text_delta", "text": text}}}
+
+        def block(content):
+            return {"type": "assistant", "message": {"model": "fake-model", "content": [content]}}
+
+        events = [{"type": "system", "subtype": "init", "session_id": "s"},
+                  delta("A clear request, "), delta("so I'll check the code first."),
+                  block({"type": "text", "text": "A clear request, so I'll check the code first."}),
+                  block({"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "grep -n busy web"}}),
+                  {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "fixture"}]}},
+                  delta("Found it."), block({"type": "text", "text": "Found it."}),
+                  {"type": "result", "subtype": "success", "is_error": False, "result": "Found it.", "session_id": "s"}]
+        streamed = []
+        with mock.patch.object(config, "CLAUDE_BIN", self.scripted("claude-turn", events)):
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home",
+                                          cwd=self.repo, timeout=30, on_text=streamed.append)
+        self.assertIsNone(result["error"], result)
+        self.assertEqual(result["text"], "A clear request, so I'll check the code first.\n\nFound it.")
+        self.assertEqual("".join(streamed), result["text"])
+        self.assertEqual(result["tools"], [engines.common._tool("Bash", "grep -n busy web")])
+
+    def test_a_codex_turn_keeps_every_message_it_wrote_around_its_commands(self):
+        def item(kind, **fields):
+            return {"type": "item.completed", "item": {"id": f"item-{kind}-{len(fields)}", "type": kind, **fields}}
+
+        events = [{"type": "thread.started", "thread_id": "fake-thread"}, {"type": "turn.started"},
+                  item("agent_message", text="A clear request, so I'll check the code first."),
+                  item("command_execution", command="grep -n busy web", aggregated_output="fixture", exit_code=0, status="completed"),
+                  item("agent_message", text="Found it.\n"),
+                  {"type": "turn.completed", "usage": {"input_tokens": 5, "output_tokens": 2}}]
+        with mock.patch.object(config, "CODEX_BIN", self.scripted("codex-turn", events)):
+            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=30)
+        self.assertIsNone(result["error"], result)
+        self.assertEqual(result["text"], "A clear request, so I'll check the code first.\n\nFound it.")
+        self.assertEqual(result["tools"], [engines.common._tool("Bash", "grep -n busy web")])
+
     def test_a_codex_exec_that_exits_at_once_reports_its_own_error(self):
         script = self.tmp / "signed-out"
         script.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('codex: not signed in\\n')\nsys.exit(3)\n")
