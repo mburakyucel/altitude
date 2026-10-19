@@ -21,6 +21,8 @@
 .terminal-reconnecting { position: absolute; top: 8px; right: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(229, 231, 235, 0.92); color: #111827; font-size: var(--text-meta); font-weight: 500; pointer-events: none; }
 /* The padding is xterm's own, which its fit subtracts: on the screen around it, the last row would sit under the edge. */
 .terminal-screen .xterm { height: 100%; padding: 8px 0 8px 10px; }
+/* xterm's scroll layer fills that padding too, black by default: the screen's own colour shows through instead. */
+.terminal-screen .xterm .xterm-viewport { background-color: transparent; }
 .terminal-keys { display: flex; flex: none; gap: 6px; padding: 8px 8px 0; }
 .terminal-keys button { min-width: 0; min-height: var(--target-min); flex: 1 1 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font-weight: 500; }
 .terminal-keys .terminal-enter { flex-grow: 1.5; border-color: var(--accent); background: var(--accent); color: var(--on-accent); }

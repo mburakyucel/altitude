@@ -71,6 +71,8 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   const line = await reader.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
   expect((await reader.boundingBox())!.height).toBeLessThanOrEqual(line + 1);
   expect(await reader.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+  // The screen is one colour to its edges: xterm's scroll layer, black by default, lets it show through its padding.
+  expect(await page.locator(".terminal-screen .xterm-viewport").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
 
   // Tab completion, arrows and Escape reach the shell; nothing around the terminal takes them.
   await page.locator(".terminal-screen").click();
