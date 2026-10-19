@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
@@ -396,7 +396,14 @@ function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
     }
   };
   const section = useRef<HTMLElement>(null);
-  useEffect(() => { if (hash === "#notifications") section.current?.scrollIntoView({ block: "nearest" }); }, [hash]);
+  // Rows above load after arrival (a phone has one column), so the group is brought into view again until they have.
+  const loading = useIsFetching() > 0;
+  const placed = useRef(false);
+  useEffect(() => {
+    if (hash !== "#notifications" || placed.current) return;
+    section.current?.scrollIntoView({ block: "nearest" });
+    if (!loading) placed.current = true;
+  }, [hash, loading]);
   const busy = save.status === "saving";
   const shows = !shown ? "" : shown.reveal === "task" ? `“${project} needs a decision” and the task name`
     : shown.reveal === "project" ? `“${project} needs a decision”` : "“A decision needs you”";

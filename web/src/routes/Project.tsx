@@ -165,7 +165,8 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
   const reset = useL3Reset(name);
   const setup = useSetupReading(name);
   const pending = reset.isPending || starting;
-  const settings = (path: string) => navigate(path, { state: settingsOpener(window.location) });
+  const location = useLocation();
+  const settings = (path: string) => navigate(path, { state: settingsOpener(location) });
 
   const close = useCallback((refocus = false) => {
     if (pending) return;

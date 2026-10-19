@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useLocation, type NavigateFunction } from "react-router";
+import { activeTab } from "../shell/TabBar";
 
 /**
  * What a page holds when the operator leaves one history entry, such as unsent answers or the question
@@ -11,10 +12,13 @@ const kept = new Map<string, unknown>();
 const id = (entry: string, item: string) => `${entry}\n${item}`;
 
 /** Where Settings returns: the page that opened it and, in the browser's history, its entry, so Back brings that
- * same entry back with what it kept, such as unsent answers (SPEC.md §3.15). */
-export function settingsOpener(location: { pathname: string; search: string }) {
+ * same entry back with what it kept, such as unsent answers; and that page's phone tab, which stays lit (SPEC.md §3.15). */
+export function settingsOpener(location: { pathname: string; search: string; state: unknown }) {
   const index = (window.history.state as { idx?: unknown } | null)?.idx;
-  return { settingsFrom: location.pathname + location.search, settingsFromIndex: typeof index === "number" ? index : undefined };
+  return {
+    settingsFrom: location.pathname + location.search, settingsFromIndex: typeof index === "number" ? index : undefined,
+    settingsTab: activeTab(location.pathname, location.state, location.search),
+  };
 }
 
 /** Back to the entry that opened Settings when the history still holds it; otherwise to its page anew. */

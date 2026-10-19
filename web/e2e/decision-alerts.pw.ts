@@ -131,6 +131,7 @@ test("the switch walks its states and alerts once for each new decision", { tag:
     action: () => offer.click(),
     visible: [alertsSwitch, page.getByText("Altitude can alert you when a new decision arrives.")], hidden: [offer],
   });
+  await expect(alertsSwitch).toBeInViewport();
   await alertsSwitch.click();
   await expect(page.getByText(/only while Altitude is open/)).toBeVisible();
   await walk.state("02-alerts-on", {
@@ -199,6 +200,7 @@ test("the switch walks its states and alerts once for each new decision", { tag:
     visible: [blocked, alertsSwitch], hidden: [page.getByRole("region", { name: "Notifications" }).getByRole("combobox")],
   });
   await expect(alertsSwitch).toHaveAttribute("aria-disabled", "true");
+  await expect(blocked).toBeInViewport();
 });
 
 /** Every banner the device shows now, as the real service worker left them. Read only between wakes: Chromium

@@ -4,7 +4,7 @@ import { scopedProject } from "./projects";
 import { useSelectedProject } from "./scope";
 import { attentionCount } from "../data/decisions";
 
-type Tab = "chat" | "work" | "needs" | "monitor";
+export type Tab = "chat" | "work" | "needs" | "monitor";
 
 const ICONS: Record<Tab, string> = {
   chat: "M3 4.5h14v9H8l-4 3v-3H3z",
@@ -24,12 +24,9 @@ export function activeTab(pathname: string, state: unknown, search: string): Tab
   if (/^\/projects\/[^/]+\/decisions\//.test(pathname)) {
     return from === "work" || from === "chat" ? from : "needs";
   }
-  // Settings keeps the tab it was opened from lit, as Needs you's alert link does.
-  const opener = state && typeof state === "object" ? (state as { settingsFrom?: unknown }).settingsFrom : null;
-  if (pathname.startsWith("/settings") && typeof opener === "string" && !opener.startsWith("/settings")) {
-    const [path = "", query = ""] = opener.split("?");
-    return activeTab(path, null, query);
-  }
+  // Settings keeps lit the tab of the page that opened it (settingsOpener), as from Needs you's alert link.
+  const opened = state && typeof state === "object" ? (state as { settingsTab?: unknown }).settingsTab : null;
+  if (pathname.startsWith("/settings") && typeof opened === "string" && opened in ICONS) return opened as Tab;
   return new URLSearchParams(search).get("tab") === "work" ? "work" : "chat";
 }
 
