@@ -94,6 +94,40 @@ class SelfDeployFastForward(AltitudeCase):
         self.assertEqual((self.repo / "altitude" / "x.py").read_text(), "# merged\n")
         self.assertEqual(git_policy.source_head(self.repo, "main"), tip)
 
+    def test_the_deployment_reads_altitudes_copy_never_the_checkouts_object_store(self):
+        tip = self.merged()
+        git("fetch", "-q", "origin", cwd=self.repo)
+        store = self.repo / ".git" / "objects"
+        self.assertEqual(list((store / "pack").glob("*.pack")), [])
+        # A worker writes the checkout's store: it removes every tree and file the two commits hold and plants a
+        # replacement for the merged file.
+        merged = git("rev-parse", f"{tip}:altitude/x.py", cwd=self.repo).strip()
+        for loose in store.glob("??/*"):
+            if git("cat-file", "-t", loose.parent.name + loose.name, cwd=self.repo).strip() != "commit":
+                loose.unlink()
+        planted = subprocess.run(["git", "hash-object", "-w", "--stdin"], input="# a worker's\n", cwd=self.repo,
+                                 capture_output=True, text=True, check=True).stdout.strip()
+        git("update-ref", f"refs/replace/{merged}", planted, cwd=self.repo)
+        self.assertEqual(git_policy.deploy_source(self.repo, "main"), (self.head, tip, ["altitude/x.py"]))
+        self.assertEqual((self.repo / "altitude" / "x.py").read_text(), "# merged\n")
+        self.assertEqual((self.repo / "README.md").read_text(), "readme\n")
+        self.assertEqual(git_policy.source_head(self.repo, "main"), tip)
+
+    def test_a_held_commit_is_checked_without_reaching_the_origin(self):
+        (self.tmp / "origin.git").rename(self.tmp / "unreachable.git")
+        self.assertEqual(git_policy.source_head(self.repo, "main"), self.head)
+        with self.assertRaises(git_policy.FetchError):
+            git_policy.deploy_source(self.repo, "main")
+
+    def test_a_commit_no_longer_on_the_branch_is_refused_and_never_deployed_backwards(self):
+        tip = self.merged()
+        self.assertEqual(git_policy.deploy_source(self.repo, "main")[1], tip)
+        git("update-ref", "refs/heads/main", self.head, cwd=self.tmp / "origin.git")   # the origin's main rewound
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "commit is not on main"):
+            git_policy.deploy_source(self.repo, "main")
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.repo).strip(), tip)
+        self.assertEqual((self.repo / "altitude" / "x.py").read_text(), "# merged\n")
+
     def test_a_fast_forward_marks_activation_pending(self):
         tip = self.merged("altitude/x.py")
         with mock.patch("altitude.incidents.system_fault") as fault:

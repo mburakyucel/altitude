@@ -41,7 +41,7 @@ TESTS = [f"tests/test_{name}.py" for name in (
     "task_status",
     "faults", "worker_end", "decisions", "question_groups", "conversation_decisions", "reported_continuation",
     "continuation_journey",
-    "git_policy", "git_policy_integration", "worker_git_folders", "checkout_preservation",
+    "git_policy", "git_policy_integration", "worker_git_folders", "checkout_preservation", "self_deploy_fast_forward",
     "task_door", "codex_door",
     "land", "land_adoption", "land_contention", "land_continuation", "merge_approval_journey",
     "recorded_merge_approval", "merge_policy", "parallel_checks",

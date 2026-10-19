@@ -41,5 +41,66 @@ class TestLifecycle(AltitudeCase):
                          "FYIs are chat rows; the project inbox file is gone (SPEC.md §5.2 note 3)")
 
 
+class TestStateSummary(AltitudeCase):
+    """STATE.md is the task state L3 reads at the start of every turn: each task sits under its own state, and
+    each waiting task under the audience it waits for."""
+
+    def task(self, title, state, **fields):
+        task = T.new(self.project, title, "A fixture task.")
+        task.update(state=state, **fields)
+        S.save_task(self.project, task)
+        return task["slug"]
+
+    def placement(self, text):
+        """Each listed slug with the section and subsection headings it sits under."""
+        found, section, subsection = {}, None, None
+        for line in text.splitlines():
+            if line.startswith("## "):
+                section, subsection = line[3:], None
+            elif line.startswith("### "):
+                subsection = line[4:]
+            elif line.startswith("- **"):
+                found.setdefault(line[4:].split("**", 1)[0], []).append((section, subsection))
+        return found
+
+    def test_tasks_sit_under_their_state_and_waiting_audience(self):
+        empty = S.regen_state_md(self.project)
+        self.assertEqual(empty.split("## Needs user input\n\n", 1)[1].split("\n", 1)[0], "- none")
+        self.assertEqual(empty.split("## Needs L3 input\n\n", 1)[1].split("\n", 1)[0], "- none")
+        self.assertNotIn("###", empty)
+
+        queued = self.task("Queued work", "queued")
+        running = self.task("Running work", "running", attempt=2, prs=[7])
+        reported = self.task("Reported work", "reported", attempt=1)
+        for_l3 = self.task("Waits for the coordinator", "blocked", waiting_on="l3", blocked_reason="Lease question")
+        for_operator = self.task("Waits for the operator", "blocked", blocked_reason="Merge go")
+        planned = self.task("Resumes by itself", "blocked", resume_after="2999-01-01T00:00:00+00:00",
+                            blocked_reason="CI wait")
+        asked = self.task("Asks the operator", "blocked", questions=[
+            {"id": "q1", "revision": 2, "status": "open", "audience": "operator", "question": "Ship it?",
+             "recommendation": {"text": "Yes"}},
+            {"id": "q0", "revision": 1, "status": "answered", "audience": "l3", "question": "Settled already?"}])
+        self.task("Finished work", "done")
+
+        text = S.regen_state_md(self.project)
+        self.assertEqual(text, (config.project_dir(self.project) / "STATE.md").read_text())
+        needs_user, needs_l3 = ("Needs user input", None), ("Needs L3 input", None)
+        self.assertEqual(self.placement(text), {
+            queued: [("Tasks", "queued (1)")],
+            running: [("Tasks", "running (1)")],
+            reported: [("Tasks", "reported (1)")],
+            for_l3: [needs_l3, ("Tasks", "blocked (4)")],
+            for_operator: [needs_user, ("Tasks", "blocked (4)")],
+            planned: [("Tasks", "blocked (4)")],
+            asked: [needs_user, ("Tasks", "blocked (4)")],
+        })
+        self.assertIn(f"- **{asked}** (0m; question q1 revision 2): Ship it? Recommended: Yes\n", text)
+        self.assertNotIn("Settled already?", text)
+        self.assertIn(f"- **{for_l3}** (0m): Lease question\n", text)
+        self.assertIn(f"- **{running}** Running work — 0m — attempt 2; PRs 7\n", text)
+        self.assertEqual([line for line in text.splitlines() if line.startswith("### ")],
+                         ["### blocked (4)", "### running (1)", "### reported (1)", "### queued (1)"])
+
+
 if __name__ == "__main__":
     unittest.main()
