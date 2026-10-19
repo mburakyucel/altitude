@@ -1057,7 +1057,7 @@ PRIVACY_ROWS, REFUSED = ("confinement", "validation-confinement"), \
 # The rows that run fixture commands as launchd jobs: output, Stop of every descendant, cleanup, time limits and a
 # confined job's launch input.
 JOB_ROWS = ("job-pipe", "job-file-output", "exit-cleanup", "stop-descendants", "time-limit", "limit-after-owner-exit",
-            "logged-job", "detached-job", "launch-input")
+            "sleep-hold", "awake-clock", "logged-job", "detached-job", "launch-input")
 # The suite's read-only-home cases, which confine a child with a second Seatbelt profile or Codex's own sandbox and so
 # skip in a validation run or a confined worker (docs/DEVELOPMENT.md#macos-validation-runs).
 READ_ONLY_HOME = ("tests.test_worker_writes", "tests.test_worker_roots",
@@ -1319,7 +1319,8 @@ git push -q origin main && git rev-parse HEAD""")
 # The runtime rows each phase drives in the guest (tests/macos_guest_runtime.py), split so that a `run` of one phase
 # finishes within `alt task run`'s ten minutes.
 RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
-                "grants": ("grants", "contention"), "incident": ("incident",), "session": ("logout-login",)}
+                "grants": ("grants", "contention"), "incident": ("incident", "schedule"),
+                "session": ("logout-login",)}
 GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
 # Rows may end the account's session, so they run in the background while the host polls.
 ROWS_BUDGET = 420
@@ -1390,13 +1391,15 @@ def phase_grants(guest: Guest, repository: str, results: Path, record: dict, inp
 
 
 def phase_incident(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
-    """Incident issues held on a release behind a newer one, and sent to the fake GitHub CLI otherwise (#767)."""
+    """Incident issues held on a release behind a newer one, and sent to the fake GitHub CLI otherwise (#767); then
+    the release lookup's 12-hour schedule and the once-a-day notice on the guest's own clock (#226, #731)."""
     runtime(guest, repository, results, record, inputs, "incident")
 
 
 def phase_session(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """Logout and login without a restart (#731, #226). The guest cannot sleep: macOS under Apple's Virtualization
-    framework refuses `pmset sleepnow` as not permitted, so sleep past a job's time limit needs a real Mac."""
+    framework refuses `pmset sleepnow` as not permitted; the `jobs` phase's `sleep-hold` and `awake-clock` rows cover
+    a job across sleep."""
     runtime(guest, repository, results, record, inputs, "session")
 
 

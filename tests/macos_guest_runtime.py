@@ -513,6 +513,54 @@ def row_incident() -> dict:
     return facts
 
 
+def row_schedule() -> dict:
+    """#226, #731: the daemon looks for a release again 12 hours after its last lookup and not before, and the
+    terminal names a newer release once a day. The guest's own clock is moved forward; nothing in Altitude's records
+    is rewritten. Runs last in its phase: the clock stays moved."""
+    path = ROOT / "update.json"
+    record = lambda: json.loads(path.read_text()) if path.exists() else {}  # noqa: E731
+    latest = Path(os.environ["LANE_LATEST"])
+    serve = lambda version: latest.write_text(json.dumps({"tag_name": version, "draft": False}))  # noqa: E731
+    found = lambda version: (record().get("latest") or {}).get("version") == version  # noqa: E731
+
+    def move_to(moment: float) -> None:
+        shell(f"sudo -n /bin/date -u {time.strftime('%m%d%H%M%Y.%S', time.gmtime(moment))}", check=True)
+
+    def notice() -> str:
+        """What `alt queue` prints to a terminal before its own output: the once-a-day line, if due."""
+        shown = shell(f"/usr/bin/env -u ALTITUDE_ACTOR /usr/bin/script -q /dev/null {ALT} queue", timeout=60).stdout
+        return next((line.strip() for line in shown.splitlines() if "is available" in line), "")
+
+    settings = ROOT / "settings.json"
+    current = json.loads(settings.read_text()) if settings.exists() else {}
+    settings.write_text(json.dumps({**current, "update_automatic": False}))  # a newer release is only offered
+    version = os.environ["LANE_VERSION"]
+    newer = re.sub(r"(\d+)$", lambda m: str(int(m[1]) + 1), version)
+    latest.parent.mkdir(parents=True, exist_ok=True)
+    serve(version)
+    facts: dict = {"installed": version, "newer": newer}
+    start = record()
+    if not start.get("checked"):  # the startup lookup failed before a release was served: its hourly retry
+        facts["retry"] = {"failed_at_next": start.get("next")}
+        move_to(start["next"] + 5)
+        wait("the hourly retry", lambda: record().get("checked"), timeout=120)
+    base = record()
+    facts.update(checked=base["checked"], interval_hours=round((base["next"] - base["checked"]) / 3600, 3))
+    serve(newer)
+    move_to(base["next"] - 120)
+    time.sleep(75)  # more than two of the daemon's 30-second ticks, two minutes before the lookup is due
+    facts["early_lookup"] = record().get("checked") != base["checked"]
+    move_to(base["next"] + 5)
+    due = wait(f"the 12-hour lookup to find {newer}", lambda: found(newer) and record(), timeout=120)
+    facts["due_lookup"] = {"checked": due["checked"], "after_due": due["checked"] >= base["next"]}
+    first, second = notice(), notice()
+    move_to(time.time() + 86400 + 60)
+    facts["notice"] = {"first": first, "same_day": second, "next_day": notice()}
+    facts["passed"] = (facts["interval_hours"] == 12 and not facts["early_lookup"] and facts["due_lookup"]["after_due"]
+                       and newer in first and not second and newer in facts["notice"]["next_day"])
+    return facts
+
+
 def row_logout_login() -> dict:
     """#731 and #226: the account's desktop session ends and starts again without a restart; the service stops
     with the session and the next login starts it again."""
@@ -541,7 +589,7 @@ def row_logout_login() -> dict:
 STATE: dict = {}
 ROWS = {"coordinator-stop": row_coordinator_stop, "failed-turn": row_failed_turn, "status-unknown": row_status_unknown,
         "validation-restart": row_validation_restart, "grants": row_grants, "contention": row_contention,
-        "incident": row_incident, "logout-login": row_logout_login}
+        "incident": row_incident, "schedule": row_schedule, "logout-login": row_logout_login}
 
 
 def rows(names: list[str]) -> int:
