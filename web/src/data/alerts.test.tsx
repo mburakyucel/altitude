@@ -37,19 +37,24 @@ function overview(queue: unknown[]) {
 const PUSH_KEY = btoa(String.fromCharCode(...new Uint8Array(65).fill(4))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 /** The fixture queue the next overview read returns; tests grow it like altd would. */
-function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachable = false,
-  refused: { host: string; reason: string }[] = []) {
+function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachable = false, refused: string | null = null) {
   let queue = initial;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/alerts/subscription")) {
       if (unreachable) throw new TypeError("Failed to fetch");
-      return jsonResponse({ push: true });
+      const { endpoint, remove } = JSON.parse(String(init?.body)) as { endpoint: string; remove?: boolean };
+      if (remove) return jsonResponse({ push: false });
+      const known = !ended.delete(endpoint); // told once, altd holds it
+      return jsonResponse({ push: true, known, refused });
     }
     if (url.includes("/api/alerts/pace")) {
       return paceRefusal ? jsonResponse({ error: paceRefusal }, 400) : jsonResponse({ every: JSON.parse(String(init?.body)).every });
     }
-    if (url.includes("/api/alerts")) return jsonResponse({ key, refused });
+    if (url.includes("/api/alerts")) {
+      await keyRead;
+      return jsonResponse({ key });
+    }
     if (url.includes("/api/overview")) return jsonResponse(overview(queue));
     if (url.includes("/api/project/")) return jsonResponse({ name: url.split("/").at(-1), tasks: [] });
     if (url.includes("/api/task/")) return jsonResponse({ slug: "x", state: "blocked", messages: [] });
@@ -63,6 +68,10 @@ const ENDPOINT = "https://push.example/wake/device-1";
 
 /** What altd answers a change of pace with: refused with this reason, or saved. */
 let paceRefusal: string | null = null;
+/** Endpoints altd does not hold, because their push service ended them or they are new, until it is told one. */
+const ended = new Set<string>();
+/** Resolves when altd answers the key read, so a test can act while a renewal waits on it. */
+let keyRead: Promise<void> = Promise.resolve();
 
 /** The worker's store in Cache Storage, which the page shares: announced keys and this device's preferences. */
 function deviceStore(preferences?: Record<string, unknown>) {
@@ -152,10 +161,16 @@ function alertingBrowser(permission: NotificationPermission = "default", answer:
 }
 
 /** The permission the browser already holds, with alerts already switched on for this device. */
-function alreadyOn(seen: string[]) {
+function alreadyOn(seen: string[], pushes = false) {
   const browser = alertingBrowser("granted");
   localStorage.setItem(ALERTS_KEY, "on");
   localStorage.setItem(ALERTS_SEEN_KEY, JSON.stringify(seen));
+  if (pushes) { // subscribed, and Altitude holds its subscription
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    browser.registration.subscribed = browser.registration.subscription;
+  } else { // a browser without a push service: the open page alerts
+    Object.defineProperty(browser.registration, "pushManager", { value: undefined });
+  }
   return browser;
 }
 
@@ -163,6 +178,8 @@ const KEY = "altitude:choose-retention:q-retention";
 
 afterEach(() => {
   paceRefusal = null;
+  ended.clear();
+  keyRead = Promise.resolve();
   Reflect.deleteProperty(navigator, "serviceWorker");
   Reflect.deleteProperty(globalThis, "caches");
   vi.restoreAllMocks();
@@ -211,10 +228,122 @@ describe("decision alerts", () => {
 
     await user.click(await screen.findByRole("button", { name: "Alert me about new decisions" }));
     await waitFor(() => expect(stale.unsubscribe).toHaveBeenCalled());
-    expect(browser.registration.pushManager.subscribe).toHaveBeenCalled();
+    // Altitude forgets the endpoint it replaces, so no record outlives its subscription.
     expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
-      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+      body: JSON.stringify({ endpoint: "https://push.example/wake/old", remove: true }),
     }));
+    expect(browser.registration.pushManager.subscribe).toHaveBeenCalled();
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+    })));
+  });
+
+  it("renews a subscription made with an old key each time Altitude opens, without the switch", async () => {
+    const browser = alreadyOn([KEY], true);
+    const stale = {
+      endpoint: "https://push.example/wake/old", options: { applicationServerKey: new Uint8Array(65).fill(9) },
+      unsubscribe: vi.fn(async () => true),
+    };
+    browser.registration.subscribed = stale;
+    ended.add(ENDPOINT); // the new subscription is news to altd, and is not replaced again for that
+    mockFetch([question]);
+    renderApp({ route: "/" });
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+    })));
+    expect(stale.unsubscribe).toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: "https://push.example/wake/old", remove: true }),
+    }));
+    expect(browser.registration.pushManager.subscribe).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("button", { name: "Alerts on" })).toBeVisible();
+    expect(screen.getByText(/even when Altitude is closed/)).toBeVisible();
+
+    // Back on screen, the renewed subscription is told again and left as it is.
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url, init]) => url === "/api/alerts/subscription"
+      && init?.body === JSON.stringify({ endpoint: ENDPOINT, every: 0 }))).toHaveLength(2));
+    expect(browser.registration.pushManager.subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("renews a subscription its push service ended, which altd no longer holds", async () => {
+    const browser = alreadyOn([KEY], true);
+    const dead = { ...browser.registration.subscription, endpoint: "https://push.example/wake/dead", unsubscribe: vi.fn(async () => true) };
+    browser.registration.subscribed = dead;
+    ended.add(dead.endpoint);
+    mockFetch([question]);
+    renderApp({ route: "/" });
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+    })));
+    expect(dead.unsubscribe).toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: dead.endpoint, remove: true }),
+    }));
+    expect(screen.getByText(/even when Altitude is closed/)).toBeVisible();
+  });
+
+  it("says alerts arrive only while open when a renewal cannot subscribe again, and tries again next time", async () => {
+    const browser = alreadyOn([KEY], true);
+    browser.registration.subscribed = {
+      endpoint: "https://push.example/wake/old", options: { applicationServerKey: new Uint8Array(65).fill(9) },
+      unsubscribe: vi.fn(async () => true),
+    };
+    browser.registration.pushManager.subscribe.mockRejectedValueOnce(new DOMException("refused", "AbortError"));
+    mockFetch([question]);
+    renderApp({ route: "/" });
+
+    expect(await screen.findByText(/only while Altitude is open/)).toBeVisible();
+    expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBeNull();
+
+    // Back on screen, the push service takes the subscription, and nobody touched the switch.
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(await screen.findByText(/even when Altitude is closed/)).toBeVisible();
+    expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBe("on");
+  });
+
+  it("renews even when this device's alert choices cannot be read", async () => {
+    const browser = alreadyOn([KEY], true);
+    const stale = {
+      endpoint: "https://push.example/wake/old", options: { applicationServerKey: new Uint8Array(65).fill(9) },
+      unsubscribe: vi.fn(async () => true),
+    };
+    browser.registration.subscribed = stale;
+    deviceStore().set("/preferences", "{not json");
+    mockFetch([question]);
+    renderApp({ route: "/" });
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+    })));
+    expect(stale.unsubscribe).toHaveBeenCalled();
+  });
+
+  it("keeps the switch off when it is turned off while a renewal is under way", async () => {
+    const browser = alreadyOn([KEY], true);
+    let answer = () => {};
+    keyRead = new Promise((resolve) => { answer = resolve; });
+    mockFetch([question]);
+    const { user } = renderApp({ route: "/" });
+
+    await user.click(await screen.findByRole("button", { name: "Alerts on" }));
+    act(() => answer());
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, remove: true }),
+    })));
+    // The renewal finished first, and turning alerts off had the last word with altd and the push service.
+    const told = vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/alerts/subscription").map(([, init]) => init?.body);
+    expect(told.at(-1)).toBe(JSON.stringify({ endpoint: ENDPOINT, remove: true }));
+    expect(browser.registration.subscription.unsubscribe).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toBeVisible();
+
+    // On again: subscribing waits its turn too, so the device ends subscribed.
+    await user.click(screen.getByRole("button", { name: "Alert me about new decisions" }));
+    expect(await screen.findByText(/even when Altitude is closed/)).toBeVisible();
+    const after = vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/alerts/subscription").map(([, init]) => init?.body);
+    expect(after.at(-1)).toBe(JSON.stringify({ endpoint: ENDPOINT, every: 0 }));
   });
 
   it("keeps alerting while Altitude is open, and says so, when this device cannot be woken", async () => {
@@ -235,17 +364,27 @@ describe("decision alerts", () => {
     await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
   });
 
-  it("names a push service that refuses alerts, with its reason and what to do", async () => {
-    alreadyOn([KEY]);
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
-    mockFetch([question], PUSH_KEY, false, [{ host: "push.example", reason: "403 BadJwtToken" }]);
+  it.each([
+    ["403 BadJwtToken", "Give Altitude a real contact address in ALTITUDE_PUSH_CONTACT on the computer it runs on."],
+    ["429 TooManyRequests", "Altitude keeps trying until one gets through."],
+  ])("names this device's push service refusing alerts (%s), with what to do", async (reason, todo) => {
+    const browser = alreadyOn([KEY], true);
+    mockFetch([question], PUSH_KEY, false, reason);
     renderApp({ route: "/" });
 
-    expect(await screen.findByText(
-      "The push service at push.example refused Altitude's last alert (403 BadJwtToken), so that device "
-      + "gets no alerts. Turn alerts off and on there to subscribe it again.",
-    )).toBeVisible();
+    expect(await screen.findByText(`The push service at push.example refused Altitude's last alert (${reason}), so this `
+      + `device gets alerts only while Altitude is open. ${todo}`)).toBeVisible();
     expect(screen.queryByText(/even when Altitude is closed/)).toBeNull();
+  });
+
+  it("shows no refusal on a device push does not wake", async () => {
+    alreadyOn([KEY]);
+    mockFetch([question], PUSH_KEY, false, "403 BadJwtToken");
+    renderApp({ route: "/" });
+
+    expect(await screen.findByText(/only while Altitude is open\. On a phone/)).toBeVisible();
+    expect(screen.queryByText(/refused/)).toBeNull();
+    expect(fetch).not.toHaveBeenCalledWith("/api/alerts/subscription", expect.anything());
   });
 
   it("alerts once for a new question, with the task name only, and never again for the same one", async () => {
@@ -340,8 +479,7 @@ describe("decision alerts", () => {
   });
 
   it("leaves alerting to the service worker on a device push wakes", async () => {
-    const browser = alreadyOn([KEY]);
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     const setQueue = mockFetch([question]);
     const { queryClient } = renderApp({ route: "/projects/altitude" });
     await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-retention"));
@@ -395,8 +533,7 @@ describe("decision alerts", () => {
   });
 
   it("stops alerting and gives up its push subscription when the switch goes off", async () => {
-    const browser = alreadyOn([]);
-    browser.registration.subscribed = browser.registration.subscription;
+    const browser = alreadyOn([], true);
     const setQueue = mockFetch([]);
     const { queryClient, user } = renderApp({ route: "/" });
     await user.click(await screen.findByRole("button", { name: "Alerts on" }));
@@ -413,8 +550,7 @@ describe("decision alerts", () => {
   });
 
   it("gives up the push subscription even while altd cannot be told", async () => {
-    const browser = alreadyOn([]);
-    browser.registration.subscribed = browser.registration.subscription;
+    const browser = alreadyOn([], true);
     mockFetch([], PUSH_KEY, true);
     const { user } = renderApp({ route: "/" });
 
@@ -461,13 +597,11 @@ describe("this device's alert preferences", () => {
   });
 
   it("brings Altitude's copy of this device's pace back to the device's own each time it opens", async () => {
-    const browser = alreadyOn([KEY]);
-    browser.registration.subscribed = browser.registration.subscription;
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     deviceStore({ every: 3600 });
     mockFetch([question]);
     renderApp({ route: "/" });
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/pace", expect.objectContaining({
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
       body: JSON.stringify({ endpoint: ENDPOINT, every: 3600 }),
     })));
   });
@@ -557,9 +691,7 @@ describe("Notifications in Settings", () => {
   });
 
   it("tells Altitude how often it may wake this device, and keeps the earlier pace when refused", async () => {
-    const browser = alreadyOn([KEY]);
-    browser.registration.subscribed = browser.registration.subscription;
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     const stored = deviceStore();
     mockFetch([question]);
     const { user } = renderApp({ route: "/settings" });

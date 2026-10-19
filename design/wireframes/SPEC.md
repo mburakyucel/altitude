@@ -915,10 +915,14 @@ Under the Needs you heading, one switch offers **Alert me about new decisions** 
 once permission is granted. It is set per device, because each browser grants its own permission, and
 its line below states the reach honestly: a device the browser's push service can wake alerts with
 Altitude closed, and says that away from your network the alert names nothing; a device that cannot be
-woken alerts only while Altitude is open, which on a phone means while it is on screen. While a push
-service refuses Altitude's alerts, the line names that service and the reason it gave, says its device
-gets no alerts and offers turning alerts off and on there to subscribe it again; the
-line returns to the reach once a push gets through. An unavailable alert control looks disabled and exposes the browser limitation or permission recovery instructions as its accessible description and on press. Every state
+woken alerts only while Altitude is open, which on a phone means while it is on screen. A subscription
+its push service ended, or made with an old key, renews itself the next time Altitude opens on that
+device, without a word. While a push service refuses Altitude's alerts for another reason, the line on
+that device alone reads "The push service at <host> refused Altitude's last alert (<status> <reason>),
+so this device gets alerts only while Altitude is open." followed by what to do: for a refused sender
+token (401, 403) "Give Altitude a real contact address in ALTITUDE_PUSH_CONTACT on the computer it runs
+on.", otherwise "Altitude keeps trying until one gets through."; the line returns to the reach once a
+push gets through. An unavailable alert control looks disabled and exposes the browser limitation or permission recovery instructions as its accessible description and on press. Every state
 leaves Needs you, its cards and all typing untouched.
 
 Each newly published operator question alerts once, titled with the project and carrying the task name

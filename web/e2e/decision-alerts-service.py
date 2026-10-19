@@ -10,7 +10,7 @@ from altitude import config, push, server, state as S, tasks as T
 def main():
     configure()
     private = Path(tempfile.mkdtemp(prefix="push-"))  # this walkthrough's own device record
-    push.KEY_DIR, push.RECORD = private, private / "push.json"
+    push.KEY, push.RECORD = private / "vapid.key", private / "push.json"
     repos = {}
     for project, folder in (("atlas", "atlas"), ("beacon", "second-project/beacon")):  # one origin.git per parent
         repos[project] = make_repo(config.PROJECT_ROOTS[0] / folder)
@@ -45,7 +45,8 @@ def main():
                 body = self._body()
                 push._send = lambda endpoint: (body["status"], body.get("reason", ""))
                 push.notify()
-                return self._json({"refused": push.refused()})
+                record = push._record()
+                return self._json({"subscriptions": record["subscriptions"], "refused": record["refused"]})
             if self.path == "/fixture/answer":  # the operator answers from another device
                 body = self._body()
                 T.message(body["project"], body["slug"], T.OPERATOR_MESSAGE_ROLE, "Thirty days.")

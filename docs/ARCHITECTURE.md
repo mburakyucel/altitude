@@ -2636,7 +2636,10 @@ alerts on keeps its change stream while hidden; every other hidden tab still clo
 A device is also woken while Altitude is closed. `altitude/push.py` keeps the VAPID signing key in
 the access folder, which no Altitude sandbox can read, and the subscribed endpoints in `~/.altitude/push.json`, both written only by the
 daemon; the switch registers its endpoint through `/api/alerts/subscription` and reads the public key
-from `/api/alerts`. Each tick, a decision key that newly may alert is recorded as owed to every device
+from `/api/alerts`, and with alerts on subscribes and tells it again each time Altitude opens or returns to
+the screen there, one step at a time with the switch. The answer says whether altd still held the endpoint
+and whether that device's push service refuses Altitude's alerts; the page replaces a subscription made with
+an old key, or one altd dropped, and tells altd to forget the endpoint it replaces. Each tick, a decision key that newly may alert is recorded as owed to every device
 (`owes`), which is woken with one empty, signed POST, and logs `push wakes <n> device(s) for <m> new
 decision(s)`; an owed device is tried each tick until its push service takes a wake for it, a decision
 whose task is moving again stays owed until the task rests, and a decision settled first is owed no more, so
@@ -2657,8 +2660,9 @@ decision" with the task name under that decision's own key, or "Still waiting fo
 you now" / "L3 or the task's owner is handling it first."; with none, "No decision needs you now" / "It was
 settled before this alert arrived." An answered banner
 therefore closes when a page next reads the queue or the next alert wakes the device. An endpoint the
-service reports gone is dropped, a refusal is logged and kept, and a machine without OpenSSL or outbound
-reach simply has no push, which the switch states.
+service reports gone (404, 410) or made with another key (Apple's 400 `VapidPkHashMismatch`) is dropped,
+any other refusal is logged and kept for that device's line under the switch, and a machine without
+OpenSSL or outbound reach simply has no push, which the switch states.
 
 Each device chooses in Settings › Notifications what its banners reveal (project and task, the project
 only, or only that a decision waits), how often it is alerted (every new decision, at most every 15
@@ -2670,11 +2674,11 @@ nothing, so a storage failure never reveals more than was chosen nor leaves a pu
 Settings says so. With a pace chosen, several new
 decisions read "<n> decisions need you" with one line each, as much as the device reveals, and open Needs
 you; sound off makes every banner silent. Altitude learns only the pace, because it sends the wakes: the
-subscription carries it, `POST /api/alerts/pace` changes it, and `push.json` keeps it per endpoint
+subscription carries it, `POST /api/alerts/pace` changes it from Settings, and `push.json` keeps it per endpoint
 (`every`) with when that device's push service last took a wake (`woken`). An owed device is woken only
 once its pace has passed since then, so one wake covers what arrived meanwhile; Altitude takes a change
-before the device saves it, and the page re-sends the device's pace each time Altitude opens there, so the
-two copies converge. A device without push paces the open page the same way, holding fresh keys
+before the device saves it, and the subscription the page re-sends each time Altitude opens there carries the
+device's pace, so the two copies converge. A device without push paces the open page the same way, holding fresh keys
 unrecorded until `altitude.alerts.last` plus the pace has passed.
 EventSource retries a dropped connection after the stream's 3-second `retry`; a refused stream, such
 as during daemon activation, reconnects after 5 seconds. A hidden tab closes its stream and reopens it,

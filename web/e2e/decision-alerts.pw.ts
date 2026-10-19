@@ -27,13 +27,30 @@ const recordAlerts = (page: Page) =>
 
 const alerts = (page: Page) => page.evaluate(() => (window as unknown as { __alerts: Alert[] }).__alerts);
 
-/** A push service this browser can subscribe to; without one no device could be woken here. */
-const fakePushService = (page: Page) =>
-  page.addInitScript(() => {
-    const subscription = { endpoint: "https://push.example/wake/walkthrough", unsubscribe: () => Promise.resolve(true) };
-    PushManager.prototype.subscribe = () => Promise.resolve(subscription as unknown as PushSubscription);
-    PushManager.prototype.getSubscription = () => Promise.resolve(subscription as unknown as PushSubscription);
-  });
+/**
+ * A push service this browser can subscribe to; without one no device could be woken here. Its subscription
+ * outlives a reload and carries the key it was made with, as a browser's does, and each one after the first has
+ * an endpoint of its own; `old` is one this device made before Altitude's key changed.
+ */
+const fakePushService = (page: Page, old?: string) =>
+  page.addInitScript((old) => {
+    type Stored = { endpoint: string; key: number[] } | null;
+    const STORE = "fixture.push-subscription";
+    if (old && localStorage.getItem(STORE) === null) localStorage.setItem(STORE, JSON.stringify({ endpoint: old, key: [9] }));
+    const made = (stored: Stored) => stored && ({
+      endpoint: stored.endpoint, options: { applicationServerKey: new Uint8Array(stored.key).buffer },
+      unsubscribe: () => { localStorage.setItem(STORE, "null"); return Promise.resolve(true); },
+    }) as unknown as PushSubscription;
+    PushManager.prototype.subscribe = (options?: PushSubscriptionOptionsInit) => {
+      const key = [...new Uint8Array(options!.applicationServerKey as Uint8Array)];
+      const count = Number(localStorage.getItem(`${STORE}.count`) ?? 0) + 1;
+      localStorage.setItem(`${STORE}.count`, String(count));
+      const stored = { endpoint: `https://push.example/wake/walkthrough${count > 1 ? `-${count}` : ""}`, key };
+      localStorage.setItem(STORE, JSON.stringify(stored));
+      return Promise.resolve(made(stored)!);
+    };
+    PushManager.prototype.getSubscription = () => Promise.resolve(made(JSON.parse(localStorage.getItem(STORE) ?? "null") as Stored));
+  }, old);
 
 test("the switch walks its states and alerts once for each new decision", { tag: "@chromium" }, async ({ page, context, request }, info) => {
   test.setTimeout(90_000);
@@ -301,14 +318,20 @@ test("a browser without notifications keeps every decision usable", async ({ pag
   await expect(offer).toBeDisabled();
 });
 
-test("a push service that refuses alerts is named with its reason until a push gets through", { tag: "@chromium" }, async ({ page, context, request }, info) => {
+test("a refusal shows on its own device until a push gets through, and an ended subscription renews itself", { tag: "@chromium" }, async ({ page, context, request }, info) => {
   const walk = walkthrough(page, info);
   const tick = async (status: number, reason = "") =>
     (await request.post("/fixture/tick", { data: { status, reason } })).json();
+  const ask = async (title: string) =>
+    expect((await request.post("/fixture/decision", { data: { project: "beacon", title, question: "Which one?" } })).ok()).toBe(true);
+  const subscriptions = async () => (await (await request.get("/fixture/push")).json()).subscriptions;
   const offer = page.getByRole("button", { name: "Alert me about new decisions" });
   const on = page.getByRole("button", { name: "Alerts on" });
-  const refused = page.getByText(/push\.example refused Altitude's last alert \(403 BadJwtToken\)/);
+  const refused = page.getByText("The push service at push.example refused Altitude's last alert (403 BadJwtToken), so this "
+    + "device gets alerts only while Altitude is open. Give Altitude a real contact address in ALTITUDE_PUSH_CONTACT on "
+    + "the computer it runs on.");
   const reach = page.getByText(/even when Altitude is closed/);
+  const device = "https://push.example/wake/walkthrough";
 
   await recordAlerts(page);
   await fakePushService(page);
@@ -316,26 +339,46 @@ test("a push service that refuses alerts is named with its reason until a push g
   await walk.open("/");
   await offer.click();
   await expect(reach).toBeVisible();
-  const decision = await request.post("/fixture/decision", { data: { project: "beacon", title: "Pick a drill day", question: "Which day?" } });
-  expect(decision.ok()).toBe(true);
-  expect(await tick(403, "BadJwtToken")).toEqual({ refused: [{ host: "push.example", reason: "403 BadJwtToken" }] });
+  await ask("Pick a drill day");
+  expect(await tick(403, "BadJwtToken")).toEqual({ subscriptions: [device], refused: { [device]: "403 BadJwtToken" } });
 
-  // The page reads the refusal on its next return to the screen.
+  // The device learns its refusal the next time Altitude opens there.
   await page.reload();
   await walk.state("09-push-refused", { visible: [on, refused], hidden: [reach, offer] });
 
-  // Turning alerts off and on subscribes this device afresh; the line returns to its reach.
-  await on.click();
-  await expect(offer).toBeVisible();
-  await walk.state("10-refused-then-resubscribed", { action: () => offer.click(), visible: [on, reach], hidden: [refused] });
+  // A refusal cleared by the push service accepting the next alert stops showing.
+  await ask("Pick a log format");
+  expect(await tick(201)).toEqual({ subscriptions: [device], refused: {} });
+  await page.reload();
+  await walk.state("10-refusal-cleared", { visible: [on, reach], hidden: [refused] });
 
-  // A refusal cleared by the push service accepting the next alert stops showing too.
-  await request.post("/fixture/decision", { data: { project: "beacon", title: "Pick a restore target", question: "Which host?" } });
-  await tick(403, "BadJwtToken");
+  // A subscription the push service will never take again ends on Altitude's side, and the device makes a new one
+  // the next time Altitude opens there, without the switch.
+  await ask("Pick a restore target");
+  expect(await tick(410)).toEqual({ subscriptions: [], refused: {} });
   await page.reload();
-  await expect(refused).toBeVisible();
-  await request.post("/fixture/decision", { data: { project: "beacon", title: "Pick a log format", question: "Which format?" } });
-  expect(await tick(201)).toEqual({ refused: [] });
-  await page.reload();
-  await walk.state("11-refusal-cleared", { visible: [on, reach], hidden: [refused] });
+  await expect.poll(subscriptions).toEqual([`${device}-2`]);
+  await walk.state("11-ended-subscription-renewed", { visible: [on, reach], hidden: [refused, offer] });
+});
+
+test("a device subscribed with an old key renews itself when Altitude opens there", { tag: "@chromium" }, async ({ page, context, request }, info) => {
+  const walk = walkthrough(page, info);
+  const old = "https://push.example/wake/old-key";
+  await fakePushService(page, old);
+  await page.addInitScript(() => { // alerts were turned on here before Altitude's key changed
+    if (localStorage.getItem("altitude.alerts") !== null) return;
+    localStorage.setItem("altitude.alerts", "on");
+    localStorage.setItem("altitude.alerts.push", "on");
+  });
+  await context.grantPermissions(["notifications"]);
+  expect((await request.post("/api/alerts/subscription", { data: { endpoint: old } })).ok()).toBe(true);
+
+  await walk.open("/");
+  // Altitude forgets the endpoint the device replaced, and holds the new one.
+  await expect.poll(async () => (await (await request.get("/fixture/push")).json()).subscriptions)
+    .toEqual(["https://push.example/wake/walkthrough"]);
+  await walk.state("24-old-key-renewed", {
+    visible: [page.getByRole("button", { name: "Alerts on" }), page.getByText(/even when Altitude is closed/)],
+    hidden: [page.getByText(/refused/)],
+  });
 });
