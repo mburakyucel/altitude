@@ -540,7 +540,7 @@ lane runs at a time, and the guest stops when less than 10 GiB of disk would sta
 through `alt task run` under an operator grant, which L3 records from the
 [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac) on request. The launcher,
 `--logout` and `--image-workflow` lanes pass, the last also with `--native-sandbox-binary` and diagnostic CLI
-0.162.1 for Linux arm64 (Ubuntu 24.04 arm64, kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1, macOS
+0.162.1 for Linux arm64 (Ubuntu 24.04 arm64, kernel 6.8.0-142 and 6.8.0-147, Podman 4.9.3, crun 1.14.1, macOS
 26.6.2 on Apple M3). This is Linux guest behavior: the Mac side owns only the guest process,
 and a Mac-side controller and Mac logout/restart and sleep/wake stay open in
 [#643](https://github.com/mburakyucel/altitude/issues/643).
@@ -568,9 +568,10 @@ The reviewed Ubuntu tuple additionally permits these exact readable predicates f
 `/proc/acpi/wakeup`, `/proc/scsi/device_info`, `/proc/scsi/scsi`, `/proc/scsi/sg`, and
 `/proc/scsi/sg/{allow_dio,debug,def_reserved_size,device_hdr,device_strs,devices,version}`.
 The expanded inventory measured these descendants without reading their contents; none adds a
-writable predicate. The same Ubuntu tuple on arm64, measured in the Mac's guest, adds no predicate
+writable predicate. The same Ubuntu release on arm64, measured in the Mac's guest on kernels 6.8.0-142 and
+6.8.0-147, adds no predicate
 for either UID; it lacks `/proc/acpi`, `/proc/asound` and root's `kernel/cad_pid` and `kernel/pid_max`
-writes. The acceptance policy accepts these two reviewed tuples and rejects any other
+writes. The acceptance policy accepts these reviewed tuples and rejects any other
 kernel/runtime/network/architecture tuple rather than inheriting this list; other tuples require
 full remeasurement and review.
 
