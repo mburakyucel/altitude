@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -418,6 +419,7 @@ class TestWorkerTokenInput(AltitudeCase):
         self.patch(platform, "_stop_members", return_value=True)
         self.patch(platform, "_running", return_value=True)
         self.patch(platform, "CAFFEINATE", "/usr/bin/true")
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.getsignal(signal.SIGTERM))  # the supervisor's own
         for engine in ("claude", "codex"):
             with self.subTest(engine=engine):
                 command, sent = self.launched(engine, "darwin")
