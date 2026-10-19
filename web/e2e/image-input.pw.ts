@@ -238,7 +238,7 @@ for (const scope of ["project", "task"] as const) {
     await v.field.press("End");
     await page.keyboard.type("unwanted recording edit");
     // Live words may already follow the draft; typing never reaches it.
-    await expect(v.field).toHaveValue(new RegExp(`^${caption.replace(/\./g, "\\.")} Keep this edit\\.(?: check.*)?$`));
+    await expect(v.field).toHaveValue(new RegExp(`^${caption.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} Keep this edit\\.(?: check.*)?$`));
     await walk.state("02-voice-cancel-keeps-image", { action: () => page.getByRole("button", { name: "Cancel voice input", exact: true }).click(), visible: [v.strip, v.add, start], hidden: [stop] });
     await expect(v.field).toBeEditable();
     await expect(v.field).toHaveValue(`${caption} Keep this edit.`);
