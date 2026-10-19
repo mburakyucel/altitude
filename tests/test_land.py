@@ -593,15 +593,22 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.pr_bodies, [body.read_text()])
         self.assertFalse(any(args[:2] == ["gh", "issue"] for args in commands))
 
-    def test_missing_or_foreign_closing_links_refuse_merge(self):
+    def test_missing_or_foreign_closing_links_refuse_landing(self):
         self.staged_change()
         links = []
         commands = self.closing_link_fixture(links)
         for response in ([], [{"url": "https://github.com/other/widget/issues/42"}],
                          [{"url": "https://github.com/acme/widget/issues/43"}]):
             links[:] = response
-            with self.subTest(response=response), self.assertRaisesRegex(land.LandError, "lacks GitHub closing links"):
-                land.land("fix: missing link", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
+            for merge in (True, False):
+                with (self.subTest(response=response, merge=merge),
+                      self.assertRaisesRegex(land.LandError, "lacks GitHub closing links")):
+                    land.land("fix: missing link", cwd=self.repo, wait=0, closes_issues=[42], merge=merge)
+        # A merge that stops on red checks still reports the missing link.
+        links[:] = []
+        (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}]')
+        with self.assertRaisesRegex(land.LandError, "lacks GitHub closing links"):
+            land.land("fix: missing link", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
         self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
 
     def test_removed_closing_link_before_merge_refuses_merge(self):
