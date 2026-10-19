@@ -26,6 +26,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   appears in the chat, Waiting, the moment you press, then settles in place when Altitude saves it. If
   Altitude refuses, the card comes back with your picks and **Not sent** with Retry; if the connection
   drops, the answer stays Waiting until Altitude shows whether it was saved, and Retry never sends it twice.
+- A sent image stays on screen from Send to saved: the message no longer blinks to "Loading image…"
+  when Altitude saves it, and its picture is named beneath while it is on its way, as it is once saved.
 - A device whose alert subscription stopped working, such as one made before Altitude's alert key
   changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
   old subscription. The warning about it shows only on the device it concerns, and only

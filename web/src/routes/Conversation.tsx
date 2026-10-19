@@ -223,6 +223,9 @@ export default function Conversation({
   const read = readOf(queryClient, view);
   const gone = useCallback((entry: Outgoing) => retired(entry, view, read), [view, read]);
   const pending = useMemo(() => outbox.filter((entry) => !gone(entry)), [outbox, gone]);
+  // The pictures a message this page sent still holds, by its send or queue id, so its saved thumbnails start from them.
+  const sentPreviews = (ids: (string | null | undefined)[]) =>
+    outbox.find((entry) => ids.includes(entry.id) || Boolean(entry.queueId && ids.includes(entry.queueId)))?.images;
   useEffect(() => {
     const leaving = outbox.filter(gone);
     if (!leaving.length) return;
@@ -431,7 +434,7 @@ export default function Conversation({
       const keptRow = kept.get(turn.id);
       rows.push(
         <div key={turn.id} className="turn" data-turn={turn.id} data-joined={silent || undefined}>
-          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state} images={<MessageImages project={name} images={turn.user.images} />}
+          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state} images={<MessageImages project={name} images={turn.user.images} previews={sentPreviews([turn.user.request_id, ...turn.user.queue_ids ?? []])} />}
             enter={enter(`user:${turn.id}`, `turn:${turn.id}`, turn.user.request_id && `msg:${turn.user.request_id}`, ...(turn.user.queue_ids ?? []).map((id) => `msg:${id}`))} /> : null}
           {turn.assistant ? silent ? null : (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant" enter={enter(`reply:${turn.id}`)}>
@@ -572,7 +575,7 @@ export default function Conversation({
                       trigger: "project-message", prompt: row.text, reply: null, error: null,
                       inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} enter={enter(`sys:${row.id}`)} />
                   ) : !row.trigger || row.trigger === "chat" ? (
-                    <Bubble text={row.text} at={row.at} state={row.sending ? "sending" : "queued"} images={<MessageImages project={name} images={row.images} />}
+                    <Bubble text={row.text} at={row.at} state={row.sending ? "sending" : "queued"} images={<MessageImages project={name} images={row.images} previews={sentPreviews([row.id])} />}
                       enter={enter(`queued:${row.id}`, `msg:${row.id}`, row.turn_id && `turn:${row.turn_id}`)}
                       side={row.sending || row.turn_id ? undefined : <RemoveMessage message={row.text} removing={dequeue.isPending && dequeue.variables === row.id}
                         disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => remove(row.id)} />}>

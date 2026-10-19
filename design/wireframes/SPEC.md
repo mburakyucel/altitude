@@ -728,12 +728,12 @@ local until Send; leaving the conversation releases it and late results cannot f
 | --- | --- |
 | Empty / cancel picker | Add images shares the existing controls; no strip or status row. Cancel changes nothing. |
 | Selected / remove | Preview strip appears; last Remove removes it and keeps text. Invalid format, unreadable preview or size/count rejection names recovery inline and preserves other selections. |
-| Sending | Pending bubble holds text and previews. The selection clears at Send and the composer stays free. |
+| Sending | Pending bubble holds text and previews, each named beneath as its saved thumbnail will be. The selection clears at Send and the composer stays free. |
 | Confirmed refusal | No partial message is accepted. The message shows Not sent with its previews; Retry sends the saved images again and Edit returns the caption to the field and the images to the picker. |
 | Uncertain response | The message shows Unconfirmed with its previews and Copy to draft (the caption); a read that shows it settles it. Navigation remains available. |
 | Queued / delivery failure | Images retain their caption. Project rows and unclaimed task messages offer Remove; removed task messages show a muted placeholder without images. Failed project-turn Retry uses saved images; task recovery keeps existing authority. |
-| Sent / viewer | Thumbnails belong to the saved message. Open shows the full image in a modal with Fit/Zoom, Close and Escape; closing restores thumbnail focus, or focuses the same image's stored thumbnail once history admission has replaced a queued opener. Archived tasks retain viewing without a composer. |
-| Loading / missing / denied | Image-sized placeholder names loading or the error; Retry repeats only the private read, never the send. Text remains readable. |
+| Sent / viewer | Thumbnails belong to the saved message. A message this page sent keeps each picture in place until its saved thumbnail loads, so nothing blinks; its Open works from the first frame. Open shows the full image in a modal with Fit/Zoom, Close and Escape; closing restores thumbnail focus, or focuses the same image's stored thumbnail once history admission has replaced a queued opener. Archived tasks retain viewing without a composer. |
+| Loading / missing / denied | Image-sized placeholder names loading (an image the page did not just send) or the error; Retry repeats only the private read, never the send. Text remains readable. |
 | Capability unavailable | Add images explains why input is unavailable. Known converter refusal restores selections; removing them allows text. |
 | Voice / scope changes | Listening/transcribing retain previews and lock text editing. Cancel preserves preexisting text; empty/failed transcription sends nothing. Explicit voice Send captures its images and completes for the original conversation after navigation. Other unsent image selection is released on leaving. |
 
