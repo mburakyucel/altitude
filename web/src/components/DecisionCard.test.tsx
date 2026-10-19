@@ -201,15 +201,16 @@ describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () =
     const side = (name: string) => ({ url: `/api/shown/atlas/gate/pr/7/files/${name}.png`, width: 4, height: 3 });
     const pr_images = { available: true, not_shown: ["docs/logo.svg"], pictures: [
       { path: "docs/hero.png", name: "hero.png", change: "changed", before: side("a"), after: side("b") },
-      { path: "docs/gone.png", name: "gone.png", change: "removed", before: side("c"), after: null },
       { path: "docs/new.png", name: "new.png", change: "added", before: null, after: side("d") },
-      { path: "docs/more.png", name: "more.png", change: "added", before: null, after: side("e") }] };
+      { path: "docs/gone.png", name: "gone.png", change: "removed", before: side("c"), after: null },
+      { path: "docs/more.png", name: "more.png", change: "removed", before: side("e"), after: null }] };
     const review = DecisionSchema.parse({ ...base, kind: "review", pr: 7, question: "Review PR #7 before merge", pr_images, review: { subject: "changes", ...done, findings: 0 } });
     const { container, unmount } = mount(<ReviewDecision decision={review} />);
     expect(container.querySelector(".decision-question ~ .pr-pictures ~ .question-review")).not.toBeNull();
     expect(screen.getByRole("img", { name: "hero.png, after" })).toHaveAttribute("src", side("b").url);
     expect(screen.getByRole("img", { name: "gone.png, removed" })).toHaveAttribute("src", side("c").url);
     expect(screen.getByText("New")).toBeVisible();
+    expect(screen.getByText("Removed")).toBeVisible();
     expect(screen.queryByText("docs/more.png")).toBeNull();
     expect(screen.getByText("Also changed: docs/logo.svg")).toBeVisible();
     screen.getByRole("button", { name: "Before" }).click();

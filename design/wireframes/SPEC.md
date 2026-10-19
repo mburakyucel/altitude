@@ -1097,15 +1097,18 @@ before merge** card or the owner's open question about the held PR (§3.8.3), in
 shows the PNG, JPEG, GIF and WebP pictures the PR's commit adds, replaces or removes, without the owner attaching
 anything. Altitude reads them from the PR's recorded head and the commit it branched from, never from the worktree,
 and keeps fixed copies as it keeps shown files (§3.9.1). A PR that changes no picture shows the card it always had.
-Files the owner shows with the merge question sit above the pictures as their own thumbnails or page card.
+Files the owner shows with the merge question (`--show` on the member marked `"changes"`) sit above the pictures as
+their own thumbnails or page card; a revision keeps them unless the owner shows others, and like any shown files they
+bind the answer to what the operator saw, so the question's answers wait while those copies are missing (§3.9.1).
 
 Under the question, its detail and any shown files, above the review box: **Pictures in this PR** (13px, 600,
-secondary), then one bordered tile per picture in diff path order, stacked, full card width up to 480 px (the review
-box's width). A tile is a frame 240 px tall on desktop and 200 px on phone, the picture fitted whole and centred on the
-page colour (never cropped or enlarged), with the expand badge; the frame is a button ("Open image overview.png")
-opening the gallery, which holds each picture at the side its tile shows. Under the frame, at least 44 px tall, the
-picture's path in 12.5px muted monospace on one line, cut at its start so the file name stays, the full path as
-its tooltip; at the right:
+secondary), then one bordered tile per picture, stacked, full card width up to 480 px (the review box's width):
+replaced pictures first, then new ones, then removed ones, each group in path order. A tile is a frame 240 px tall on
+desktop and 160 px on phone, the picture fitted whole and centred on the page colour (never cropped or enlarged), with
+the expand badge; the frame is a button ("Open image overview.png") opening the gallery, which holds each picture at
+the side its tile shows and names it with that side in its header (**overview.png · Before**, **banner.png ·
+Removed**). Under the frame, at least 44 px tall, the picture's path in 12.5px muted monospace on one line, cut at
+its start so the file name stays, the full path as its tooltip; at the right:
 
 | Picture | Right of the path | Frame |
 | --- | --- | --- |
@@ -1115,18 +1118,19 @@ its tooltip; at the right:
 
 At most three tiles show; a bordered **Show N more pictures** button below them shows the rest in place for the
 page visit. A changed picture of another type (such as SVG), a link, or one past the shown-file limits is named on a
-muted 13px line under the tiles, **Also changed:** with its paths, wrapping; **View PR #N** opens the rest.
+muted 13px line under the tiles, **Also changed:** with its paths, wrapping; **View PR #N** opens the rest. A
+Git LFS pointer is not a picture and is named there too.
 
 | State | What shows |
 | --- | --- |
-| Loading | The frame is a flat grey block; path and switch already in place. |
+| Loading | The frame is a flat grey block without its expand badge, as a shown thumbnail loads (§3.9.1); path and switch already in place. |
 | Failed | The frame holds a broken-image icon, **Image unavailable** and **Retry**; the switch still works. |
 | Copies missing or resized | One closed card in the pictures' place: a broken-picture icon, **Pictures in this PR**, **Preview unavailable**; not a control. The merge controls are unchanged. |
 
 The pictures inform the decision and bind nothing: **Approve merge** sends what it always sent and is checked against
-the current PR and hold as before. A new head brings its own pictures. `web/e2e/pr-pictures.pw.ts` walks these
-states, the owner's merge question with its own shown file, and a text-only PR in Needs you and the conversation at
-both widths.
+the current PR and hold as before. The pictures follow the PR's recorded head: a new head brings its own on the
+card's next refresh. `web/e2e/pr-pictures.pw.ts` walks these states, the owner's merge question with its own shown
+file, and a text-only PR in Needs you and the conversation at both widths.
 
 ### 3.9 Open the owning L2 question
 

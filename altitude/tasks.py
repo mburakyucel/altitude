@@ -628,7 +628,8 @@ def pr_images(project: str, slug: str, task: dict) -> dict | None:
 
 def pr_images_view(project: str, task: dict) -> dict | None:
     """The current PR's pictures as a merge card shows them: one entry per path with its before and after copies,
-    and the paths it cannot show; None for a PR that changes no pictures."""
+    replaced pictures first, then new and removed ones, and the paths it cannot show; None for a PR that changes no
+    pictures."""
     record = pr_images(project, task["slug"], task)
     if not record or not (record["images"] or record.get("not_shown")):
         return None
@@ -638,7 +639,9 @@ def pr_images_view(project: str, task: dict) -> dict | None:
         entry = pictures.setdefault(item["path"], {"path": item["path"], "name": item["path"].rsplit("/", 1)[-1],
                                                    "change": item["change"], "before": None, "after": None})
         entry[item["side"]] = {"url": f"{api}/files/{item['name']}", "width": item["width"], "height": item["height"]}
-    return {"available": _shown_available(project, task["slug"], record), "pictures": list(pictures.values()),
+    order = ("changed", "added", "removed")
+    return {"available": _shown_available(project, task["slug"], record),
+            "pictures": sorted(pictures.values(), key=lambda picture: order.index(picture["change"])),
             "not_shown": record.get("not_shown", [])}
 
 

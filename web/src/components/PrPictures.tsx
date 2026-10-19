@@ -27,8 +27,9 @@ export function PrPictures({ pictures }: { pictures: PrImages }) {
   const side = (picture: Picture): Side => picture.before && picture.after ? sides[picture.path] ?? "after" : picture.after ? "after" : "before";
   const items = pictures.pictures;
   const open = (index: number) => gallery(items.map((picture) => {
-    const image = picture[side(picture)]!;
-    return { key: image.url, name: picture.name, url: image.url };
+    const shown = side(picture);
+    const image = picture[shown]!;
+    return { key: image.url, name: `${picture.name} · ${picture.change === "changed" ? shown === "before" ? "Before" : "After" : picture.after ? "New" : "Removed"}`, url: image.url };
   }), index);
   const more = items.length - FIRST;
   return <section className="pr-pictures" aria-label="Pictures in this PR">

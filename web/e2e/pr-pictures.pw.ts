@@ -18,11 +18,11 @@ test("the generated merge card shows the PR's pictures with before and after, an
   await settled(pictures(readme));
   await pictures(readme).scrollIntoViewIfNeeded();
   await walk.state("01-merge-card-pictures", {
-    visible: [pictures(readme).getByText("Pictures in this PR", { exact: true }), figure(readme, "docs/banner.png").getByText("Removed", { exact: true }),
-      overview.getByRole("button", { name: "After", pressed: true }), figure(readme, "docs/phone.png"),
+    visible: [pictures(readme).getByText("Pictures in this PR", { exact: true }), overview.getByRole("button", { name: "After", pressed: true }),
+      figure(readme, "docs/phone.png"), figure(readme, "docs/review.webp").getByText("New", { exact: true }),
       readme.getByRole("button", { name: "Show 1 more picture", exact: true }),
       readme.getByText("Also changed: docs/logo.svg", { exact: true }), readme.getByRole("button", { name: "Approve merge" })],
-    hidden: [figure(readme, "docs/review.webp")],
+    hidden: [figure(readme, "docs/banner.png")],
   });
   // The pictures sit between the card's text and its review box, and never widen the card.
   const box = (await pictures(readme).boundingBox())!;
@@ -42,16 +42,16 @@ test("the generated merge card shows the PR's pictures with before and after, an
 
   await readme.getByRole("button", { name: "Show 1 more picture", exact: true }).click();
   await settled(pictures(readme));
-  await figure(readme, "docs/review.webp").scrollIntoViewIfNeeded();
+  await figure(readme, "docs/banner.png").scrollIntoViewIfNeeded();
   await walk.state("03-all-pictures", {
-    visible: [figure(readme, "docs/review.webp").getByText("New", { exact: true })],
+    visible: [figure(readme, "docs/banner.png").getByText("Removed", { exact: true })],
     hidden: [readme.getByRole("button", { name: /more picture/ })],
   });
 
   // A picture opens the gallery at the side it shows; Back closes it to the card.
   await overview.getByRole("button", { name: "Open image overview.png" }).click();
   const viewer = page.getByRole("dialog");
-  await walk.state("04-gallery", { visible: [viewer, viewer.getByText("2 / 4")], hidden: [] });
+  await walk.state("04-gallery", { visible: [viewer, viewer.getByText("overview.png · Before"), viewer.getByText("1 / 4")], hidden: [] });
   await page.goBack();
   await expect(viewer).toBeHidden();
   await expect(overview.getByRole("button", { name: "Before", pressed: true })).toBeVisible();

@@ -87,10 +87,10 @@ a.shown-card[aria-current="page"] { border-color: var(--accent); box-shadow: 0 0
   border-radius: var(--radius-card); background: var(--card); }
 .pr-picture-frame { position: relative; display: flex; height: 240px; align-items: center; justify-content: center; padding: 8px;
   border: 0; border-bottom: 1px solid var(--hairline); background: var(--page); cursor: zoom-in; }
-.shell[data-phone] .pr-picture-frame { height: 200px; }
+.shell[data-phone] .pr-picture-frame { height: 160px; }
 .pr-picture-frame img { display: block; width: auto; max-width: 100%; height: auto; max-height: 100%; object-fit: contain; }
 .pr-picture-frame:has(img[data-loading]) { background: var(--bubble); }
-.pr-picture-frame img[data-loading] { visibility: hidden; }
+.pr-picture-frame img[data-loading], .pr-picture-frame:has(img[data-loading]) .shown-expand { visibility: hidden; }
 .pr-picture-frame.shown-image-failed { min-height: 0; cursor: default; }
 .pr-picture[data-change="removed"] .pr-picture-frame img { opacity: 0.55; filter: grayscale(1); }
 .pr-picture figcaption { display: flex; min-height: 44px; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; }

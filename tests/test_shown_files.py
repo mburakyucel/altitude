@@ -525,6 +525,8 @@ class TestShownFiles(AltitudeCase):
         (self.worktree / "site" / "hero.png").write_bytes(png(200, 2, 2))  # an uncommitted edit is not the PR
         card = T.review_row(self.project, S.load_task(self.project, self.slug))
         pictures = {p["path"]: p for p in card["pr_images"]["pictures"]}
+        self.assertEqual(list(pictures), ["site/hero.png", "site/renamed.gif", "site/new.webp", "site/gone.png"],
+                         "replaced pictures lead, then new, then removed ones")
         self.assertTrue(card["pr_images"]["available"])
         self.assertEqual(sorted(pictures), ["site/gone.png", "site/hero.png", "site/new.webp", "site/renamed.gif"])
         self.assertEqual(sorted(card["pr_images"]["not_shown"]), ["site/broken.png", "site/diagram.svg"])

@@ -3472,7 +3472,7 @@ limits; another type, a link, a missing object or one past the limits is listed 
 are content-named in the same `shown/` folder beside a hashed record, `pr-<number>-<head>.json`, which
 also records an unreadable head as empty so no view reads it again. `question_view` (for an open
 question about the held PR) and `review_row` project `pr_images`: one entry per path with the change
-(added, changed, removed), the before and after copies' URLs and sizes, the `not_shown` paths and
+(changed first, then added, then removed), the before and after copies' URLs and sizes, the `not_shown` paths and
 whether every copy is present; a PR without pictures projects none. The shown-files API serves them at
 `/api/shown/<project>/<slug>/pr/<number>/files/<name>` while the record matches the task's current PR,
 one file at a time with the same headers. The pictures bind nothing: the approval's check of PR, hold
