@@ -1383,6 +1383,8 @@ class TestInstallationMacosVm(AltitudeCase):
         for argv, phases in (([], [name for name in vm.PHASES if name not in ("published", "online")]),
                              (["--phase", "online"], ["online"])):
             with mock.patch.object(vm.sys, "argv", ["installation_macos_vm.py", "run", str(self.tmp / "r"), *argv]), \
+                    mock.patch.object(vm.sys, "platform", "darwin"), mock.patch.object(vm.platform, "machine", return_value="arm64"), \
+                    mock.patch.object(vm, "watch_disk"), mock.patch.object(vm.signal, "signal"), \
                     mock.patch.object(vm, "lock"), mock.patch.object(vm, "lane", return_value=0) as lane:
                 self.assertEqual(vm.main(), 0)
             self.assertEqual(lane.call_args.args[2], phases)
