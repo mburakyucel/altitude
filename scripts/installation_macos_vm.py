@@ -26,10 +26,10 @@ this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or 
 interrupts two mutation runs, whose cleanup lists processes with `ps`, from packages downloaded on this Mac.
 `source` installs from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
 repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
-`incident`, `update`, `terminal`, `session` and `agents` install the release into the account's own home with a scripted
-fictional engine and the tests' fake GitHub CLI, then drive the guest's own service through the revision's
-tests/macos_guest_runtime.py rows; `update`, `terminal` and `agents` first trust Altitude's authority on the desktop for
-Safari, whose page those rows read. `online`, run only when named, is the one phase whose guest keeps its network: the guest downloads
+`incident`, `update`, `terminal`, `session`, `agents`, `repairs` and `app-repairs` install the release into the
+account's own home with a scripted fictional engine and the tests' fake GitHub CLI, then drive the guest's own service
+through the revision's tests/macos_guest_runtime.py rows; `update`, `terminal`, `agents`, `repairs` and `app-repairs`
+first trust Altitude's authority on the desktop for Safari, whose page those rows read. `online`, run only when named, is the one phase whose guest keeps its network: the guest downloads
 Homebrew's python@3.13 and Google Chrome and Firefox from their publishers, installs the latest published release
 through the public command from GitHub itself, whose service must run on Python 3.13, and Chrome and Firefox must
 refuse Altitude's address before `alt trust` on the desktop and open it after.
@@ -1761,9 +1761,11 @@ RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown",
                 "grants": ("grants", "contention", "sign-in"), "incident": ("incident", "schedule"),
                 "update": ("quiet-point",), "terminal": ("operator-step", "terminal-hold"),
                 "session": ("scratch", "coordinator-channel", "logout-login"),
-                "agents": ("agent-refusal", "codex-sign-in")}
+                "agents": ("agent-refusal", "codex-sign-in"),
+                "repairs": ("repair-terminal", "repair-page-terminal", "repair-installer"),
+                "app-repairs": ("repair-app", "repair-deadline", "repair-logout")}
 # The phases whose rows read Altitude's page in Safari.
-BROWSED = ("update", "terminal", "agents")
+BROWSED = ("update", "terminal", "agents", "repairs", "app-repairs")
 GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
 # Rows may end the account's session, so they run in the background while the host polls.
 ROWS_BUDGET = 420
@@ -1879,6 +1881,20 @@ def phase_agents(guest: Guest, repository: str, results: Path, record: dict, inp
     runtime(guest, repository, results, record, inputs, "agents")
 
 
+def phase_repairs(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """Repairs from the operator's own shell: `alt repair` starts one with a brief from Altitude's records, its outcome
+    shows in Settings' About, the page terminal's launchd job is refused, and `install.py --repair` starts one of the
+    installed release (#1052)."""
+    runtime(guest, repository, results, record, inputs, "repairs")
+
+
+def phase_app_repairs(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """Repairs from the page in launchd jobs of their own: a message resumes the session, the job outlives a restart and
+    a reinstall, Stop and the deadline end every process in it, Left running names what the agent left outside it, and
+    logout ends it with the lock released (#1065)."""
+    runtime(guest, repository, results, record, inputs, "app-repairs")
+
+
 def phase_session(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """A worker's scratch folder through completion (#958), the coordinator channel refusing a worker and another
     project's coordinator (#943), then logout and login without a restart (#731, #226).
@@ -1892,7 +1908,8 @@ PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle
           "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home,
           "mutation": phase_mutation, "source": phase_source,
           "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "update": phase_update,
-          "terminal": phase_terminal, "session": phase_session, "agents": phase_agents,
+          "terminal": phase_terminal, "session": phase_session, "agents": phase_agents, "repairs": phase_repairs,
+          "app-repairs": phase_app_repairs,
           "published": phase_published, "online": phase_online}
 # The phases a run includes only when named: `published` with --published, `online` with --phase online.
 NAMED = ("published", "online")

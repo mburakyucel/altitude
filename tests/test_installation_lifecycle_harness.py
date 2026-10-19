@@ -1331,7 +1331,8 @@ class TestInstallationMacosVm(AltitudeCase):
             with mock.patch.object(vm, "prerequisites", return_value={}), mock.patch.object(vm.time, "sleep"), \
                     mock.patch.object(vm, "browser") as browser:
                 phase(guest, "fictional-owner/fictional-altitude", self.tmp, record, self.tmp, "c" * 40)
-            self.assertEqual(browser.called, phase in (vm.phase_update, vm.phase_terminal, vm.phase_agents))  # Safari only where read
+            self.assertEqual(browser.called, phase in (vm.phase_update, vm.phase_terminal, vm.phase_agents,  # Safari only
+                                                       vm.phase_repairs, vm.phase_app_repairs))  # where read
             return guest, record["cases"]
 
         every = [{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["workers"]]
@@ -1352,9 +1353,13 @@ class TestInstallationMacosVm(AltitudeCase):
         guest, cases = judged([{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["terminal"]], vm.phase_terminal)
         self.assertIn("rows operator-step terminal-hold", "".join(guest.commands))
         self.assertTrue(all(case["passed"] for case in cases.values()))
-        guest, cases = judged([{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["agents"]], vm.phase_agents)
-        self.assertIn("rows agent-refusal codex-sign-in", "".join(guest.commands))
-        self.assertTrue(all(case["passed"] for case in cases.values()))
+        for phase, rows in ((vm.phase_agents, "agent-refusal codex-sign-in"),
+                            (vm.phase_repairs, "repair-terminal repair-page-terminal repair-installer"),
+                            (vm.phase_app_repairs, "repair-app repair-deadline repair-logout")):
+            name = phase.__name__.removeprefix("phase_").replace("_", "-")
+            guest, cases = judged([{"row": row, "passed": True} for row in vm.RUNTIME_ROWS[name]], phase)
+            self.assertIn(f"rows {rows}", "".join(guest.commands))
+            self.assertTrue(all(case["passed"] for case in cases.values()))
 
     def test_guest_engine_runs_its_prompts_commands_and_ends_the_turn_as_told(self):
         engine, log = REPO / "tests/macos_guest_engine.py", self.tmp / "log.jsonl"
@@ -1393,6 +1398,20 @@ class TestInstallationMacosVm(AltitudeCase):
                        timeout=30)
         self.assertEqual(json.loads((self.tmp / "codex/auth.json").read_text())["tokens"]["access_token"],
                          "fictional-refreshed")
+        # A repair follows the problem its brief quotes, from the app (`exec`) and in the operator's terminal.
+        brief = self.tmp / "brief.md"
+        brief.write_text("# Repair brief\n\n## What is wrong\n\n> A fictional problem.\n> FIXTURE-RUN: echo repaired\n")
+        repairing = {**environment, "ALTITUDE_REPAIR": "a" * 32}
+        prompt = f"You are a repair agent for this Altitude installation. Read {brief} first and follow its rules."
+        app = subprocess.run([sys.executable, str(engine), "exec", "--json", "-"], text=True, capture_output=True,
+                             env=repairing, input=prompt, timeout=30)
+        self.assertEqual(json.loads(app.stdout.splitlines()[-1])["type"], "turn.completed")
+        subprocess.run([sys.executable, str(engine), prompt], text=True, capture_output=True, env=repairing, timeout=30)
+        repaired = [entry for entry in logged() if entry.get("repair") == "a" * 32]
+        self.assertEqual([entry["stdout"] for entry in repaired if "command" in entry], ["repaired\n", "repaired\n"])
+        self.assertEqual([entry["headings"] for entry in repaired if "headings" in entry][0],
+                         ["# Repair brief", "## What is wrong"])
+        self.assertEqual([entry["argv"] for entry in repaired if entry.get("terminal")], [[prompt]])
         failed = worker("FIXTURE-END: failed\n")[-1]["params"]["turn"]
         self.assertEqual((failed["status"], failed["error"]["message"]), ("failed", "Fictional turn failed."))
         held = worker("FIXTURE-END: exit 3\n")

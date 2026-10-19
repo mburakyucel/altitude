@@ -18,6 +18,10 @@ lines of its own, so the host's harness acts as L2 or L3 by writing them into a 
 FIXTURE_LOG (JSON lines) receives each turn's role, task and session, then each command's result. A worker records
 the sign-in Altitude hands it; asked outside a worker to refresh the sign-in (`account/read`), the CLI replaces the
 access token in its folder's `auth.json` with `fictional-refreshed`, as the provider's refresh does.
+
+In a repair (`ALTITUDE_REPAIR`), a session's first turn also follows the lines of the brief the prompt names, where
+the operator's problem is quoted, and records its arguments: `exec` is a repair from the app and the CLI with the
+prompt as its only argument a repair in the operator's terminal, which ends after that one turn.
 """
 import json
 import os
@@ -36,11 +40,22 @@ def out(message: dict) -> None:
 
 def record(entry: dict) -> None:
     with LOG.open("a") as log:
-        log.write(json.dumps({"at": time.time(), "task": os.environ.get("ALTITUDE_TASK"), **entry}) + "\n")
+        log.write(json.dumps({"at": time.time(), "task": os.environ.get("ALTITUDE_TASK"),
+                              **({"repair": os.environ["ALTITUDE_REPAIR"]} if os.environ.get("ALTITUDE_REPAIR") else {}),
+                              **entry}) + "\n")
 
 
 def directives(prompt: str, name: str) -> list[str]:
     return [line.split(":", 1)[1].strip() for line in prompt.splitlines() if line.startswith(f"FIXTURE-{name}:")]
+
+
+def briefed(prompt: str) -> str:
+    """A repair's first prompt with its brief's lines after it, the quoted problem's unquoted."""
+    named = next((word for word in prompt.split() if word.endswith("brief.md")), None)
+    brief = Path(named).read_text() if named and Path(named).is_file() else ""
+    record({"role": "repair", "brief": named,
+            "headings": [line for line in brief.splitlines() if line.startswith("#")]})
+    return prompt + "\n" + "\n".join(line.removeprefix("> ") for line in brief.splitlines())
 
 
 def turn(role: str, session: str, prompt: str) -> list[str]:
@@ -63,8 +78,11 @@ def coordinator() -> None:
     """`codex exec [resume SESSION] -`: one turn, streamed as exec events."""
     prompt = sys.stdin.read()
     session = sys.argv[-2] if "resume" in sys.argv else str(uuid.uuid4())
+    if os.environ.get("ALTITUDE_REPAIR"):
+        prompt = prompt if "resume" in sys.argv else briefed(prompt)
+        record({"role": "repair", "argv": sys.argv[1:], "session": session})
     out({"type": "thread.started", "thread_id": session})
-    end = turn("l3", session, prompt)
+    end = turn("repair" if os.environ.get("ALTITUDE_REPAIR") else "l3", session, prompt)
     if end[0] == "failed":
         out({"type": "turn.failed", "error": {"message": "Fictional coordinator turn failed."}})
         raise SystemExit(1)
@@ -146,6 +164,9 @@ if __name__ == "__main__":
         coordinator()
     elif sys.argv[1:2] == ["app-server"]:
         server()
+    elif len(sys.argv) == 2 and os.environ.get("ALTITUDE_REPAIR"):
+        record({"role": "repair", "argv": sys.argv[1:], "terminal": True})
+        turn("repair", os.environ["ALTITUDE_REPAIR"], briefed(sys.argv[1]))
     else:
         print(f"fixture: unsupported arguments {sys.argv[1:]}", file=sys.stderr)
         raise SystemExit(2)
