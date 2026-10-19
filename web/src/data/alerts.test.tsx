@@ -37,19 +37,18 @@ function overview(queue: unknown[]) {
 const PUSH_KEY = btoa(String.fromCharCode(...new Uint8Array(65).fill(4))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 /** The fixture queue the next overview read returns; tests grow it like altd would. */
-function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachable = false,
-  refused: { host: string; reason: string }[] = []) {
+function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachable = false, refused: string | null = null) {
   let queue = initial;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/alerts/subscription")) {
       if (unreachable) throw new TypeError("Failed to fetch");
-      return jsonResponse({ push: true });
+      return jsonResponse(JSON.parse(String(init?.body)).remove ? { push: false } : { push: true, refused });
     }
     if (url.includes("/api/alerts/pace")) {
       return paceRefusal ? jsonResponse({ error: paceRefusal }, 400) : jsonResponse({ every: JSON.parse(String(init?.body)).every });
     }
-    if (url.includes("/api/alerts")) return jsonResponse({ key, refused });
+    if (url.includes("/api/alerts")) return jsonResponse({ key });
     if (url.includes("/api/overview")) return jsonResponse(overview(queue));
     if (url.includes("/api/project/")) return jsonResponse({ name: url.split("/").at(-1), tasks: [] });
     if (url.includes("/api/task/")) return jsonResponse({ slug: "x", state: "blocked", messages: [] });
@@ -211,10 +210,43 @@ describe("decision alerts", () => {
 
     await user.click(await screen.findByRole("button", { name: "Alert me about new decisions" }));
     await waitFor(() => expect(stale.unsubscribe).toHaveBeenCalled());
-    expect(browser.registration.pushManager.subscribe).toHaveBeenCalled();
+    // Altitude forgets the endpoint it replaces, so no record outlives its subscription.
     expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
-      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+      body: JSON.stringify({ endpoint: "https://push.example/wake/old", remove: true }),
     }));
+    expect(browser.registration.pushManager.subscribe).toHaveBeenCalled();
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+    })));
+  });
+
+  it("renews a subscription made with an old key each time Altitude opens, without the switch", async () => {
+    const browser = alreadyOn([KEY]);
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const stale = {
+      endpoint: "https://push.example/wake/old", options: { applicationServerKey: new Uint8Array(65).fill(9) },
+      unsubscribe: vi.fn(async () => true),
+    };
+    browser.registration.subscribed = stale;
+    mockFetch([question]);
+    renderApp({ route: "/" });
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+    })));
+    expect(stale.unsubscribe).toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: "https://push.example/wake/old", remove: true }),
+    }));
+    expect(browser.registration.pushManager.subscribe).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("button", { name: "Alerts on" })).toBeVisible();
+    expect(screen.getByText(/even when Altitude is closed/)).toBeVisible();
+
+    // Back on screen, the renewed subscription is told again and left as it is.
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url, init]) => url === "/api/alerts/subscription"
+      && init?.body === JSON.stringify({ endpoint: ENDPOINT, every: 0 }))).toHaveLength(2));
+    expect(browser.registration.pushManager.subscribe).toHaveBeenCalledTimes(1);
   });
 
   it("keeps alerting while Altitude is open, and says so, when this device cannot be woken", async () => {
@@ -235,17 +267,29 @@ describe("decision alerts", () => {
     await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
   });
 
-  it("names a push service that refuses alerts, with its reason and what to do", async () => {
-    alreadyOn([KEY]);
+  it.each([
+    ["403 BadJwtToken", "Give Altitude a real contact address in ALTITUDE_PUSH_CONTACT on the computer it runs on."],
+    ["429 TooManyRequests", "Altitude keeps trying until one gets through."],
+  ])("names this device's push service refusing alerts (%s), with what to do", async (reason, todo) => {
+    const browser = alreadyOn([KEY]);
+    browser.registration.subscribed = browser.registration.subscription;
     localStorage.setItem(ALERTS_PUSH_KEY, "on");
-    mockFetch([question], PUSH_KEY, false, [{ host: "push.example", reason: "403 BadJwtToken" }]);
+    mockFetch([question], PUSH_KEY, false, reason);
     renderApp({ route: "/" });
 
-    expect(await screen.findByText(
-      "The push service at push.example refused Altitude's last alert (403 BadJwtToken), so that device "
-      + "gets no alerts. Turn alerts off and on there to subscribe it again.",
-    )).toBeVisible();
+    expect(await screen.findByText(`The push service at push.example refused Altitude's last alert (${reason}), so this `
+      + `device gets alerts only while Altitude is open. ${todo}`)).toBeVisible();
     expect(screen.queryByText(/even when Altitude is closed/)).toBeNull();
+  });
+
+  it("shows no refusal on a device push does not wake", async () => {
+    alreadyOn([KEY]);
+    mockFetch([question], PUSH_KEY, false, "403 BadJwtToken");
+    renderApp({ route: "/" });
+
+    expect(await screen.findByText(/only while Altitude is open\. On a phone/)).toBeVisible();
+    expect(screen.queryByText(/refused/)).toBeNull();
+    expect(fetch).not.toHaveBeenCalledWith("/api/alerts/subscription", expect.anything());
   });
 
   it("alerts once for a new question, with the task name only, and never again for the same one", async () => {
@@ -467,7 +511,7 @@ describe("this device's alert preferences", () => {
     deviceStore({ every: 3600 });
     mockFetch([question]);
     renderApp({ route: "/" });
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/pace", expect.objectContaining({
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
       body: JSON.stringify({ endpoint: ENDPOINT, every: 3600 }),
     })));
   });

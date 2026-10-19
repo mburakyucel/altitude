@@ -196,20 +196,28 @@ logs each wake as `push wakes <n> device(s) for <m> new decision(s)`.
 
 ## Refused decision alerts
 
-A push service that refuses Altitude's alert keeps its device subscribed, and altd tries that device
-again on each tick until a push gets through, even for a decision another device already took, so a
-fix on either side takes effect without another step. altd records the refusal and the short reason code the
-service gave in `~/.altitude/push.json`, logs it once as `push to <host> refused with
-<status> <reason>` and logs `push to <host> delivered again` once a push gets through. Until then,
-the line under the alert switch in Needs you names that push service and its reason, and that device
-gets no alerts.
+A subscription the push service will never take again ends on Altitude's side: altd drops it from
+`~/.altitude/push.json` and logs `push to <host> ended with <status> <reason>: dropped`. Each time
+Altitude opens or returns to the screen on a device with alerts on, the device tells altd about its
+subscription again, and one that altd dropped or that was made with a key Altitude no longer signs
+with is made anew, with altd told to forget the endpoint it replaces. Nobody touches the switch.
 
-- `403 BadJwtToken`: the service rejects the signed sender token, most often its contact address.
-  Set `ALTITUDE_PUSH_CONTACT` to a `mailto:` address with a real domain (see [configuration](#configuration)).
-- `403 VapidPkHashMismatch` or another refusal of the key: turn alerts off and on again on that
-  device, which subscribes it with the key Altitude signs with.
-- `404` or `410`: the subscription has ended; altd drops it and the device subscribes again when
-  alerts are next turned on there.
+- `404` or `410`: the subscription has ended.
+- `400 VapidPkHashMismatch` (Apple): the subscription was made with another signing key. Other push
+  services answer a key mismatch with `404`, or the device notices the old key itself.
+
+Any other refusal keeps its device subscribed, and altd tries that device again on each tick until a
+push gets through, even for a decision another device already took, so a fix on either side takes
+effect without another step. altd records the refusal and the short reason code the service gave,
+logs it once as `push to <host> refused with <status> <reason>` and logs `push to <host> delivered
+again` once a push gets through. Until then, the line under the alert switch on that device alone
+names its push service and the reason, says that it gets alerts only while Altitude is open and
+what to do:
+
+- `401` or `403`, such as `403 BadJwtToken`: the service rejects the signed sender token, most often
+  its contact address. Set `ALTITUDE_PUSH_CONTACT` to a `mailto:` address with a real domain (see
+  [configuration](#configuration)).
+- Anything else, such as `429` or `503`: nothing; the line says Altitude keeps trying.
 
 ## Remove a project
 

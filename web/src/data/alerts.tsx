@@ -74,12 +74,14 @@ function keyBytes(key: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
-async function tell(endpoint: string, remove = false): Promise<boolean> {
+/** Tell Altitude about this device's subscription, or to forget it; telling it about one answers its refusal. */
+async function tell(endpoint: string, remove = false): Promise<{ refused?: string | null }> {
   const response = await fetch("/api/alerts/subscription", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(remove ? { endpoint, remove } : { endpoint, every: (await loadPreferences())?.every ?? 0 }),
   });
-  return response.ok;
+  if (!response.ok) throw new Error("Altitude did not take this device's subscription.");
+  return (await response.json()) as { refused?: string | null };
 }
 
 /** The worker's store (web/public/sw.js): what it announced, and this device's alert preferences. */
@@ -174,30 +176,47 @@ function madeWith(subscription: PushSubscription, key: Uint8Array): boolean {
   return bytes.length === key.length && bytes.every((byte, index) => byte === key[index]);
 }
 
+type Refusal = { host: string; reason: string };
+
+/** What this device's push service last answered Altitude, as Altitude told this device: null while it takes alerts. */
+let refusal: Refusal | null = null;
+let subscribing: Promise<boolean> | undefined;
+
 /**
- * Ask the push service to wake this device for Altitude. It returns false whenever the device cannot
- * be woken — no key on the machine, no push service reachable, or an iPhone not added to the Home
- * Screen — and alerts then arrive only while Altitude is open, which the note says.
+ * Ask the push service to wake this device for Altitude, and tell Altitude. It returns false whenever the device
+ * cannot be woken — no key on the machine, no push service reachable, or an iPhone not added to the Home Screen —
+ * and alerts then arrive only while Altitude is open, which the note says. A subscription made with a key Altitude
+ * no longer signs with is replaced, and Altitude forgets its endpoint, so no record outlives it. One call at a
+ * time: the switch and Altitude opening here must not each replace the same subscription.
  */
-async function subscribePush(): Promise<boolean> {
-  try {
-    const { key } = (await (await fetch("/api/alerts")).json()) as { key?: string | null };
-    if (!key) return false;
-    // A subscription attaches to an active worker: a freshly registered one is still installing.
-    const registration = await navigator.serviceWorker.ready;
-    if (!registration.pushManager) return false;
-    const wanted = keyBytes(key);
-    let subscription = await registration.pushManager.getSubscription();
-    if (subscription && !madeWith(subscription, wanted)) {
-      await subscription.unsubscribe(); // this endpoint is deaf to the key Altitude now signs with
-      subscription = null;
+function subscribePush(): Promise<boolean> {
+  subscribing ??= (async () => {
+    try {
+      const { key } = (await (await fetch("/api/alerts")).json()) as { key?: string | null };
+      if (!key) return false;
+      // Registering first is idempotent and keeps `ready` from waiting forever when site data was cleared;
+      // a subscription attaches to an active worker, and a freshly registered one is still installing.
+      await navigator.serviceWorker.register("/sw.js");
+      const registration = await navigator.serviceWorker.ready;
+      if (!registration.pushManager) return false;
+      const wanted = keyBytes(key);
+      let subscription = await registration.pushManager.getSubscription();
+      if (subscription && !madeWith(subscription, wanted)) {
+        await subscription.unsubscribe(); // this endpoint is deaf to the key Altitude now signs with
+        await tell(subscription.endpoint, true).catch(() => undefined); // left behind, its next wake ends it
+        subscription = null;
+      }
+      subscription ??= await registration.pushManager.subscribe(
+        { userVisibleOnly: true, applicationServerKey: wanted });
+      const { refused } = await tell(subscription.endpoint);
+      refusal = refused ? { host: new URL(subscription.endpoint).host, reason: refused } : null;
+      announce();
+      return true;
+    } catch {
+      return false;
     }
-    subscription ??= await registration.pushManager.subscribe(
-      { userVisibleOnly: true, applicationServerKey: wanted });
-    return await tell(subscription.endpoint);
-  } catch {
-    return false;
-  }
+  })().finally(() => { subscribing = undefined; });
+  return subscribing;
 }
 
 async function unsubscribePush(): Promise<void> {
@@ -266,6 +285,7 @@ export async function enableAlerts(pending: Attention[]): Promise<AlertState> {
 export function disableAlerts(): void {
   store(ALERTS_KEY, null);
   store(ALERTS_PUSH_KEY, null);
+  refusal = null;
   announce();
   void unsubscribePush();
 }
@@ -413,8 +433,14 @@ export function useDecisionAlerts(overview: Overview | undefined, pathname: stri
 
   const every = chosen?.every;
   useEffect(() => {
-    // Altitude's copy of this device's pace follows the device's own, whatever a lost reply left behind.
-    if (state === "on" && pushed && every !== undefined) void pace(every).catch(() => undefined);
+    // Each time Altitude opens or returns here, a device push wakes tells Altitude about its subscription again: one
+    // made with an old key, or one Altitude ended, is made anew without the switch, Altitude's copy of the pace follows
+    // the device's own, and the note learns whether this device's push service refuses Altitude's alerts.
+    if (state !== "on" || !pushed || every === undefined) return;
+    const renew = () => { if (!document.hidden) void subscribePush(); };
+    renew();
+    document.addEventListener("visibilitychange", renew);
+    return () => document.removeEventListener("visibilitychange", renew);
   }, [state, pushed, every]);
 
   useEffect(() => {
@@ -452,45 +478,24 @@ const NOTE: Record<AlertState, string> = {
 /** The honest difference the operator needs: this device wakes for a decision, closed app and all. */
 const PUSHED = "Alerts arrive on this device even when Altitude is closed. Away from your network the alert says a decision is waiting, without naming it.";
 
-type Refusal = { host: string; reason: string };
-
 /**
- * A push service that refuses Altitude's alerts leaves its device alerting only while Altitude is
- * open; altd records why. Read while alerts are on, again after this device subscribes and whenever
- * the page returns to the screen, so a refusal cleared by a later push stops showing.
+ * A refusal Altitude cannot end by itself, on the device it concerns: a subscription its push service ended or made
+ * with an old key is replaced without a word. A refused sender token (401, 403) is fixed on the computer running
+ * Altitude; any other refusal, such as a busy service, passes, and Altitude tries again with each decision owed.
  */
-function useRefusals(on: boolean, pushed: boolean): Refusal[] {
-  const [refused, setRefused] = useState<Refusal[]>([]);
-  useEffect(() => {
-    if (!on) return;
-    let live = true;
-    const read = () => {
-      if (document.hidden) return;
-      void fetch("/api/alerts")
-        .then((response) => response.json() as Promise<{ refused?: Refusal[] }>)
-        .then((body) => { if (live) setRefused(body.refused ?? []); })
-        .catch(() => undefined); // altd unreachable: the next return to the page reads again
-    };
-    read();
-    document.addEventListener("visibilitychange", read);
-    return () => {
-      live = false;
-      document.removeEventListener("visibilitychange", read);
-    };
-  }, [on, pushed]);
-  return on ? refused : [];
-}
-
 function refusedNote({ host, reason }: Refusal): string {
-  return `The push service at ${host} refused Altitude's last alert${reason ? ` (${reason})` : ""}, so that device `
-    + "gets no alerts. Turn alerts off and on there to subscribe it again.";
+  const lead = `The push service at ${host} refused Altitude's last alert (${reason}), so this device gets alerts only `
+    + "while Altitude is open.";
+  return /^40[13]\b/.test(reason)
+    ? `${lead} Give Altitude a real contact address in ALTITUDE_PUSH_CONTACT on the computer it runs on.`
+    : `${lead} Altitude keeps trying until one gets through.`;
 }
 
 /** What this device's alerts reach, or why it has none, for the switch's line on Needs you and in Settings. */
 export function useAlertNote(state: AlertState): string {
   const pushed = useSyncExternalStore(watch, readPushState, () => false);
-  const [refusal] = useRefusals(state === "on", pushed);
-  return refusal ? refusedNote(refusal) : state === "on" && pushed ? PUSHED : NOTE[state];
+  const refused = useSyncExternalStore(watch, () => refusal, () => null);
+  return state === "on" && pushed ? refused ? refusedNote(refused) : PUSHED : NOTE[state];
 }
 
 /** The switch on Needs you (SPEC.md §3.8.1), set on each device that should alert. */
