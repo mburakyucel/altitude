@@ -469,6 +469,23 @@ class TestChatTurns(AltitudeCase):
         self.assertEqual("".join(streamed), result["text"])
         self.assertEqual(result["tools"], [engines.common._tool("Bash", "grep -n busy web")])
 
+    def test_claude_paragraphs_hold_when_one_assistant_event_carries_a_whole_message(self):
+        """A thinking block opens the turn without a leading break; text and tool use may arrive as one event."""
+        def delta(text):
+            return {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": text}}}
+
+        events = [{"type": "assistant", "message": {"model": "fake-model", "content": [{"type": "thinking", "thinking": "Plan."}]}},
+                  delta("Checking."),
+                  {"type": "assistant", "message": {"model": "fake-model", "content": [
+                      {"type": "text", "text": "Checking."}, {"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}},
+                  delta("Done."), {"type": "result", "subtype": "success", "is_error": False, "result": "Done.", "session_id": "s"}]
+        streamed = []
+        with mock.patch.object(config, "CLAUDE_BIN", self.scripted("claude-whole", events)):
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home",
+                                          cwd=self.repo, timeout=30, on_text=streamed.append)
+        self.assertEqual(streamed, ["Checking.", "\n\nDone."])
+        self.assertEqual(result["text"], "Checking.\n\nDone.")
+
     def test_a_codex_turn_keeps_every_message_it_wrote_around_its_commands(self):
         def item(kind, **fields):
             return {"type": "item.completed", "item": {"id": f"item-{kind}-{len(fields)}", "type": kind, **fields}}
