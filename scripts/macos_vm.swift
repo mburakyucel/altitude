@@ -12,8 +12,11 @@
 //
 // `run` and `linux` relay each connection to the Unix socket SOCKET to the guest's host-guest (vsock) port 22, so
 // the host reaches the guest without a network. It reads commands on stdin: `unplug` disconnects the network
-// card, `stop` powers the guest off; end of input also powers it off. It prints `started <mac>`,
-// `unplugged`, and `stopped` or `failed <reason>` before exiting.
+// card, `click X Y` clicks the guest's screen at point X, Y from its top left, `type TEXT` types TEXT (letters,
+// digits, `-` and `_`) and Return on the guest's keyboard, as a person at its screen does, `stop` powers the guest
+// off; end of input also powers it off. It prints `started <mac>`, `unplugged`, `clicked`, `typed`, and `stopped`
+// or `failed <reason>` before exiting.
+import AppKit
 import Darwin
 import Foundation
 import Virtualization
@@ -234,6 +237,87 @@ func powerOff() {
     }
 }
 
+// Apple's US keyboard key codes; the guest reads keys, not characters.
+let keyCodes: [Character: UInt16] = [
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13,
+    "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25, "7": 26,
+    "-": 27, "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "\r": 36, "l": 37, "j": 38, "k": 40, "n": 45,
+    "m": 46]
+let shift: UInt16 = 56
+// Left Shift as a real keyboard reports it: the device-independent flag with the left key's own bit.
+let shifted = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.shift.rawValue | 0x2)
+var screen: VZVirtualMachineView?
+var holder: NSWindow?
+
+/// The view a person types into and clicks, the size of the guest's display, inside a window far off every screen
+/// that is never activated, so this Mac's own keyboard focus stays where it is.
+func display(of vm: VZVirtualMachine) -> VZVirtualMachineView {
+    if let view = screen { return view }
+    _ = NSApplication.shared
+    let view = VZVirtualMachineView(frame: NSRect(x: 0, y: 0, width: 1920, height: 1200))
+    let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 1920, height: 1200),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = view
+    window.orderFrontRegardless()
+    window.makeFirstResponder(view)
+    view.virtualMachine = vm
+    screen = view
+    holder = window
+    return view
+}
+
+/// Moves the guest's pointer to X, Y, counted from the top left of its display, and clicks there.
+func click(_ x: Double, _ y: Double, in vm: VZVirtualMachine) {
+    let view = display(of: vm)
+    let point = view.convert(NSPoint(x: x, y: view.bounds.height - y), to: nil)
+    for kind in [NSEvent.EventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+        guard let event = NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [],
+                                             timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: holder?.windowNumber ?? 0, context: nil, eventNumber: 0,
+                                             clickCount: 1, pressure: kind == .leftMouseDown ? 1 : 0) else {
+            print("failed no mouse event")
+            return
+        }
+        switch kind {
+        case .mouseMoved: view.mouseMoved(with: event)
+        case .leftMouseDown: view.mouseDown(with: event)
+        default: view.mouseUp(with: event)
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+    }
+    print("clicked")
+}
+
+/// Presses each key of TEXT and then Return through the view a person types into, holding Shift for capitals and
+/// `_`, on the main queue.
+func type(_ text: String, into vm: VZVirtualMachine) {
+    let view = display(of: vm)
+    func press(_ kind: NSEvent.EventType, _ code: UInt16, _ flags: NSEvent.ModifierFlags, _ character: String) -> Bool {
+        guard let event = NSEvent.keyEvent(with: kind, location: .zero, modifierFlags: flags,
+                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
+                                           context: nil, characters: character, charactersIgnoringModifiers: character,
+                                           isARepeat: false, keyCode: code) else { return false }
+        switch kind {
+        case .keyDown: view.keyDown(with: event)
+        case .keyUp: view.keyUp(with: event)
+        default: view.flagsChanged(with: event)
+        }
+        return true
+    }
+    for character in text + "\r" {
+        let capital = character.isUppercase || character == "_"
+        let base = character == "_" ? "-" : Character(character.lowercased())
+        guard let code = keyCodes[base] else { print("failed cannot type \(character)"); return }
+        let flags: NSEvent.ModifierFlags = capital ? shifted : []
+        let typed = (!capital || press(.flagsChanged, shift, shifted, ""))
+            && press(.keyDown, code, flags, String(character)) && press(.keyUp, code, flags, String(character))
+            && (!capital || press(.flagsChanged, shift, [], ""))
+        guard typed else { print("failed no key event"); return }
+        Thread.sleep(forTimeInterval: 0.05)
+    }
+    print("typed")
+}
+
 func run(socketPath: String, _ make: () throws -> VZVirtualMachineConfiguration) {
     let config: VZVirtualMachineConfiguration
     do { config = try make() } catch { fail("\(error.localizedDescription)") }
@@ -265,6 +349,15 @@ func run(socketPath: String, _ make: () throws -> VZVirtualMachineConfiguration)
     }
     Thread.detachNewThread {
         while let line = readLine() {
+            if line.hasPrefix("type ") {
+                DispatchQueue.main.async { type(String(line.dropFirst(5)), into: vm) }
+                continue
+            }
+            let words = line.split(separator: " ")
+            if words.count == 3, words[0] == "click", let x = Double(words[1]), let y = Double(words[2]) {
+                DispatchQueue.main.async { click(x, y, in: vm) }
+                continue
+            }
             switch line.trimmingCharacters(in: .whitespaces) {
             case "unplug":
                 DispatchQueue.main.async {
@@ -339,4 +432,4 @@ default:
     FileHandle.standardError.write("usage: macos_vm latest | install IPSW BUNDLE DISK_GIB | run BUNDLE SOCKET CPUS MEMORY_GIB | linux KERNEL INITRD COMMAND_LINE DISK SEED CONSOLE SOCKET CPUS MEMORY_GIB | relay PORT\n".data(using: .utf8)!)
     exit(2)
 }
-dispatchMain()
+RunLoop.main.run()  // the main thread itself serves the main queue, as AppKit requires
