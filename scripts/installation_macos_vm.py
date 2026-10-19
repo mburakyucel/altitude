@@ -1043,13 +1043,30 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     hint = doctor("doctor-trust")["next"]
     check(hint == ["Next: compare the certificate below with what your browser shows, trust it, then run alt pair."],
           f"next: {hint}")
+    # From this SSH session, with the account's desktop logged in, `alt trust` answered y must fail for the login
+    # keychain with the remote-terminal message and change nothing (#1006 check 3). The undo command it prints on a
+    # desktop names the authority by SHA-256: `security delete-certificate -Z` must remove it by that name.
+    keychain = f"/Users/{ACCOUNT}/Library/Keychains/login.keychain-db"
+    listed = f"security dump-trust-settings 2>&1; security find-certificate -a -Z {keychain} | grep SHA-256"
+    unchanged = step("trust-before", listed).stdout
+    answered = step("trust-ssh", f"printf 'y\\n' | /usr/bin/script -q /dev/null {alt} trust", timeout=150)
+    trust_ssh = {"passed": "This is an SSH session" in answered.stdout
+                 and "a remote terminal cannot show; run alt trust there, or follow the Mac steps on the pair page"
+                 in answered.stdout.replace("\r", "").replace("\n", " ")
+                 and step("trust-after", listed).stdout == unchanged}
+    fingerprint = "openssl x509 -in ~/.config/altitude/tls/ca.crt -noout -fingerprint -sha256 | cut -d= -f2 | tr -d :"
+    undone = step("undo-sha256", f"sha=$({fingerprint}) && security add-certificates -k {keychain} "
+                                 f"~/.config/altitude/tls/ca.crt && security find-certificate -a -Z {keychain} | "
+                                 f"grep -qi \"SHA-256 hash: $sha\" && security delete-certificate -Z $sha -t {keychain} "
+                                 f"&& ! security find-certificate -a -Z {keychain} | grep -qi \"SHA-256 hash: $sha\"")
     removed = step("uninstall", f"{alt} uninstall")
     check(removed.returncode == 0 and json.loads(removed.stdout)["uninstalled"], "uninstall failed")
     gone = step("removed", f"test ! -e {agent} && ! launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} >/dev/null 2>&1 && "
                            f"! curl -sk --max-time 5 https://127.0.0.1:{port}/api/health >/dev/null")
     check(gone.returncode == 0, "the LaunchAgent or the service is still there")
     record["cases"] = {"login": {"passed": True, "version": version, "service_label": SERVICE_LABEL,
-                                 "pids": [before["pid"], after["pid"]]}}
+                                 "pids": [before["pid"], after["pid"]]},
+                       "trust-ssh": trust_ssh, "undo-sha256": {"passed": undone.returncode == 0}}
 
 
 # The confinement rows that must refuse private places without macOS asking, and how their details say so.
@@ -1321,7 +1338,7 @@ git push -q origin main && git rev-parse HEAD""")
 # finishes within `alt task run`'s ten minutes.
 RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
                 "grants": ("grants", "contention"), "incident": ("incident", "schedule"),
-                "update": ("quiet-point",), "session": ("logout-login",)}
+                "update": ("operator-step", "quiet-point"), "session": ("scratch", "logout-login")}
 GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
 # Rows may end the account's session, so they run in the background while the host polls.
 ROWS_BUDGET = 420
@@ -1398,15 +1415,16 @@ def phase_incident(guest: Guest, repository: str, results: Path, record: dict, i
 
 
 def phase_update(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
-    """An automatic update offered during a validation run waits for it, refusing new runs, and installs itself once
-    the run ends, while another task's worker stays in its turn (#1003)."""
+    """A command the coordinator hands the operator waits in Needs you until the project terminal runs it to its end
+    (#1017); an automatic update offered during a validation run waits for it, refusing new runs, and installs itself
+    once the run ends, while the validating task's worker stays in its turn (#1003)."""
     runtime(guest, repository, results, record, inputs, "update")
 
 
 def phase_session(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
-    """Logout and login without a restart (#731, #226). The guest cannot sleep: macOS under Apple's Virtualization
-    framework refuses `pmset sleepnow` as not permitted; the `jobs` phase's `sleep-hold` and `awake-clock` rows cover
-    a job across sleep."""
+    """A worker's scratch folder through completion (#958), then logout and login without a restart (#731, #226).
+    The guest cannot sleep: macOS under Apple's Virtualization framework refuses `pmset sleepnow` as not permitted;
+    the `jobs` phase's `sleep-hold` and `awake-clock` rows cover a job across sleep."""
     runtime(guest, repository, results, record, inputs, "session")
 
 

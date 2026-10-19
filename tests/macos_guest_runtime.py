@@ -13,6 +13,7 @@ account's shell; the coordinator's and the owner's are `alt` commands the fictio
                                                inside an owner's turn: resolve the operator's answer and record the grant
 """
 import ast
+import base64
 import hashlib
 import io
 import json
@@ -212,20 +213,25 @@ def new_task(title: str, brief: str) -> str:
     return slug
 
 
+def page(path: str, body: dict | None = None, timeout: float = 60):
+    """The service's answer to one request as the page sends it, with the CLI's machine key."""
+    environment = json.loads((HOME / ".config/altitude/install.json").read_text()).get("environment", {})
+    request = urllib.request.Request(
+        f"https://127.0.0.1:{environment.get('ALTITUDE_PORT', '8890')}{path}",
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Content-Type": "application/json",
+                 "X-Altitude-Key": (HOME / ".config/altitude/access/machine.key").read_text().strip()})
+    context = ssl.create_default_context(cafile=str(HOME / ".config/altitude/tls/ca.crt"))
+    return urllib.request.urlopen(request, context=context, timeout=timeout)
+
+
 def coordinator(text: str) -> None:
     """One coordinator turn in the service, started as the operator's chat message from the page starts it, with the
     CLI's machine key: the project's coordinator socket serves only the service's own running turn, so `alt chat`,
     which runs its turn in the calling process, cannot stand in for it. Returns once the turn ran every command."""
     commands = [line.split(":", 1)[1].strip() for line in text.splitlines() if line.startswith("FIXTURE-RUN:")]
     before = len(lines(LOG))
-    environment = json.loads((HOME / ".config/altitude/install.json").read_text()).get("environment", {})
-    request = urllib.request.Request(
-        f"https://127.0.0.1:{environment.get('ALTITUDE_PORT', '8890')}/api/chat",
-        data=json.dumps({"project": PROJECT, "text": text}).encode(),
-        headers={"Content-Type": "application/json",
-                 "X-Altitude-Key": (HOME / ".config/altitude/access/machine.key").read_text().strip()})
-    context = ssl.create_default_context(cafile=str(HOME / ".config/altitude/tls/ca.crt"))
-    with urllib.request.urlopen(request, context=context, timeout=300) as response:
+    with page("/api/chat", {"project": PROJECT, "text": text}, timeout=300) as response:
         answer = response.read().decode(errors="replace")
     STEPS.append({"chat": text, "answer": answer[-1000:]})
     wait("the coordinator's commands", lambda: all(any(entry.get("role") == "l3" and entry.get("command") == command
@@ -587,7 +593,7 @@ def relabelled(version: str, newer: str) -> None:
 def row_quiet_point() -> dict:
     """#1003: an automatic update offered while a validation run holds the machine waits for that run and names it
     in `alt doctor`; a new validation request is refused meanwhile; once the run ends the update installs itself and
-    the service restarts into it while another task's worker stays in its turn."""
+    the service restarts into it while the validating task's worker stays in its turn."""
     record = lambda: json.loads((ROOT / "update.json").read_text())  # noqa: E731
     installed = lambda: json.loads((HOME / ".local/share/altitude/current/release.json").read_text())["version"]  # noqa: E731
     settings = ROOT / "settings.json"
@@ -596,8 +602,9 @@ def row_quiet_point() -> dict:
     version = os.environ["LANE_VERSION"]
     newer = re.sub(r"(\d+)$", lambda m: str(int(m[1]) + 1), version)
     relabelled(version, newer)
-    running = new_task("Validation during an update", "Fictional task that validates its candidate.\n"
-                       "FIXTURE-RUN: alt task validate -- /bin/sh -c 'echo validation-started; sleep 60'\n")
+    running = new_task("Validation during an update", "Fictional task that validates its candidate, then stays in "
+                       "its turn.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo validation-started; sleep 120'\n"
+                       "FIXTURE-END: hold 400\n")
     run = wait("the validation run", lambda: next((r for r in machine(running) if r.get("purpose") == "validation"),
                                                   None), timeout=120)
     wait("its launchd job", lambda: job_running(run["unit"]), timeout=60)
@@ -607,9 +614,9 @@ def row_quiet_point() -> dict:
                    and record()["waiting"], timeout=90)
     doctor = next((line for line in alt("doctor", project=False).splitlines() if line.startswith("Update:")), "")
     later = new_task("Validation while an update waits", "Fictional task that asks for a validation run while an "
-                     "update waits.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo second-run'\nFIXTURE-END: hold 300\n")
+                     "update waits.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo second-run'\n")
     refused = wait("the second request's answer", lambda: ran(later, "alt task validate"), timeout=90)
-    unit, before = worker_unit(later), service_pid()
+    unit, before = worker_unit(running), service_pid()
     ended = wait("the validation run to end", lambda: next((r for r in machine(running) if r.get("n") == run["n"]
                                                             and r.get("finished")), None), timeout=150)
     attempt = wait("the automatic update to start", lambda: (record().get("attempt") or {}).get("version") == newer
@@ -624,7 +631,8 @@ def row_quiet_point() -> dict:
              "attempt": wait("the attempt's outcome", lambda: record()["attempt"].get("state") != "running"
                              and record()["attempt"], timeout=60),
              "now": installed(), "service": {"before": before, "after": service_pid()},
-             "worker_kept": job_running(unit) and task(later).get("state") == "running"}
+             "worker_kept": {"job": job_running(unit), "unit": worker_unit(running) == unit,
+                             "state": task(running).get("state")}}
     stopped_cleanly(later)
     stopped_cleanly(running)
     facts["passed"] = (doctor == f"Update: Altitude {newer} installs automatically at the next quiet moment; "
@@ -632,7 +640,114 @@ def row_quiet_point() -> dict:
                        and refused.get("exit") != 0 and "restarts soon to apply an update" in refused.get("stderr", "")
                        and not facts["second_runs"] and ended.get("exit") == 0 and facts["attempt_after_run_s"] < 45
                        and facts["attempt"].get("state") == "succeeded" and facts["attempt"].get("automatic") is True
-                       and facts["now"] == newer and facts["worker_kept"])
+                       and facts["now"] == newer and facts["worker_kept"] == {"job": True, "unit": True,
+                                                                               "state": "running"})
+    return facts
+
+
+def row_scratch() -> dict:
+    """#958: a worker keeps its drafts in its own scratch folder, shows a worktree file and completes; the scratch
+    folder is gone once the task is done, and a command the worker left running writes nothing afterwards, neither
+    in Altitude's home nor in a recreated scratch folder."""
+    late = ROOT / "late-write.txt"
+    slug = new_task("Scratch through done", "Fictional task that drafts in its scratch folder and completes.\n"
+                    "FIXTURE-RUN: echo \"$ALTITUDE_SCRATCH\"; printf '# Progress\\nFictional draft.\\n' "
+                    ">\"$ALTITUDE_SCRATCH/progress.md\" && alt task save progress \"$ALTITUDE_SCRATCH/progress.md\"\n"
+                    "FIXTURE-RUN: printf '# Shown\\n' >shown.md && alt task reply --show shown.md 'A fictional shown "
+                    "file' && rm shown.md\n"
+                    "FIXTURE-RUN: nohup /bin/sh -c 'sleep 20; mkdir -p \"$ALTITUDE_SCRATCH\" && echo late "
+                    f">\"$ALTITUDE_SCRATCH/late.txt\"; echo late >{late}' >/dev/null 2>&1 &\n"
+                    "FIXTURE-RUN: alt task done \"$ALTITUDE_TASK\" --digest 'Fictional outcome'\n")
+    drafted = wait("the drafts", lambda: ran(slug, "save progress"), timeout=90)
+    scratch = Path(drafted["stdout"].splitlines()[0].strip())
+    shown = wait("the shown file", lambda: ran(slug, "--show shown.md"), timeout=90)
+    completed = wait("the completion", lambda: ran(slug, "alt task done"), timeout=90)
+    archived = wait("the task's archive", lambda: next((ROOT / PROJECT / "archive").glob(f"*{slug}*/status.json"), None),
+                    timeout=120)
+    facts = {"task": slug, "scratch": str(scratch), "drafted": drafted["exit"], "shown": shown["exit"],
+             "done": completed["exit"], "state": json.loads(archived.read_text()).get("state"),
+             "progress_kept": (archived.parent / "progress.md").exists(), "scratch_at_done": scratch.exists()}
+    time.sleep(30)  # past the left-running command's write
+    facts["late"] = {"scratch": sorted(path.name for path in scratch.iterdir()) if scratch.exists() else None,
+                     "home": late.exists()}
+    facts["passed"] = (facts["drafted"] == facts["shown"] == facts["done"] == 0 and facts["state"] == "done"
+                       and facts["progress_kept"] and not facts["scratch_at_done"]
+                       and facts["late"]["scratch"] in (None, ["late.txt"]) and not facts["late"]["home"])
+    return facts
+
+
+def row_operator_step() -> dict:
+    """#1017: a command the coordinator hands the operator waits in Needs you as the named task's turn; run to its end
+    in the project terminal as Open in terminal runs it, its notice clears the step and wakes the coordinator, while a
+    terminal closed before its command ends leaves the step waiting."""
+    def call(path: str, body: dict | None = None):
+        with page(path, body) as response:
+            return json.loads(response.read() or b"null")
+
+    def steps() -> list[dict]:
+        return [item for item in call("/api/overview").get("queue", []) if item.get("kind") == "step"]
+
+    def publish(title: str, command: str) -> dict:
+        coordinator(f"FIXTURE-RUN: printf '{title}\\n\\n```run\\n{command}\\n```\\n' | alt project step --task {slug} -")
+        return wait(f"{title!r} in Needs you", lambda: next((item for item in steps()
+                                                             if item.get("question", "").startswith(title)), None), 30)
+
+    def hand(command: str) -> str:
+        """Open in terminal: the project terminal opened, the command handed to it, then typed with Enter."""
+        opened = call(f"/api/terminal/{PROJECT}/open", {})
+        call(f"/api/terminal/{PROJECT}/command", {"id": opened["id"], "text": command})
+        call(f"/api/terminal/{PROJECT}/input", {"id": opened["id"], "data": command + "\r"})
+        return opened["id"]
+
+    def transcript(terminal: str, marker: str) -> str:
+        seen = ""
+        try:
+            with page(f"/api/terminal/{PROJECT}/stream?id={terminal}&offset=0", timeout=10) as response:
+                for raw in response:
+                    line = raw.decode(errors="replace").strip()
+                    if line.startswith("data:") and "data" in (event := json.loads(line[5:]) or {}):
+                        seen += base64.b64decode(event["data"]).decode(errors="replace")
+                    if f"\n{marker}" in seen.replace("\r", ""):
+                        break
+        except OSError:  # the stream's read timed out
+            pass
+        return seen[-2000:]
+
+    def close(terminal: str) -> None:
+        call(f"/api/terminal/{PROJECT}/close", {"id": terminal})
+        wait("the terminal to close", lambda: call(f"/api/terminal/{PROJECT}").get("state") != "running", timeout=30)
+
+    slug = new_task("Waits for the operator's step", "Fictional task that waits for a step only the operator takes.\n"
+                    "FIXTURE-RUN: alt task block \"$ALTITUDE_TASK\" --reason 'Waiting for a fictional operator step'\n")
+    wait("the block", lambda: task(slug).get("state") == "blocked", timeout=90)
+    call("/api/terminal-access", {"enabled": True})
+    facts: dict = {"task": slug, "before": alt("task", "status", slug)["waiting"]}
+    finished = "sleep 3; echo fictional-step-done"
+    card = publish("Run the fictional step", finished)
+    facts.update(card={key: card.get(key) for key in ("id", "question", "tasks", "asked_by")},
+                 during=alt("task", "status", slug)["waiting"])
+    mark = len(lines(LOG))
+    terminal = hand(finished)
+    facts["transcript"] = transcript(terminal, "fictional-step-done")
+    facts["cleared"] = bool(wait("the notice to clear the step", lambda: not any(item["id"] == card["id"]
+                                                                                 for item in steps()), timeout=60))
+    facts["coordinator_turns"] = len(wait("the coordinator's turn", lambda: [
+        entry for entry in lines(LOG)[mark:] if entry.get("role") == "l3" and "end" in entry], timeout=120))
+    facts["after"] = alt("task", "status", slug)["waiting"]
+    close(terminal)
+    unfinished = "sleep 60; echo fictional-late-step-done"
+    kept = publish("Run the long fictional step", unfinished)
+    terminal = hand(unfinished)
+    time.sleep(3)
+    close(terminal)
+    time.sleep(5)  # past the notice that the terminal ended first
+    facts["kept_after_close"] = any(item["id"] == kept["id"] for item in steps())
+    coordinator(f"FIXTURE-RUN: alt project step --withdraw {kept['id']} --reason 'Fixture row complete'")
+    facts["passed"] = (slug in json.dumps(card.get("tasks")) and "Run the fictional step" in (facts["during"] or "")
+                       and "Run the fictional step" not in (facts["before"] or "")
+                       and "\nfictional-step-done" in facts["transcript"].replace("\r", "") and facts["cleared"]
+                       and facts["coordinator_turns"] >= 1 and "Run the fictional step" not in (facts["after"] or "")
+                       and facts["kept_after_close"])
     return facts
 
 
@@ -665,7 +780,7 @@ STATE: dict = {}
 ROWS = {"coordinator-stop": row_coordinator_stop, "failed-turn": row_failed_turn, "status-unknown": row_status_unknown,
         "validation-restart": row_validation_restart, "grants": row_grants, "contention": row_contention,
         "incident": row_incident, "schedule": row_schedule, "quiet-point": row_quiet_point,
-        "logout-login": row_logout_login}
+        "scratch": row_scratch, "operator-step": row_operator_step, "logout-login": row_logout_login}
 
 
 def rows(names: list[str]) -> int:
