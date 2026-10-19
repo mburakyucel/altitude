@@ -75,19 +75,19 @@ class TestAbstractScope(AltitudeCase):
 
 @unittest.skipUnless(sys.platform == "linux", "Linux's sandbox")
 class TestSandboxedJob(AltitudeCase):
-    """Real bubblewrap. It cannot start inside an Altitude worker, whose own sandbox forbids new namespaces, so the
-    cases skip there; the Linux validation image installs bubblewrap and says so, and there they fail instead."""
+    """Real bubblewrap, on a Linux host where it starts: not inside an Altitude worker, whose sandbox forbids new
+    namespaces, a validation container, which cannot mount a fresh /proc, or a runner whose AppArmor refuses it user
+    namespaces. There the cases skip; `python3 -m unittest tests.test_session_sockets` runs them on such a host."""
 
     def setUp(self):
         super().setUp()
         try:
-            ready = subprocess.run([platform.BWRAP, "--ro-bind", "/", "/", "true"], capture_output=True, text=True)
+            ready = subprocess.run([platform.BWRAP, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/", "--dev",
+                                    "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "true"], capture_output=True, text=True)
             why = ready.stderr.strip() if ready.returncode else None
         except FileNotFoundError:
             why = "not installed"
         if why:
-            if os.environ.get("ALTITUDE_BUBBLEWRAP") == "required":
-                self.fail(f"bubblewrap does not start here: {why}")
             self.skipTest(f"bubblewrap does not start here: {why}")
         self.home = self.tmp / "home"
         (self.home / ".cache").mkdir(parents=True)
@@ -102,7 +102,8 @@ class TestSandboxedJob(AltitudeCase):
         self.temporary = Path(tempfile.mkdtemp(prefix="altitude-", dir=self.tmp))
         shared = tempfile.mkdtemp(prefix="fictional-desk-", dir="/tmp")
         self.addCleanup(shutil.rmtree, shared, True)
-        self.places = {"runtime": str(self.runtime / "fictional-session/socket"),
+        self.places = {"visible": str(self.root / "visible"),
+                       "runtime": str(self.runtime / "fictional-session/socket"),
                        "shared": os.path.join(shared, "socket"),
                        "broker": str(self.runtime / "coordinators/ab12"),
                        "abstract": f"fictional-desk-{os.getpid()}"}
@@ -110,7 +111,10 @@ class TestSandboxedJob(AltitudeCase):
             self.addCleanup(listen(address if name != "abstract" else "\0" + address).close)
 
     def run_job(self, sockets=()) -> dict:
-        argv = platform.bubblewrap_profile([str(self.work)], temporary=str(self.temporary), sockets=sockets)
+        # The case folder lies in the shared /tmp, which the job's own folder replaces; read-only again, it shows the
+        # job's view of the fictional runtime folder in it, which only the runtime-folder mask hides (`visible` proves it).
+        argv = platform.bubblewrap_profile([str(self.work)], [str(self.root)], temporary=str(self.temporary),
+                                           sockets=sockets)
         done = subprocess.run([*argv, sys.executable, "-I", "-c", PROBE, json.dumps(self.places), "/tmp"],
                               capture_output=True, text=True, timeout=60, cwd=self.work)
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -122,7 +126,7 @@ class TestSandboxedJob(AltitudeCase):
         self.assertEqual(set(json.loads(host.stdout).values()), {"reached"}, host.stderr)
         seen = self.run_job()
         abstract = errno.EPERM if platform.abstract_scope() else "reached"
-        self.assertEqual(seen, {"runtime": errno.ENOENT, "shared": errno.ENOENT, "broker": errno.ENOENT,
+        self.assertEqual(seen, {"visible": "reached", "runtime": errno.ENOENT, "shared": errno.ENOENT, "broker": errno.ENOENT,
                                 "abstract": abstract, "own": "reached", "own abstract": "reached"})
         self.assertEqual((self.temporary / "written").read_text(), "job", "the job's /tmp is its own folder")
         self.assertTrue((self.temporary / "own.sock").exists())

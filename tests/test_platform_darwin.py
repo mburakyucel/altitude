@@ -770,6 +770,14 @@ class Supervisor(DarwinCase):
         temporary.mkdir()
         self.assertEqual(self.supervise(["/usr/bin/true"], temporary=str(temporary)), 0)
         self.assertTrue(temporary.exists(), "survivors may still use it")
+        self.assertTrue((self.job / "survivors").exists())
+        label = "dev.altitude.job.kept"
+        self.patch(platform, "_jobs", return_value=self.tmp)
+        self.job.rename(self.tmp / label)
+        self.patch(platform, "_print", return_value=None)
+        self.patch(platform, "_members", return_value=[])
+        self.assertTrue(platform._collect(label))
+        self.assertFalse(temporary.exists(), "it goes with the survivors' record")
 
     def test_the_time_limit_stops_the_command(self):
         def stop(coalition, spare):

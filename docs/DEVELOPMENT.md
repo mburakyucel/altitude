@@ -32,8 +32,9 @@ Seatbelt profile: tools write their caches to the task's scratch folder, `/tmp` 
 temporary folder, gone when the job ends, the desktop session's sockets (its agents, display and editor servers) are
 out of reach, and a program that starts a sandbox or container of its own (Chromium's sandbox, rootless Podman)
 cannot start there, so those checks run through `alt task validate`. The sandbox's own socket cases
-(`tests/test_session_sockets.py`) run real bubblewrap in the required check and the Linux validation image, which set
-`ALTITUDE_BUBBLEWRAP=required` so they fail there rather than skip.
+(`tests/test_session_sockets.py`) need real bubblewrap, which starts neither there, nor in the validation container,
+which cannot mount a fresh /proc, nor on the hosted runner, whose AppArmor refuses it user namespaces; they skip in
+those places and run on a Linux desktop outside any worker.
 
 Use Python 3.12+, Node 22.22.2+ (22.x), 24.15+ (24.x) or 26+, and the pnpm version pinned in
 `web/package.json`. From the repository root:

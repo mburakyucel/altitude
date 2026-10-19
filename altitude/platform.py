@@ -2975,11 +2975,10 @@ def _supervise(job: Path) -> int:
         launcher = spec.get("launcher")
         if not stopped:
             _keep(job, coalition)
-        else:
-            if spec.get("temporary"):
-                shutil.rmtree(spec["temporary"], ignore_errors=True)
-            if launcher is None or not _running(*launcher):
-                shutil.rmtree(job, ignore_errors=True)
+        elif launcher is None or not _running(*launcher):
+            _forget(job, spec)
+        elif spec.get("temporary"):
+            shutil.rmtree(spec["temporary"], ignore_errors=True)
         os.execv(LAUNCHCTL, [LAUNCHCTL, "remove", spec["label"]])
     return status
 
@@ -3036,8 +3035,20 @@ def _collect(label: str) -> bool:
             return False
     except (OSError, RuntimeError):
         return False
-    shutil.rmtree(job, ignore_errors=True)
+    try:
+        spec = json.loads((job / "spec.json").read_text())
+    except (OSError, ValueError):
+        spec = {}
+    _forget(job, spec)
     return True
+
+
+def _forget(job: Path, spec: dict) -> None:
+    """Remove a finished job's record and its own temporary folder (`job_command`), which outlives the record only
+    while processes the job started may still use it."""
+    if spec.get("temporary"):
+        shutil.rmtree(spec["temporary"], ignore_errors=True)
+    shutil.rmtree(job, ignore_errors=True)
 
 
 def _recorded_coalition(label: str) -> int | None:
@@ -3077,7 +3088,7 @@ def _launchd_job_stop(name: str, timeout: int) -> None:
     stopped = not coalition or _confirm_stopped(coalition, limit=timeout, **_stop_signal(spec))
     subprocess.run([LAUNCHCTL, "bootout", f"{_domain()}/{label}"], capture_output=True, timeout=timeout)
     if stopped:
-        shutil.rmtree(_jobs() / label, ignore_errors=True)
+        _forget(_jobs() / label, spec)
     else:
         _keep(_jobs() / label, coalition)
 

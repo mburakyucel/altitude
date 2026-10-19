@@ -2,11 +2,9 @@
 # deployed source; a task's code enters a container from it at run time, never at build time.
 FROM docker.io/library/ubuntu:24.04
 
-# bubblewrap runs the sandbox's socket cases (tests/test_session_sockets.py), which fail here if it cannot start.
-ENV DEBIAN_FRONTEND=noninteractive PLAYWRIGHT_BROWSERS_PATH=/opt/playwright COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
-    ALTITUDE_BUBBLEWRAP=required
+ENV DEBIAN_FRONTEND=noninteractive PLAYWRIGHT_BROWSERS_PATH=/opt/playwright COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bubblewrap ca-certificates cloud-image-utils curl ffmpeg fuse-overlayfs git gpgv libcap2-bin libnss3-tools make openssh-client podman \
+        ca-certificates cloud-image-utils curl ffmpeg fuse-overlayfs git gpgv libcap2-bin libnss3-tools make openssh-client podman \
         python3 qemu-system-x86 qemu-utils slirp4netns ubuntu-cloudimage-keyring uidmap xz-utils \
     && rm -rf /var/lib/apt/lists/*
 

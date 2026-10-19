@@ -810,9 +810,11 @@ def doctor() -> dict:
     if sandbox:
         checks.append({"name": "agent sandbox", "state": "configured" if sandbox["enabled"] else "unavailable",
                        "detail": sandbox["detail"]})
-        checks.append({"name": "agent sandbox abstract sockets", "state": "configured" if sandbox["scoped"] else "unavailable",
-                       "detail": "Confined agents reach only abstract sockets they made." if sandbox["scoped"]
-                       else platform.UNSCOPED})
+        if sandbox["enabled"]:
+            checks.append({"name": "agent sandbox abstract sockets",
+                           "state": "configured" if sandbox["scoped"] else "unavailable",
+                           "detail": "Agents in Altitude's sandbox reach only abstract sockets they made."
+                           if sandbox["scoped"] else platform.UNSCOPED})
     if shutil.which("gh"):
         lacks = _gh_lacks()
         checks.append({"name": "GitHub CLI pull request fields",
