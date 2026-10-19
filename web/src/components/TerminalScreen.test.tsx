@@ -57,6 +57,7 @@ beforeEach(() => {
   Object.assign(term, { written: [], resets: 0, size: { cols: 80, rows: 24 } });
   vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { observed = callback; } observe() {} disconnect() {} });
   vi.mocked(terminalStatus).mockResolvedValue(running);
+  vi.mocked(terminalSend).mockImplementation(async () => ({ ok: true }));
   vi.mocked(terminalStream).mockImplementation((_project, _task, _id, offset) => {
     const stream: Stream = { offset, closed: false, listeners: {}, addEventListener(name, listener) { this.listeners[name] = listener; }, close() { this.closed = true; } };
     streams.push(stream);
@@ -71,6 +72,11 @@ afterEach(() => {
 
 const typed = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "input").map(([, , body]) => body.data);
 const handed = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "command").map(([, , body]) => body);
+// Altitude refuses the chat command; input and resizes still succeed.
+const refuseCommand = (error: unknown) => vi.mocked(terminalSend).mockImplementation(async (_project, action) => {
+  if (action === "command") throw error;
+  return { ok: true };
+});
 const sizes = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "resize").map(([, , body]) => `${body.cols}x${body.rows}`);
 
 function show(text: string, keys = false) {
@@ -166,7 +172,7 @@ describe("a chat command at the terminal", () => {
     "vim is running, so the command wasn't typed.",
     "This command is already typed at the prompt. Press Enter to run it, or Ctrl+C to clear the line.",
   ])("says why Altitude didn't type it, with Copy: %s", async (reason) => {
-    vi.mocked(terminalSend).mockRejectedValueOnce(new ApiError(409, reason));
+    refuseCommand(new ApiError(409, reason));
     const { request, onCommand } = show("echo hi");
     request();
     act(() => emit());
@@ -179,7 +185,7 @@ describe("a chat command at the terminal", () => {
 
   it.each([new TypeError("Failed to fetch"), new ApiError(503, "Service unavailable")])(
     "asks the operator to check the screen when Altitude couldn't type it: %s", async (error) => {
-      vi.mocked(terminalSend).mockRejectedValueOnce(error);
+      refuseCommand(error);
       show("gh api repos/fixture/demo").request();
       act(() => emit());
       await act(() => vi.advanceTimersByTimeAsync(400));
@@ -187,7 +193,7 @@ describe("a chat command at the terminal", () => {
     });
 
   it("drops the command quietly for a terminal that was replaced, whose end the stream reports", async () => {
-    vi.mocked(terminalSend).mockRejectedValueOnce(new ApiError(410, "This terminal was replaced."));
+    refuseCommand(new ApiError(410, "This terminal was replaced."));
     const { request, onCommand } = show("echo hi");
     request();
     act(() => emit());
