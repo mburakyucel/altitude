@@ -1230,7 +1230,10 @@ The ordinary operator composer and resume admission retain their open-PR require
 block identity. Messages arriving at report handoff invalidate completion evidence; pending inbox
 messages return to the ordinary resume path. The verifier reads each reported PR through GitHub's REST
 API. If GitHub refuses that read for a rate limit, the task stays as it is and the next tick verifies again,
-without a verifier fault. Report application, verifier faults, stranded-report
+without a verifier fault. A read that gets no answer from GitHub (gh's time limit, or a connection, DNS, TLS or
+gateway error) also waits for the next tick, and becomes a verifier fault only once the same worker's verification
+has failed that way for five minutes; any other gh failure, such as bad credentials or unparseable output, faults
+at once. Report application, verifier faults, stranded-report
 recovery, automatic completion and report-turn receipts reject superseded work. A report that needs
 L3 waits, with no turn or chat row, while routing has no available L3 option; the stranded-report scan
 delivers it once one is. A report turn that runs and fails leaves `l3_handled` unset and retries after
