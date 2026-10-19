@@ -614,7 +614,7 @@ def inspect():
         probe.settimeout(5)
         probe.connect(inspector)
 def run(*argv):
-    subprocess.run(argv, check=True, capture_output=True, timeout=60)
+    subprocess.run(argv, check=True, capture_output=True, text=True, timeout=60)
 attempt("inspector", inspect)
 attempt("spawn", lambda: run("xcrun", "simctl", "--set", devices, "spawn", "booted", "/bin/sh", "-c", f"echo x > {marker}"))
 attempt("device-services", lambda: run("xcrun", "devicectl", "list", "devices", "--timeout", "10"))
