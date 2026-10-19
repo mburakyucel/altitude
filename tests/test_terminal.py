@@ -480,25 +480,36 @@ class TestHandedCommand(TerminalCase):
     def test_input_waits_for_the_command_being_typed(self):
         # Review finding: a Ctrl+C or Enter could land between the check and the command's own text.
         typing, release = threading.Event(), threading.Event()
+        interrupted_after_release = []
+        errors = []
         send = terminal._send
 
         def held(term, data):
             if data == "echo handed":
                 typing.set()
                 release.wait(5)
+            elif data == "\x03":
+                interrupted_after_release.append(release.is_set())
             send(term, data)
+
+        def run(call, *args):
+            try:
+                call(*args)
+            except Exception as exc:  # noqa: BLE001 - surfaced to the test below
+                errors.append(exc)
         with mock.patch.object(terminal, "_send", side_effect=held):
-            handing = threading.Thread(target=self.hand, args=("echo handed",))
+            handing = threading.Thread(target=run, args=(self.hand, "echo handed"))
             handing.start()
             self.assertTrue(typing.wait(5))
-            interrupt = threading.Thread(target=self.type, args=("\x03", self.slug))
+            interrupt = threading.Thread(target=run, args=(terminal.write, self.project, self.slug, self.ident, "\x03"))
             interrupt.start()
             time.sleep(.3)
-            self.assertTrue(interrupt.is_alive())  # waiting for the command to be typed
             release.set()
             handing.join(5)
             interrupt.join(5)
-        self.assertIsNone(self.current(self.slug).command)  # the Ctrl+C came after the command and dropped it
+        self.assertEqual(errors, [])
+        self.assertEqual(interrupted_after_release, [True])  # Ctrl+C reached the shell only after the command
+        self.assertIsNone(self.current(self.slug).command)  # and dropped it
         self.hand("echo handed")
 
     def test_an_entered_command_is_followed_to_its_end_before_another_is_typed(self):
