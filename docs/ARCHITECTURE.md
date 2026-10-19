@@ -1824,7 +1824,10 @@ Output goes into a 256 KB replay buffer addressed by absolute offsets. `GET
 bytes, the next offset and whether older output was dropped, and `end` carries the final status
 (`exited`, exit code and end reason: `exited`, `closed`, `task-finished`, `project-removed` or `failed` with
 its `error`). A
-reconnecting page resumes from its own offset. An ended terminal leaves the status at once (`none`), accepts no
+reconnecting page resumes from its own offset, and so does a page shown again after the background or the
+back-forward cache, whose connection may have dropped without an error; when older output was dropped meanwhile it
+starts its screen over from what was kept. The page sends `resize` once a size change has settled and changed
+the columns or rows, and again after each reconnect, since another page may have resized the shell. An ended terminal leaves the status at once (`none`), accepts no
 more input, resize or close, and stays readable only by a stream naming its id, so a page attaching after a
 failed start still reads why, until a new terminal opens, the task finishes or altd stops. `GET /api/terminal/<project>?task=` returns
 the status: state (`none` or `running`), terminal id, the setting, folder and the foreground command.

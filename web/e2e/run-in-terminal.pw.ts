@@ -76,11 +76,11 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
   await typedAlready.getByRole("button", { name: "Dismiss" }).click();
   await expect(typedAlready).toBeHidden();
 
-  // On phone the key row's Enter runs it without focusing the screen, so the soft keyboard stays closed;
+  // On phone the typed command leaves the soft keyboard closed and the key row's Enter runs it, keeping it closed;
   // desktop has no key row, and the screen already has focus for the keyboard's Enter.
   const enter = page.getByRole("toolbar", { name: "Terminal keys" }).getByRole("button", { name: "Enter" });
   if (phone) {
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    expect(await page.evaluate(() => !!document.activeElement?.closest(".terminal-screen"))).toBe(false);
     await enter.click();
     expect(await page.evaluate(() => !!document.activeElement?.closest(".terminal-screen"))).toBe(false);
   } else {

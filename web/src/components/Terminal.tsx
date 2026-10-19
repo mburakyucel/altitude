@@ -16,9 +16,20 @@ class ScreenLoadFailure extends Error {}
 
 // xterm.js loads only when a terminal is on screen. Its stylesheet travels with the app's: a lazy module with a
 // stylesheet is also preloaded, and WebKit keeps a failed preload across a reload (docs/ARCHITECTURE.md#web-delivery).
-const TerminalScreen = lazy(() => import("./TerminalScreen").catch((cause: unknown) => {
-  throw new ScreenLoadFailure("The terminal's code did not load", { cause });
-}));
+// The screen measures its character cells as it opens, so its font loads first: cells measured in a fallback font
+// fit more rows than the screen holds, and the last of them, the prompt, sits below its edge. A font that does not
+// arrive within a few seconds does not hold the terminal: it opens in the font it has.
+const FONT = { family: '"IBM Plex Mono", ui-monospace, monospace', size: 13 };
+const FONT_WAIT_MS = 3_000;
+const TerminalScreen = lazy(() => Promise.all([
+  import("./TerminalScreen").catch((cause: unknown) => {
+    throw new ScreenLoadFailure("The terminal's code did not load", { cause });
+  }),
+  Promise.race([
+    document.fonts.load(`${FONT.size}px ${FONT.family}`).catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS)),
+  ]),
+]).then(([module]) => module));
 
 /**
  * Why the terminal's code did not arrive. An update replaces the hashed files a page opened before it
@@ -235,7 +246,7 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
       {restart && !restart.failed ? <p className="terminal-note" role="status">Altitude restarts at its next quiet point to apply an update. This terminal will close then.</p> : null}
       <ScreenBoundary onError={screenFailed}>
         <Suspense fallback={<div className="terminal-screen" aria-label="Loading the terminal" />}>
-          <TerminalScreen key={data.id} project={project} task={task} id={data.id!} keys={keys} reconnecting={reconnecting}
+          <TerminalScreen key={data.id} project={project} task={task} id={data.id!} keys={keys} font={FONT} reconnecting={reconnecting}
             intro={`Runs as you in ${data.folder}`} command={command} onCommand={() => setCommand(null)}
             onEnd={leave} onReconnecting={setReconnecting} />
         </Suspense>

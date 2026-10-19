@@ -12,11 +12,13 @@
 .terminal-card h3 { font-weight: 600; }
 .terminal-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .terminal-card-actions .btn { min-height: 40px; }
-.terminal-frame { position: relative; display: flex; min-height: 160px; flex: 1; flex-direction: column; }
-.terminal-screen { min-height: 0; flex: 1; padding: 8px 0 8px 10px; overflow: hidden; border-radius: var(--radius-card); background: #111827; }
+/* At least a few rows, so that a short screen (a phone's open keyboard) shrinks the screen rather than push the key row out of view. */
+.terminal-frame { position: relative; display: flex; min-height: 72px; flex: 1; flex-direction: column; }
+.terminal-screen { min-height: 0; flex: 1; overflow: hidden; border-radius: var(--radius-card); background: #111827; }
 /* Over the screen, so losing the connection does not resize the shell. */
 .terminal-reconnecting { position: absolute; top: 8px; right: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(229, 231, 235, 0.92); color: #111827; font-size: var(--text-meta); font-weight: 500; pointer-events: none; }
-.terminal-screen .xterm { height: 100%; }
+/* The padding is xterm's own, which its fit subtracts: on the screen around it, the last row would sit under the edge. */
+.terminal-screen .xterm { height: 100%; padding: 8px 0 8px 10px; }
 .terminal-keys { display: flex; flex: none; gap: 6px; padding: 8px 8px 0; }
 .terminal-keys button { min-width: 0; min-height: var(--target-min); flex: 1 1 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font-weight: 500; }
 .terminal-keys .terminal-enter { flex-grow: 1.5; border-color: var(--accent); background: var(--accent); color: var(--on-accent); }

@@ -7,8 +7,10 @@ import { walkthrough } from "./walkthrough";
  * walked at both widths: off, the Settings switch, running, keys and tab completion, copy and paste, the
  * phone's Enter key at a prompt and a hidden password prompt, a
  * running command's close confirmation, reconnecting, typing stopped after failed input, a non-zero and a
- * clean exit, task finished, restart pending, refused, closed elsewhere, Altitude restarted and Close.
- * Only the agent check and the restart notice are fixtures.
+ * clean exit, task finished, restart pending, refused, closed elsewhere, Altitude restarted and Close; then the
+ * soft keyboard opening and closing, a hidden page shown again, a back-forward cache restore, a reload and a
+ * rotation. Only the agent check, the restart notice, the keyboard, the page's visibility and a connection that
+ * goes quiet without closing are fixtures.
  */
 test.use({ serviceScript: "terminal-service.py" });
 
@@ -411,6 +413,158 @@ test("the terminal scrolls back through its output by touch or wheel and follows
   }
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/atlas$/);
+});
+
+/** The last line ending in the prompt lies wholly on the terminal screen and inside what the viewport shows. */
+const promptInView = (page: Page) => page.evaluate(() => {
+  const screen = document.querySelector(".terminal-screen")!.getBoundingClientRect();
+  const rows = [...document.querySelectorAll(".terminal-screen .xterm-rows > div")];
+  const prompt = rows.filter((row) => /\$\s*$/.test(row.textContent ?? "")).pop()?.getBoundingClientRect();
+  const view = window.visualViewport!;
+  return Boolean(prompt && prompt.top >= screen.top && prompt.bottom <= screen.bottom && prompt.bottom <= view.offsetTop + view.height);
+});
+
+test("the terminal keeps its prompt in view as the keyboard opens and closes, the page hides and shows, reloads and rotates", { tag: "@chromium" }, async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const phone = info.project.name === "phone";
+  const walk = walkthrough(page, info);
+  const panel = page.getByRole("region", { name: "Terminal" });
+  const output = page.locator(".terminal-screen .xterm-rows");
+  const keys = page.getByRole("toolbar", { name: "Terminal keys" });
+  const resizes: string[] = [];
+  page.on("request", (sent) => { if (sent.url().endsWith("/resize")) resizes.push(sent.postData() ?? ""); });
+  const rows = () => resizes.map((body) => JSON.parse(body).rows as number);
+  const focused = () => page.evaluate(() => !!document.activeElement?.closest(".terminal-screen"));
+  // A phone keyboard changes only the visual viewport, and a hidden page only its visibility: browser emulation has
+  // neither, so both are set here as the browser would report them.
+  await page.addInitScript(() => {
+    const viewport = new EventTarget();
+    let height: number | undefined;
+    Object.defineProperty(viewport, "height", { get: () => height ?? window.innerHeight, set: (value: number) => { height = value; } });
+    Object.assign(viewport, { offsetTop: 0, scale: 1 });
+    Object.defineProperty(window, "visualViewport", { value: viewport });
+    let hidden = false;
+    Object.defineProperty(document, "visibilityState", { get: () => hidden ? "hidden" : "visible" });
+    Object.defineProperty(document, "hidden", { get: () => hidden });
+    Object.assign(window, { setHidden: (value: boolean) => { hidden = value; document.dispatchEvent(new Event("visibilitychange")); } });
+  });
+  const keyboard = (height?: number) => page.evaluate((height) => {
+    Object.assign(window.visualViewport!, { height: height ?? window.innerHeight });
+    window.visualViewport!.dispatchEvent(new Event("resize"));
+  }, height);
+  const setHidden = (value: boolean) => page.evaluate((value) => (window as unknown as { setHidden(value: boolean): void }).setHidden(value), value);
+  // The terminal's font arrives late, as over a slow connection: the screen waits for it, so its rows fit.
+  await page.route("**/assets/ibm-plex-mono-latin-400-normal-*", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await route.continue();
+  });
+  expect((await request.post("/api/terminal-access", { data: { enabled: true } })).ok()).toBe(true);
+
+  await walk.open(`${TASK}/terminal`);
+  await expect(output).toContainText("$");
+  // On phone the keyboard stays closed until the operator taps the screen; desktop types at once.
+  expect(await focused()).toBe(!phone);
+  await run(page, "seq -f 'kb-%03g' 1 120");
+  await expect(output.getByText("kb-120")).toBeVisible();
+  await expect.poll(() => promptInView(page)).toBe(true);
+  await expect.poll(() => resizes.length).toBeGreaterThan(0);
+  const opened = rows().at(-1)!;
+
+  if (phone) {
+    // The keyboard takes the bottom of the screen: the shell gets fewer rows once, and the prompt and the key row
+    // stay above the keyboard while the tab bar gives way.
+    resizes.length = 0;
+    await keyboard(480);
+    await expect.poll(rows).toHaveLength(1);
+    expect(rows()[0]).toBeLessThan(opened);
+    await expect.poll(() => promptInView(page)).toBe(true);
+    expect((await keys.boundingBox())!.y + (await keys.boundingBox())!.height).toBeLessThanOrEqual(480);
+    await page.locator(".terminal-screen").click();
+    await page.keyboard.type("echo typed-$((6*7))");
+    await page.keyboard.press("Enter");
+    await expect(output.getByText("typed-42", { exact: true })).toBeVisible();
+    await expect.poll(() => promptInView(page)).toBe(true);
+    await walk.state("20-keyboard-open-prompt-in-view", {
+      visible: [output.getByText("typed-42", { exact: true }), keys],
+      hidden: [page.getByRole("navigation", { name: "Primary", exact: true })],
+    });
+    // A key row key leaves the keyboard as it found it: open stays open, closed stays closed; Ctrl opens it.
+    await keys.getByRole("button", { name: "Up" }).click();
+    expect(await focused()).toBe(true);
+    await page.keyboard.press("Control+U");
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await keys.getByRole("button", { name: "Up" }).click();
+    expect(await focused()).toBe(false);
+    await keys.getByRole("button", { name: "Control" }).click();
+    expect(await focused()).toBe(true);
+    await page.keyboard.type("u");
+    await expect(output).toHaveText(/\$\s*$/);
+    // A shorter screen still: the shell's screen gives way before the key row does.
+    await keyboard(360);
+    await expect.poll(() => promptInView(page)).toBe(true);
+    expect((await keys.boundingBox())!.y + (await keys.boundingBox())!.height).toBeLessThanOrEqual(360);
+    // The keyboard closes: the rows come back, once.
+    resizes.length = 0;
+    await keyboard();
+    await expect.poll(rows).toEqual([opened]);
+    await page.waitForTimeout(300);
+    expect(rows()).toEqual([opened]);
+    await expect.poll(() => promptInView(page)).toBe(true);
+  }
+
+  // Hidden, the page's connection can drop without a word to it, as a phone's does in the background. Shown again,
+  // it reads on from where it was: the output written meanwhile appears once, with no Reconnecting in between.
+  const terminal = await (await request.get("/api/terminal/atlas?task=prepare-index-migration")).json();
+  await setHidden(true);
+  await fixture(request, "stall");
+  expect((await request.post("/api/terminal/atlas/input", { data: { task: "prepare-index-migration", id: terminal.id, data: "echo away-$((3+4))\r" } })).ok()).toBe(true);
+  await page.waitForTimeout(1_000);
+  await expect(output.getByText("away-7", { exact: true })).toBeHidden();
+  await setHidden(false);
+  await expect(output.getByText("away-7", { exact: true })).toBeVisible();
+  await expect(output.getByText("away-7", { exact: true })).toHaveCount(1);
+  await expect(panel.getByText("Reconnecting…")).toBeHidden();
+  await expect.poll(() => promptInView(page)).toBe(true);
+  await walk.state("21-shown-again-reads-on", { visible: [output.getByText("away-7", { exact: true })], hidden: [panel.getByText("Reconnecting…")] });
+
+  // Restored from the back-forward cache: the same.
+  await fixture(request, "stall");
+  expect((await request.post("/api/terminal/atlas/input", { data: { task: "prepare-index-migration", id: terminal.id, data: "echo cached-$((4+4))\r" } })).ok()).toBe(true);
+  await page.waitForTimeout(1_000);
+  await expect(output.getByText("cached-8", { exact: true })).toBeHidden();
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+  await expect(output.getByText("cached-8", { exact: true })).toHaveCount(1);
+
+  // The app swiped away and opened again, with the keyboard open: the page reattaches to the same shell, replays its
+  // output and lands at the prompt, with the keyboard closed on phone.
+  if (phone) {
+    await page.locator(".terminal-screen").click();
+    await keyboard(480);
+    await expect.poll(() => promptInView(page)).toBe(true);
+  }
+  await page.reload();
+  await expect(output.getByText("cached-8", { exact: true })).toBeVisible();
+  await expect.poll(() => promptInView(page)).toBe(true);
+  expect(await focused()).toBe(!phone);
+  expect((await (await request.get("/api/terminal/atlas?task=prepare-index-migration")).json()).id).toBe(terminal.id);
+  await walk.state("22-reopened-at-the-prompt", { visible: [output.getByText("cached-8", { exact: true })], hidden: [panel.getByText("Reconnecting…")] });
+
+  if (phone) {
+    // Turned sideways and back: the shell's size follows once each way, and the prompt and key row stay in view.
+    resizes.length = 0;
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect.poll(() => resizes.length).toBe(1);
+    await expect.poll(() => promptInView(page)).toBe(true);
+    expect((await keys.boundingBox())!.y + (await keys.boundingBox())!.height).toBeLessThanOrEqual(390);
+    await walk.state("23-rotated", { visible: [keys], hidden: [] });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => resizes.length).toBe(2);
+    await page.waitForTimeout(300);
+    expect(resizes).toHaveLength(2);
+    await expect.poll(() => promptInView(page)).toBe(true);
+  }
+  await run(page, "exit");
+  await expect(page).toHaveURL(new RegExp(`${TASK}/live$`));
 });
 
 /** A horizontal swipe by Chromium's touch input: a resting pause before lifting, so its distance decides the outcome. */
