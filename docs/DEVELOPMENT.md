@@ -1702,8 +1702,9 @@ worker's own job and sandbox. No provider is reached.
   `/api/sign-in/claude` must show the sign-in link and, given the code, save the token at mode 0600 with this
   sign-in's save time in Altitude's access folder, where the setup command ran with its own settings folder and
   no token; the Claude row of Settings › Prerequisites reads "Claude signed in". The token appears in no answer
-  and no service log, and no `claude.setup.*` folder or setup command remains after that sign-in, after one
-  cancelled part-way, or after one interrupted by the service's restart (`sign-in`, #1025).
+  and no service log, and no `claude.setup.*` folder, setup command or process the command started remains
+  after that sign-in, after one cancelled part-way, or after one interrupted by the service's restart (`sign-in`,
+  #1025).
 - `incident`: on a release behind a newer one, a new incident is held without calling GitHub and publishing it
   later creates the issue; on the latest release it is created directly, both naming the installed version
   (`incident`, #767). The release check reads `api.github.com` on the guest's loopback. Then the guest's own
