@@ -593,7 +593,8 @@ Ordinary development and code agents must not start, stop, mask, unmask, or rest
 Source-deployed Altitude activates merged backend and web changes itself. The regular thirty-second tick discovers
 merges even while their workers run. A failed fetch of `origin/main`, or a Git call that outlives its
 time limit on a busy host, is logged and retried on the next tick, and becomes a system fault only after
-the same step has failed for five minutes without a success.
+the same step has failed for five minutes without a success. Report verification treats a GitHub read that
+times out or cannot connect the same way.
 Other self-deploy refusals, such as a dirty checkout, fault immediately and once; the tick then waits
 for the checkout to change. A fault reading "fast-forward failed after moving the branch" (a full disk or a
 timeout while writing files) means the branch already names the new commit while its files do not: restoring the

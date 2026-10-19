@@ -17,6 +17,11 @@ class RateLimited(VerifierFault):
     """GitHub refused the read for the account's rate limit: a wait, not a fault (#814)."""
 
 
+class Unreachable(VerifierFault):
+    """gh could not reach GitHub (a timeout, a connection, DNS or TLS failure, a gateway error). The caller retries
+    on a later tick and files the fault only once it persists (I-20261018-220735)."""
+
+
 #: gh's wording when GitHub refuses a request for a primary or secondary rate limit.
 _RATE_LIMIT = re.compile(r"rate limit (already )?exceeded|exceeded a secondary rate limit", re.I)
 #: GitHub's REST pull request projected onto the GraphQL field names the readers share. REST has its own
@@ -25,6 +30,11 @@ _RATE_LIMIT = re.compile(r"rate limit (already )?exceeded|exceeded a secondary r
 PULL_JQ = ('{number, url: .html_url, state: (if .merged_at then "MERGED" elif .state == "closed" then "CLOSED" '
            'else "OPEN" end), baseRefName: .base.ref, headRefName: .head.ref, headRefOid: .head.sha, '
            'mergedAt: .merged_at, mergeCommit: (if .merged_at then {oid: .merge_commit_sha} else null end)}')
+
+
+#: gh's wording when the request never got an answer from GitHub: Go's network errors and GitHub's gateway errors.
+_UNREACHABLE = re.compile(r"error connecting to|connection (reset|refused)|i/o timeout|no such host|dial tcp|"
+                          r"TLS handshake|tls: |context deadline exceeded|timeout awaiting|HTTP 50[234]", re.I)
 
 
 def rate_limited(output: str) -> bool:
@@ -43,12 +53,16 @@ def open_findings(report: dict | None) -> list[dict]:
 def gh(args: list[str], cwd: Path) -> dict | list | None:
     try:
         p = subprocess.run(["gh"] + args, cwd=str(cwd), capture_output=True, text=True, timeout=60, env=engines.clean_env())
+    except subprocess.TimeoutExpired as e:
+        raise Unreachable(f"gh {' '.join(args[:3])}: {e}") from e
     except (subprocess.SubprocessError, OSError) as e:
         raise VerifierFault(f"gh {' '.join(args[:3])}: {e}") from e
     if p.returncode != 0:
         err = (p.stderr or "").strip()
         if rate_limited(err):
             raise RateLimited(f"gh {' '.join(args[:3])}: {err[-300:]}")
+        if _UNREACHABLE.search(err):
+            raise Unreachable(f"gh {' '.join(args[:3])}: {err[-300:]}")
         if "Could not resolve" in err or "no pull requests found" in err.lower() or "not found" in err.lower():
             return None  # a legitimately missing object, not a tooling failure
         raise VerifierFault(f"gh {' '.join(args[:3])} exit {p.returncode}: {err[-300:]}")
@@ -59,16 +73,24 @@ def gh(args: list[str], cwd: Path) -> dict | list | None:
 
 
 def verify(project: str, slug: str) -> dict:
+    """The verdict on the task's report. Unreachable propagates: the caller judges whether GitHub stays unreachable."""
     from . import tasks as T
     owner = T.report_owner(S.load_task(project, slug))
     try:
         return {**_verify(project, slug), "owner": owner}
     except RateLimited as e:  # the next tick verifies again
         return {"verdict": "rate-limited", "problems": [str(e)], "signals": [], "spend": {}, "prs": [], "report": None}
+    except Unreachable:
+        raise
     except VerifierFault as e:
-        from . import incidents
-        incidents.system_fault("verifier", str(e), project=project, task=slug, expected_owner=owner)
-        return {"verdict": "fault", "problems": [f"verifier fault: {e}"], "signals": [], "spend": {}, "prs": [], "report": None, "fault": str(e)}
+        return fault(project, slug, e, owner)
+
+
+def fault(project: str, slug: str, e: VerifierFault, owner: dict) -> dict:
+    """File the verifier's own failure as a system fault for the report `owner` and return its verdict."""
+    from . import incidents
+    incidents.system_fault("verifier", str(e), project=project, task=slug, expected_owner=owner)
+    return {"verdict": "fault", "problems": [f"verifier fault: {e}"], "signals": [], "spend": {}, "prs": [], "report": None, "fault": str(e)}
 
 
 def _verify(project: str, slug: str) -> dict:

@@ -427,6 +427,26 @@ class TestSystemFault(AltitudeCase):
         self.assertIn("unit inspection failed", fault["detail"])
         self.assertIsNone(fault["task"], "an unknown worker retains its task state and capacity")
 
+    def test_gh_separates_unreachable_github_from_tooling_failures(self):
+        def answers(stderr="", returncode=1, stdout=""):
+            done = subprocess.CompletedProcess(["gh"], returncode, stdout=stdout, stderr=stderr)
+            return mock.patch.object(verify.subprocess, "run", return_value=done)
+        with mock.patch.object(verify.subprocess, "run", side_effect=subprocess.TimeoutExpired(["gh"], 60)):
+            self.assertRaises(verify.Unreachable, verify.gh, ["run", "view", "7"], self.tmp)
+        for stderr in ('Get "https://api.github.com/repos/team/demo/pulls/1": read: connection reset by peer',
+                       "error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com",
+                       'dial tcp: lookup api.github.com: no such host', "net/http: TLS handshake timeout",
+                       "HTTP 502: Bad Gateway (https://api.github.com/graphql)"):
+            with answers(stderr):
+                self.assertRaises(verify.Unreachable, verify.gh, ["pr", "view", "1"], self.tmp)
+        for broken in (answers("HTTP 401: Bad credentials (https://api.github.com/graphql)"),
+                       answers(returncode=0, stdout="not json")):
+            with broken, self.assertRaises(verify.VerifierFault) as raised:
+                verify.gh(["pr", "view", "1"], self.tmp)
+            self.assertNotIsInstance(raised.exception, verify.Unreachable)
+        with answers("GraphQL: Could not resolve to a PullRequest with the number of 9."):
+            self.assertIsNone(verify.gh(["pr", "view", "9"], self.tmp))
+
     def test_verifier_tooling_failure_is_a_fault_verdict(self):
         self.patch(verify, "gh", new=lambda *a, **k: (_ for _ in ()).throw(verify.VerifierFault("gh: network down")))
         task = T.new(PROJECT, "verifier fault test", "request", actor="burak")

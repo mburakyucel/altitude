@@ -145,10 +145,7 @@ class TestContinuationJourney(AltitudeCase):
 
     def test_rate_limited_report_verification_waits_for_the_next_tick(self):
         # #814: GitHub refusing the verifier's PR read for the account's rate limit is no verifier fault.
-        self.commit("README.md", "Delivered change\n", "Delivered change")
-        delivery = land.land("Checked delivery", cwd=self.worktree, merge=True, wait=0)
-        self.write_report([(delivery["pr"], git("rev-parse", "main", cwd=self.remote).strip())])
-        self.engine.workers[self.initial["agent_id"]].update(state="done", status="exited")
+        self.finish_delivered_worker()
         (self.ghdir / "rate_limited.json").write_text('{"count": 1, "prefix": "api repos/"}')
         server.on_l2_finished(self.project, dispatch.poll(self.project)[0])
         waiting = S.load_task(self.project, self.slug)
@@ -157,6 +154,51 @@ class TestContinuationJourney(AltitudeCase):
         server.on_l2_finished(self.project, dispatch.poll(self.project)[0])  # the next tick
         verified = S.load_task(self.project, self.slug)
         self.assertEqual((verified["state"], verified["verified"]["verdict"]), ("done", "ok"))
+
+    def github_times_out(self, times):
+        """The verifier's next `times` PR reads hit gh's timeout, as a slow GitHub answer does."""
+        real, left = subprocess.run, [times]
+
+        def run(args, *rest, **kwargs):
+            if args[:2] == ["gh", "api"] and "/pulls/" in args[2] and left[0] > 0:
+                left[0] -= 1
+                raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
+            return real(args, *rest, **kwargs)
+        self.patch(verify.subprocess, "run", new=run)
+        self.addCleanup(server._failing_since.clear)
+
+    def finish_delivered_worker(self):
+        self.commit("README.md", "Delivered change\n", "Delivered change")
+        delivery = land.land("Checked delivery", cwd=self.worktree, merge=True, wait=0)
+        self.write_report([(delivery["pr"], git("rev-parse", "main", cwd=self.remote).strip())])
+        self.engine.workers[self.initial["agent_id"]].update(state="done", status="exited")
+
+    def test_slow_github_answer_during_verification_waits_for_the_next_tick(self):
+        # I-20261018-220735: one timed-out read of a correct delivery is no verifier fault.
+        self.finish_delivered_worker()
+        self.github_times_out(1)
+        server.on_l2_finished(self.project, dispatch.poll(self.project)[0])
+        waiting = S.load_task(self.project, self.slug)
+        self.assertEqual((waiting["state"], waiting.get("fault"), waiting.get("verified")), ("running", None, None))
+        self.assertNotIn(json.dumps([self.project, "verifier"]), S.read_json(incidents.FAULTS, {}))
+        self.assertTrue(any("retrying next tick" in line for line in self.logs))
+        server.on_l2_finished(self.project, dispatch.poll(self.project)[0])  # the next tick
+        verified = S.load_task(self.project, self.slug)
+        self.assertEqual((verified["state"], verified["verified"]["verdict"]), ("done", "ok"))
+        self.assertEqual(server._failing_since, {})
+
+    def test_github_unreachable_past_the_tick_grace_is_a_verifier_fault(self):
+        self.finish_delivered_worker()
+        self.github_times_out(10 ** 6)
+        server.on_l2_finished(self.project, dispatch.poll(self.project)[0])
+        self.assertEqual(S.load_task(self.project, self.slug)["state"], "running")
+        for step in server._failing_since:  # GitHub has stayed unreachable for the whole grace
+            server._failing_since[step] -= server.TICK_GRACE_SECONDS
+        server.on_l2_finished(self.project, dispatch.poll(self.project)[0])
+        blocked = S.load_task(self.project, self.slug)
+        self.assertEqual(blocked["state"], "blocked")
+        self.assertIn("system fault [verifier]", blocked["blocked_reason"])
+        self.assertIn("timed out", S.read_json(incidents.FAULTS)[json.dumps([self.project, "verifier"])]["detail"])
 
     def test_dirty_deployment_survives_checked_delivery_and_same_owner_followup(self):
         deployment_head = git("rev-parse", "HEAD", cwd=self.repo)

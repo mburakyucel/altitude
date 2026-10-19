@@ -468,6 +468,45 @@ class TestGitPolicy(unittest.TestCase):
         with self.assertRaises(git_policy.GitPolicyError):
             git_policy.require_hooks_installed(self.repo)
 
+    def test_consent_to_changed_originals_covers_only_the_contents_observed(self):
+        custom = self.custom_hooks()
+        self.git("config", "core.hooksPath", str(custom))
+        observed = git_policy.inspect_hooks(self.repo)
+        first = git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])["hooks_path"]
+        (custom / "pre-commit").write_text("#!/bin/sh\nexit 7\n")
+        shown = git_policy.inspect_hooks(self.repo)
+        self.assertEqual((shown["status"], shown["can_combine"]), ("conflict", True))
+        # The originals change again after the operator saw them: that consent does not cover the new contents.
+        (custom / "pre-commit").write_text("#!/bin/sh\nexit 8\n")
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "ownership changed"):
+            git_policy.repair_hooks(self.repo, combine=True, expected=shown["fingerprint"])
+        self.assertEqual(self.git("config", "--get", "core.hooksPath").stdout.strip(), first)
+        current = git_policy.inspect_hooks(self.repo)
+        self.assertNotEqual(current["fingerprint"], shown["fingerprint"])
+        combined = Path(git_policy.repair_hooks(self.repo, combine=True, expected=current["fingerprint"])["hooks_path"])
+        self.assertEqual(json.loads((combined / "original.json").read_text())["original_contents"],
+                         git_policy._hook_contents(custom))
+
+    def test_changed_managed_hook_files_are_never_offered_for_combination(self):
+        custom = self.custom_hooks()
+        self.git("config", "core.hooksPath", str(custom))
+        observed = git_policy.inspect_hooks(self.repo)
+        managed = Path(git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])["hooks_path"])
+        (managed / "pre-commit").write_text("#!/bin/sh\nexit 0\n")   # the protected guard no longer runs
+        tampered = git_policy.inspect_hooks(self.repo)
+        self.assertEqual((tampered["status"], tampered["can_combine"]), ("conflict", False))
+        self.assertEqual(tampered["detail"], "The managed hook files changed; L3 needs to inspect them.")
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "managed hook files changed"):
+            git_policy.repair_hooks(self.repo, combine=True, expected=tampered["fingerprint"])
+        self.assertEqual((managed / "pre-commit").read_text(), "#!/bin/sh\nexit 0\n")
+        self.assertEqual(self.git("config", "--get", "core.hooksPath").stdout.strip(), str(managed))
+        # Selecting the folder that holds the managed compositions is not combinable either.
+        shutil.copy2(managed / "pre-commit", managed.parent / "pre-commit")
+        self.git("config", "core.hooksPath", str(managed.parent))
+        folder = git_policy.inspect_hooks(self.repo)
+        self.assertEqual((folder["status"], folder["can_combine"]), ("conflict", False))
+        self.assertEqual(folder["detail"], "The managed hook files changed; L3 needs to inspect them.")
+
     def test_worktree_consent_cannot_be_reused_by_a_sibling_worktree(self):
         git_policy.install_hooks(self.repo)
         self.git("config", "extensions.worktreeConfig", "true")
