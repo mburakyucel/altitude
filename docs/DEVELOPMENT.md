@@ -1889,6 +1889,16 @@ required-check rule rejects a merge if a merge made outside the line moves main 
 validation and merge; the head then integrates again within its turn. No repository move, plan upgrade or settings change
 is needed. GitHub web/API merges do not enforce Altitude's task holds or review protocol.
 
+Each CodeQL alert dismissed on GitHub records its reason. CodeQL's Python path check recognizes a
+normalize-then-prefix test, a comparison with a constant and known library sanitizers as validation,
+not checks inside Altitude's own functions: project and task names pass `config.require_project_name`
+and `state.require_task_slug`, the `storage` layer opens one checked component at a time without
+following links, and other names match a fixed pattern or a stored record. A path alert whose data
+passes one of these is a false positive whose dismissal names that check; a path that reaches the
+filesystem without one is a defect fixed through these helpers. No workflow restores an Actions cache:
+the [installation lifecycle](#installation-lifecycle-acceptance) workflow runs candidate code in main's
+cache scope.
+
 Other projects retain their configured hosted/no-CI gates. Shared hosted-check handling ignores
 completed nonrequired skips without parsing workflow conditions; failed or pending checks still
 block, and at least one hosted check must actually pass. Requiredness and candidate association

@@ -191,6 +191,7 @@ def _certificate(directory: Path, host: str, port: int) -> str:
     expected = ssl.PEM_cert_to_DER_cert(pem)
     ca = directory / "ca.crt"
     context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     with socket.create_connection((host, port), timeout=5) as connection:
         with context.wrap_socket(connection, server_hostname=host) as secured:
             actual = secured.getpeercert(binary_form=True)

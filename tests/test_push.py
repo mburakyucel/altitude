@@ -68,6 +68,7 @@ class TestPush(AltitudeCase):
         self.patch(config, "TLS_DIR", self.tmp / "tls")
         server.tls_init("127.0.0.1")
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(config.TLS_DIR / "server.crt", config.TLS_DIR / "server.key")
         self.service = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Service)
         self.service.socket = context.wrap_socket(self.service.socket, server_side=True)

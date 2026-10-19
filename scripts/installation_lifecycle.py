@@ -518,6 +518,7 @@ class Lifecycle:
 
         httpd = ThreadingHTTPServer(("127.0.0.1", 443), functools.partial(Handler, directory=str(server / "root")))
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(server / "server.crt", server / "server.key")
         httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -893,6 +894,7 @@ class ReleaseServer:
         self.repository, self.latest, self.files, self.requests = repository, None, {}, []
         self.ca = folder / "ca.crt"
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(folder / "server.crt", folder / "server.key")
         release = self
 

@@ -1282,6 +1282,7 @@ def container_https(address: str, facts: dict) -> None:
     if target.is_unspecified or target.is_multicast:
         raise RuntimeError("The container needs one concrete published host address")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_verify_locations(cadata=facts["ca"])
     with socket.create_connection((str(target), facts["port"]), timeout=5) as raw:
         with context.wrap_socket(raw, server_hostname=facts["host"]) as connection:
