@@ -1830,7 +1830,7 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
 
 
 def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, agent_id: str | None,
-             worktree: str | None, branch: str | None, l2_engine: str = "claude",
+             worktree: str | None, branch: str | None, l2_engine: str,
              engine_model: str | None = None, routing: str | None = None, actor: str = "altd",
              launch_model: str | None = None, launch_effort: str | None = None, routing_pinned: bool = False,
              messages: list[dict] | None = None, input_delivered: bool = False) -> dict:
@@ -1861,12 +1861,10 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
 
 def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
            expected_state: str | None = None, expected_attempt: int | None = None,
-           expected_block_from: str | None = None, expected_agent_id: object = _UNSET,
-           expected_session_id: object = _UNSET, expected_block_id: object = _UNSET) -> dict:
+           expected_block_from: str | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        _require_daemon_fence(task, slug, expected_agent_id=expected_agent_id,
-                              expected_session_id=expected_session_id, expected_block_id=expected_block_id)
+        _require_daemon_fence(task, slug)
         if expected_state is not None and task["state"] != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task['state']}")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:

@@ -12,7 +12,7 @@ class SelfDeployFastForward(AltitudeCase):
         super().setUp()
         self.private_ledgers()
         make_repo(self.repo)
-        git_policy.install_hooks(self.repo, REPO / "hooks")
+        git("config", "core.hooksPath", str(REPO / "hooks"), cwd=self.repo)
         self.register("altitude", path=self.repo, self_deploy=True)
         self.patch(config, "REPO", self.repo)
         self.head = git("rev-parse", "HEAD", cwd=self.repo).strip()

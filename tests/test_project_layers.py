@@ -44,7 +44,7 @@ PROVIDER_BASELINE = {
     "altitude/l3.py": 30,
     "altitude/monitor.py": 4,
     "altitude/server.py": 1,
-    "altitude/tasks.py": 2,
+    "altitude/tasks.py": 1,
 }
 
 #: Host mechanisms per file in `altitude/**/*.py` and `bin/alt`, outside the platform seam.

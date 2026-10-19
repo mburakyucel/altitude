@@ -79,7 +79,7 @@ class TestOperatorGrant(AltitudeCase):
         self.slug = T.new(self.project, "Preserve the service configuration", "Keep TLS across the install.")["slug"]
         self.worktree = self.task_worktree(self.slug)
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
-                   worktree=str(self.worktree), branch="work")
+                   worktree=str(self.worktree), branch="work", l2_engine=config.ENGINES[0])
         root = dispatch.l2_job_root(self.project, self.slug)
         root.mkdir(parents=True, exist_ok=True)
         S.write_json(root / "agent.json", {"id": "agent", "engine": "claude", "unit": engines.claude._claude_unit("agent")})
@@ -203,7 +203,7 @@ class TestOperatorGrant(AltitudeCase):
     def test_l3_applies_an_operator_answer_from_another_task_for_the_identical_purpose(self):
         earlier = T.new(self.project, "Close device installation", "Verify the published release.")["slug"]
         T.dispatch(self.project, earlier, attempt=1, session_id="earlier", agent_id="earlier",
-                   worktree=str(self.task_worktree(earlier)), branch="earlier")
+                   worktree=str(self.task_worktree(earlier)), branch="earlier", l2_engine=config.ENGINES[0])
         self.tick()
         T.block(self.project, earlier, "May I run repeated installation VMs against the published release?",
                 actor="l2", expected_state="running", expected_attempt=1, updates={"waiting_on": "burak"})
@@ -302,7 +302,7 @@ class TestOperatorGrant(AltitudeCase):
         relay = T.message(self.project, self.slug, "l3", "The operator approved publishing.", by="l3")
         sibling = T.new(self.project, "Another task", "Unrelated.")["slug"]
         T.dispatch(self.project, sibling, attempt=1, session_id="sibling", agent_id="sibling",
-                   worktree=str(self.task_worktree(sibling)), branch="sibling")
+                   worktree=str(self.task_worktree(sibling)), branch="sibling", l2_engine=config.ENGINES[0])
         self.tick()
         elsewhere = T.message(self.project, sibling, "burak", "Publish the release.", by="burak")
         refusals = [
@@ -348,7 +348,7 @@ class TestOperatorGrant(AltitudeCase):
         question = self.ask("Please record the release grant.", "l3")
         sibling = T.new(self.project, "Publish the hotfix", "Ship it.")["slug"]
         T.dispatch(self.project, sibling, attempt=1, session_id="sibling", agent_id="sibling",
-                   worktree=str(self.task_worktree(sibling)), branch="sibling")
+                   worktree=str(self.task_worktree(sibling)), branch="sibling", l2_engine=config.ENGINES[0])
         self.tick()
         T.block(self.project, sibling, "Please record the release grant here too.", actor="l2",
                 expected_state="running", expected_attempt=1, updates={"waiting_on": "l3"})
@@ -357,7 +357,7 @@ class TestOperatorGrant(AltitudeCase):
         self.from_earlier(theirs, slug=sibling)
         third = T.new(self.project, "Install a toolchain", "Unrelated.")["slug"]
         T.dispatch(self.project, third, attempt=1, session_id="third", agent_id="third",
-                   worktree=str(self.task_worktree(third)), branch="third")
+                   worktree=str(self.task_worktree(third)), branch="third", l2_engine=config.ENGINES[0])
         self.tick()
         T.block(self.project, third, "Please record the hotfix grant.", actor="l2", expected_state="running",
                 expected_attempt=1, updates={"waiting_on": "l3"})
@@ -411,7 +411,7 @@ class TestOperatorGrant(AltitudeCase):
                            reason="Again.", actor="l3")
         later = T.new(self.project, "Carry on", "Remaining work.")["slug"]
         T.dispatch(self.project, later, attempt=1, session_id="later", agent_id="later",
-                   worktree=str(self.task_worktree(later)), branch="later")
+                   worktree=str(self.task_worktree(later)), branch="later", l2_engine=config.ENGINES[0])
         with self.assertRaisesRegex(T.TransitionError, "withdrew this approval"):
             T.record_grant(self.project, later, row["id"], question=question["id"], revision=question["revision"],
                            reason="Same purpose.", actor="l3", expected_attempt=1, from_task=self.slug)

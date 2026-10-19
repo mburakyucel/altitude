@@ -1010,8 +1010,7 @@ def _candidate(root: Path, base_sha: str, head_sha: str):
                 raise LandError(f"candidate cleanup failed: {detail}")
 
 
-def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
-           *, delete_branch: bool = True) -> bool:
+def _merge(root: Path, number: int, base: str, expected_head: str, *, delete_branch: bool) -> bool:
     """Merge, then believe GitHub about the result, not the exit code — `--delete-branch` can fail on the
     local half (a worktree holds the branch) after the merge itself succeeded. GitHub atomically refuses if the
     PR head changed after the candidate this invocation validated. An adopted PR keeps its original branch. The
@@ -1095,8 +1094,7 @@ def _require_merged_tree(root: Path, pair: dict) -> None:
 def _merge_pair(root: Path, pair: dict, *, delete_branch: bool) -> bool:
     """Merge the pinned pair; a refusal caused only by a moved base (a strict up-to-date rule) is BaseMoved."""
     try:
-        return _merge(root, pair["branch"], pair["number"], pair["base"], pair["head_sha"],
-                      delete_branch=delete_branch)
+        return _merge(root, pair["number"], pair["base"], pair["head_sha"], delete_branch=delete_branch)
     except RateLimited:
         raise  # the landing confirms with GitHub whether the merge happened before it starts again
     except LandError:
@@ -1104,8 +1102,8 @@ def _merge_pair(root: Path, pair: dict, *, delete_branch: bool) -> bool:
         raise
 
 
-def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge=None,
-                          delete_branch: bool = True) -> tuple[bool, dict]:
+def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge,
+                          delete_branch: bool) -> tuple[bool, dict]:
     """Test one exact base/head pair and merge only while both tips still match it."""
     base_sha, head_sha = pair["base_sha"], pair["head_sha"]
     identity = {"base": base_sha, "head": head_sha}
@@ -1147,7 +1145,7 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         tests["error"] = f"PR checks changed from none to {after_checks} while the local suite ran"
         _note(f"not merging: {tests['error']} — re-run alt land under the current gate")
         return False, tests
-    with before_merge() if before_merge else contextlib.nullcontext():
+    with before_merge():
         merged = _merge_pair(root, pair, delete_branch=delete_branch)
     return merged, tests
 
@@ -1636,17 +1634,18 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                         merged = True
                         break
                     attempted = None
-                with S.project_lock(project):
-                    _require_delivery_owner(project, slug, task, S.load_task(project, slug), None,
-                                            branch=publish_branch, number=(pr or {}).get("number"))
                 if line:
                     line.beat()  # a turn taken over while this process was paused ends here
-                    ready()
-                elif merge and hold_merge:  # #777: a held candidate integrates main only on a validated approval
-                    if not approval:
-                        raise LandError(f"task carries a merge hold: {hold_merge}")
-                    if pr and pr.get("headRefOid"):
-                        apply_approval(pr, pr["headRefOid"], validate_only=True)
+                    ready()  # its gates include the delivery owner
+                else:
+                    with S.project_lock(project):
+                        _require_delivery_owner(project, slug, task, S.load_task(project, slug), None,
+                                                branch=publish_branch, number=(pr or {}).get("number"))
+                    if merge and hold_merge:  # #777: a held candidate integrates main only on a validated approval
+                        if not approval:
+                            raise LandError(f"task carries a merge hold: {hold_merge}")
+                        if pr and pr.get("headRefOid"):
+                            apply_approval(pr, pr["headRefOid"], validate_only=True)
                 # An approval binds to a PR: without one, the head publishes as it is and is validated before the line.
                 unbound = merge and hold_merge and not line and not (pr and pr.get("headRefOid"))
                 publishing_base = _fetch_rev(root, base)
@@ -1685,7 +1684,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                                base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
                 hold_merge = task.get("hold_merge")
                 pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
-                merged, local_tests = pr.get("state") == "MERGED", None
+                merged, local_tests = False, None
                 if line is None:
                     # Publication: the candidate is judged on its own head; main moving does not interrupt it.
                     checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
@@ -1696,9 +1695,9 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                               "and checking the new head")
                         republish = republished = True
                         continue
-                    _require_closing_issues(root, number, closes_issues)
-                    if not merge or merged or checks not in ("pass", "none-configured"):
-                        if merge and not merged:
+                    if not merge or checks not in ("pass", "none-configured"):
+                        _require_closing_issues(root, number, closes_issues)
+                        if merge:
                             _note(f"not merging: {_checks_outcome(checks, pair)}")
                         break
                     ready()
@@ -1718,7 +1717,6 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                 # The turn: the exact pair, its fresh check if main moved, then the merge.
                 checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
                                              deadline=deadline, strict=True, line=line)
-                _require_closing_issues(root, number, closes_issues)
                 if checks in ("pass", "none-configured"):
                     attempted = pair
                     if checks == "none-configured":

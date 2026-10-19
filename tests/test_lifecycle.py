@@ -14,7 +14,8 @@ class TestLifecycle(AltitudeCase):
         self.assertEqual(t["state"], "queued")
         self.assertEqual(T.decisions(self.project), [])
         T.brief(self.project, t["slug"], "# Brief\n…")
-        T.dispatch(self.project, t["slug"], attempt=1, session_id="sid", agent_id="aid", worktree="/wt", branch="b")
+        T.dispatch(self.project, t["slug"], attempt=1, session_id="sid", agent_id="aid", worktree="/wt", branch="b",
+                   l2_engine=config.ENGINES[0])
         self.assertEqual(S.load_task(self.project, t["slug"])["attempt"], 1)
 
         parked = T.block(self.project, t["slug"], "Landing window pending")

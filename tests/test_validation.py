@@ -213,7 +213,7 @@ class RunnerCase(AltitudeCase):
         """A running task whose worker is `agent`; returns its slug."""
         slug = T.new(self.project, title, "Run the VM lifecycle.")["slug"]
         T.dispatch(self.project, slug, attempt=1, session_id="session", agent_id=agent,
-                   worktree=str(add_worktree(self.repo, slug)), branch=f"worktree-{slug}")
+                   worktree=str(add_worktree(self.repo, slug)), branch=f"worktree-{slug}", l2_engine=config.ENGINES[0])
         root = dispatch.l2_job_root(self.project, slug)
         root.mkdir(parents=True, exist_ok=True)
         S.write_json(root / f"{agent}.json", {"id": agent, "engine": "claude", "unit": engines.claude._claude_unit(agent)})
