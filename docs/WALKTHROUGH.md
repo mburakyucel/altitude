@@ -51,6 +51,11 @@ The owner describes its generation-bound cursor design in the task conversation.
 Messages sent here are durable and reach the worker at its engine's next checkpoint; the
 conversation remains available separately from the engine transcript.
 
+A Claude owner also takes your skills and custom commands by name: type `/release-notes v2` and it
+uses that skill with `v2`, whether the skill is yours or the project's. Claude's coordinator in the
+project conversation does not load them, so use them in a task; Codex owners are not yet confirmed.
+[Engine integration](ARCHITECTURE.md#engine-integration-boundary) describes the limits.
+
 <picture>
   <source media="(max-width: 600px)" srcset="images/task-phone.png">
   <img src="images/task-desktop.png" alt="The compatibility task: direct steering and the owner's response beside the live session, which shows cursor inspection and contract-test commands." width="1440">
