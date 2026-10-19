@@ -56,6 +56,11 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def read_json(path: Path):
+    """PATH's JSON, or None when it is absent."""
+    return json.loads(path.read_text()) if path.exists() else None
+
+
 def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2) + "\n")
 
@@ -328,8 +333,11 @@ class Lifecycle:
         (self.results / "foreign-caches-baseline-check.log").write_text(f"exit: {probe.returncode}\n{probe.stderr}")
         if probe.returncode == 0:
             return False
-        legacy = release and tuple(map(int, re.match(r"v(\d+)\.(\d+)\.(\d+)", release).groups())) < (0, 9, 0)
-        if legacy and "the only extra files look like generated Python caches" in probe.stderr:
+        number = release and tuple(map(int, re.match(r"v(\d+)\.(\d+)\.(\d+)", release).groups()))
+        # v0.7.0 and v0.8.0 name the caches; v0.6.0 and older say only that the files differ from the manifest.
+        words = "the only extra files look like generated Python caches" if number and number >= (0, 7, 0) \
+            else "Release files do not match its manifest"
+        if number and number < (0, 9, 0) and words in probe.stderr:
             return True
         raise AssertionError(f"The installed release refused its generated caches: {probe.stderr.strip()[-500:]}")
 
@@ -1396,6 +1404,14 @@ class MacLifecycle(Lifecycle):
                 path.write_text("Fictional retained installation acceptance data\n")
             retained = {path: digest(path) for path in [*sentinels, self.settings, *self.tls.glob("*")] if path.is_file()}
             write_json(self.results / "state-before.json", {"device": device, "machine": self.request("/api/machine")})
+            # Upgrades from before v0.7.0: the machine key is replaced (#947) and the voice runtime that sat in the
+            # worker-writable home is removed (#940). Later baselines keep their key; the planted folder goes either way.
+            access = self.home / ".config/altitude/access"
+            key_before = {"sha256": digest(access / "machine.key"), "record": read_json(access / "key.json")}
+            voice = self.home / ".altitude/speech"
+            for name in ("worker.log", "installation.json", "runtime-earlier/site/fictional.py"):
+                (voice / name).parent.mkdir(parents=True, exist_ok=True)
+                (voice / name).write_text("Fictional voice runtime left by an earlier release\n")
             # An outside process writes bytecode into the installed baseline first (#1029).
             outgoing = self.prefix.joinpath("current").resolve()
             caches = self.foreign_caches(outgoing)
@@ -1420,7 +1436,14 @@ class MacLifecycle(Lifecycle):
             write_json(self.results / "automatic-update-record.json", self.record())
             # The candidate reads what the baseline wrote, through the device the baseline paired.
             devices, machine = self.request("/api/devices"), self.request("/api/machine")
-            write_json(self.results / "state-after.json", {"devices": devices, "machine": machine})
+            key_after = {"sha256": digest(access / "machine.key"), "record": read_json(access / "key.json")}
+            write_json(self.results / "state-after.json", {"devices": devices, "machine": machine,
+                                                           "key": {"before": key_before, "after": key_after},
+                                                           "voice_folder_left": voice.exists()})
+            earlier = (key_before["record"] or {}).get("generation") != key_after["record"]["generation"]
+            assert key_after["record"]["generation"] >= 2 and (key_after["sha256"] != key_before["sha256"]) == earlier, \
+                (key_before, key_after)
+            assert not voice.exists(), sorted(str(path.relative_to(voice)) for path in voice.rglob("*"))
             assert devices["current"] == device, (devices, device)
             assert machine["operator"] == operator, machine
             installed_now = self.request("/api/overview")["update"]["installed"]

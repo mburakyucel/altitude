@@ -188,6 +188,61 @@ def limit_after_owner_exit():
 
 
 @row
+def sleep_hold():
+    """Idle sleep waits for a running job: its supervisor's caffeinate holds the assertion and lets it go with the job.
+    A closed lid or a forced sleep still sleeps; `awake-clock` shows that the time limit then counts awake time."""
+    if not DARWIN:
+        return None
+    marker = f"probe-sleep-{NONCE}"
+    job = name("sleep")
+    proc = subprocess.Popen(platform.job_command(job, [sys.executable, "-c", "import time; time.sleep(120)", marker],
+                                                 env(), runtime_max=60), stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        check(until(lambda: marked(marker), 10), "job did not start")
+        supervisor = int((platform._jobs() / platform._label(job) / "supervisor").read_text())
+        check(until(lambda: held_for(supervisor), 10), f"nothing holds off idle sleep for the supervisor {supervisor}")
+        held = held_for(supervisor)
+        platform.job_stop(job, env())
+        check(until(lambda: not held_for(supervisor), 10), f"the assertion outlived the job: {held}")
+    finally:
+        proc.kill()
+        proc.wait()
+    return f"{held[0]} on behalf of the job's supervisor while it ran, and nothing after it ended"
+
+
+def held_for(pid: int) -> list[str]:
+    """The idle-sleep assertions `pmset -g assertions` lists as made on behalf of this process."""
+    listed = subprocess.run(["pmset", "-g", "assertions"], capture_output=True, text=True, check=True).stdout
+    owner, found = "", []
+    for line in listed.splitlines():
+        if line.strip().startswith("pid "):
+            owner = line.strip()
+        elif line.strip().split()[-1:] == [str(pid)] and "on behalf of Process ID" in line \
+                and "PreventUserIdleSystemSleep" in owner:
+            found.append(owner.split(" named:")[0])
+    return found
+
+
+@row
+def awake_clock():
+    """Supporting evidence that a job's time limit counts awake time, as systemd's monotonic limit does: the
+    supervisor's limit is `Popen.wait`'s timeout, which counts Python's monotonic clock, on macOS the kernel's uptime
+    clock that stops while the Mac sleeps. It starts no job and crosses no sleep. On a Mac that has slept since it
+    started, the clock that keeps counting through sleep is ahead by the time slept."""
+    if not DARWIN:
+        return None
+    check(subprocess._time is time.monotonic, "Popen.wait's timeout no longer counts time.monotonic")
+    clock = time.get_clock_info("monotonic").implementation
+    monotonic, awake = time.monotonic(), time.clock_gettime(time.CLOCK_UPTIME_RAW)
+    slept = time.clock_gettime(time.CLOCK_MONOTONIC) - awake
+    check(abs(monotonic - awake) < 0.01, f"monotonic ({clock}) {monotonic:.3f}s is not awake time {awake:.3f}s")
+    return (f"the limit's clock ({clock}) is awake time; this Mac has slept {slept / 3600:.1f} h since it started, "
+            "which that clock left out" if slept >= 1 else
+            f"the limit's clock ({clock}) is awake time; this Mac has not slept since it started")
+
+
+@row
 def logged_job():
     job = name("logged")
     with tempfile.TemporaryDirectory() as folder:

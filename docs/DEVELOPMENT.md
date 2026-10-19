@@ -961,7 +961,7 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself; with `TRUST`, the installer's consented certificate trust opening its private link in Playwright's Chromium and Firefox without a warning; on Ubuntu 24.04 x86_64 | Desktop login/logout, distribution or snap browsers, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop and time limits end every descendant, a pseudo-terminal's child among them; the suite's read-only-home cases, each confining a child with Seatbelt or Codex's own sandbox; a source checkout cloned from an origin in the guest, whose first start creates Altitude's own copy of its repository and runs from it, and whose service deploys a newer main pushed to that origin through the copy; the installed service with a fictional engine and GitHub CLI: a coordinator's Stop, a worker ended at its failed turn, unknown worker status, a validation run and a granted command across the service's restart, revocation, an answer reused for another task, a second command waiting for the machine-run place, an incident held behind a newer release, and logout and login without a restart; with `PUBLISHED`, a published release's own daemon, with an outside process's caches in its release, installing a later published or source-built release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, sleep (the guest refuses it), browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, `alt trust` from an SSH session refused for the login keychain with no trust setting added, the SHA-256 undo command removing the certificate, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop and time limits end every descendant, a pseudo-terminal's child among them, and whose idle-sleep assertion lasts as long as the job, and the awake-time clock their limit's wait counts; the suite's read-only-home cases, each confining a child with Seatbelt or Codex's own sandbox; a source checkout cloned from an origin in the guest, whose first start creates Altitude's own copy of its repository and runs from it, and whose service deploys a newer main pushed to that origin through the copy; the installed service with a fictional engine and GitHub CLI: a coordinator's Stop, a worker ended at its failed turn, unknown worker status, a validation run and a granted command across the service's restart, revocation, an answer reused for another task, a second command waiting for the machine-run place, an incident held behind a newer release, the release lookup's 12-hour schedule and once-a-day notice on the guest's moved clock, an operator's command waiting in Needs you until the project terminal runs it to its end, an automatic update waiting for a validation run, holding new runs until it has restarted and installing itself once the run ends, a worker's scratch folder removed at completion, a coordinator channel refusing task workers and other projects' coordinators, and logout and login without a restart; with `PUBLISHED`, a published release's own daemon, with an outside process's caches in its release, installing a later published or source-built release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, an actual sleep (the guest refuses it), browser/device CA trust, the guest's own download from GitHub, a schedule's real elapsed hours, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
@@ -1618,7 +1618,12 @@ shell trusts, with `github.com` resolving to the loopback.
   its card still unplugged, the automatic login must start the service again with a new process and
   the browser stays paired. A fictional Git project added through the app must then show its
   coordinator waiting for a coding tool, with setup continuing by itself and no incident filed; once
-  the browser is unpaired, doctor's next step is certificate trust and `alt pair`. Uninstall must
+  the browser is unpaired, doctor's next step is certificate trust and `alt pair`. From the SSH
+  session, with the account's desktop logged in, `alt trust` answered `y` must name the SSH session,
+  fail for the login keychain with the message pointing to the Mac's own desktop or the pair page's
+  Mac steps and add no trust setting (`trust-ssh`); macOS keeps the certificate itself in the
+  keychain, untrusted. That certificate must then be removed by `security delete-certificate -Z
+  <SHA-256> -t`, the form of the undo command `alt trust` prints (`undo-sha256`). Uninstall must
   then remove the LaunchAgent and stop the service.
 - `privacy`: the account, logged in and outside any sandbox, runs the revision's own
   `scripts/platform_probe.py --only confinement validation-confinement` with Homebrew's Python 3.12,
@@ -1628,10 +1633,17 @@ shell trusts, with `github.com` resolving to the loopback.
   stored answer, refused.
 - `jobs`: the account, logged in and outside any sandbox, runs the revision's own probe job rows
   (`job-pipe`, `job-file-output`, `exit-cleanup`, `stop-descendants`, `time-limit`,
-  `limit-after-owner-exit`, `logged-job`, `detached-job` and `launch-input`) as real launchd jobs in
-  its own domain, which launchd refuses a worker sandbox. Every row must pass: Stop ends each
-  descendant, including one that leaves by `setsid`, double fork or a cleared environment or keeps
-  forking, before the job reads inactive, and the time limit holds also after its owner exits. The
+  `limit-after-owner-exit`, `sleep-hold`, `awake-clock`, `logged-job`, `detached-job` and `launch-input`)
+  as real launchd jobs in its own domain, which launchd refuses a worker sandbox. Every row must pass:
+  Stop ends each descendant, including one that leaves by `setsid`, double fork or a cleared environment
+  or keeps forking, before the job reads inactive, and the time limit holds also after its owner exits.
+  While a job runs, `pmset -g assertions` lists an idle-sleep assertion made on behalf of its supervisor,
+  gone once the job ends. `awake-clock` is supporting evidence, not a job across sleep: the clock the
+  supervisor's limit waits on, `Popen.wait`'s monotonic clock, is macOS's awake-time clock, which stops
+  while the Mac sleeps, as systemd's limit does. The guest itself cannot sleep (macOS under the Virtualization framework
+  refuses `pmset sleepnow`), so `awake-clock`, which starts no job, also runs on this Mac through
+  `alt task validate -- python3 scripts/platform_probe.py --only awake-clock`: on a Mac that has slept
+  since it started, the limit's clock has left out the hours slept, which the row reports. The
   `launch-input` job, confined and launched as a review is, takes its own folder and a fictional
   sign-in from its input's first line, reads but cannot write a home settings file linked into that
   folder, and cannot list the launcher's job folders or read another job's saved launch input there.
@@ -1659,7 +1671,7 @@ shell trusts, with `github.com` resolving to the loopback.
   with the checkout, the copy and the export its startup activated all at the new commit, serving
   the page with the mark the first start did not serve. The service's logs are kept.
 
-The runtime phases `workers`, `grants`, `incident` and `session` install the release into the account's own home through
+The runtime phases `workers`, `grants`, `incident`, `update` and `session` install the release into the account's own home through
 the public command, with `tests/macos_guest_engine.py`, a scripted fictional Codex CLI, as its only engine and the
 tests' fake GitHub CLI first on its saved PATH, and register a fictional project. `tests/macos_guest_runtime.py` then
 drives each row as the account against the installed service: the operator acts through `alt`, the coordinator
@@ -1679,11 +1691,32 @@ worker's own job and sandbox. No provider is reached.
   guest's one machine-run place, a second granted command waits for the first (`contention`, #728).
 - `incident`: on a release behind a newer one, a new incident is held without calling GitHub and publishing it
   later creates the issue; on the latest release it is created directly, both naming the installed version
-  (`incident`, #767). The release check reads `api.github.com` on the guest's loopback.
-- `session`: ending the login session without a restart stops the service and the automatic login starts it again
-  (`logout-login`, #731); a login that does not return is recorded as unavailable with its reason. The guest
-  cannot sleep: macOS under the Virtualization framework refuses `pmset sleepnow` as not permitted, so a job's time
-  limit across sleep needs a real Mac.
+  (`incident`, #767). The release check reads `api.github.com` on the guest's loopback. Then the guest's own
+  clock moves forward, with nothing in Altitude's records rewritten: two minutes before the next lookup is due
+  the daemon has not looked, just after it finds the newer release, 12 hours after its last lookup (a failed
+  startup lookup is first retried an hour later); a terminal shows the newer release's notice once, not again
+  that day, and again the next day (`schedule`, #226, #731). The row runs last, since the clock stays moved.
+- `update`: the coordinator hands the operator a fictional command naming a blocked task: it must wait in
+  Needs you (`/api/overview`) as that task's turn. Opened in the project terminal as the page's Open in
+  terminal opens it, through the same requests, the command runs to its end; its notice must clear the step,
+  start a coordinator turn and leave the task no longer the operator's turn. A second step's terminal, closed
+  before its command ends, must leave that step waiting (`operator-step`, #1017). Then the guest's installed
+  release, relabelled one patch version newer and otherwise unchanged, is offered for automatic installation
+  while a task's validation run holds the machine. `alt doctor` must read `Update: Altitude <newer> installs
+  automatically at the next quiet moment; waiting for the validation run of fictional/<task>.`, another task's
+  `alt task validate` is told Altitude restarts soon to apply an update and runs only after the restart, and
+  within 45 seconds of the run's end the update starts, succeeds and the service restarts into the newer version
+  while the validating task's worker stays in its turn (`quiet-point`, #1003).
+- `session`: a worker saves a draft from its scratch folder, shows a worktree file and completes; once the
+  task is done its scratch folder must be gone with its progress kept, and a command it left running must write
+  nothing afterwards, in Altitude's home or a recreated scratch folder (`scratch`, #958). With a second project
+  registered, a coordinator turn of the fictional Codex CLI must run from a fresh folder in the coordinator folder,
+  which only the account may open, be admitted to its own project's channel and refused at the other project's,
+  while a task worker is refused at its own project's; each channel's path stays within macOS's 103 bytes
+  (`coordinator-channel`, #943). Then ending the login
+  session without a restart stops the service and the automatic login starts it again
+  (`logout-login`, #731); a login that does not return is recorded as unavailable with its reason. Sleep is
+  the `jobs` phase's `sleep-hold` and `awake-clock` rows.
 
 `PUBLISHED=<baseline>..<candidate>` names two published release tags and runs only the `published`
 phase. `PUBLISHED=<baseline>` alone names only the published baseline: the candidate is then built
@@ -1709,7 +1742,10 @@ it automatically at a quiet point, leave those caches where they were and downlo
 and checksum. Only a baseline from v0.8.0 or older, whose own check refuses the caches with its
 earlier error, updates without them, which its results record as a limit. The candidate must answer
 health with its own version and commit and pass `alt doctor`, recognize the same paired device, show
-the saved name, and keep configuration, TLS identity and data unchanged before uninstall.
+the saved name, and keep configuration, TLS identity and data unchanged before uninstall. A baseline
+from before v0.7.0 must also have its machine key replaced (#947); a later one keeps it. Fictional
+files of an earlier voice runtime planted in `~/.altitude/speech` must be gone once the candidate has
+started (#940).
 
 `RESULTS/macos-vm.json` records the source and harness commits, this Mac's macOS version, free disk
 and load average before and after, the guest's sizing, each image's restore image, macOS build,
@@ -1724,7 +1760,7 @@ stop. One guest runs at a time, and the runner stops whenever less than 10 GiB o
 free. Building the images takes about fifteen minutes after the restore image's download. On an
 unloaded Mac `fresh` and `prerequisites` take under half a minute each, `lifecycle` about five
 minutes, `login` just over one, `privacy` under one, `workers` about five and a half, `grants` about four,
-`incident`, `session` and `source` about two and `published` about one and a half; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
+`incident`, `update`, `session` and `source` about two and `published` about one and a half; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
 run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with

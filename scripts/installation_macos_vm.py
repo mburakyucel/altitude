@@ -25,8 +25,9 @@ worker sandbox can; `read-only-home` runs the revision's suite cases that confin
 this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or worker can start. `source` installs
 from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
 repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
-`incident` and `session` install the release into the account's own home with a scripted fictional engine and the
-tests' fake GitHub CLI, then drive the guest's own service through the revision's tests/macos_guest_runtime.py rows.
+`incident`, `update` and `session` install the release into the account's own home with a scripted fictional engine
+and the tests' fake GitHub CLI, then drive the guest's own service through the revision's tests/macos_guest_runtime.py
+rows.
 `--published` downloads the published baseline, and the candidate when it names one, on this Mac, checked against
 their SHA256SUMS and tags; without a published candidate it builds one from the source revision under the baseline's
 next minor version. It runs only `published`: after an outside process writes caches into the installed baseline, the
@@ -1042,13 +1043,35 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     hint = doctor("doctor-trust")["next"]
     check(hint == ["Next: compare the certificate below with what your browser shows, trust it, then run alt pair."],
           f"next: {hint}")
+    # From this SSH session, with the account's desktop logged in, `alt trust` answered y must fail for the login
+    # keychain with the remote-terminal message and change nothing (#1006 check 3). The undo command it prints on a
+    # desktop names the authority by SHA-256: `security delete-certificate -Z` must remove it by that name.
+    keychain = f"/Users/{ACCOUNT}/Library/Keychains/login.keychain-db"
+    # The refusal must leave no trust setting; `security add-trusted-cert` keeps the certificate itself untrusted.
+    listed = "security dump-trust-settings 2>&1"
+    unchanged = step("trust-before", listed).stdout
+    # The answer is typed once the question shows: `alt trust` discards keys typed before it asks.
+    answered = step("trust-ssh", f"/usr/bin/expect -c 'set timeout 240; spawn {alt} trust; expect \"Trust it?\"; "
+                                 "send \"y\\r\"; expect {{ eof {{}} timeout {{ puts STILL-WAITING; "
+                                 "exec ps -axo pid,etime,command >@ stdout; exit 9 }} }}; catch wait result; "
+                                 "exit [lindex $result 3]'", timeout=300)
+    trust_ssh = {"passed": "This is an SSH session" in answered.stdout
+                 and "a remote terminal cannot show; run alt trust there, or follow the Mac steps on the pair page"
+                 in answered.stdout.replace("\r", "").replace("\n", " ")
+                 and step("trust-after", listed).stdout == unchanged}
+    fingerprint = "openssl x509 -in ~/.config/altitude/tls/ca.crt -noout -fingerprint -sha256 | cut -d= -f2 | tr -d :"
+    found = f"security find-certificate -a -Z {keychain} | grep -qi \"SHA-256 hash: $sha\""
+    undone = step("undo-sha256", f"sha=$({fingerprint}) && {{ {found} || security add-certificates -k {keychain} "
+                                 f"~/.config/altitude/tls/ca.crt; }} && {found} && "
+                                 f"security delete-certificate -Z $sha -t {keychain} && ! {found}")
     removed = step("uninstall", f"{alt} uninstall")
     check(removed.returncode == 0 and json.loads(removed.stdout)["uninstalled"], "uninstall failed")
     gone = step("removed", f"test ! -e {agent} && ! launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} >/dev/null 2>&1 && "
                            f"! curl -sk --max-time 5 https://127.0.0.1:{port}/api/health >/dev/null")
     check(gone.returncode == 0, "the LaunchAgent or the service is still there")
     record["cases"] = {"login": {"passed": True, "version": version, "service_label": SERVICE_LABEL,
-                                 "pids": [before["pid"], after["pid"]]}}
+                                 "pids": [before["pid"], after["pid"]]},
+                       "trust-ssh": trust_ssh, "undo-sha256": {"passed": undone.returncode == 0}}
 
 
 # The confinement rows that must refuse private places without macOS asking, and how their details say so.
@@ -1057,7 +1080,7 @@ PRIVACY_ROWS, REFUSED = ("confinement", "validation-confinement"), \
 # The rows that run fixture commands as launchd jobs: output, Stop of every descendant, cleanup, time limits and a
 # confined job's launch input.
 JOB_ROWS = ("job-pipe", "job-file-output", "exit-cleanup", "stop-descendants", "time-limit", "limit-after-owner-exit",
-            "logged-job", "detached-job", "launch-input")
+            "sleep-hold", "awake-clock", "logged-job", "detached-job", "launch-input")
 # The suite's read-only-home cases, which confine a child with a second Seatbelt profile or Codex's own sandbox and so
 # skip in a validation run or a confined worker (docs/DEVELOPMENT.md#macos-validation-runs).
 READ_ONLY_HOME = ("tests.test_worker_writes", "tests.test_worker_roots",
@@ -1319,7 +1342,8 @@ git push -q origin main && git rev-parse HEAD""")
 # The runtime rows each phase drives in the guest (tests/macos_guest_runtime.py), split so that a `run` of one phase
 # finishes within `alt task run`'s ten minutes.
 RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
-                "grants": ("grants", "contention"), "incident": ("incident",), "session": ("logout-login",)}
+                "grants": ("grants", "contention"), "incident": ("incident", "schedule"),
+                "update": ("operator-step", "quiet-point"), "session": ("scratch", "coordinator-channel", "logout-login")}
 GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
 # Rows may end the account's session, so they run in the background while the host polls.
 ROWS_BUDGET = 420
@@ -1390,20 +1414,31 @@ def phase_grants(guest: Guest, repository: str, results: Path, record: dict, inp
 
 
 def phase_incident(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
-    """Incident issues held on a release behind a newer one, and sent to the fake GitHub CLI otherwise (#767)."""
+    """Incident issues held on a release behind a newer one, and sent to the fake GitHub CLI otherwise (#767); then
+    the release lookup's 12-hour schedule and the once-a-day notice on the guest's own clock (#226, #731)."""
     runtime(guest, repository, results, record, inputs, "incident")
 
 
+def phase_update(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """A command the coordinator hands the operator waits in Needs you until the project terminal runs it to its end
+    (#1017); an automatic update offered during a validation run waits for it, holding new runs, and installs itself
+    once the run ends, while the validating task's worker stays in its turn (#1003)."""
+    runtime(guest, repository, results, record, inputs, "update")
+
+
 def phase_session(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
-    """Logout and login without a restart (#731, #226). The guest cannot sleep: macOS under Apple's Virtualization
-    framework refuses `pmset sleepnow` as not permitted, so sleep past a job's time limit needs a real Mac."""
+    """A worker's scratch folder through completion (#958), the coordinator channel refusing a worker and another
+    project's coordinator (#943), then logout and login without a restart (#731, #226).
+    The guest cannot sleep: macOS under Apple's Virtualization framework refuses `pmset sleepnow` as not permitted;
+    the `jobs` phase's `sleep-hold` and `awake-clock` rows cover a job across sleep."""
     runtime(guest, repository, results, record, inputs, "session")
 
 
 # `fresh` starts from the fresh image, every other phase from prerequisites; `published` runs only with --published.
 PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login,
           "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home, "source": phase_source,
-          "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "session": phase_session,
+          "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "update": phase_update,
+          "session": phase_session,
           "published": phase_published}
 # The phases that install the release built from the source, and those that also read the revision's files.
 BUILT = ("fresh", "prerequisites", "lifecycle", "login", *RUNTIME_ROWS)
