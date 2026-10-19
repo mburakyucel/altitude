@@ -118,6 +118,9 @@ class TestClaudeFolders(AltitudeCase):
         self.assertNotIn(TOKEN, " ".join(command))
         spec = json.loads(sent)
         self.assertNotIn(TOKEN, json.dumps(spec["command"]))
+        # A skill or command typed in task chat runs because the worker loads them and keeps the Skill tool.
+        for flag in ("--restricted", "--safe-mode", "--bare", "--disable-slash-commands", "--tools"):
+            self.assertNotIn(flag, spec["command"])
         self.assertEqual(spec["env"], {"CLAUDE_CONFIG_DIR": str(job_root / "claude"), "CLAUDE_CODE_OAUTH_TOKEN": TOKEN})
         # The driver, inside the job, prepares the folder before Claude starts.
         job = subprocess.run(command[command.index("--") + 1:], input=sent, capture_output=True, timeout=60)
