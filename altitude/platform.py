@@ -1603,7 +1603,7 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
     Every job has a temporary folder of its own (`_job_temporary`), its TMPDIR, removed when the job ends.
     `writable` confines the job with Altitude's own sandbox, Seatbelt on macOS and bubblewrap on Linux: it may signal
     only its own processes and write only under these roots and its temporary folder, except under `read_only`,
-    never reads Altitude's credentials or the engines' folders of the operator's own (`engines.operator_places`),
+    never reads Altitude's credentials or the engines' places of the operator's own (`engines.operator_places`),
     except a `read_only` path inside one, and reaches no Unix socket of the desktop session; `sockets` are the ones
     outside its roots it may reach. Without it, file confinement is left to the engine.
 
@@ -1632,12 +1632,44 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
             *command]
 
 
-def _operator_places() -> list[str]:
-    """The engines' folders of the operator's own that no job in Altitude's sandbox sees, resolved and present; on
-    macOS each also through the data volume's other name, as `secret_places` spells them."""
+def _operator_places(places=None) -> list[str]:
+    """The engines' folders and files of the operator's own that no job in Altitude's sandbox sees (`places`, by
+    default every engine's), resolved, present or not; a place ending in * stands for every name in its folder that
+    starts with it, and is followed by where each such name present now that is a link leads. On macOS each is also
+    spelled through the data volume's other name, as `secret_places` spells them."""
     from .engines import common
-    found = [place for place in dict.fromkeys(map(os.path.realpath, common.operator_places())) if os.path.isdir(place)]
+    found = []
+    for place in common.operator_places() if places is None else places:
+        if not place.endswith("*"):
+            found.append(os.path.realpath(place))
+            continue
+        found.append(os.path.join(os.path.realpath(os.path.dirname(place)), os.path.basename(place)))
+        found.extend(os.path.realpath(path) for path in _named(place) if os.path.islink(path))
+    found = list(dict.fromkeys(found))
     return list(_volume_spellings(found)) if _darwin() else found
+
+
+def operator_paths(places) -> list[str]:
+    """Each path of the operator's `places` present now, for a sandbox that names paths one by one, as an engine's own may."""
+    return [path for path in _hidden_paths(_operator_places(places)) if os.path.lexists(path)]
+
+
+def _hidden_paths(places) -> list[str]:
+    """Each path `places` name, resolved: a link among the names a * place stands for counts where it leads, which
+    `_operator_places` already names, so a sandbox never mounts over the link itself."""
+    return list(dict.fromkeys(os.path.realpath(path) for place in places for path in _named(place)))
+
+
+def _named(root: str) -> list[str]:
+    """A root's paths: the root resolved or, for a root ending in *, each name present in its folder that starts
+    with it."""
+    if not root.endswith("*"):
+        return [os.path.realpath(root)]
+    folder, prefix = os.path.realpath(os.path.dirname(root)), os.path.basename(root)[:-1]
+    try:
+        return [os.path.join(folder, name) for name in sorted(os.listdir(folder)) if name.startswith(prefix)]
+    except OSError:
+        return []
 
 
 def _inside(path: str, places: list[str]) -> bool:
@@ -1683,7 +1715,8 @@ def bubblewrap_profile(writable: list[str], read_only: list[str] = (), *, tempor
     `read_only` read-only again, the most specific path deciding; the control groups are read-only too. The per-user
     runtime folder is an empty one, so the session bus, the user manager and the desktop session's sockets are out of
     reach; `sockets` (a coordinator's broker) come back read-only, and so does a root inside it. Each `hidden` folder
-    is an empty one too, with only the `read_only` paths inside it back, read-only. The job sees only its
+    is an empty one too, with only the `read_only` paths inside it back, read-only, and each `hidden` file one it
+    cannot open; a hidden * place hides the names present at launch. The job sees only its
     own processes and a device folder of its own with its own terminals, never Altitude's credentials and, where the
     kernel offers the scope (`ABSTRACT_SCOPE`), no abstract socket it did not make. A writable folder that does not
     exist yet is created first, so what the job writes there lasts; a * root admits only the names present at launch.
@@ -1699,7 +1732,7 @@ def bubblewrap_profile(writable: list[str], read_only: list[str] = (), *, tempor
                 mounts.append((entry.path, 0, ["--symlink", os.readlink(entry.path), entry.path]))
             else:
                 mounts.append((entry.path, 0, ["--ro-bind", entry.path, entry.path]))
-    for place in (*map(str, job_control_paths()), *hidden):
+    for place in (*map(str, job_control_paths()), *_hidden_paths(hidden)):
         if os.path.isdir(place):
             mounts.append((place, 0, ["--tmpfs", place]))
         elif os.path.lexists(place):
@@ -1707,14 +1740,8 @@ def bubblewrap_profile(writable: list[str], read_only: list[str] = (), *, tempor
     mounts.extend((shared, 0, ["--bind", temporary, shared]) for shared in map(os.path.realpath, ("/tmp", "/var/tmp")))
     reopened = _reopened(read_only, hidden)
     for root in dict.fromkeys(writable):
-        if root.endswith("*"):
-            folder, prefix = os.path.realpath(os.path.dirname(root)), os.path.basename(root)[:-1]
-            try:
-                paths = [os.path.join(folder, name) for name in sorted(os.listdir(folder)) if name.startswith(prefix)]
-            except OSError:
-                paths = []
-        else:
-            paths = [os.path.realpath(root)]
+        paths = _named(root)
+        if not root.endswith("*"):
             os.makedirs(paths[0], exist_ok=True)
         mounts.extend((path, 1, ["--bind", path, path]) for path in paths)
     kept = [path for path in read_only if os.path.abspath(path) not in reopened]
@@ -2689,6 +2716,12 @@ def git_marker(directory: NamespacePath) -> bool:
         return False
 
 
+def _prefix_rule(prefix: str) -> str:
+    """Seatbelt's filter for every path that starts with `prefix`, escaping only the characters its regular
+    expressions treat as special."""
+    return '(regex #"^' + re.sub(r'([.^$*+?()\[\]{}|\\"])', r"\\\1", prefix) + '")'
+
+
 def _filters(kind: str, values) -> list[str]:
     return [f'({kind} "' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '")' for value in values]
 
@@ -2926,24 +2959,27 @@ def seatbelt_profile(writable: list[str], read_only: list[str] = (), *, temporar
     neither read nor write macOS's private places. Seatbelt matches resolved paths and lets the last matching rule
     decide, so rules follow from shallow to deep. It reaches Unix sockets only under its own roots and `temporary`
     folder, at `sockets` and the system's, never one another program keeps in the shared temporary folders. It
-    neither reads nor writes a `hidden` folder, apart from reading the `read_only` paths inside it, as named and
-    resolved, each also through the data volume; these rules come before the private places' refusal, which stays last. launchd refuses service control
-    to every sandboxed process, and the profile refuses the services and Apple Events that would run a program
-    outside it."""
+    neither reads nor writes a `hidden` folder or file, or any path a hidden * place starts, apart from reading the
+    `read_only` paths inside a hidden folder, as named and resolved, each also through the data volume; these rules
+    come before the private places' refusal, which stays last. launchd refuses service control to every sandboxed
+    process, and the profile refuses the services and Apple Events that would run a program outside it."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
     rules = []
     for root in dict.fromkeys((*writable, temporary, user, "/private/tmp", "/private/var/tmp", "/dev")):
         if root.endswith("*"):
             prefix = os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root)[:-1])
-            rules.append((prefix, "allow", '(regex #"^' + re.escape(prefix).replace('"', '\\"') + '")'))
+            rules.append((prefix, "allow", _prefix_rule(prefix)))
         else:
             rules.extend((path, "allow", rule) for path in [os.path.realpath(root)] for rule in _filters("subpath", [path]))
     rules.extend((path, "deny", rule) for path in map(os.path.realpath, read_only) for rule in _filters("subpath", [path]))
     rules.sort(key=lambda rule: (rule[0].count("/"), rule[1] == "deny"))
     own = [os.path.realpath(root) for root in (*writable, temporary) if not root.endswith("*")]
-    reopened = _volume_spellings(kept for path in _reopened(read_only, hidden) for kept in (path, os.path.realpath(path)))
-    hide = "".join(f"(deny file-read* file-write* {rule})" for rule in _filters("subpath", hidden)) + "".join(
-        f"(allow file-read-metadata {rule})" for rule in _filters("literal", hidden)) + "".join(
+    reopened = _volume_spellings(kept for path in _reopened((*read_only, *map(os.path.realpath, read_only)), hidden)
+                                 for kept in (path, os.path.realpath(path)))
+    folders = [place for place in hidden if not place.endswith("*")]
+    refused = (*_filters("subpath", folders), *(_prefix_rule(place[:-1]) for place in hidden if place.endswith("*")))
+    hide = "".join(f"(deny file-read* file-write* {rule})" for rule in refused) + "".join(
+        f"(allow file-read-metadata {rule})" for rule in _filters("literal", folders)) + "".join(
         f"(allow file-read* {rule})" for rule in _filters("subpath", reopened))
     return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))(deny file-write*)"
             + "".join(f"({verdict} file-write* {rule})" for _, verdict, rule in rules) + hide

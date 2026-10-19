@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import tomllib
 import unittest
@@ -13,7 +14,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from tests.support import AltitudeCase, git, make_repo
+from tests.support import REPO, AltitudeCase, git, make_repo
 from altitude import config, dispatch, engines, l3, platform, server, state as S, tasks as T
 
 
@@ -619,6 +620,42 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
                                                   str(l3.verb_socket_path(self.project)), f"/run/user/{os.getuid()}/bus"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("native sandbox:", result.stdout)
+
+    @unittest.skipUnless(os.environ.get("ALTITUDE_TEST_CODEX_SANDBOX") == "1",
+                         "opt in on a host with the real Codex Linux sandbox")
+    def test_real_codex_sandbox_refuses_the_operators_claude_folder_and_state_file(self):
+        """The operator's Claude folder and state file in the coordinator's own profile (`codex.denied`), refused
+        when the turn starts; a copy gone by then does not stop it."""
+        from tests.support import run_native_sandbox_probe
+        runtime = l3._l3_runtime(self.project, "codex")
+        self.addCleanup(l3._remove_runtime, runtime)
+        # Outside every place the profile refuses whole, such as the shared temporary folders.
+        home = Path(tempfile.mkdtemp(prefix=".sandbox-home-", dir=REPO))
+        self.addCleanup(shutil.rmtree, home)
+        (home / ".claude").mkdir()
+        (home / ".claude" / ".credentials.json").write_text("fictional sign-in")
+        for name in (".claude.json", ".claude.json.tmp.1.fixture"):
+            (home / name).write_text("fictional state")
+        self.patch(config, "HOME", home)
+        self.patch(engines.claude, "OPERATOR_HOME", home / ".claude")
+        settings = engines.codex_l3_permissions(runtime, project=self.project)
+        self.assertIn(json.dumps(str(home / ".claude.json.tmp.1.fixture")), "".join(settings))
+        (home / ".claude.json.tmp.1.fixture").unlink()  # as Claude's own replacement leaves none
+        probe = r'''
+import json, sys
+from pathlib import Path
+def read(path):
+    try:
+        return Path(path).read_text()
+    except OSError as exc:
+        return exc.errno
+print(json.dumps([read(path) for path in sys.argv[1:]]))
+'''
+        result = run_native_sandbox_probe(runtime, settings, probe,
+                                          [str(home / ".claude" / ".credentials.json"), str(home / ".claude.json")])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        seen = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertTrue(all(isinstance(value, int) for value in seen), seen)
 
     def test_i_20260903_075410_runtime_path_cannot_be_retargeted_to_the_checkout(self):
         before = self.checkout_snapshot()

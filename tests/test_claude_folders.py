@@ -130,27 +130,142 @@ class TestClaudeFolders(AltitudeCase):
         self.assertFalse(os.path.lexists(home / "plugins"), "only what the operator has is linked")
         self.assertFalse((home / ".claude.json").exists(), "the folder's state file starts empty")
 
-    def test_the_driver_links_once_and_moves_a_resumed_session_into_the_folder_once(self):
+    def test_the_driver_links_once_and_copies_a_resumed_session_into_the_folder_once(self):
         (self.operator / "CLAUDE.md").write_text("operator rules")
         project = self.operator / "projects" / "-fixture-repo"
         (project / "sid-1" / "subagents").mkdir(parents=True)
         (project / "sid-1.jsonl").write_text('{"turn": 1}\n')
         (project / "sid-1" / "subagents" / "agent-a.jsonl").write_text('{"helper": 1}\n')
+        (project / "sid-2.jsonl").write_text('{"other": 1}\n')
         home = self.runtime_tmp / "claude"
         home.mkdir()
         (home / "settings.json").write_text('{"own": true}')
-        engines.claude._own_folder(home, "sid-1")
+        copies = engines.claude._first_resume(home, "sid-1")
+        self.assertEqual(copies, [project / "sid-1", project / "sid-1.jsonl"], "only that session's records")
+        engines.claude._own_folder(home, list(map(str, copies)))
         self.assertEqual((home / "settings.json").read_text(), '{"own": true}', "an existing entry is kept")
         self.assertEqual(os.readlink(home / "CLAUDE.md"), str(self.operator / "CLAUDE.md"))
         copied = home / "projects" / "-fixture-repo"
         self.assertEqual((copied / "sid-1.jsonl").read_text(), '{"turn": 1}\n')
         self.assertEqual((copied / "sid-1" / "subagents" / "agent-a.jsonl").read_text(), '{"helper": 1}\n')
+        self.assertFalse((copied / "sid-2.jsonl").exists())
         (copied / "sid-1.jsonl").write_text('{"turn": 1}\n{"turn": 2}\n')
-        engines.claude._own_folder(home, "sid-1")
+        self.assertEqual(engines.claude._first_resume(home, "sid-1"), [], "a session in the folder is its own")
+        engines.claude._own_folder(home, list(map(str, copies)))
         self.assertEqual((copied / "sid-1.jsonl").read_text(), '{"turn": 1}\n{"turn": 2}\n',
                          "the folder's own session is never replaced")
-        engines.claude._own_folder(home, "unknown")
-        self.assertFalse(list(home.glob("projects/*/unknown.jsonl")))
+        for resume in ("unknown", "../sid-1", None):
+            self.assertEqual(engines.claude._first_resume(home, resume), [])
+
+    def test_the_operators_claude_folder_is_hidden_from_every_confined_job_but_what_its_launch_reopens(self):
+        """Through the seam: the folder and the state file beside it, with a copy Claude left, are among the places
+        every confined job is denied; each Claude launch names the entries its folder links to, a worker also the
+        project's notes, and a launch resuming a session for the first time that session's records."""
+        state = [config.HOME / ".claude.json", config.HOME / ".claude.json.tmp.1.fixture"]
+        for path in state:
+            path.write_text("fictional state")
+            self.addCleanup(path.unlink)
+        kept = self.tmp / "dotfiles" / "claude.json"  # a state copy a dotfiles manager links in
+        kept.parent.mkdir()
+        kept.write_text("fictional state")
+        (config.HOME / ".claude.json.backup.fixture").symlink_to(kept)
+        self.addCleanup((config.HOME / ".claude.json.backup.fixture").unlink)
+        (self.operator / ".credentials.json").write_text("fictional sign-in")
+        self.addCleanup((self.operator / ".credentials.json").unlink)
+        (self.operator / "settings.json").write_text("{}")
+        (self.operator / "skills").mkdir(exist_ok=True)
+        hidden = platform._operator_places()
+        self.assertLessEqual({os.path.realpath(self.operator), os.path.realpath(config.HOME) + "/.claude.json*",
+                              os.path.realpath(kept)}, set(hidden),
+                             "the state file's copies too, whenever Claude makes them, and where a linked one leads")
+        self.assertLessEqual({os.path.realpath(self.operator), *map(os.path.realpath, state), os.path.realpath(kept)},
+                             set(platform.operator_paths(engines.claude.operator_places())))
+        linked = engines.claude._linked()
+        self.assertLessEqual({self.operator / "settings.json", self.operator / "skills"}, set(linked))
+        self.assertEqual(linked, [self.operator / name for name in engines.claude.LINKED
+                                  if (self.operator / name).exists()], "only what the operator has")
+
+        worktree = add_worktree(make_repo(self.repo), "hidden")
+        notes = engines.notes_folder(self.repo)
+        notes.mkdir(parents=True)
+        session = self.operator / "projects" / "-repo" / "sid-old.jsonl"
+        session.parent.mkdir(parents=True, exist_ok=True)
+        session.write_text("{}\n")
+        self.patch(engines.claude, "claude_agents", return_value=[])
+        _, _, writable, read_only, _, launch = engines.claude.prepare_worker(
+            "p/hidden", "brief", cwd=worktree, scratch=config.task_scratch(self.project, "hidden"),
+            job_root=self.runtime_tmp / "l2-engine", persona=None, model=None,
+            settings=dispatch.session_settings(self.project, "hidden"), effort=None, resume="sid-old", images=())
+        self.assertEqual(list(read_only[-len(linked) - 2:]), [*linked, notes, session])
+        self.assertEqual(launch, {"copies": [str(session)]})
+        self.assert_none_shared(writable)
+
+        captured = {}
+
+        def job_command(unit, command, env, **kw):
+            captured.update(kw)
+            raise _Stop
+
+        with mock.patch.object(platform, "job_command", side_effect=job_command), self.assertRaises(_Stop):
+            engines.claude_print("prompt", cwd=self.tmp, unit="altitude-coordinator-fixture.service",
+                                 home=self.tmp / "coordinator-claude")
+        self.assertEqual(captured["read_only"], tuple(linked), "a coordinator reads its links, not the notes")
+
+        temporary = str(self.tmp / "job-tmp")
+        args = platform.bubblewrap_profile([str(worktree)], [str(path) for path in read_only], temporary=temporary,
+                                           hidden=hidden)
+        pairs = [args[n:n + 3] for n in range(len(args))]
+        for path in (*state, kept):
+            self.assertIn(["--ro-bind", "/dev/null", os.path.realpath(path)], pairs)
+        emptied = next(n for n, pair in enumerate(pairs) if pair[:2] == ["--tmpfs", os.path.realpath(self.operator)])
+        for path in (*linked, notes, session):
+            self.assertGreater(pairs.index(["--ro-bind-try", str(path), str(path)]), emptied)
+        profile = platform.seatbelt_profile([str(worktree)], [str(path) for path in read_only], temporary=temporary,
+                                            hidden=hidden)
+        self.assertIn(f"(deny file-read* file-write* {platform._prefix_rule(os.path.realpath(config.HOME) + '/.claude.json')})",
+                      profile)
+        self.assertEqual(platform._prefix_rule('/Users/a-b c/.claude.json'), r'(regex #"^/Users/a-b c/\.claude\.json")',
+                         "only the regular expressions' own special characters are escaped")
+        deny = profile.index(f'(deny file-read* file-write* (subpath "{os.path.realpath(self.operator)}"))')
+        for path in (*linked, notes, session):
+            self.assertGreater(profile.index(f'(allow file-read* (subpath "{path}"))'), deny)
+        # A Codex coordinator runs in Codex's own sandbox, whose profile names each path present, apart from one
+        # inside a place it refuses whole, such as this case's home in the shared temporary folder.
+        present = ["/home/fictional/.claude", "/home/fictional/.claude.json", os.path.realpath(state[0])]
+        with mock.patch.object(platform, "operator_paths", return_value=present) as named:
+            filesystem = next(setting for setting in engines.codex_l3_permissions(self.tmp, project=self.project)
+                              if ".filesystem=" in setting)
+        self.assertEqual(set(named.call_args.args[0]), set(engines.claude.operator_places()),
+                         "a Codex coordinator keeps its own folder")
+        for path in present[:2]:
+            self.assertIn(f'{json.dumps(path)}="deny"', filesystem)
+        self.assertNotIn(json.dumps(present[2]), filesystem)
+
+    def test_an_operators_claude_folder_behind_a_link_is_hidden_where_it_lies_with_its_entries_reopened(self):
+        target = self.tmp / "dotfiles" / "claude"
+        (target / "skills").mkdir(parents=True)
+        (target / "settings.json").write_text("{}")
+        link = self.tmp / "home-with-link" / ".claude"
+        link.parent.mkdir()
+        link.symlink_to(target)
+        self.patch(engines.claude, "OPERATOR_HOME", link)
+        hidden = platform._operator_places()
+        resolved = os.path.realpath(target)
+        self.assertIn(resolved, hidden)
+        read_only = [str(path) for path in engines.claude._linked()]
+        self.assertEqual(read_only, [str(link / "settings.json"), str(link / "skills")])
+        work = self.tmp / "work"
+        args = platform.bubblewrap_profile([str(work)], read_only, temporary=str(self.tmp / "job-tmp"), hidden=hidden)
+        pairs = [args[n:n + 3] for n in range(len(args))]
+        emptied = next(n for n, pair in enumerate(pairs) if pair[:2] == ["--tmpfs", resolved])
+        for name in ("settings.json", "skills"):
+            again = pairs.index(["--ro-bind-try", os.path.join(resolved, name), os.path.join(resolved, name)])
+            self.assertGreater(again, emptied, f"{name} comes back where the link leads")
+        profile = platform.seatbelt_profile([str(work)], read_only, temporary=str(self.tmp / "job-tmp"), hidden=hidden)
+        deny = profile.index(f'(deny file-read* file-write* (subpath "{resolved}"))')
+        for name in ("settings.json", "skills"):
+            self.assertGreater(profile.index(f'(allow file-read* (subpath "{os.path.join(resolved, name)}"))'), deny,
+                               "Seatbelt matches the resolved path")
 
     def test_readers_use_the_jobs_folder_without_following_a_planted_link(self):
         slug = "reader"

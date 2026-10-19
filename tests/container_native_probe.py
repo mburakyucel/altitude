@@ -30,7 +30,7 @@ workspace = project / '.claude/worktrees/task'
 sibling = project / '.claude/worktrees/other'
 runtime = home / 'coordinator-runtime'
 tls = home / '.config/altitude/tls'
-for path in (project, runtime, tls, access.DIR, config.ROOT, home / '.codex'):
+for path in (project, runtime, tls, access.DIR, config.ROOT, home / '.codex', engines.claude.OPERATOR_HOME):
     path.mkdir(parents=True, exist_ok=True)
 command(['git', 'init', '--initial-branch=main', str(project)])
 command(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
@@ -73,7 +73,8 @@ home_files = {'task_status': S.status_path('fixture', task['slug']), 'projects':
 spec = {'targets': {k: str(v) for k, v in targets.items()},
         'git_files': {k: str(v) for k, v in git_files.items()},
         'home_files': {k: str(v) for k, v in home_files.items()}, 'broker': str(broker),
-        'credentials': {'access': str(access.DIR), 'tls': str(tls)},
+        'credentials': {'access': str(access.DIR), 'tls': str(tls), 'claude_folder': str(engines.claude.OPERATOR_HOME)},
+        'secret_files': {'claude_state': str(config.HOME / '.claude.json')},
         'task': task['slug'],
         'port': tcp_server.getsockname()[1],
         # Probe the real endpoints independently of how the profile represents denial.
@@ -137,6 +138,11 @@ for name, directory in spec['credentials'].items():
         out['reads'][name] = {'allowed': 'fixture-credential' in os.listdir(directory)}
     except OSError as e:
         out['reads'][name] = {'allowed': False, 'errno': e.errno}
+for name, file in spec['secret_files'].items():
+    try:
+        out['reads'][name] = {'allowed': Path(file).read_text() == 'fictional'}
+    except OSError as e:
+        out['reads'][name] = {'allowed': False, 'errno': e.errno}
 out['security'] = [x for x in Path('/proc/self/status').read_text().splitlines()
                    if x.startswith(('Seccomp:', 'CapEff:', 'NoNewPrivs:'))]
 if role == 'task':
@@ -159,6 +165,8 @@ print(json.dumps(out))
 '''
 for folder in spec['credentials'].values():
     Path(folder, 'fixture-credential').write_text('fictional')
+for file in spec['secret_files'].values():  # before the coordinator's profile, which names the files present
+    Path(file).write_text('fictional')
 
 
 def settle(observed, role):
@@ -216,7 +224,7 @@ for name, result in control['writes'].items():
 if not all(r['connected'] for r in control['connections'].values()):
     failures.append('unsandboxed socket controls failed')
 if not all(r['allowed'] for r in control['reads'].values()):
-    failures.append('unsandboxed credential folder controls failed')
+    failures.append('unsandboxed credential controls failed')
 # A task's temporary folders are its own, never the shared one; like a Claude worker, it may write its worktree's
 # engine settings folders, which no other task loads.
 for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'scratch', 'protected_codex',
@@ -243,7 +251,7 @@ for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'scr
         if outcome['connected'] != expected:
             failures.append(role + ': unexpected connection permission for ' + name)
     if any(r['allowed'] for r in observed['reads'].values()):
-        failures.append(role + ': a credential folder is readable')
+        failures.append(role + ': a credential folder or file is readable')
     for name in spec.get('git_files', {}):
         if observed['writes'].get(name, {}).get('allowed', True):
             failures.append(role + ': a read-only file in the shared Git folder was writable: ' + name)
