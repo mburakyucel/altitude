@@ -78,6 +78,16 @@ function Ran({ ran }: { ran: NonNullable<Decision["ran"]> }) {
 
 /** Refused sends whose Not sent line was already brought into view, so returning to the card does not scroll again. */
 const noticed = new Set<string>();
+/** Brings a refused send's Not sent line into view once (SPEC.md §3.8). */
+function useNotice<T extends HTMLElement>(refused: string | undefined) {
+  const node = useRef<T>(null);
+  useEffect(() => {
+    if (!refused || noticed.has(refused)) return;
+    noticed.add(refused);
+    node.current?.scrollIntoView({ block: "nearest" });
+  }, [refused]);
+  return node;
+}
 
 /** Preset and custom answers share one conversational handoff in Needs you and chat. */
 export function QuestionSet({ decisions, group, target, disabled = false, onDenied, onRefresh, refreshKey, chat = false, from = "project", deliveries }: QuestionProps & {
@@ -89,12 +99,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
   const keys = new Set(decisions.map(draftKey));
   const refused: PendingWrite | undefined = usePending().filter((entry) => entry.kind === "answers" && entry.state === "refused"
     && Object.keys(entry.picks ?? {}).some((key) => keys.has(key))).at(-1);
-  const alert = useRef<HTMLParagraphElement>(null);
-  useEffect(() => {
-    if (!refused || noticed.has(refused.id)) return;
-    noticed.add(refused.id);
-    alert.current?.scrollIntoView({ block: "nearest" });
-  }, [refused?.id]);
+  const alert = useNotice<HTMLParagraphElement>(refused?.id);
   const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -286,6 +291,7 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
   const error = sent?.state === "refused" ? sent.error : undefined;
   const denied = error instanceof ApiError && [401, 403].includes(error.status);
   const state: ChoiceState = !sent ? "ready" : sent.state === "refused" ? denied ? "ready" : "fail" : "wait";
+  const options = useNotice<HTMLDivElement>(state === "fail" ? sent?.id : undefined);
   const approve = () => {
     if (sent) dropPending(queryClient, sent.id);
     const { project, slug } = decision;
@@ -308,7 +314,7 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
     {decision.detail ? <QuestionProse className="decision-why" text={decision.detail} /> : null}
     {decision.pr_images ? <PrPictures pictures={decision.pr_images} /> : null}
     <ReviewLink decision={decision} from={chat ? undefined : from} />
-    <div className="decision-options" role="group" aria-label="Merge review">
+    <div ref={options} className="decision-options" role="group" aria-label="Merge review">
       <Choice primary label="Approve merge" state={state} disabled={disabled || denied}
         spoken={state === "wait" ? "waiting for the L2" : state === "fail" ? "retry" : undefined}
         error={error ? denied ? "You cannot approve here." : notDone("Not sent", error instanceof ApiError ? error.message : undefined) : null} onPress={approve} />

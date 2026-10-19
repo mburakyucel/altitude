@@ -2545,9 +2545,10 @@ the press: `web/src/data/pending.ts` keeps each write on its way beside the quer
 the overview, project and task reads with it, until the first read begun after Altitude's save shows
 the record; a saved entry goes once every cached view has read past it or expired. A write with no
 reply stays until a read of its task shows whether it was saved, read again after each later read that
-works. A refused write stops overlaying and keeps its picks for its card until Retry, an edit, or a
-read of its task that leaves it no card to return to. Entries live only in memory, belong to their
-project, and go with it, with pairing and with a reload. Alerts read the record without the overlay.
+works. A refused write stops overlaying and stays with its card until Retry or an edit, or a read of
+its task that lists it as saved; a refused answer also goes once a read shows none of its questions
+still waiting. Entries live only in memory, belong to their project, and go with it, with pairing and
+with a reload. Alerts read the record without the overlay.
 Screen-reader names retain the status words. Unavailable terminal, voice and alert
 controls disclose their reason on press without invoking the action. Authored blockers, errors,
 setup instructions and resource/privacy consequences remain visible; task-page descriptions do

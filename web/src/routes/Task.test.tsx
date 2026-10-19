@@ -849,11 +849,14 @@ describe("Task on desktop", () => {
       await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
       const turn = await waitFor(reviewTurn);
       expect(within(turn).queryByRole("link", { name: /View PR/ })).toBeNull();
+      const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
       await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
       // No answer came, and the task's next read does not list the approval: the card comes back with Not sent.
       const retry = await screen.findByRole("button", { name: "Approve merge, retry" });
       expect(within(reviewTurn()).getByRole("alert")).toHaveTextContent(/^Not sent\.$/);
       expect(approval()?.closest(".conversation-question")).toBe(reviewTurn());
+      // The returned card brings its Not sent line into view (SPEC.md §3.8.2).
+      await waitFor(() => expect(scroll.mock.contexts).toContain(within(reviewTurn()).getByRole("group", { name: "Merge review" })));
       fail = false;
       await user.click(retry);
       await waitFor(() => expect(screen.queryByText("Your turn · review before merge")).toBeNull());
@@ -864,6 +867,7 @@ describe("Task on desktop", () => {
       const bodies = sent.map((call) => JSON.parse(String(call[1]?.body)) as { text: string; request_id: string });
       for (const body of bodies) expect(body.text).toBe("Approved: merge PR #204.");
       expect(bodies[1]!.request_id).toBe(bodies[0]!.request_id);
+      scroll.mockRestore();
     });
 
     it("replaces a stale card refused by the server with the task's current state", async () => {
