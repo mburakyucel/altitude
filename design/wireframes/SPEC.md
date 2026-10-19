@@ -2102,7 +2102,8 @@ installation "Confirm yourself · the installation was changed by hand."; the re
 wrong**, **What changed** and **What remains** with an optional "Try:" line, or "The repair ended
 without a report."; Altitude's check ("Altitude checks the result once the repair ends.", "Altitude is
 checking the result…", or "Altitude checked: version 0.9.0 · matches its release · all checks pass",
-with failing checks and a target version that is not installed in red); "Its steps are in that
+with failing checks, a target version that is not installed and "Altitude’s service still runs 0.8.0."
+in red); "Its steps are in that
 terminal’s history."; and a collapsed **Brief**. A repair that is not there reads "That repair is not on
 this computer." `web/e2e/repairs.pw.ts` walks these states at both
 widths.

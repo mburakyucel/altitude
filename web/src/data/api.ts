@@ -1072,7 +1072,7 @@ export const RepairSchema = RepairRowSchema.extend({
   update: z.object({ version: z.string(), error: z.string().nullish() }).nullable(),
   report: z.object({ wrong: z.string(), changed: z.string(), remains: z.string(), try: z.string().optional() }).nullable(),
   check: z.object({
-    at: z.string(), version: z.string().nullable(), matches: z.boolean().nullable(),
+    at: z.string(), version: z.string().nullable(), running: z.string().nullish(), matches: z.boolean().nullable(),
     failing: z.array(z.object({ name: z.string() }).passthrough()),
   }).nullable(),
   brief: z.string().nullable(),

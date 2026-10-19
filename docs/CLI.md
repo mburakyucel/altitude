@@ -824,10 +824,10 @@ receive its own automatic attempt.
 `alt repair [--problem TEXT] [--engine NAME]` (operator only, from their own terminal) starts a
 [repair](OPERATIONS.md#repairs) in that terminal: the first installed coding agent's interactive session,
 or the named one, as the operator, with a brief in a new `repairs/<id>/` folder under Altitude's home, and
-waits for it to end; it exits with the session's status. It needs no service. It refuses Altitude's agents,
-reviewers and anything else in one of Altitude's jobs except the page's terminal, a command under an
-operator grant ("Only you can start a repair, from your own terminal."), and a second repair while one
-runs ("A repair is already running. Stop it there first."). `run` blocks never carry it. Inside the
+waits for it to end; it exits with the session's status. It needs no service. Anything in one of
+Altitude's jobs refuses it ("Only you can start a repair, from your own terminal."): agents, reviewers,
+commands under an operator grant and the page's terminal, where `run` blocks run. So does a second repair
+while one runs ("A repair is already running. Stop it there first."). Inside the
 session `alt` allows inspection and `doctor`, `service`, `update`, `recover`, `install`, `monitor`,
 `queue` and `repair report`; `alt repair report --wrong … --changed … --remains … [--try …]` records the
 session's report, at most 4,000 characters a part, until the session ends. `python3.12 install.py

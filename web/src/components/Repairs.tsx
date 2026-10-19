@@ -81,7 +81,9 @@ function Checked({ repair }: { repair: Repair }) {
     {check.matches === false ? <p className="text-meta text-danger">The installed files differ from the release: the installation was changed by hand.</p> : null}
     {check.failing.length ? <p className="text-meta text-danger">Failing: {check.failing.map((item) => item.name).join(", ")}</p> : null}
     {repair.update && repair.report && check.version !== repair.update.version
-      ? <p className="text-meta text-danger">The update to {repair.update.version.replace(/^v/, "")} is not installed.</p> : null}
+      ? <p className="text-meta text-danger">The update to {repair.update.version.replace(/^v/, "")} is not installed.</p>
+      : repair.update && repair.report && check.running !== repair.update.version
+        ? <p className="text-meta text-danger">Altitude’s service still runs {(check.running ?? "another version").replace(/^v/, "")}.</p> : null}
   </>;
 }
 

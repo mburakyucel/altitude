@@ -21,12 +21,12 @@ const DETAIL: Record<string, object> = {
   [id("a")]: { ...RUNNING, problem: RUNNING.title, update: null, report: null, check: null, brief: "# Repair brief\n\nFind out what is wrong and fix it." },
   [id("b")]: { ...ROWS[1], problem: null, update: { version: "v0.9.0", error: "The download failed its certificate check." },
     report: { wrong: "The update's download was refused by an expired certificate.", changed: "Renewed the certificate and ran alt update again.", remains: "Nothing." },
-    check: { at: "2026-10-18T08:21:00Z", version: "v0.9.0", matches: true, failing: [] }, brief: "# Repair brief" },
+    check: { at: "2026-10-18T08:21:00Z", version: "v0.9.0", running: "v0.9.0", matches: true, failing: [] }, brief: "# Repair brief" },
   [id("c")]: { ...ROWS[2], problem: ROWS[2].title, update: null,
     report: { wrong: "The service still pointed at the old projects folder.", changed: "Set the new folder and restarted the service.", remains: "Nothing known.", try: "Start a task in atlas." },
-    check: { at: "2026-10-17T08:31:00Z", version: "v0.9.0", matches: false, failing: [] }, brief: "# Repair brief" },
+    check: { at: "2026-10-17T08:31:00Z", version: "v0.9.0", running: "v0.9.0", matches: false, failing: [] }, brief: "# Repair brief" },
   [id("d")]: { ...ROWS[3], problem: null, update: null, report: null,
-    check: { at: "2026-10-16T08:06:00Z", version: "v0.9.0", matches: true, failing: [{ name: "github cli" }] }, brief: "# Repair brief" },
+    check: { at: "2026-10-16T08:06:00Z", version: "v0.9.0", running: "v0.9.0", matches: true, failing: [{ name: "github cli" }] }, brief: "# Repair brief" },
 };
 
 test("repairs in Settings → About: start, loading, failure, recent repairs, every repair and each outcome's page", async ({ page }, info) => {
@@ -91,7 +91,7 @@ test("repairs in Settings → About: start, loading, failure, recent repairs, ev
       page.getByText(/^From a terminal · started .* · ended /), page.getByText("The update's download was refused by an expired certificate."),
       page.getByText("Renewed the certificate and ran alt update again."), page.getByText("Altitude checked: version 0.9.0 · matches its release · all checks pass"),
       page.getByText("Its steps are in that terminal’s history."), brief],
-    hidden: [page.getByText(/^Try:/), page.getByText("The repair ended without a report."), page.getByText("# Repair brief")],
+    hidden: [page.getByText(/^Try:/), page.getByText("The repair ended without a report."), page.getByText(/still runs|is not installed/), page.getByText("# Repair brief")],
   });
   await brief.click();
   await expect(page.getByText("# Repair brief")).toBeVisible();

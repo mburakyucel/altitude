@@ -3419,8 +3419,6 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
         raise ValueError(f"alt task run: supply one non-empty command of at most {MACHINE_COMMAND_LIMIT} characters")
     if not isinstance(request, str) or not re.fullmatch(r"[0-9a-f]{32}", request):
         raise ValueError("alt task run: name the request with 32 lowercase hexadecimal characters")
-    if repair.COMMAND.search(command):
-        raise PermissionError(f"alt task run: {repair.ONLY_YOU}")
     folder = S.task_dir(project, slug)
     runs = folder / "machine.jsonl"
 

@@ -20,11 +20,6 @@ describe("run commands", () => {
     expect(runCommand(" \n ")).toEqual({ refused: "Not offered for the terminal: the command is empty." });
   });
 
-  it("never offers a repair, which only the operator starts from their own terminal", () => {
-    const repair = "Not offered for the terminal: only you start a repair, from your own terminal.";
-    for (const text of ["alt repair", "~/.local/bin/alt  repair --problem x", "python3.12 install.py --repair"]) expect(runCommand(text)).toEqual({ refused: repair });
-    for (const text of ["alt repairs", "alt doctor", "python3.12 install.py --archive a --sha256 b --repair-generated-bytecode"]) expect(runCommand(text)).toEqual({ command: text });
-  });
 });
 
 describe("code blocks in prose", () => {

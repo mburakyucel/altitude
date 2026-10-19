@@ -17,8 +17,6 @@ export function runCommand(text: string): { command: string } | { refused: strin
   if (!text.trim()) return { refused: "Not offered for the terminal: the command is empty." };
   if (/[\r\n\u2028\u2029]/.test(text)) return { refused: "Not offered for the terminal: more than one line." };
   if (/[\p{Cc}\p{Cf}]/u.test(text)) return { refused: "Not offered for the terminal: it contains a control or invisible character." };
-  // Only the operator starts a repair, from their own terminal (altitude/repair.py COMMAND).
-  if (/(?<![\w-])alt\s+repair(?![\w-])|install\.py\b.*\s--repair(?![\w-])/.test(text)) return { refused: "Not offered for the terminal: only you start a repair, from your own terminal." };
   return { command: text };
 }
 

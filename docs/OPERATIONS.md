@@ -319,23 +319,25 @@ and you end the session as you would any other. Once it has ended, the service c
 with `alt doctor` and the installed release's manifest, at its next tick or its next start, and sets
 the outcome:
 
-- **Repaired:** for a failed update, the target version is installed, its files match the release and
-  every check passes.
+- **Repaired:** for a failed update, the target version is installed and running, its files match the
+  release and every check passes.
 - **Confirm yourself:** every check passes, but a check cannot prove a problem you described is gone,
   or the installed files differ from the release because they were changed by hand.
-- **Not repaired:** a check fails, or the update's target version is not installed.
+- **Not repaired:** a check fails, or the update's target version is not installed or not running.
 - **The repair ended without a report** when the session ended, crashed or its terminal closed before
   it reported.
 
 Settings → About lists the three most recent repairs with their outcome, and **All repairs** lists
 every one; each repair's page shows its report, Altitude's check and its brief. Its steps stay in that
 terminal's history. One repair runs at a time on this computer: a second `alt repair` says "A repair
-is already running. Stop it there first." The lock belongs to the running process, so a crash,
-closed terminal or restart never leaves one behind.
+is already running. Stop it there first." The lock belongs to `alt repair` and its session, so a crash,
+closed terminal or restart never leaves one behind, and a repair counts as running until its session,
+and anything it left running from that terminal, has ended.
 
-Only you start a repair, from your own terminal. Altitude's agents, coordinator and reviewers, a
-command under an operator grant, a `run` block and a standing policy never start one ("Only you can
-start a repair, from your own terminal."). Altitude's terminal on the page can, since you type in it.
+Only you start a repair, from your own terminal. Anything running in one of Altitude's jobs refuses
+("Only you can start a repair, from your own terminal."): its agents, coordinator and reviewers, a
+command under an operator grant or a standing policy, and Altitude's terminal on the page, where a
+`run` block an agent wrote would run on your Enter.
 When `alt` itself cannot start, the release's standalone installer starts the installed release's
 own repair from its verified files: `python3.12 install.py --repair [--prefix PATH]`. A repair needs
 an installed coding agent; it cannot repair a deleted installation, which goes back to

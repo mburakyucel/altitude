@@ -13,11 +13,12 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from tests.support import ALT, AltitudeCase
 
-from altitude import config, installation, platform, repair, server, tasks as T
+from altitude import config, installation, platform, repair, server
 
 PASSING = [{"name": "git", "state": "configured", "detail": "/usr/bin/git"},
            {"name": "user service", "state": "tested", "detail": {}}]
@@ -116,8 +117,9 @@ class TerminalRepair(RepairCase):
         self.start(None)
         [row] = repair.records()
         self.assertEqual(row["title"], "Failed update to 0.9.0")
-        self.assertIn("the update to v0.9.0 did not finish: The download failed its certificate check.",
-                      (repair.DIR / row["id"] / "brief.md").read_text())
+        brief = (repair.DIR / row["id"] / "brief.md").read_text()
+        self.assertIn("the update to v0.9.0 did not finish; its cause is under Altitude's records below.", brief)
+        self.assertIn("The failed update's cause:\n\n```text\nThe download failed its certificate check.\n```", brief)
 
     def test_records_reach_the_brief_only_as_quoted_evidence(self):
         faults = config.MONITOR_DIR / "faults.json"
@@ -151,10 +153,11 @@ class WhoStarts(RepairCase):
         self.setenv("ALTITUDE_REPAIR", "0" * 32)
         self.assertEqual(repair.refusal(), repair.ALREADY)
         self.setenv("ALTITUDE_REPAIR", None)
-        # Reviewers carry no actor; their job, like every Altitude job but the page's terminal, refuses.
+        # Reviewers carry no actor, and a `run` block runs in the page's terminal on the operator's Enter, whatever its
+        # quoting; every Altitude job refuses.
         for unit, refused in (("altitude-claude-abc.service", True), ("altitude-review-abc.service", True),
                               ("altitude-coordinator-abc.service", True), ("altitude-machine-p-t-1.service", True),
-                              ("altitude.service", True), ("altitude-terminal-abc.service", False),
+                              ("altitude.service", True), ("altitude-terminal-abc.service", True),
                               ("session-2.scope", False)):
             with self.subTest(unit=unit):
                 self.assertEqual(repair.refusal(["user.slice", unit]), repair.ONLY_YOU if refused else None)
@@ -167,20 +170,13 @@ class WhoStarts(RepairCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn("not available to an L2 worker", done.stderr)
 
-    def test_no_run_block_and_no_granted_command_starts_a_repair(self):
-        for command, refused in (("alt repair", True), ("~/.local/bin/alt repair --problem x", True),
-                                 ("python3.12 install.py --repair", True), ("cd /tmp; alt  repair", True),
-                                 ("python3.12 install.py --archive a --sha256 b --repair-generated-bytecode", False),
-                                 ("alt repairs", False), ("alt doctor", False)):
-            with self.subTest(command=command):
-                self.assertEqual(T._runnable(command), not refused)
-        with self.assertRaisesRegex(T.TransitionError, "exactly one `run` block"):
-            T.publish_step(self.project, "Repair Altitude\n\n```run\nalt repair\n```")
-        with self.assertRaisesRegex(PermissionError, "Only you can start a repair"):
-            server.run_machine_command(self.project, "fix", 1, "env -u ALTITUDE_ACTOR alt repair", "0" * 32)
-
 
 class OneAtATime(RepairCase):
+    @staticmethod
+    def end_group(pid: int) -> None:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pid, signal.SIGKILL)
+
     def test_a_held_lock_refuses_a_second_repair_until_its_process_is_gone(self):
         repair.running()  # makes the lock file
         holder = subprocess.Popen([sys.executable, "-c", "import fcntl, sys, time\nf = open(sys.argv[1], 'rb')\n"
@@ -197,6 +193,43 @@ class OneAtATime(RepairCase):
         holder.wait()
         self.assertIsNone(repair.running(), "a killed holder leaves no lock behind")
         self.assertEqual(self.start()[0], 0)
+
+    def test_a_killed_alt_repair_leaves_its_session_holding_the_repair(self):
+        """The session inherits the lock: killing only `alt repair` neither frees a second repair nor lets the service
+        check a repair whose session still runs."""
+        session = self.tmp / "claude"
+        session.write_text(f"#!{sys.executable}\nimport os, sys, time\nopen(os.environ['FAKE_REPAIR_LOG'], 'w').write('started')\n"
+                           "time.sleep(60)\n")
+        wrapper = subprocess.Popen([sys.executable, "-c", "import sys\nfrom unittest import mock\n"
+                                    "from altitude import installation, platform, repair\n"
+                                    "for name, value in (('doctor', {'checks': []}), ('describe_doctor', ''), "
+                                    "('hosting_status', {}), ('installed_release', {})):\n"
+                                    "    mock.patch.object(installation, name, return_value=value).start()\n"
+                                    "mock.patch.object(platform, 'process_table', return_value={}).start()\n"
+                                    "sys.exit(repair.start('stays running'))"],
+                                   cwd=Path(__file__).resolve().parents[1], stdout=subprocess.DEVNULL, start_new_session=True,
+                                   env={**os.environ, "CLAUDE_BIN": str(session)})
+        self.addCleanup(self.end_group, wrapper.pid)
+        for _ in range(200):
+            if self.log.exists():
+                break
+            time.sleep(0.05)
+        [row] = repair.records()
+        wrapper.kill()
+        wrapper.wait()
+        self.assertEqual(repair.running(), {"id": row["id"], "route": "terminal"})
+        with self.assertRaisesRegex(repair.Refused, "already running"):
+            self.start()
+        repair.check_ended()
+        self.assertIsNone(repair.record(row["id"])["outcome"])
+        self.end_group(wrapper.pid)
+        for _ in range(200):
+            if repair.running() is None:
+                break
+            time.sleep(0.05)
+        repair.check_ended()
+        self.assertEqual(repair.record(row["id"])["outcome"], "no_report")
+        self.assertTrue(repair.record(row["id"])["ended"])
 
     def test_the_check_waits_for_the_running_repair_and_settles_an_interrupted_one(self):
         interrupted, live = "a" * 32, "b" * 32
@@ -221,11 +254,12 @@ class Outcome(RepairCase):
         update = {"version": "v0.9.0", "error": "x"}
         failing = [*PASSING, {"name": "openssl", "state": "unavailable", "detail": "missing"}]
         for row, checks, installed, expected in (
-                ({"report": None, "update": update}, PASSING, {"version": "v0.9.0", "matches": True}, "no_report"),
-                ({"report": {"wrong": "w"}, "update": update}, failing, {"version": "v0.9.0", "matches": True}, "not_repaired"),
-                ({"report": {"wrong": "w"}, "update": update}, PASSING, {"version": "v0.8.0", "matches": True}, "not_repaired"),
-                ({"report": {"wrong": "w"}, "update": update}, PASSING, {"version": "v0.9.0", "matches": False}, "changed_by_hand"),
-                ({"report": {"wrong": "w"}, "update": update}, PASSING, {"version": "v0.9.0", "matches": True}, "repaired"),
+                ({"report": None, "update": update}, PASSING, {"version": "v0.9.0", "running": "v0.9.0", "matches": True}, "no_report"),
+                ({"report": {"wrong": "w"}, "update": update}, failing, {"version": "v0.9.0", "running": "v0.9.0", "matches": True}, "not_repaired"),
+                ({"report": {"wrong": "w"}, "update": update}, PASSING, {"version": "v0.8.0", "running": "v0.8.0", "matches": True}, "not_repaired"),
+                ({"report": {"wrong": "w"}, "update": update}, PASSING, {"version": "v0.9.0", "running": "v0.9.0", "matches": False}, "changed_by_hand"),
+                ({"report": {"wrong": "w"}, "update": update}, PASSING, {"version": "v0.9.0", "running": "v0.8.0", "matches": True}, "not_repaired"),
+                ({"report": {"wrong": "w"}, "update": update}, PASSING, {"version": "v0.9.0", "running": "v0.9.0", "matches": True}, "repaired"),
                 ({"report": {"wrong": "w"}, "update": None}, PASSING, {"version": None, "matches": None}, "confirm"),
                 ({"report": {"wrong": "w"}, "update": None}, failing, {"version": None, "matches": None}, "not_repaired")):
             with self.subTest(expected=expected, installed=installed):
