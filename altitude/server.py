@@ -2349,7 +2349,7 @@ class Handler(BaseHTTPRequestHandler):
             if action == "input":
                 terminal.write(project, slug, ident, body.get("data"))
             elif action == "command":
-                terminal.hand(project, slug, ident, body.get("text"))
+                terminal.hand(project, slug, ident, body.get("text"), body.get("bracketed"))
             elif action == "resize":
                 terminal.resize(project, slug, ident, body.get("cols"), body.get("rows"))
             else:

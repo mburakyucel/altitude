@@ -1829,8 +1829,8 @@ more input, resize or close, and stays readable only by a stream naming its id, 
 failed start still reads why, until a new terminal opens, the task finishes or altd stops. `GET /api/terminal/<project>?task=` returns
 the status: state (`none` or `running`), terminal id, the setting, folder and the foreground command.
 `POST /api/terminal/<project>/{open,input,resize,close}` with `{task?, id, data?, cols?, rows?}`
-drive it, and `POST /api/terminal/<project>/command` with `{task, id, text}` names the command the page is
-about to type for the owner. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,
+drive it, and `POST /api/terminal/<project>/command` with `{task, id, text, bracketed}` has altd type a chat
+command for the terminal's reader. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,
 while every other altd reply closes its own, so typing reuses one connection instead of a new TCP and TLS handshake per
 keystroke (an echo takes one network round trip), and altd sends small writes without Nagle's delay.
 The page sends input in order, one request at a time, coalescing keys typed meanwhile and splitting a
@@ -1843,10 +1843,15 @@ may have arrived in part, so the page stops sending keys until the operator resu
 message's `run` block (one line with no control, invisible-formatting or line-separator character) offers
 **Open in terminal** in its task or project conversation: the page holds the command in memory for that
 terminal, never in the URL or history, shows the terminal and, once its screen has drawn output and
-stayed quiet for 300 ms, re-reads the status and types the command through xterm's paste when no program
-holds the foreground. It never sends Enter, and the server sees ordinary input. Before typing it, the page
-names it with `command`, so altd follows that one command in memory: the first Enter the
-operator types after it starts it, and a Ctrl+C before that Enter drops it. The command has finished once
+stayed quiet for 300 ms, hands it over with `command`. altd types it, framed as a paste when xterm reports the
+shell's bracketed paste mode and never with Enter, and follows that one command in memory: the first Enter the
+operator types after it starts it, and a Ctrl+C before that Enter drops it. altd types nothing, and says why,
+while a program holds the foreground or it still follows a command it typed (waiting for that Enter or Ctrl+C, or
+run and not yet finished), so opening the command again (a second tap, after a reload, from another page) never
+joins a second copy to the line. A command typed in part when its write fails stays followed, as what reached the
+line still waits for Enter or Ctrl+C. altd cannot see other edits, so a line the operator cleared by hand takes
+Ctrl+C first. Input and the command's typing take the terminal's descriptor in turn, so no keystroke lands between
+the check and the command. The command has finished once
 the shell has held the foreground (`tcgetpgrp` equal to the shell's session) for a second after that Enter and
 no process group that held the foreground since still exists, so a job suspended with Ctrl+Z or sent to the
 background has not. The reader looks every 0.2 seconds, so a job suspended sooner than that after it starts

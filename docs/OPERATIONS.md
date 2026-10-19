@@ -71,15 +71,16 @@ including the same settings from the terminal.
 
 A step only the operator can take arrives in chat as a command block. **Open in terminal** types it at
 the prompt of that task's or project's terminal without pressing Enter; read it, then press Enter, edit
-it or clear it. A plain code block (a command for another machine) has Copy only. If a program is
-running in the terminal, nothing is typed and a notice offers Copy instead. On Linux, `sudo` in the
+it or clear it with Ctrl+C. A plain code block (a command for another machine) has Copy only. If a program is
+running in the terminal, or a command it typed there still waits for Enter, nothing is typed and a notice offers
+Copy instead, so opening a command twice never types it twice. On Linux, `sudo` in the
 terminal asks for your password there, as in a desktop terminal. If the terminal cannot start, it shows
 why and closes; a desktop or SSH terminal on this computer runs the same command.
 
 A task's owner can read its task terminal's output, and the project's coordinator its project terminal's;
 each terminal says who. When you press Enter on a step the owner or coordinator handed you, Altitude tells
 it once the command looks finished (or the terminal ended first), and it reads the result to check that it
-did and continues; no reply is needed unless the terminal says Altitude couldn't tell it. Meanwhile the owner's
+did and continues; no reply is needed. Meanwhile the owner's
 question card, in Needs you and the task conversation, says **Ran in the terminal** and that it waits for the
 owner to check it, or that the terminal closed before the command finished, so you can open it again; the question
 stays open until the owner settles it. It reads what the

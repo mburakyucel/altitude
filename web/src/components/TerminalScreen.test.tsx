@@ -1,14 +1,16 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalScreen, { inputPiece } from "./TerminalScreen";
-import { terminalSend, terminalStatus, terminalStream, type TerminalStatus } from "../data/api";
+import { ApiError, terminalSend, terminalStatus, terminalStream, type TerminalStatus } from "../data/api";
 
-// A stand-in xterm without bracketed paste: a paste reaches onData as the raw text, as a keystroke would.
-const term: { data?: (data: string) => void } = {};
+// A stand-in xterm, without bracketed paste unless a test turns it on: a paste reaches onData as the raw text, as a
+// keystroke would.
+const term: { data?: (data: string) => void; bracketed: boolean } = { bracketed: false };
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
+    get modes() { return { bracketedPasteMode: term.bracketed }; }
     loadAddon() {}
     open() {}
     write() {}
@@ -17,6 +19,7 @@ vi.mock("@xterm/xterm", () => ({
     hasSelection() { return false; }
     attachCustomKeyEventHandler() {}
     buffer = { active: { viewportY: 0, baseY: 0 } };
+    scrollToBottom() {}
     onData(listener: (data: string) => void) { term.data = listener; return { dispose() {} }; }
     paste(text: string) { term.data?.(text); }
   },
@@ -44,11 +47,13 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  term.bracketed = false;
   vi.useRealTimers();
   vi.clearAllMocks();
 });
 
 const typed = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "input").map(([, , body]) => body.data);
+const handed = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "command").map(([, , body]) => body);
 
 function show(text: string, keys = false) {
   const onCommand = vi.fn();
@@ -70,26 +75,35 @@ describe("terminal input pieces", () => {
 });
 
 describe("a chat command at the terminal", () => {
-  it("is typed without Enter once the prompt has stayed quiet, never before", async () => {
+  it("is handed to Altitude to type, without Enter, once the prompt has stayed quiet, never before", async () => {
     const { request, onCommand } = show("echo hi");
     request();
     act(() => emit());
     await act(() => vi.advanceTimersByTimeAsync(200));
-    expect(typed()).toEqual([]);
+    expect(handed()).toEqual([]);
     await act(() => vi.advanceTimersByTimeAsync(200));
-    expect(typed()).toEqual(["echo hi"]);
+    expect(handed()).toEqual([{ task: undefined, id: "t1", text: "echo hi", bracketed: false }]);
+    expect(typed()).toEqual([]);
     expect(onCommand).toHaveBeenCalledTimes(1);
   });
 
-  it("is never turned into a control character by a latched Ctrl", async () => {
+  it("is typed as a paste when the shell asked for bracketed paste", async () => {
+    term.bracketed = true;
+    show("echo hi").request();
+    act(() => emit());
+    await act(() => vi.advanceTimersByTimeAsync(400));
+    expect(handed()).toEqual([{ task: undefined, id: "t1", text: "echo hi", bracketed: true }]);
+  });
+
+  it("is never turned into a control character by a latched Ctrl, which stays for the next key", async () => {
     const { request } = show("m", true);
     act(() => emit());
     fireEvent.click(screen.getByRole("button", { name: "Control" }));
-    expect(screen.getByRole("button", { name: "Control" })).toHaveAttribute("aria-pressed", "true");
     request();
     await act(() => vi.advanceTimersByTimeAsync(400));
-    expect(typed()).toEqual(["m"]);
-    expect(screen.getByRole("button", { name: "Control" })).toHaveAttribute("aria-pressed", "false");
+    expect(handed()).toEqual([expect.objectContaining({ text: "m" })]);
+    expect(typed()).toEqual([]);
+    expect(screen.getByRole("button", { name: "Control" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("never turns a browser paste into a control character after Ctrl is latched", () => {
@@ -107,7 +121,7 @@ describe("a chat command at the terminal", () => {
     expect(screen.getByRole("status")).toHaveTextContent("The terminal hasn't shown a prompt, so the command wasn't typed.");
     act(() => emit());
     await act(() => vi.advanceTimersByTimeAsync(2_000));
-    expect(typed()).toEqual([]);
+    expect(handed()).toEqual([]);
   });
 
   it("is refused while output keeps coming, and output settling afterwards types nothing", async () => {
@@ -118,52 +132,49 @@ describe("a chat command at the terminal", () => {
     }
     expect(screen.getByRole("status")).toHaveTextContent("The terminal kept printing, so the command wasn't typed.");
     await act(() => vi.advanceTimersByTimeAsync(2_000));
-    expect(typed()).toEqual([]);
+    expect(handed()).toEqual([]);
   });
 
-  it("is refused when the check answers after five seconds, and the late answer types nothing", async () => {
-    let answer!: (status: TerminalStatus) => void;
-    vi.mocked(terminalStatus).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+  it("is refused when a throttled timer reaches the settled prompt after the deadline", async () => {
     show("echo hi").request();
     act(() => emit());
-    await act(() => vi.advanceTimersByTimeAsync(5_000));
-    expect(screen.getByRole("status")).toHaveTextContent("Altitude couldn't check the terminal in time, so the command wasn't typed.");
-    await act(async () => answer(running));
-    expect(typed()).toEqual([]);
-  });
-
-  it("is refused when the check answers after the deadline but before a throttled timer fires", async () => {
-    let answer!: (status: TerminalStatus) => void;
-    vi.mocked(terminalStatus).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
-    show("echo hi").request();
-    act(() => emit());
-    await act(() => vi.advanceTimersByTimeAsync(400));
     vi.setSystemTime(Date.now() + 5_000);
-    await act(async () => answer(running));
-    expect(screen.getByRole("status")).toHaveTextContent("Altitude couldn't check the terminal in time, so the command wasn't typed.");
-    expect(typed()).toEqual([]);
+    await act(() => vi.advanceTimersByTimeAsync(400));
+    expect(screen.getByRole("status")).toHaveTextContent("Too much time passed since the tap, so the command wasn't typed.");
+    expect(handed()).toEqual([]);
   });
 
-  it("is refused while a program holds the foreground", async () => {
-    vi.mocked(terminalStatus).mockResolvedValueOnce({ ...running, busy: "vim" });
-    show("echo hi").request();
+  it.each([
+    "vim is running, so the command wasn't typed.",
+    "This command is already typed at the prompt. Press Enter to run it, or Ctrl+C to clear the line.",
+  ])("says why Altitude didn't type it, with Copy: %s", async (reason) => {
+    vi.mocked(terminalSend).mockRejectedValueOnce(new ApiError(409, reason));
+    const { request, onCommand } = show("echo hi");
+    request();
     act(() => emit());
     await act(() => vi.advanceTimersByTimeAsync(400));
-    expect(screen.getByRole("status")).toHaveTextContent("vim is running, so the command wasn't typed.");
+    expect(screen.getByRole("status")).toHaveTextContent(reason);
     expect(screen.getByRole("button", { name: "Copy command" })).toBeVisible();
+    expect(onCommand).toHaveBeenCalledTimes(1);
     expect(typed()).toEqual([]);
   });
 
-  it("names the command for the project terminal so the coordinator hears, and says when it won't", async () => {
-    vi.mocked(terminalSend).mockImplementation(async (_project, action) => {
-      if (action === "command") throw new Error("refused");
-      return { ok: true };
+  it.each([new TypeError("Failed to fetch"), new ApiError(503, "Service unavailable")])(
+    "asks the operator to check the screen when Altitude couldn't type it: %s", async (error) => {
+      vi.mocked(terminalSend).mockRejectedValueOnce(error);
+      show("gh api repos/fixture/demo").request();
+      act(() => emit());
+      await act(() => vi.advanceTimersByTimeAsync(400));
+      expect(screen.getByRole("status")).toHaveTextContent("Altitude couldn't type the command. Check the screen before typing it yourself.");
     });
-    show("gh api repos/fixture/demo").request();
+
+  it("drops the command quietly for a terminal that was replaced, whose end the stream reports", async () => {
+    vi.mocked(terminalSend).mockRejectedValueOnce(new ApiError(410, "This terminal was replaced."));
+    const { request, onCommand } = show("echo hi");
+    request();
     act(() => emit());
     await act(() => vi.advanceTimersByTimeAsync(400));
-    expect(vi.mocked(terminalSend)).toHaveBeenCalledWith("demo", "command", { task: undefined, id: "t1", text: "gh api repos/fixture/demo" });
-    expect(screen.getByRole("status")).toHaveTextContent("Altitude couldn't tell the coordinator to watch this command, so reply in chat once it has run.");
-    expect(typed()).toEqual(["gh api repos/fixture/demo"]);
+    expect(onCommand).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
