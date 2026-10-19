@@ -1,9 +1,10 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Page, type TestInfo } from "@playwright/test";
 import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
 /**
- * Decision alerts (issue #221) at both widths: the switch's states, one alert for a new decision,
+ * Decision alerts (issue #221) at both widths: the Needs you pill's states and the switch in Settings it opens, one
+ * alert for a new decision,
  * none for a decision already on screen, none repeated after a refresh, and a push waking the real
  * service worker. The page's alerts are recorded at its calls into the worker's registration — the
  * last step before the operating system shows them; the worker's banners are read back from that
@@ -26,6 +27,50 @@ const recordAlerts = (page: Page) =>
   });
 
 const alerts = (page: Page) => page.evaluate(() => (window as unknown as { __alerts: Alert[] }).__alerts);
+
+/** The pill on the Needs you title row, naming this device's alerts and opening them in Settings. */
+const pill = (page: Page, label: string) => page.getByRole("link", { name: `${label}, alert settings`, exact: true });
+
+/** On the phone run, the same Needs you at 320 px: the title keeps one line and the pill keeps its row. */
+async function narrow(page: Page, info: TestInfo, name: string) {
+  if (info.project.name !== "phone") return;
+  const before = page.viewportSize()!;
+  await page.setViewportSize({ width: 320, height: 700 });
+  const title = (await page.getByRole("heading", { name: "Needs you", level: 1 }).boundingBox())!;
+  const link = (await page.locator(".needs-alerts").boundingBox())!;
+  expect(title.height).toBeLessThan(48);
+  expect(link.y).toBeLessThan(title.y + title.height);
+  expect(link.x + link.width).toBeLessThanOrEqual(320);
+  await page.screenshot({ path: info.outputPath(`${name}-320.png`), animations: "disabled" });
+  await page.setViewportSize(before);
+}
+
+test("the pill stays on the title row while Needs you loads, fails to read and is empty", async ({ page }, info) => {
+  test.setTimeout(60_000);
+  const walk = walkthrough(page, info);
+  const offer = pill(page, "Alerts off");
+  let mode: "hold" | "fail" | "empty" = "hold";
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/overview*", async (route) => {
+    if (mode === "hold") { await held; return route.abort(); }
+    if (mode === "fail") return route.fulfill({ status: 500, json: { error: "down" } });
+    const response = await route.fetch();
+    return route.fulfill({ response, json: { ...(await response.json()), queue: [] } });
+  });
+  await page.goto("/");
+  await walk.state("25-needs-loading", { visible: [offer, page.locator(".needs-page [aria-label=Loading]")], hidden: [] });
+  mode = "fail";
+  release();
+  // The queue read retries before it reports the error.
+  await expect(page.getByText(/^Could not read what needs you\./)).toBeVisible({ timeout: 30_000 });
+  await walk.state("26-needs-read-error", { visible: [offer, page.getByText(/^Could not read what needs you\./)], hidden: [] });
+  mode = "empty";
+  await walk.state("27-needs-empty", {
+    action: () => page.getByRole("button", { name: "Retry" }).click(),
+    visible: [offer, page.getByText("Nothing needs you.", { exact: true })], hidden: [],
+  });
+});
 
 /**
  * A push service this browser can subscribe to; without one no device could be woken here. Its subscription
@@ -61,19 +106,37 @@ test("the switch walks its states and alerts once for each new decision", { tag:
     return (await response.json()).slug as string;
   };
   const card = (title: string) => page.getByRole("article", { name: title });
-  const offer = page.getByRole("button", { name: "Alert me about new decisions" });
-  const on = page.getByRole("button", { name: "Alerts on" });
+  const offer = pill(page, "Alerts off");
+  const on = pill(page, "Alerts while open");
+  const alertsSwitch = page.getByRole("region", { name: "Notifications" }).getByRole("switch", { name: "Decision alerts" });
+  const back = page.getByRole("button", { name: "‹ Back" });
 
   await recordAlerts(page);
   await context.grantPermissions(["notifications"]);
   // A device push cannot wake is alerted by the open page; one push wakes is alerted by its worker (below).
   await page.route("**/api/alerts", (route) => route.fulfill({ json: { key: null } }));
   await walk.open("/");
-  await walk.state("01-alerts-off", { visible: [offer, card("Choose backup retention")], hidden: [on] });
+  await walk.state("01-alerts-off", { visible: [offer, card("Choose backup retention")], hidden: [on, alertsSwitch] });
 
-  await walk.state("02-alerts-on", {
+  // The pill opens Settings at Notifications, where the switch lives; Back returns to the same Needs you visit,
+  // a half-typed answer still in its box.
+  const answer = card("Choose backup retention").getByRole("textbox", { name: /^Your answer to:/ });
+  await answer.fill("Thirty days");
+  await offer.click();
+  await expect(alertsSwitch).toBeVisible();
+  await back.click();
+  await expect(answer).toHaveValue("Thirty days");
+  await answer.fill("");
+  await walk.state("02-settings-from-the-pill", {
     action: () => offer.click(),
-    visible: [on, page.getByText(/only while Altitude is open/)], hidden: [offer],
+    visible: [alertsSwitch, page.getByText("Altitude can alert you when a new decision arrives.")], hidden: [offer],
+  });
+  await expect(alertsSwitch).toBeInViewport();
+  await alertsSwitch.click();
+  await expect(page.getByText(/only while Altitude is open/)).toBeVisible();
+  await walk.state("02-alerts-on", {
+    action: () => back.click(),
+    visible: [on, card("Choose backup retention")], hidden: [offer, page.getByText(/only while Altitude is open/)],
   });
   expect(await alerts(page)).toEqual([]); // the waiting decision is not announced as news
 
@@ -118,27 +181,26 @@ test("the switch walks its states and alerts once for each new decision", { tag:
   expect(await alerts(page)).toEqual([]);
   await walk.state("05-refresh-repeats-nothing", { visible: [page.getByRole("heading", { name: /Run a restore drill/ })], hidden: [] });
 
-  // Permission refused: the switch says so, and Needs you keeps working.
+  // Permission refused: the pill says so, and Needs you keeps working. A headless browser forgets a refusal on
+  // reload, so the walk stays on the page: off in Settings, refused on again, Back.
   await context.clearPermissions();
+  await page.evaluate(() => localStorage.removeItem("altitude.alerts"));
   await walk.open("/");
-  await expect(offer).toBeEnabled();
   await offer.click();
+  await alertsSwitch.click();
   const blocked = page.getByText(/blocked in this browser's settings/);
-  await walk.state("06-permission-blocked", { visible: [blocked, card("Choose backup retention")], hidden: [on] });
-  await expect(offer).toBeDisabled();
+  await expect(blocked).toBeVisible();
+  await back.click();
+  const blockedPill = pill(page, "Alerts blocked");
+  await walk.state("06-permission-blocked", { visible: [blockedPill, card("Choose backup retention")], hidden: [on, blocked] });
 
-  // Settings offers the same switch, disabled-looking, with the same reason on press and no choices.
-  await walk.open("/settings");
-  const notifications = page.getByRole("region", { name: "Notifications" });
-  const blockedSwitch = notifications.getByRole("switch", { name: "Decision alerts" });
-  await expect(blockedSwitch).toHaveAttribute("aria-disabled", "true");
+  // Settings, opened from the pill, shows the switch disabled-looking with its reason already showing.
   await walk.state("08-settings-blocked", {
-    action: async () => {
-      await blockedSwitch.scrollIntoViewIfNeeded();
-      await blockedSwitch.click({ force: true }); // aria-disabled: the press reveals the reason
-    },
-    visible: [notifications.getByText(/blocked in this browser's settings/)], hidden: [notifications.getByRole("combobox")],
+    action: () => blockedPill.click(),
+    visible: [blocked, alertsSwitch], hidden: [page.getByRole("region", { name: "Notifications" }).getByRole("combobox")],
   });
+  await expect(alertsSwitch).toHaveAttribute("aria-disabled", "true");
+  await expect(blocked).toBeInViewport();
 });
 
 /** Every banner the device shows now, as the real service worker left them. Read only between wakes: Chromium
@@ -176,9 +238,10 @@ test("a push wakes the real worker, which names the decision and never shows a b
   const walk = walkthrough(page, info);
   await fakePushService(page);
   await context.grantPermissions(["notifications"]);
-  await walk.open("/");
-  await page.getByRole("button", { name: "Alert me about new decisions" }).click();
+  await walk.open("/settings");
+  await page.getByRole("switch", { name: "Decision alerts" }).click();
   await expect(page.getByText(/even when Altitude is closed/)).toBeVisible();
+  await walk.open("/");
   // altd holds what waking this device takes, and nothing else about it.
   expect(await (await request.get("/fixture/push")).json())
     .toEqual({ subscriptions: ["https://push.example/wake/walkthrough"], every: {} });
@@ -304,18 +367,22 @@ test("Settings chooses what this device's alerts show, how often they come and w
   await walk.state("23-settings-alerts-off-again", { action: () => alertsSwitch.click(), visible: [alertsSwitch], hidden: [show, often, sound] });
 });
 
-test("a browser without notifications keeps every decision usable", async ({ page }, info) => {
+test("a browser without notifications keeps every decision usable, and Settings says why", async ({ page }, info) => {
   const walk = walkthrough(page, info);
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: undefined });
   });
   await walk.open("/");
-  const offer = page.getByRole("button", { name: "Alert me about new decisions" });
+  const unavailable = pill(page, "Alerts unavailable");
   await walk.state("07-alerts-unavailable", {
-    visible: [page.getByText("This browser cannot show alerts."), page.getByRole("article", { name: "Choose backup retention" })],
-    hidden: [page.getByRole("button", { name: "Alerts on" })],
+    visible: [unavailable, page.getByRole("article", { name: "Choose backup retention" })],
+    hidden: [page.getByText("This browser cannot show alerts.")],
   });
-  await expect(offer).toBeDisabled();
+  await narrow(page, info, "07-alerts-unavailable");
+  await walk.state("07-settings-unavailable", {
+    action: () => unavailable.click(),
+    visible: [page.getByText("This browser cannot show alerts.")], hidden: [unavailable],
+  });
 });
 
 test("a refusal shows on its own device until a push gets through, and an ended subscription renews itself", { tag: "@chromium" }, async ({ page, context, request }, info) => {
@@ -325,8 +392,9 @@ test("a refusal shows on its own device until a push gets through, and an ended 
   const ask = async (title: string) =>
     expect((await request.post("/fixture/decision", { data: { project: "beacon", title, question: "Which one?" } })).ok()).toBe(true);
   const subscriptions = async () => (await (await request.get("/fixture/push")).json()).subscriptions;
-  const offer = page.getByRole("button", { name: "Alert me about new decisions" });
-  const on = page.getByRole("button", { name: "Alerts on" });
+  const alertsSwitch = page.getByRole("switch", { name: "Decision alerts" });
+  const on = pill(page, "Alerts on");
+  const refusedPill = pill(page, "Push refused");
   const refused = page.getByText("The push service at push.example refused Altitude's last alert (403 BadJwtToken), so this "
     + "device gets alerts only while Altitude is open. Give Altitude a real contact address in ALTITUDE_PUSH_CONTACT on "
     + "the computer it runs on.");
@@ -336,21 +404,25 @@ test("a refusal shows on its own device until a push gets through, and an ended 
   await recordAlerts(page);
   await fakePushService(page);
   await context.grantPermissions(["notifications"]);
-  await walk.open("/");
-  await offer.click();
+  await walk.open("/settings");
+  await alertsSwitch.click();
   await expect(reach).toBeVisible();
   await ask("Pick a drill day");
   expect(await tick(403, "BadJwtToken")).toEqual({ subscriptions: [device], refused: { [device]: "403 BadJwtToken" } });
 
-  // The device learns its refusal the next time Altitude opens there.
-  await page.reload();
-  await walk.state("09-push-refused", { visible: [on, refused], hidden: [reach, offer] });
+  // The device learns its refusal the next time Altitude opens there: two red words on Needs you, the whole
+  // line with what to do in Settings.
+  await walk.open("/");
+  await walk.state("09-push-refused", { visible: [refusedPill], hidden: [on, refused, reach] });
+  await expect(refusedPill).toHaveAttribute("data-tone", "danger");
+  await narrow(page, info, "09-push-refused");
+  await walk.state("09-settings-push-refused", { action: () => refusedPill.click(), visible: [refused], hidden: [reach] });
 
   // A refusal cleared by the push service accepting the next alert stops showing.
   await ask("Pick a log format");
   expect(await tick(201)).toEqual({ subscriptions: [device], refused: {} });
-  await page.reload();
-  await walk.state("10-refusal-cleared", { visible: [on, reach], hidden: [refused] });
+  await walk.open("/");
+  await walk.state("10-refusal-cleared", { visible: [on], hidden: [refusedPill] });
 
   // A subscription the push service will never take again ends on Altitude's side, and the device makes a new one
   // the next time Altitude opens there, without the switch.
@@ -358,7 +430,7 @@ test("a refusal shows on its own device until a push gets through, and an ended 
   expect(await tick(410)).toEqual({ subscriptions: [], refused: {} });
   await page.reload();
   await expect.poll(subscriptions).toEqual([`${device}-2`]);
-  await walk.state("11-ended-subscription-renewed", { visible: [on, reach], hidden: [refused, offer] });
+  await walk.state("11-ended-subscription-renewed", { visible: [on], hidden: [refusedPill] });
 });
 
 test("a device subscribed with an old key renews itself when Altitude opens there", { tag: "@chromium" }, async ({ page, context, request }, info) => {
@@ -377,8 +449,5 @@ test("a device subscribed with an old key renews itself when Altitude opens ther
   // Altitude forgets the endpoint the device replaced, and holds the new one.
   await expect.poll(async () => (await (await request.get("/fixture/push")).json()).subscriptions)
     .toEqual(["https://push.example/wake/walkthrough"]);
-  await walk.state("24-old-key-renewed", {
-    visible: [page.getByRole("button", { name: "Alerts on" }), page.getByText(/even when Altitude is closed/)],
-    hidden: [page.getByText(/refused/)],
-  });
+  await walk.state("24-old-key-renewed", { visible: [pill(page, "Alerts on")], hidden: [pill(page, "Push refused")] });
 });

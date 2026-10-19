@@ -7,6 +7,7 @@ import { BrandMark } from "./BrandMark";
 import { ThemeToggle } from "./theme";
 import { attentionCount } from "../data/decisions";
 import { RoleModelButton } from "../components/ModelMenu";
+import { settingsOpener } from "../components/visitMemory";
 
 /** "78% of week", "not installed", "no reading", "52% of week · reading 3h old" (SPEC.md §3.1). */
 export function readoutText(row: EngineReadout): string {
@@ -99,7 +100,7 @@ export function Rail({
         </NavLink>
       </nav>
       <div className="rail-operator">
-        <NavLink to="/settings" className="rail-item min-w-0 flex-1" aria-label="Settings" state={location.pathname.startsWith("/settings") ? location.state : { settingsFrom: location.pathname + location.search }}>
+        <NavLink to="/settings" className="rail-item min-w-0 flex-1" aria-label="Settings" state={location.pathname.startsWith("/settings") ? location.state : settingsOpener(location)}>
           <span className="truncate font-medium">{data?.operator || "You"}</span><span aria-hidden>⚙</span>
         </NavLink>
         <span className="ml-auto">

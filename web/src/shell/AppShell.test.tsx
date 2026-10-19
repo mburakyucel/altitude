@@ -6,6 +6,8 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ToastProvider } from "../data/Toast";
 import { routes } from "../routes";
 import { renderApp, setViewport } from "../test/render";
+import { activeTab } from "./TabBar";
+import { settingsOpener } from "../components/visitMemory";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
@@ -270,6 +272,33 @@ describe("Phone", () => {
     await user.click(screen.getByRole("button", { name: "Back" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/harbor"));
     expect(router.state.location.search).toBe("?tab=work");
+  });
+
+  it("opens alert settings from Needs you under its own tab, and Back returns to that same visit", async () => {
+    mockFetch();
+    setViewport(390);
+    const { router, user } = renderBrowserApp("/");
+    const bar = screen.getByRole("navigation", { name: "Primary" });
+
+    await user.click(await screen.findByRole("link", { name: "Alerts unavailable, alert settings" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings"));
+    expect(router.state.location.hash).toBe("#notifications");
+    expect(within(bar).getByRole("link", { name: /^Needs you/ })).toHaveAttribute("aria-current", "page");
+    expect(within(bar).getByRole("link", { name: "Chat" })).not.toHaveAttribute("aria-current");
+
+    // Back steps back to the entry that opened Settings, which brings back what that visit kept.
+    await user.click(screen.getByRole("button", { name: "‹ Back" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    expect(router.state.historyAction).toBe("POP");
+  });
+
+  it("keeps lit the tab a task was opened through when Settings opens from that task", () => {
+    const task = { pathname: "/projects/atlas/tasks/rotate-key", search: "" };
+    expect(activeTab("/settings", settingsOpener({ ...task, state: { tab: "needs" } }), "")).toBe("needs");
+    expect(activeTab("/settings", settingsOpener({ ...task, state: { tab: "chat" } }), "")).toBe("chat");
+    expect(activeTab("/settings/voice", settingsOpener({ ...task, state: null }), "")).toBe("work");
+    expect(activeTab("/settings", settingsOpener({ pathname: "/monitor", search: "", state: null }), "")).toBe("monitor");
+    expect(activeTab("/settings", null, "")).toBe("chat");
   });
 
   it.each(["", "/live"])("direct task entry %s falls back to its owning L3 after local switches", async (suffix) => {
