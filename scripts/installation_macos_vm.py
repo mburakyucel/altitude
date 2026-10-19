@@ -1338,7 +1338,7 @@ git push -q origin main && git rev-parse HEAD""")
 # finishes within `alt task run`'s ten minutes.
 RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
                 "grants": ("grants", "contention"), "incident": ("incident", "schedule"),
-                "update": ("operator-step", "quiet-point"), "session": ("scratch", "logout-login")}
+                "update": ("operator-step", "quiet-point"), "session": ("scratch", "coordinator-channel", "logout-login")}
 GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
 # Rows may end the account's session, so they run in the background while the host polls.
 ROWS_BUDGET = 420
@@ -1422,7 +1422,8 @@ def phase_update(guest: Guest, repository: str, results: Path, record: dict, inp
 
 
 def phase_session(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
-    """A worker's scratch folder through completion (#958), then logout and login without a restart (#731, #226).
+    """A worker's scratch folder through completion (#958), the coordinator channel refusing a worker and another
+    project's coordinator (#943), then logout and login without a restart (#731, #226).
     The guest cannot sleep: macOS under Apple's Virtualization framework refuses `pmset sleepnow` as not permitted;
     the `jobs` phase's `sleep-hold` and `awake-clock` rows cover a job across sleep."""
     runtime(guest, repository, results, record, inputs, "session")

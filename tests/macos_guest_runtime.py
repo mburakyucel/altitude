@@ -621,8 +621,12 @@ def row_quiet_point() -> dict:
                                                             and r.get("finished")), None), timeout=150)
     attempt = wait("the automatic update to start", lambda: (record().get("attempt") or {}).get("version") == newer
                    and record()["attempt"], timeout=120)
-    wait(f"the service to restart into {newer}", lambda: installed() == newer and (service_pid() or before) != before
-         and healthy(), timeout=180)
+    try:
+        wait(f"the service to restart into {newer}", lambda: installed() == newer
+             and (service_pid() or before) != before and healthy(), timeout=180)
+    except Failed as error:
+        raise Failed(f"{error}: installed {installed()}, service {before} then {service_pid()}, healthy {healthy()}, "
+                     f"attempt {record().get('attempt')}") from None
     facts = {"installed": version, "newer": newer, "waiting": waiting, "doctor": doctor,
              "refused": {key: refused.get(key) for key in ("exit", "stdout", "stderr")},
              "second_runs": [r for r in machine(later) if r.get("purpose") == "validation"],
@@ -751,6 +755,60 @@ def row_operator_step() -> dict:
     return facts
 
 
+CHANNEL = """import json, os, socket, sys
+for path in sys.argv[1:]:
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(30)
+            client.connect(path)
+            client.sendall(b"{}\\n")
+            print(json.dumps({"socket": path, "answer": json.loads(client.recv(4096) or b"null")}))
+    except OSError as error:
+        print(json.dumps({"socket": path, "error": str(error)}))
+print(json.dumps({"cwd": os.getcwd()}))
+"""
+
+
+def row_coordinator_channel() -> dict:
+    """#943 A1, A2: a coordinator turn, here the fictional Codex CLI's, runs from a fresh folder in the private
+    coordinator folder and is admitted to its own project's channel; another project's channel and a task worker are
+    refused. The folder is the account's alone and each socket's path fits macOS's limit."""
+    other = "fictional-other"
+    repo = HOME / "Projects" / other
+    repo.mkdir(parents=True)
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "-c", "user.name=Fixture Operator", "-c", "user.email=fixture@example.invalid", "commit", "-q",
+        "--allow-empty", "-m", "Fictional initial commit")
+    alt("project", "add", other, "--path", str(repo), "--l2-engine", "codex", project=False)
+    folder = HOME / ".config/altitude" / hashlib.sha256(str(ROOT.resolve()).encode()).hexdigest()[:12]
+    sockets = {name: folder / hashlib.sha256(name.encode()).hexdigest()[:8] for name in (PROJECT, other)}
+    wait("both projects' channels", lambda: all(path.is_socket() for path in sockets.values()), timeout=60)
+    probe = TEMP / "channel.py"
+    probe.write_text(CHANNEL)
+    command = f"{PYTHON} -B {probe} {sockets[PROJECT]} {sockets[other]}"
+    mark = len(lines(LOG))
+    coordinator(f"FIXTURE-RUN: {command}")
+    answers = [json.loads(line) for line in next(entry for entry in lines(LOG)[mark:] if entry.get("role") == "l3"
+                                                 and entry.get("command") == command)["stdout"].splitlines()]
+    slug = new_task("Coordinator channel from a worker", "Fictional task that tries its project's coordinator "
+                    f"channel.\nFIXTURE-RUN: {PYTHON} -B {probe} {sockets[PROJECT]}\n")
+    worker = [json.loads(line) for line in wait("the worker's attempt", lambda: ran(slug, str(probe)),
+                                                timeout=90)["stdout"].splitlines()]
+    stopped_cleanly(slug)
+    # Refused by the service's admission, or by the caller's sandbox before it connects.
+    refused = lambda answer: "error" in answer or (answer.get("answer") or {}).get("error") == (  # noqa: E731
+        "this socket serves only the project's running coordinator turn")
+    mode = lambda path: oct(path.stat().st_mode & 0o777)  # noqa: E731
+    facts = {"coordinator": answers, "worker": worker, "folder_mode": mode(folder),
+             "socket_modes": {name: mode(path) for name, path in sockets.items()},
+             "socket_bytes": {name: len(str(path).encode()) for name, path in sockets.items()}}
+    facts["passed"] = (not refused(answers[0]) and refused(answers[1])
+                       and answers[2]["cwd"].startswith(f"{folder}/l3-codex-") and refused(worker[0])
+                       and facts["folder_mode"] == "0o700" and max(facts["socket_bytes"].values()) <= 103
+                       and all(path.stat().st_uid == UID for path in sockets.values()))
+    return facts
+
+
 def row_logout_login() -> dict:
     """#731 and #226: the account's desktop session ends and starts again without a restart; the service stops
     with the session and the next login starts it again."""
@@ -780,7 +838,8 @@ STATE: dict = {}
 ROWS = {"coordinator-stop": row_coordinator_stop, "failed-turn": row_failed_turn, "status-unknown": row_status_unknown,
         "validation-restart": row_validation_restart, "grants": row_grants, "contention": row_contention,
         "incident": row_incident, "schedule": row_schedule, "quiet-point": row_quiet_point,
-        "scratch": row_scratch, "operator-step": row_operator_step, "logout-login": row_logout_login}
+        "scratch": row_scratch, "operator-step": row_operator_step,
+        "coordinator-channel": row_coordinator_channel, "logout-login": row_logout_login}
 
 
 def rows(names: list[str]) -> int:
