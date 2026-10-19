@@ -244,10 +244,12 @@ def _project_review(review, task, identity):
 def _earlier(review, task, identity):
     """"Earlier version" names new content (commits or a revised proposal); a moved main or conversation is
     L2's routine reassessment before landing, which require_merge still enforces. A question published with
-    other shown files than the review read also makes it an earlier version."""
+    other shown files than the review read also makes it an earlier version; a merge question's files are not the
+    proposal's."""
     snapshot = review.get("snapshot") or {}
     saved = review.get("reconciled") or snapshot
-    published = next((q["shown"]["id"] for q in reversed(task.get("questions", [])) if q.get("shown")), None)
+    published = next((q["shown"]["id"] for q in reversed(task.get("questions", []))
+                      if q.get("shown") and q.get("review") != "changes"), None)
     reviewed = (snapshot.get("design") or {}).get("id")
     return (bool(identity and saved and any(saved.get(k) != identity.get(k) for k in ("head", "proposal_id", "proposal_hash")))
             or bool(reviewed and published and reviewed != published))

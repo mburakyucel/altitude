@@ -446,9 +446,10 @@ class TestShownFiles(AltitudeCase):
         T.accept_question(self.project, self.slug, proposal["id"], 1)
 
     def test_a_group_with_files_refuses_without_exactly_one_proposal_and_publishes_nothing(self):
-        lone = [{"questions": [{"question": "Merge PR #7?", "review": mark}]} for mark in ("changes", "none")]
-        for payload in (self.group(proposal=None, merge=None), self.group(proposal="none"),
-                        self.group(merge="proposal"), *lone):
+        lone = {"questions": [{"question": "Merge PR #7?", "review": "none"}]}
+        two = self.group(proposal="changes")
+        for payload in (self.group(proposal=None, merge=None), self.group(proposal="none", merge="none"),
+                        self.group(merge="proposal"), two, lone):
             with self.subTest(payload=payload):
                 with self.assertRaisesRegex(T.TransitionError, 'mark exactly one question "review": "proposal"'):
                     T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
@@ -460,6 +461,127 @@ class TestShownFiles(AltitudeCase):
         task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
                        updates={"waiting_on": "burak"}, questions=self.group(proposal=None, merge=None))
         self.assertEqual([q.get("shown") for q in task["questions"]], [None, None])
+
+    def test_a_merge_question_shows_files_beside_its_review_and_pr_and_keeps_them_across_revisions(self):
+        task = S.load_task(self.project, self.slug)
+        task.update(prs=[7], delivery={"number": 7})
+        S.save_task(self.project, task)
+        payload = self.group(proposal="none")
+        task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1,
+                       updates={"waiting_on": "burak"}, questions=payload, show=self.sent(["overview.png"]))
+        merge, other = task["questions"]
+        self.assertEqual([i["path"] for i in merge["shown"]["images"]], ["overview.png"])
+        self.assertNotIn("shown", other)
+        view = {v["id"]: v for v in T.question_views(self.project, self.slug)}[merge["id"]]
+        self.assertEqual((view["review"]["subject"], view["pr"]), ("changes", 7))
+        self.assertEqual([i["path"] for i in view["shown"]["images"]], ["overview.png"])
+        status, _, data = self.request("GET", view["shown"]["images"][0]["url"])
+        self.assertEqual((status, data), (200, png(50)))
+        # Re-parking the reworded merge question without files keeps them; showing others replaces them.
+        T.resume(self.project, self.slug)
+        payload["questions"][0].update(id=merge["id"], question="Merge PR #7 now that the screenshots match?")
+        task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1, questions=payload)
+        revised = next(q for q in task["questions"] if q["id"] == merge["id"] and q["status"] == "open")
+        self.assertEqual((revised["revision"], revised["shown"]), (2, merge["shown"]))
+        T.resume(self.project, self.slug)
+        task = T.block(self.project, self.slug, "Two decisions.", actor="l2", expected_attempt=1, questions=payload,
+                       show=self.sent(["docs/images/tour.png"]))
+        revised = next(q for q in task["questions"] if q["id"] == merge["id"] and q["status"] == "open")
+        self.assertEqual((revised["revision"], [i["path"] for i in revised["shown"]["images"]]),
+                         (3, ["docs/images/tour.png"]))
+
+    def deliver(self, *changes):
+        """Main with pictures and a text file, then the PR's head with `changes` applied; main moves on with a picture
+        of its own, and the task's delivery records PR #7 at that head over main's commit, as landing does."""
+        site = self.repo / "site"
+        site.mkdir()
+        for name, data in (("hero.png", png(1, 4, 3)), ("gone.png", png(2)), ("moved.gif", GIF),
+                           ("notes.md", b"notes\n")):
+            (site / name).write_bytes(data)
+        git("add", "site", cwd=self.repo)
+        git("commit", "-q", "-m", "site", cwd=self.repo)
+        git("push", "-q", "origin", "main", cwd=self.repo)
+        git("checkout", "-q", "-B", f"worktree-{self.slug}", "origin/main", cwd=self.worktree)
+        for change in changes:
+            change(self.worktree / "site")
+        git("add", "-A", "site", cwd=self.worktree)
+        git("commit", "-q", "-m", "pictures", cwd=self.worktree)
+        head = git("rev-parse", "HEAD", cwd=self.worktree).strip()
+        (site / "later.png").write_bytes(png(9))
+        git("add", "site", cwd=self.repo)
+        git("commit", "-q", "-m", "later", cwd=self.repo)
+        git("push", "-q", "origin", "main", cwd=self.repo)
+        base = git("rev-parse", "origin/main", cwd=self.repo).strip()
+        task = S.load_task(self.project, self.slug)
+        task.update(state="reported", prs=[7], delivery={"number": 7, "head": head, "base": base, "branch": "b"})
+        S.save_task(self.project, task)
+        return head
+
+    def test_a_held_prs_card_shows_the_pictures_it_adds_replaces_and_removes_from_its_commit(self):
+        def change(site):
+            (site / "hero.png").write_bytes(png(9, 8, 6))
+            (site / "gone.png").unlink()
+            (site / "moved.gif").rename(site / "renamed.gif")
+            (site / "new.webp").write_bytes(WEBP)
+            (site / "diagram.svg").write_text("<svg/>")
+            (site / "broken.png").write_bytes(b"not a picture")
+            (site / "notes.md").write_text("more notes\n")
+        self.deliver(change)
+        (self.worktree / "site" / "hero.png").write_bytes(png(200, 2, 2))  # an uncommitted edit is not the PR
+        card = T.review_row(self.project, S.load_task(self.project, self.slug))
+        pictures = {p["path"]: p for p in card["pr_images"]["pictures"]}
+        self.assertEqual(list(pictures), ["site/hero.png", "site/renamed.gif", "site/new.webp", "site/gone.png"],
+                         "replaced pictures lead, then new, then removed ones")
+        self.assertTrue(card["pr_images"]["available"])
+        self.assertEqual(sorted(pictures), ["site/gone.png", "site/hero.png", "site/new.webp", "site/renamed.gif"])
+        self.assertEqual(sorted(card["pr_images"]["not_shown"]), ["site/broken.png", "site/diagram.svg"])
+        hero = pictures["site/hero.png"]
+        self.assertEqual((hero["name"], hero["change"]), ("hero.png", "changed"))
+        self.assertEqual([(hero[side]["width"], hero[side]["height"]) for side in ("before", "after")], [(4, 3), (8, 6)])
+        self.assertEqual([(p["change"], bool(p["before"]), bool(p["after"])) for p in
+                          (pictures["site/gone.png"], pictures["site/new.webp"], pictures["site/renamed.gif"])],
+                         [("removed", True, False), ("added", False, True), ("changed", True, True)])
+        for url, data in ((hero["before"]["url"], png(1, 4, 3)), (hero["after"]["url"], png(9, 8, 6)),
+                          (pictures["site/gone.png"]["before"]["url"], png(2))):
+            with self.subTest(url=url):
+                status, headers, body = self.request("GET", url)
+                self.assertEqual((status, body, headers["content-security-policy"]),
+                                 (200, data, "default-src 'none'; sandbox"))
+        base = hero["after"]["url"].rsplit("/", 1)[0]
+        for path in (base.rsplit("/files", 1)[0], base + "/" + "0" * 64 + ".png",
+                     hero["after"]["url"].replace("/pr/7/", "/pr/8/")):
+            with self.subTest(path=path):
+                self.assertEqual(self.request("GET", path)[0], 404)
+        # The owner's merge question shows the same pictures; the record is read once per head.
+        T.resume(self.project, self.slug)
+        T.block(self.project, self.slug, "Merge?", actor="l2", expected_attempt=1, updates={"waiting_on": "burak"},
+                questions={"questions": [self.group()["questions"][0]]})
+        with mock.patch.object(T.subprocess, "run", side_effect=AssertionError("read again")):
+            merge = T.question_views(self.project, self.slug)[-1]
+            self.assertEqual(merge["pr_images"], card["pr_images"])
+            self.assertIsNone(T.review_row(self.project, S.load_task(self.project, self.slug)))
+        self.saved(hero["after"]["url"].rsplit("/", 1)[1]).unlink()
+        self.assertFalse(T.question_views(self.project, self.slug)[-1]["pr_images"]["available"])
+        # A released hold shows no merge card and no pictures.
+        task = S.load_task(self.project, self.slug)
+        task["hold_merge"] = None
+        S.save_task(self.project, task)
+        self.assertIsNone(T.question_views(self.project, self.slug)[-1]["pr_images"])
+        self.assertEqual(self.request("GET", pictures["site/gone.png"]["before"]["url"])[0], 200,
+                         "the current PR's pictures stay readable from the conversation")
+
+    def test_a_text_only_pr_shows_no_pictures_and_an_unreadable_one_says_so_until_it_reads(self):
+        head = self.deliver(lambda site: (site / "notes.md").write_text("more\n"))
+        self.assertIsNone(T.review_row(self.project, S.load_task(self.project, self.slug))["pr_images"])
+        self.assertTrue(self.saved(f"pr-7-{head}.json").exists())
+        task = S.load_task(self.project, self.slug)
+        task["delivery"]["head"] = "f" * 40  # a head the repository does not hold yet
+        S.save_task(self.project, task)
+        self.assertEqual(T.review_row(self.project, task)["pr_images"], {"available": False, "pictures": [], "not_shown": []})
+        self.assertFalse(self.saved(f"pr-7-{'f' * 40}.json").exists(), "a failed read is tried again on the next view")
+        task["delivery"]["base"] = "main"  # a branch name is not a recorded base commit
+        task["delivery"]["head"] = head
+        self.assertIsNone(T.review_row(self.project, task)["pr_images"])
 
     def test_moving_files_to_another_member_revises_the_earlier_one_without_them(self):
         first = self.publish(recommendation="Build as shown", recommendation_label="Build")
