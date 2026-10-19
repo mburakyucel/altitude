@@ -1769,8 +1769,8 @@ worker's own job and sandbox. No provider is reached.
 - `online`, only when named with `--phase online`: by the operator's decision of 2026-10-19, the one
   phase whose guest keeps its network, for the checks that need the internet. The probes must find the
   internet and this Mac reachable at the start. The guest itself downloads Homebrew's `python@3.13`, and Google Chrome and Firefox
-  from their publishers, each of which must pass `codesign --verify --deep --strict` with its
-  publisher's team. The latest published release then installs through the public command from GitHub
+  from their publishers, each of which must pass `codesign --verify --deep` with its publisher's
+  team and Gatekeeper's `spctl --assess`. The latest published release then installs through the public command from GitHub
   itself, with the guest's own certificate store, and its service must run on Python 3.13, read from
   the Python framework its process loaded. On the account's desktop, Chrome (headless, `--dump-dom`) and
   Firefox (headless, through its own Marionette protocol), each with a new profile, must refuse

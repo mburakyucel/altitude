@@ -1371,7 +1371,8 @@ def phase_online(guest: Guest, repository: str, results: Path, record: dict, inp
                                        f"ditto {quote(f'{mount}/{app}.app')} {quote(bundle)} && "
                                        f"hdiutil detach -quiet {mount} && rm {image}", timeout=900)
         check(got.returncode == 0, f"{app} did not download and install")
-        signed = step(f"{name}-signature", f"codesign --verify --deep --strict {quote(bundle)} && "
+        signed = step(f"{name}-signature", f"codesign --verify --deep {quote(bundle)} && "
+                                           f"spctl --assess --type execute {quote(bundle)} && "
                                            f"codesign -dv {quote(bundle)} 2>&1 | sed -n 's/^TeamIdentifier=//p' && "
                                            f"defaults read {quote(bundle + '/Contents/Info')} CFBundleShortVersionString")
         check(signed.returncode == 0 and signed.stdout.split()[:1] == [team], f"{app} is not signed by its publisher")
