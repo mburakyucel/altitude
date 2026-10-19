@@ -571,7 +571,7 @@ class ProjectSetup(AltitudeCase):
                 self.assertIn("Install Codex (Coding tools)", detail(), "only an engine the coordinator may use is named")
         with mock.patch.object(engines, "sign_in", return_value={"signed_in": False, "command": "fixture login"}):
             self.assertIn("Sign in to Claude (Coding tools)", detail())
-        sandbox = {"enabled": False, "command": "sudo apt install bubblewrap", "detail": "fixture"}
+        sandbox = {"enabled": False, "command": "sudo apt install bubblewrap", "scoped": True, "detail": "fixture"}
         with mock.patch.object(platform, "sandbox_tool", return_value=sandbox):
             with mock.patch.object(route, "routed_engines", return_value=["claude"]):
                 self.assertIn("Install the agent sandbox (Coding tools)", detail())

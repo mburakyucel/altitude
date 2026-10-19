@@ -435,6 +435,15 @@ def _codex_home(env: dict) -> Path:
     return Path(env.get("CODEX_HOME") or Path(env.get("HOME") or config.HOME) / ".codex")
 
 
+def denied() -> tuple[str, ...]:
+    """What every Codex profile Altitude sets refuses: the places no sandbox Altitude applies reaches (the per-user
+    runtime folder on Linux, the job folders on macOS), macOS's private places, Altitude's credentials and the shared
+    temporary folders. A narrower entry reopens a folder inside them: a coordinator's working folder in the runtime
+    folder, and the job's own temporary folder, its TMPDIR (`:tmpdir`), which `platform.job_command` makes in /tmp."""
+    return (*map(str, platform.job_control_paths()), *platform.private_places(), *platform.secret_places(),
+            ":slash_tmp", os.path.realpath("/var/tmp"))
+
+
 def codex_sandbox(cwd: Path, *, extra_roots: tuple[Path, ...] = (), read_only: tuple[Path, ...] = ()) -> list[str]:
     """The task's native permissions, shared by launch and the provider-free sandbox diagnostic.
 
@@ -442,9 +451,8 @@ def codex_sandbox(cwd: Path, *, extra_roots: tuple[Path, ...] = (), read_only: t
     Git directories so it can fetch, commit, and push, and its scratch folder). Altitude's home is not among them:
     `alt` changes the task's records through altd. `read_only` paths inside them stay read-only, existing or not (a
     worker's Git settings, hooks and worktree records). The workspace base retains protected configuration paths and
-    temporary directories.
-    Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets, macOS's private
-    places and Altitude's credentials stay denied.
+    the job's own temporary folder.
+    Network stays on for `git push`, `gh`, and the repository's own tests; the places in `denied` stay out of reach.
     The sandboxed shell inherits the launch environment, so the identity variables reach `alt` and a worker's
     GitHub token (`github_token`) reaches `gh` unchanged.
     """
@@ -452,9 +460,7 @@ def codex_sandbox(cwd: Path, *, extra_roots: tuple[Path, ...] = (), read_only: t
     profile = "altitude-task"
     workspace_roots = "{" + ",".join(f"{json.dumps(str(root))}=true" for root in roots) + "}"
     rules = ",".join([*(f'{json.dumps(str(Path(path).resolve()))}="read"' for path in read_only),
-                      *(f'{json.dumps(str(path))}="deny"' for path in (*platform.job_control_paths(),
-                                                                         *platform.private_places(),
-                                                                         *platform.secret_places()))])
+                      *(f'{json.dumps(path)}="deny"' for path in denied())])
     return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":workspace"',
             f"permissions.{profile}.workspace_roots={workspace_roots}",
             f'permissions.{profile}.filesystem={{":root"="read",{rules}}}',
@@ -472,9 +478,7 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     from ..l3 import verb_socket_path
     broker = verb_socket_path(project).resolve()
     rules = {":root": "read", str(Path(cwd).resolve()): "write",
-             str(config.project_path(project).resolve()): "read",
-             **{str(path): "deny" for path in (*platform.job_control_paths(), *platform.private_places(),
-                                               *platform.secret_places())}}
+             str(config.project_path(project).resolve()): "read", **dict.fromkeys(denied(), "deny")}
     filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
                                    for path, access in rules.items()) + "}"
     # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's

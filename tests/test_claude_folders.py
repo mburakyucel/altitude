@@ -243,7 +243,7 @@ class TestClaudeFolders(AltitudeCase):
     def test_no_sandbox_on_a_mac_reads_the_launch_input_a_job_folder_holds(self):
         jobs = os.path.realpath(platform._jobs())
         with mock.patch.object(platform, "_darwin", return_value=True):
-            profile = platform.seatbelt_profile([str(self.tmp)])
+            profile = platform.seatbelt_profile([str(self.tmp)], temporary=str(self.tmp))
             codex = engines.codex.codex_sandbox(self.tmp)
         self.assertIn('(deny file-read* file-write* ', profile)
         self.assertIn(f'(subpath "{jobs}")', profile.rsplit("(deny file-read* file-write* ", 1)[1])

@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -150,8 +151,14 @@ class WorkerRoots(AltitudeCase):
             settings=self.tmp / "settings.json", effort=None, resume=None, images=())
         task = settings(cmd)
         profile = next(s for s in task if s.startswith("default_permissions=")).split("=", 1)[1].strip('"')
-        # The environment a worker's job gets, with its temporary folder.
+        # The environment a worker's job gets, with its own temporary folder; another in /tmp stands for the shared one.
+        own, shared = (Path(tempfile.mkdtemp(prefix=prefix, dir="/tmp")) for prefix in ("altitude-", "fictional-desk-"))
+        for folder in (own, shared):
+            self.addCleanup(shutil.rmtree, folder, True)
+        self.targets.update({"job's temporary folder": ("folder", own), "shared temporary folder": ("folder", shared)})
         result = run_native_sandbox_probe(self.worktree, task, CHILD, [self.spec()], profile=profile,
-                                          env=platform.job_env(engines.launch_env()))
+                                          env={**platform.job_env(engines.launch_env()), "TMPDIR": str(own)})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assert_only_own(json.loads(result.stdout), "codex")
+        written = json.loads(result.stdout)
+        self.assertEqual({name for name, allowed in written.items() if allowed}, {"scratch", "job's temporary folder"},
+                         written)

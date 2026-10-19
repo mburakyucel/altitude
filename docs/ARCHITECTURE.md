@@ -618,8 +618,8 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
 | A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
-| Claude confinement | also Altitude's bubblewrap sandbox: writes only under its roots, never reads Altitude's credentials, sees only its own processes, no user manager or session bus; a sandbox cannot start inside it | also Altitude's Seatbelt profile: writes only under its roots, never reads macOS's [private places](DEVELOPMENT.md#macos-private-places), signals only its own processes, no launchd control, Simulator service, app launches or Apple Events; browser checks run in validation | Isolation and landing |
-| Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt), which denies macOS's private places and admits neither the Simulator service, app launches nor Apple Events; the two profiles cannot nest | Isolation and landing |
+| Claude confinement | also Altitude's bubblewrap sandbox: writes only under its roots, never reads Altitude's credentials, sees only its own processes, an empty per-user runtime folder and its own `/tmp`, and, on Linux 6.12 or newer, no abstract socket it did not make; a sandbox cannot start inside it | also Altitude's Seatbelt profile: writes only under its roots, never reads macOS's [private places](DEVELOPMENT.md#macos-private-places), signals only its own processes, reaches Unix sockets only in its own folders, no launchd control, Simulator service, app launches or Apple Events; browser checks run in validation | Isolation and landing |
+| Codex confinement | Codex's own sandbox (bwrap), denied the per-user runtime folder and the shared temporary folders | Codex's own sandbox (Seatbelt), which denies macOS's private places and admits neither the Simulator service, app launches nor Apple Events; the two profiles cannot nest | Isolation and landing |
 | Candidate browser checks, both engines | `alt task validate` runs the disposable rootless container with Chromium's own sandbox (two layers) | `alt task validate` runs a job under the validation Seatbelt profile with Chromium's inner sandbox off because profiles cannot nest (one layer, fictional fixtures only); stock engines need no custom runtime | [Browser verification](DEVELOPMENT.md#browser-verification) |
 | Operator-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
@@ -627,7 +627,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Coordinator socket admission | in the per-user runtime folder; the peer's pidfd (Linux 6.5 or newer) and cgroup | beside Altitude's private configuration; the peer's audit token, pinned by its pid version, and its job coalition | Isolation and landing |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
 | Native libraries, tools | system packages (apt, dnf, pacman or zypper) | Homebrew; OpenSSL 3 from PATH or Homebrew's `openssl@3` | Setup |
-| Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |
+| Temporary directory in jobs | the job's own folder in `/tmp`, removed by the user manager when the job ends | the job's own folder in `/tmp`, removed by the job's supervisor | above |
 | Source-checkout deployment | systemd unit (`make install-service`) for the checkout at `~/Projects/altitude` on `main`; address, PATH and branch by drop-in; TLS drop-in; self-restart | LaunchAgent (`make install-service`) for the checkout wherever it is, taking the address, PATH and checked-out branch from the installing command; self-restart through the seam; TLS drop-in refused with an explicit message | Setup, Operations |
 | Installer checks | not root, Python 3.12+, `curl`, a SHA-256 tool, `openssl`, `systemctl --user` | macOS 15+, not root, Python 3.12+, `curl`, a SHA-256 tool, OpenSSL 3 or newer on PATH or in standard Homebrew locations, launchd's domain of the logged-in desktop session; on both hosts each missing item stops with its fix, for the package manager found, before anything downloads, and a host other than Linux x86_64 or Apple silicon installs with one line saying it is not yet validated | Setup |
 | Installed service | `~/.config/systemd/user/altitude.service`, enabled and started | `~/Library/LaunchAgents/dev.altitude.altd.plist`, bootstrapped into the `gui` domain; its definition sets `HOME`, and an installation under another `HOME` gets a label derived from that home | Setup, Operations |
@@ -1495,19 +1495,36 @@ hooks for inbox delivery and telemetry. That job also runs under Altitude's own 
 bubblewrap on Linux (`platform.job_command`): it may signal only processes in its own sandbox, never its supervisor,
 and write only under its own roots (a task worker's worktree, the worktree's Git directories except their
 [read-only parts](#isolation-and-landing) and its scratch folder; a coordinator turn's runtime folder and Altitude's
-home), the job's own Claude folder and temporary directories, and never reads
+home), the job's own Claude folder and its own temporary folder, and never reads
 Altitude's credentials. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
 or the launcher's job folders, which hold each job's piped input and relay its output;
 launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
 whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
-Events, which script running apps with only macOS's Automation consent in the way. On Linux the job sees only
-its own processes and a device folder with its own terminals, reaches neither the session bus nor the user manager,
-and cannot write the control groups. It shares the network, /tmp and the rest of the per-user runtime folder, as
-Codex's profile does, so a socket another program keeps there stays reachable. Its
+Events, which script running apps with only macOS's Automation consent in the way. It reaches Unix sockets only
+inside its own roots and temporary folder, a coordinator turn's broker socket and the system's name and log services,
+never one another program keeps in the shared temporary folders. On Linux the job sees only its own processes and a
+device folder with its own terminals, and cannot write the control groups. Its per-user runtime folder is empty, so
+the session bus, the user manager and the sockets the desktop session keeps there are out of reach; a coordinator
+turn gets back its own folder and its project's broker socket. Its /tmp and /var/tmp are its own temporary folder.
+It shares the network, which `alt` needs to reach altd, and with it the abstract Unix sockets; where the kernel
+offers Landlock's abstract-socket scope (Linux 6.12 or newer), the sandbox starts the job's command under it, so the
+job reaches only abstract sockets its own processes made. On an older kernel the job still starts, and the agent
+sandbox rows in setup and `alt doctor` say abstract sockets stay reachable. Its
 home is a fresh folder holding the home's entries read-only, so a new name there lasts only as long as the job. A
 sandbox cannot start inside it where the distribution restricts user namespaces, as Ubuntu 24.04 does. Every Claude
 L3 turn also runs as a job of its own under the same sandbox.
+
+Every job, on either engine, has a temporary folder of its own as its TMPDIR: a fresh folder with an unpredictable
+name in /tmp, short enough that a socket made in it stays within the platforms' path limits, so a job neither meets
+nor leaves sockets and files in the shared temporary folders. The user manager (Linux) or the job's supervisor
+(macOS) removes it when the job ends, also after an altd restart. A confined job thereby loses the desktop session:
+its windows, the SSH and keyring agents, terminal multiplexers and editor servers. On a machine whose GitHub SSH key
+lives only in an agent, a worker's own fetch over SSH stops working; landing, which altd does, is unaffected.
+Still reachable from a job: system-wide sockets under /run, among them a container engine's socket when the
+operator's account may use it, and sockets kept inside the home folder; on Linux, abstract sockets for Codex workers,
+whose own sandbox Altitude cannot add the scope to, and for every job on a kernel older than 6.12; on macOS,
+whether Codex's Seatbelt profile refuses sockets in the shared temporary folders awaits confirmation on a Mac.
 
 Every Claude job Altitude starts has a Claude folder of its own (`CLAUDE_CONFIG_DIR`), so no job writes
 the operator's `~/.claude`, `~/.claude.json` or the GitHub CLI's configuration, which another run or
@@ -1547,8 +1564,9 @@ link the job planted there, and in the operator's folder for a session recorded 
 readings and improvement reviews still run outside any job on the operator's sign-in.
 
 On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
-roots and the same read-only Git parts. The session bus and manager runtime directory (including its direct private socket) are denied;
-other runtime-directory paths retain their policy. The generated profile also supplies provider-free
+roots and the same read-only Git parts. The per-user runtime folder and the shared /tmp and /var/tmp are denied
+except the job's own temporary folder (its TMPDIR) and a coordinator turn's working folder, which narrower rules
+reopen, so a program that writes /tmp directly rather than TMPDIR fails there. The generated profile also supplies provider-free
 confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
 CLI sign-in without reaching the keyring that holds it: the launcher, which still reaches the session
 bus, reads the token with `gh auth token`, and the job receives it in its launch input, which only the

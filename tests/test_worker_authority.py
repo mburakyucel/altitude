@@ -141,7 +141,7 @@ class TestCoordinatorFolder(AltitudeCase):
         with mock.patch.object(platform, "_darwin", return_value=True), mock.patch.object(config, "HOME", home), \
                 mock.patch.object(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/"):
             folder = os.path.realpath(platform.coordinator_directory())
-            profile = platform.seatbelt_profile([])
+            profile = platform.seatbelt_profile([], temporary="/private/tmp/altitude-fictional")
         self.assertEqual(folder, f"{home}/.config/altitude/{Path(folder).name}")
         grants = re.findall(r'\(allow file-write\* \(subpath "([^"]*)"\)\)', profile)
         self.assertIn("/private/var/folders/ab/cd", grants)
@@ -182,7 +182,7 @@ class TestCredentialsHidden(AltitudeCase):
         for place in secrets:
             self.assertIn(f'(subpath "{place}")', rule)
         self.assertTrue(rule.startswith("(deny file-read* file-write* "))
-        sandbox = " ".join(platform.bubblewrap_profile([str(config.ROOT)]))
+        sandbox = " ".join(platform.bubblewrap_profile([str(config.ROOT)], temporary=str(self.tmp)))
         for place in secrets:
             self.assertIn(f"--tmpfs {place}", sandbox)
         self.assertEqual(push.KEY.parent, access.DIR, "no task can sign a wake for the operator's devices")
@@ -190,7 +190,7 @@ class TestCredentialsHidden(AltitudeCase):
 
 
 class TestBubblewrapProfile(AltitudeCase):
-    """Altitude's Linux sandbox as the arguments bubblewrap receives; the probe on a real host is task evidence."""
+    """Altitude's Linux sandbox as the arguments bubblewrap receives; tests/test_session_sockets.py runs it."""
 
     def setUp(self):
         super().setUp()
@@ -199,15 +199,18 @@ class TestBubblewrapProfile(AltitudeCase):
         (self.home / ".account.json").write_text("{}")
         (self.home / "projects").symlink_to(self.tmp / "elsewhere")
         self.patch(platform.Path, "home", return_value=self.home)
-        self.bus, self.manager = self.tmp / "run" / "bus", self.tmp / "run" / "systemd"
-        self.manager.mkdir(parents=True)
-        self.bus.write_text("")
-        self.patch(platform, "job_control_paths", return_value=(self.bus, self.manager))
+        self.runtime = Path(os.path.realpath(self.tmp)) / "run"
+        (self.runtime / "fictional-session").mkdir(parents=True)
+        self.patch(platform, "job_control_paths", return_value=(self.runtime,))
         self.home = Path(os.path.realpath(self.home))
+        self.temporary = os.path.realpath(self.tmp / "own-temporary")
+
+    def profile(self, writable, read_only=(), sockets=()):
+        return platform.bubblewrap_profile(writable, read_only, temporary=self.temporary, sockets=sockets)
 
     def mounts(self, argv: list[str]) -> list[tuple[str, ...]]:
-        """Each mount after the fresh home, in order, as its option and arguments."""
-        rest, mounts = argv[argv.index(str(self.home)) + 1:-1], []
+        """Each mount after the process and device folders, in order, as its option and arguments."""
+        rest, mounts = argv[argv.index("/proc", argv.index("--proc") + 1) + 1:argv.index("--")], []
         while rest:
             size = 2 if rest[0] == "--tmpfs" else 3
             mounts.append(tuple(rest[:size]))
@@ -217,37 +220,58 @@ class TestBubblewrapProfile(AltitudeCase):
     def test_the_home_is_fresh_with_its_entries_read_only_and_writable_roots_reopened(self):
         work = Path(os.path.realpath(self.tmp)) / "work"
         (work / "settings").mkdir(parents=True)
-        argv = platform.bubblewrap_profile([str(work), str(self.home / ".account.json*"), str(self.tmp / "missing*")],
-                                           [str(work / "settings")])
-        self.assertEqual(argv[:12], [platform.BWRAP, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/",
-                                     "--dev", "/dev", "--proc", "/proc", "--tmpfs", str(self.home)])
-        self.assertEqual(argv[-1], "--")
+        argv = self.profile([str(work), str(self.home / ".account.json*"), str(self.tmp / "missing*")],
+                            [str(work / "settings")])
+        self.assertEqual(argv[:10], [platform.BWRAP, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/",
+                                     "--dev", "/dev", "--proc", "/proc"])
+        self.assertEqual(argv[argv.index("--"):], ["--", sys.executable, "-I", "-c", platform.ABSTRACT_SCOPE])
         mounts = self.mounts(argv)
         account = str(self.home / ".account.json")
-        expected = [("--ro-bind", str(self.home / ".cache"), str(self.home / ".cache")),
+        expected = [("--tmpfs", str(self.home)),
+                    ("--ro-bind", str(self.home / ".cache"), str(self.home / ".cache")),
                     ("--ro-bind", account, account),
                     ("--symlink", str(self.tmp / "elsewhere"), str(self.home / "projects")),
                     ("--bind", account, account),
                     ("--bind", str(work), str(work)),
-                    ("--ro-bind-try", str(work / "settings"), str(work / "settings")),
-                    *(("--bind", shared, shared) for shared in map(os.path.realpath, ("/tmp", "/var/tmp")))]
+                    ("--ro-bind-try", str(work / "settings"), str(work / "settings"))]
         for mount in expected:
             self.assertIn(mount, mounts)
-        for first, later in ((1, 3), (4, 5)):
+        for first, later in ((0, 1), (2, 4), (5, 6)):
             self.assertLess(mounts.index(expected[first]), mounts.index(expected[later]),
                             "the later mount of a path, or of a path inside it, decides")
         self.assertFalse([mount for mount in mounts if "missing" in mount[-1]], "a mount would create the path")
 
-    def test_control_sockets_and_credentials_are_hidden_after_every_mount(self):
+    def test_the_shared_temporary_folders_are_the_jobs_own_before_any_root_inside_them(self):
+        """A root under the shared /tmp (the suite's own) is mounted on purpose inside the job's folder."""
+        inside = Path(tempfile.mkdtemp(dir="/tmp"))
+        self.addCleanup(shutil.rmtree, inside, True)
+        mounts = self.mounts(self.profile([str(inside)]))
+        shared = [("--bind", self.temporary, os.path.realpath(path)) for path in ("/tmp", "/var/tmp")]
+        for mount in shared:
+            self.assertIn(mount, mounts)
+        self.assertFalse([mount for mount in mounts if mount[:2] == ("--bind", "/tmp")], "the host's /tmp is gone")
+        own = ("--bind", str(inside), str(inside))
+        self.assertLess(mounts.index(shared[0]), mounts.index(own))
+
+    def test_the_runtime_folder_is_empty_but_for_a_coordinators_folder_and_its_broker(self):
+        turn, broker = self.runtime / "altitude-fictional" / "l3-claude-x", self.runtime / "altitude-fictional" / "ab12"
+        turn.mkdir(parents=True)
+        broker.write_text("")
+        mounts = self.mounts(self.profile([str(turn)], sockets=[str(broker)]))
+        hidden = ("--tmpfs", str(self.runtime))
+        self.assertIn(hidden, mounts)
+        for reopened in (("--bind", str(turn), str(turn)), ("--ro-bind-try", str(broker), str(broker))):
+            self.assertLess(mounts.index(hidden), mounts.index(reopened))
+        self.assertFalse([mount for mount in mounts if "fictional-session" in mount[-1]])
+
+    def test_credentials_are_hidden_after_every_mount(self):
         access.prepare()
-        argv = platform.bubblewrap_profile([str(config.ROOT)])
-        mounts = self.mounts(argv)
-        masks = [("--ro-bind", "/dev/null", str(self.bus)), ("--tmpfs", str(self.manager)),
-                 ("--tmpfs", os.path.realpath(access.DIR))]
-        hidden = [mount for mount in mounts if mount[0] == "--tmpfs" or mount[1] == "/dev/null"]
-        self.assertEqual(mounts[-len(hidden):], hidden, "no root a job may write reopens a hidden place")
-        for mask in masks:
-            self.assertIn(mask, hidden)
+        mounts = self.mounts(self.profile([str(config.ROOT)]))
+        mask = ("--tmpfs", os.path.realpath(access.DIR))
+        self.assertIn(mask, mounts)
+        self.assertGreater(mounts.index(mask), mounts.index(("--bind", os.path.realpath(config.ROOT),
+                                                              os.path.realpath(config.ROOT))),
+                           "no root a job may write reopens a hidden place")
 
 
 class TestKeyGenerations(AltitudeCase):

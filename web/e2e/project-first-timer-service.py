@@ -19,7 +19,7 @@ def main():
     engines.sign_in = lambda engine: {"signed_in": agent.exists() and engine == config.ENGINES[0],
                                       "command": engines.SIGN_IN[engine][1]}
     installation._gh_signed_in = lambda: True
-    platform.sandbox_tool = lambda: {"enabled": sandbox.exists(), "command": "sudo apt install bubblewrap",
+    platform.sandbox_tool = lambda: {"enabled": sandbox.exists(), "command": "sudo apt install bubblewrap", "scoped": True,
                                      "detail": "/usr/bin/bwrap" if sandbox.exists() else "Install bubblewrap (sudo apt install bubblewrap)"}
     platform.validation_unavailable = lambda: "validation runs need podman and slirp4netns on this computer"
     engines.claude_print = lambda _prompt, **_options: {"text": "The project conversation is ready.",

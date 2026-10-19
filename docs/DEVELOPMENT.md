@@ -28,9 +28,13 @@ With repository access, clone it, then use the commands below from its root.
 Owners and helpers run tests relevant to their changes during development. The required PR
 check runs the full suite; a local full run is available for investigation but is not a landing prerequisite.
 A Claude owner or helper on Linux runs these inside Altitude's bubblewrap sandbox, as on macOS inside its
-Seatbelt profile: tools write their caches to the task's scratch folder, and a program that starts a sandbox or
-container of its own (Chromium's sandbox, rootless Podman) cannot start there, so those checks run through
-`alt task validate`.
+Seatbelt profile: tools write their caches to the task's scratch folder, `/tmp` and `TMPDIR` are the job's own
+temporary folder, gone when the job ends, the desktop session's sockets (its agents, display and editor servers) are
+out of reach, and a program that starts a sandbox or container of its own (Chromium's sandbox, rootless Podman)
+cannot start there, so those checks run through `alt task validate`. The sandbox's own socket cases
+(`tests/test_session_sockets.py`) need real bubblewrap, which starts neither there, nor in the validation container,
+which cannot mount a fresh /proc, nor on the hosted runner, whose AppArmor refuses it user namespaces; they skip in
+those places, and `make sandbox-vm` runs them in a throwaway VM ([local VM run](#local-vm-run)).
 
 Use Python 3.12+, Node 22.22.2+ (22.x), 24.15+ (24.x) or 26+, and the pnpm version pinned in
 `web/package.json`. From the repository root:
@@ -961,6 +965,7 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself; with `TRUST`, the installer's consented certificate trust opening its private link in Playwright's Chromium and Firefox without a warning; on Ubuntu 24.04 x86_64 | Desktop login/logout, distribution or snap browsers, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
+| Disposable Linux sandbox VM | `make sandbox-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Altitude's bubblewrap sandbox hiding a fictional runtime folder, shared temporary folder and abstract socket while keeping the job's own sockets and a coordinator's broker, with real bubblewrap under Ubuntu's AppArmor profile and Landlock's abstract-socket scope, on Ubuntu 24.04 x86_64 | A desktop session's own programs, Codex's sandbox, macOS | In use |
 | Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, `alt trust` from an SSH session refused for the login keychain with no trust setting added, the SHA-256 undo command removing the certificate, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop and time limits end every descendant, a pseudo-terminal's child among them, and whose idle-sleep assertion lasts as long as the job, and the awake-time clock their limit's wait counts; interrupted mutation runs leaving no scratch folder or process behind; the suite's read-only-home cases, each confining a child with Seatbelt or Codex's own sandbox; a source checkout cloned from an origin in the guest, whose first start creates Altitude's own copy of its repository and runs from it, and whose service deploys a newer main pushed to that origin through the copy; the installed service with a fictional engine and GitHub CLI: a coordinator's Stop, a worker ended at its failed turn, unknown worker status, a validation run and a granted command across the service's restart, revocation, an answer reused for another task, a second command waiting for the machine-run place, Settings' Claude sign-in with a fictional setup screen saving its token privately and leaving nothing behind after finishing, cancelling or a restart, an incident held behind a newer release, the release lookup's 12-hour schedule and once-a-day notice on the guest's moved clock, an operator's command waiting in Needs you until the project terminal runs it to its end, an automatic update waiting for a validation run, holding new runs until it has restarted and installing itself once the run ends, a worker's scratch folder removed at completion, a coordinator channel refusing task workers and other projects' coordinators, and logout and login without a restart; with `PUBLISHED`, a published release's own daemon, with an outside process's caches in its release, installing a later published or source-built release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, an actual sleep (the guest refuses it), browser/device CA trust, the guest's own download from GitHub, a schedule's real elapsed hours, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
@@ -1489,6 +1494,18 @@ is built inside the container, results go to the task folder's `validation/<n>/`
 is cached in `~/.altitude-validation/cache`. The runner never touches
 the host's Altitude service, trust stores or network configuration. `CAPTURE=1` adds an accelerated replay
 of the run as `captures/installation-vm.gif` ([validation captures](#validation-captures)).
+
+`make sandbox-vm` (`scripts/sandbox_vm.py`) boots the same kind of guest to run the sandbox's socket cases
+(`tests/test_session_sockets.py`) with real bubblewrap. While online, the guest installs bubblewrap, Ubuntu's own
+AppArmor profile that admits it to user namespaces as on an Ubuntu desktop, and the hardware-enablement kernel, which
+offers Landlock's abstract-socket scope. It then restarts on that kernel, loses its online card and runs the module from
+the committed `SOURCE`. `sandbox-vm.json` records the guest and kernel, the bubblewrap and Landlock versions and the
+module's summary; a skipped case fails the run. Inside a task it runs through the validation runner with KVM, like
+`make installation-vm`:
+
+```sh
+make sandbox-vm RESULTS=/tmp/altitude-sandbox-vm
+```
 
 ### macOS installation lane
 

@@ -640,7 +640,8 @@ def prerequisites() -> list[dict]:
         needed = not any(not confined(engine) for engine in ready) and (not installed or any(map(confined, ready or installed)))
         items.append({"key": "sandbox", "label": "Agent sandbox", "step": "Install the agent sandbox",
                       "state": "met" if sandbox["enabled"] else "unmet" if needed else "optional",
-                      "detail": None if sandbox["enabled"] else "Altitude runs agents inside bubblewrap on Linux."
+                      "detail": (None if sandbox["scoped"] else platform.UNSCOPED) if sandbox["enabled"]
+                      else "Altitude runs agents inside bubblewrap on Linux."
                       + ("" if sandbox["command"] else " Install it with this computer's package manager."),
                       "command": None if sandbox["enabled"] else sandbox["command"]})
     git = shutil.which("git")
@@ -809,6 +810,11 @@ def doctor() -> dict:
     if sandbox:
         checks.append({"name": "agent sandbox", "state": "configured" if sandbox["enabled"] else "unavailable",
                        "detail": sandbox["detail"]})
+        if sandbox["enabled"]:
+            checks.append({"name": "agent sandbox abstract sockets",
+                           "state": "configured" if sandbox["scoped"] else "unavailable",
+                           "detail": "Agents in Altitude's sandbox reach only abstract sockets they made."
+                           if sandbox["scoped"] else platform.UNSCOPED})
     if shutil.which("gh"):
         lacks = _gh_lacks()
         checks.append({"name": "GitHub CLI pull request fields",

@@ -140,7 +140,8 @@ class WorkerGitFolders(AltitudeCase):
     def test_seatbelt_applies_the_most_specific_git_rule(self):
         self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
         writable, read_only = git_policy.worker_git_access(self.worktree)
-        text = platform.seatbelt_profile([str(self.worktree), *map(str, writable)], [str(path) for path in read_only])
+        text = platform.seatbelt_profile([str(self.worktree), *map(str, writable)], [str(path) for path in read_only],
+                                         temporary=str(self.tmp))
         common = os.path.realpath(self.repo / ".git")
         order = [text.index(rule) for rule in (
             f'(allow file-write* (subpath "{common}"))', f'(deny file-write* (subpath "{common}/worktrees"))',
@@ -152,7 +153,7 @@ class WorkerGitFolders(AltitudeCase):
     def test_bubblewrap_applies_the_most_specific_git_rule(self):
         writable, read_only = git_policy.worker_git_access(self.worktree)
         argv = " ".join(platform.bubblewrap_profile([str(self.worktree), *map(str, writable)],
-                                                    [str(path) for path in read_only]))
+                                                    [str(path) for path in read_only], temporary=str(self.tmp)))
         common = os.path.realpath(self.repo / ".git")
         order = [argv.index(f"{option} {path} {path}") for option, path in (
             ("--bind", common), ("--ro-bind-try", f"{common}/worktrees"),
