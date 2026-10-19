@@ -821,6 +821,20 @@ refuses them; [generated-cache recovery](OPERATIONS.md#generated-cache-recovery)
 `alt update` or the app's Try again explicitly retries a failed release. A new release may still
 receive its own automatic attempt.
 
+`alt repair [--problem TEXT] [--engine NAME]` (operator only, from their own terminal) starts a
+[repair](OPERATIONS.md#repairs) in that terminal: the first installed coding agent's interactive session,
+or the named one, as the operator, with a brief in a new `repairs/<id>/` folder under Altitude's home, and
+waits for it to end; it exits with the session's status. It needs no service. It refuses Altitude's agents,
+reviewers and anything else in one of Altitude's jobs except the page's terminal, a command under an
+operator grant ("Only you can start a repair, from your own terminal."), and a second repair while one
+runs ("A repair is already running. Stop it there first."). `run` blocks never carry it. Inside the
+session `alt` allows inspection and `doctor`, `service`, `update`, `recover`, `install`, `monitor`,
+`queue` and `repair report`; `alt repair report --wrong … --changed … --remains … [--try …]` records the
+session's report, at most 4,000 characters a part, until the session ends. `python3.12 install.py
+--repair [--prefix PATH]` starts the installed release's own repair from its verified files when `alt`
+cannot start. Settings → About and `GET /api/repairs` (and `/api/repairs/<id>`) list repairs and their
+outcomes.
+
 `alt pair` prints a one-time code that pairs one browser with Altitude, the running service's
 address to open on that browser (or the reason there is none), a QR code of that address when a
 phone can reach it (for a local-only address, the line "Other devices can't reach this address yet — see

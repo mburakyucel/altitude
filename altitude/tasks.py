@@ -3277,8 +3277,10 @@ def run_commands(text: str) -> list[str]:
 
 
 def _runnable(command: str) -> bool:
-    """The page's `runCommand` rule (CodeBlock.tsx): one non-empty line with no control or invisible character."""
-    return bool(command.strip()) and not re.search(r"[\r\n  ]", command) and not any(
+    """The page's `runCommand` rule (CodeBlock.tsx): one non-empty line with no control or invisible character, and
+    never a repair, which only the operator starts."""
+    from .repair import COMMAND
+    return bool(command.strip()) and not COMMAND.search(command) and not re.search(r"[\r\n  ]", command) and not any(
         unicodedata.category(c) in ("Cc", "Cf") for c in command)
 
 

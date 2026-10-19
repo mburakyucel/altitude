@@ -237,6 +237,13 @@ Do not start, stop, mask, unmask, or restart the service as part of ordinary wor
 separate explicit authorization and post-change health verification; a recorded operator grant whose purpose
 names the service is that authorization for its owner, and every command under it is recorded on the task.
 
+By the operator's decision of 2026-10-19, a [repair](docs/OPERATIONS.md#repairs) is the one
+deliberate exception to confinement: an agent session that runs as the operator outside every sandbox,
+only when the operator starts it with `alt repair` or `install.py --repair` in their own terminal,
+recorded with Altitude's own check of the result. Nothing else starts one: not a grant, a `run`
+block, a standing policy or an agent's request. Its rules are instructions to the session, not
+limits Altitude enforces.
+
 ### Container operations on this machine
 
 The operator's project-chat approval of 2026-10-06 18:24 UTC (`c6f1ba6f5929`) stands until the

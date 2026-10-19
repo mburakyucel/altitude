@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, repair, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -1262,6 +1262,7 @@ def tick() -> None:
     spawn("push", push.notify, log)
     if config.RELEASE is not None:
         spawn("update-check", installation.check_for_update)
+    spawn("repair-check", repair.check_ended)
     morning_digest()
 
 
@@ -2166,7 +2167,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, 409)
         except Exception as exc:  # noqa: BLE001 — record, lock and launch failures name private paths; they stay in the log
             log(f"update request failed: {exc!r}")
-            return self._json({"error": "Altitude could not complete the update request. Run alt update in a terminal to see why."}, 503)
+            return self._json({"error": f"Altitude could not complete the update request. {installation.UPDATE_FAILED}"}, 503)
 
     def _in_line(self, call) -> None:
         """`alt task validate` and `alt task run`: `call(waiting, gone)` answered as JSON. A client that accepts NDJSON
@@ -2432,6 +2433,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(machine_view())
             if api == "prerequisites":
                 return self._json({"items": installation.prerequisites()})
+            if api == "repairs" and len(parts) == 2:
+                return self._json(repair.listing())
+            if api == "repairs" and len(parts) == 3:
+                try:
+                    return self._json(repair.view(parts[2]))
+                except KeyError:
+                    return self._json({"error": "That repair is not on this computer."}, 404)
             if api == "sign-in" and len(parts) == 3:
                 return self._sign_in(parts[2], None)
             if api == "folders":
@@ -3411,6 +3419,8 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
         raise ValueError(f"alt task run: supply one non-empty command of at most {MACHINE_COMMAND_LIMIT} characters")
     if not isinstance(request, str) or not re.fullmatch(r"[0-9a-f]{32}", request):
         raise ValueError("alt task run: name the request with 32 lowercase hexadecimal characters")
+    if repair.COMMAND.search(command):
+        raise PermissionError(f"alt task run: {repair.ONLY_YOU}")
     folder = S.task_dir(project, slug)
     runs = folder / "machine.jsonl"
 

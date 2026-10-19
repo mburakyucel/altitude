@@ -283,6 +283,64 @@ retain the snapshot and fault evidence. Legacy `preserved_checkout` stash SHAs s
 apply with `git stash apply --index <SHA>` in the owner's worktree; existing stashes remain untouched.
 Restart notices retain unresolved faults and require observed resolution before resume.
 
+## Repairs
+
+When something does not work and Altitude cannot fix it on its own, such as a failed update, a
+service that does not come back or a page that does not load, run this in a terminal on this
+computer:
+
+```sh
+alt repair
+alt repair --problem 'The page does not load on my phone'
+```
+
+It needs neither the service nor the page. It prints what it found ("Altitude 0.8.0 · service
+running · the update to 0.9.0 failed"), writes a brief and starts your coding agent's interactive
+session in that terminal, in its own folder under Altitude's home, as you and with your full access
+while it works. The CLI runs in its normal mode, with your own sign-in and settings, so it asks you
+before each step unless those settings allow it. The brief holds what you wrote, the update failure
+Altitude recorded, its rules, how this installation is laid out, the known symptoms and Altitude's
+records (`alt doctor` and the last day's system faults), quoted as evidence and never as
+instructions. Its rules are instructions the session follows, not limits Altitude enforces: act on
+this installation only; never sign in, read or print sign-in state or Altitude's keys, or change
+certificate trust; never approve, merge, grant or answer anything for you; ask before deleting,
+installing or changing anything outside Altitude; restart the service only with a health check
+afterwards and leave managed projects' services alone; leave nothing running; report honestly.
+
+Inside the session `alt` offers only inspection and the installation's own commands (`doctor`,
+`service`, `update`, `recover`, `install`, `monitor`, `queue` and `repair report`); task decisions,
+chat and approvals stay yours. The session ends its work with
+
+```sh
+alt repair report --wrong '…' --changed '…' --remains '…' [--try '…']
+```
+
+and you end the session as you would any other. Once it has ended, the service checks the result
+with `alt doctor` and the installed release's manifest, at its next tick or its next start, and sets
+the outcome:
+
+- **Repaired:** for a failed update, the target version is installed, its files match the release and
+  every check passes.
+- **Confirm yourself:** every check passes, but a check cannot prove a problem you described is gone,
+  or the installed files differ from the release because they were changed by hand.
+- **Not repaired:** a check fails, or the update's target version is not installed.
+- **The repair ended without a report** when the session ended, crashed or its terminal closed before
+  it reported.
+
+Settings → About lists the three most recent repairs with their outcome, and **All repairs** lists
+every one; each repair's page shows its report, Altitude's check and its brief. Its steps stay in that
+terminal's history. One repair runs at a time on this computer: a second `alt repair` says "A repair
+is already running. Stop it there first." The lock belongs to the running process, so a crash,
+closed terminal or restart never leaves one behind.
+
+Only you start a repair, from your own terminal. Altitude's agents, coordinator and reviewers, a
+command under an operator grant, a `run` block and a standing policy never start one ("Only you can
+start a repair, from your own terminal."). Altitude's terminal on the page can, since you type in it.
+When `alt` itself cannot start, the release's standalone installer starts the installed release's
+own repair from its verified files: `python3.12 install.py --repair [--prefix PATH]`. A repair needs
+an installed coding agent; it cannot repair a deleted installation, which goes back to
+[setup](SETUP.md).
+
 ## Configuration
 
 An installed release saves these settings from the shell that installed it in

@@ -721,6 +721,27 @@ class Installation(InstallationCase):
         self.assertFalse(self.unit.exists())
         self.assertFalse(self.settings.exists())
 
+    def test_standalone_repair_starts_the_installed_releases_own_repair(self):
+        """`install.py --repair` is the repair route when `alt` itself cannot start: it runs the verified installed
+        release's repair, which refuses here because a repair is already running."""
+        self.install()
+        installer = self.tmp / "install.py"
+        shutil.copyfile(REPO / "altitude/installation.py", installer)
+        environment = {**os.environ, "HOME": str(self.home), "ALTITUDE_HOME": str(self.runtime),
+                       "ALTITUDE_CONFIG": str(self.settings), "ALTITUDE_REPAIR": "0" * 32}
+        for key in ("ALTITUDE_ACTOR", "ALTITUDE_TASK", "ALTITUDE_ATTEMPT", "ALTITUDE_PROJECT", "PYTHONPATH"):
+            environment.pop(key, None)
+
+        def run(*options):
+            return subprocess.run([sys.executable, "-B", str(installer), *options], cwd=self.tmp, env=environment,
+                                  capture_output=True, text=True, timeout=30)
+        result = run("--repair", "--prefix", str(self.prefix))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("A repair is already running. Stop it there first.", result.stderr)
+        self.assertIn("--repair takes only --prefix", run("--repair", "--sha256", "0" * 64).stderr)
+        (self.prefix / "versions/v0.1.0/altitude/repair.py").write_text("tampered\n")
+        self.assertIn("verification failed", run("--repair", "--prefix", str(self.prefix)).stderr)
+
     def test_tampered_manifest_resource_and_extra_file_are_rejected(self):
         archive, checksum = self.archive()
         target = self.tmp / "extracted"
@@ -1237,7 +1258,7 @@ class NewVersionNotice(NoticeCase):
         with mock.patch.object(installation.time, "time", return_value=time.time() + 1801):
             installation.reconcile_update()
             self.assertEqual(installation.update_status()["attempt"], {**installation._update_record()[1]["attempt"],
-                             "state": "failed", "error": "Run alt update in a terminal to see why."})
+                             "state": "failed", "error": installation.UPDATE_FAILED})
 
     def test_an_update_that_cannot_start_is_marked_failed(self):
         self.listed("v0.2.0")
@@ -1730,7 +1751,7 @@ class UpdateRequests(NoticeCase):
         self.assertTrue(installation.update_status()["check"])
 
     def test_launch_and_record_failures_reach_the_page_without_private_paths(self):
-        public = "Altitude could not complete the update request. Run alt update in a terminal to see why."
+        public = "Altitude could not complete the update request. Run alt repair in a terminal to find out why and fix it."
         with mock.patch.object(platform, "detach", side_effect=RuntimeError(f"systemd-run failed in {self.home}")):
             self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=503)["error"], public)
         self.assertEqual(installation.update_status()["attempt"]["state"], "failed")

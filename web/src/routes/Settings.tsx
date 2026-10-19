@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
 import FolderBrowser from "../components/FolderBrowser";
@@ -9,6 +9,7 @@ import { HostingCard, networkSummary } from "../components/Network";
 import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateAutomatic, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, startUpdate, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, PhoneShare, ProjectDefaults, Update } from "../data/api";
 import { ProjectModelSettingsSection } from "../components/Models";
+import { RepairPage, RepairRows, RepairsPage, useRepairTitle } from "../components/Repairs";
 import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { INVALID_SERVICE, updateVoiceSettings } from "../components/voiceBackend";
@@ -713,6 +714,7 @@ function VersionRows({ update }: { update: Update }) {
 const titles = {
   voice: "Voice input", projects: "Projects", "projects-folder": "Projects folder", name: "Your name",
   prerequisites: "Prerequisites", "incident-reports": "Incident reports", devices: "Devices", network: "Network",
+  repairs: "Repairs", repair: "Repair",
 } as const;
 
 /** A machine setting the onboarding flow also sets: its form, saving in place with a Saved confirmation. */
@@ -762,8 +764,11 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   useEffect(() => {
     if (settings.data) updateVoiceSettings(settings.data);
   }, [settings.data]);
-  const title = page ? titles[page] : "Settings";
-  const back = page ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
+  const repairId = useParams().id;
+  const repairTitle = useRepairTitle(page === "repair" ? repairId : undefined);
+  const title = page === "repair" ? repairTitle : page ? titles[page] : "Settings";
+  const back = page === "repair" ? <Link to="/settings/repairs" state={state} className="btn settings-back">‹ Repairs</Link>
+    : page ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
     : <button type="button" className="btn settings-back" onClick={() => navigate(state?.settingsFrom || "/projects", { replace: true })}>‹ Back</button>;
   const voiceRow = settings.isPending ? <p className="settings-row"><StatusMark label="Loading voice settings…" /></p>
     : settings.isError ? <p role="alert" className="settings-row text-danger">Could not load voice settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
@@ -777,6 +782,8 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
       {page === "name" || page === "prerequisites" || page === "incident-reports" ? <MachinePage key={page} page={page} />
         : page === "devices" ? <DevicesPage />
         : page === "network" ? <HostingCard detail />
+        : page === "repairs" ? <RepairsPage state={state} />
+        : page === "repair" ? <RepairPage id={repairId ?? ""} />
         : page === "projects" ? <ProjectsPage state={state} />
         : page === "projects-folder" ? <>
         <p className="text-meta text-muted">First run offers the folders directly inside this folder. Altitude lists them only when you open First run or Add a folder; it never looks deeper or reads files.</p>
@@ -822,7 +829,10 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
               <span><strong>Incident reports</strong>{" "}<small>{machine.data ? machine.data.incident_repository ? `Published to ${machine.data.incident_repository}` : "Kept on this computer" : "Loading…"}</small></span><span aria-hidden>›</span>
             </Link>
           </Group>
-          {overview.data?.update ? <Group title="About"><VersionRows update={overview.data.update} /></Group> : null}
+          <Group title="About">
+            {overview.data?.update ? <VersionRows update={overview.data.update} /> : null}
+            <RepairRows state={state} />
+          </Group>
         </div>
       </div>}
     </div>
