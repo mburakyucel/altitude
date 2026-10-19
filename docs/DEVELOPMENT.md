@@ -1176,10 +1176,11 @@ For each edit it runs the selected tests that reach the edited function. The mod
 sit at the top of `scripts/mutation.py`. The run needs `python3 -m venv`, `ps` and the package index.
 On macOS the [macOS VM run](#macos-vm-run)'s `mutation` phase shows interrupted runs cleaning up.
 The tests' temporary folders sit inside its scratch folder, which it removes at the end with any
-process the tests left behind. On a 24-CPU Linux machine the first full run took about seven hours,
-nearly five of them for `altitude/land.py`, whose every surviving edit reruns some two hundred
-Git-backed tests, so start a full run overnight; task records and transitions alone take about
-75 minutes, and the task door 51 minutes.
+process the tests left behind. They run with `no_proxy=*`: mutmut runs them in a forked process,
+where macOS aborts the proxy lookup urllib otherwise makes. On a 24-CPU Linux machine the first
+full run took about seven hours, nearly five of them for `altitude/land.py`, whose every surviving
+edit reruns some two hundred Git-backed tests, so start a full run overnight; task records and
+transitions alone take about 75 minutes, and the task door 51 minutes.
 It is a measurement, not a check: `make check` and the required CI never run it, and its counts gate
 nothing.
 
@@ -1687,8 +1688,9 @@ shell trusts, with `github.com` resolving to the loopback.
   `alt task validate -- python3 scripts/platform_probe.py --only awake-clock`: on a Mac that has slept
   since it started, the limit's clock has left out the hours slept, which the row reports. A job across
   an actual sleep is `real-sleep`, which runs only when named, on this Mac itself, after the operator
-  schedules a wake as root: `sudo pmset relative wake 150 && python3 scripts/platform_probe.py --only
-  real-sleep`. It refuses to start unless a wake is scheduled within five minutes. A job with a
+  schedules a wake as root: `sudo pmset schedule wake "$(date -v+150S '+%m/%d/%Y %H:%M:%S')" &&
+  python3 scripts/platform_probe.py --only real-sleep`. It refuses to start unless `pmset -g sched`
+  lists a wake within five minutes (`pmset relative wake` is not listed there). A job with a
   60-second limit starts, `pmset sleepnow` sleeps the Mac until the wake, and the Mac must have slept
   and the job's whole tree must stop at its limit counted in awake time. The
   `launch-input` job, confined and launched as a review is, takes its own folder and a fictional
@@ -1709,11 +1711,9 @@ shell trusts, with `github.com` resolving to the loopback.
   Before each interruption it plants a process outside mutmut whose command names the run's scratch
   folder, as a test's leftover does. After each run, its scratch folder, mutmut and the planted process
   must be gone, with nothing in `ps`'s listing naming that folder, and the second run must use a new
-  folder.
-- `mutation-complete`, only when named with `--phase mutation-complete`: one whole run of
-  `altitude/door.py` from the same packages, about five hours on the guest's four CPUs, so it runs
-  overnight. It must end with its report, which has the door's row, and leave no scratch folder; the
-  runner keeps the report and its log.
+  folder. A whole run is not made in the guest: it measures the same platform-neutral tests as on
+  Linux, and the one macOS-only failure a whole run found is the abort described under
+  [mutation run](#mutation-run).
 - `source`: the account sets up a [source checkout](OPERATIONS.md#run-from-a-source-checkout) as
   documented, with this Mac's Node and pnpm in place: it clones the revision from an origin in the
   guest, made from a bundle of its history, runs `make web` and `alt tls-init`, and `make

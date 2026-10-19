@@ -246,9 +246,9 @@ def awake_clock():
 @row
 def real_sleep():
     """A job's time limit across an actual sleep of this Mac, which no guest allows. Runs only when named, after a wake
-    is scheduled as root (`sudo pmset relative wake 150`): a job with a 60-second limit starts, `pmset sleepnow`
-    sleeps the Mac and the scheduled wake ends the sleep. The Mac must have slept, and the job must still stop at its
-    limit counted in awake time, its whole tree with it."""
+    is scheduled as root (`sudo pmset schedule wake` 150 seconds ahead, which `pmset -g sched` lists, unlike a relative
+    wake): a job with a 60-second limit starts, `pmset sleepnow` sleeps the Mac and the scheduled wake ends the sleep.
+    The Mac must have slept, and the job must still stop at its limit counted in awake time, its whole tree with it."""
     if not DARWIN or "real-sleep" not in sys.argv:
         return None
     scheduled = subprocess.run(["pmset", "-g", "sched"], capture_output=True, text=True, check=True).stdout
