@@ -1450,10 +1450,14 @@ def row_repair_logout() -> dict:
     wait("the service to stop with the session", lambda: service_pid() is None, timeout=90, every=1)
     wait("the next login to start the service", lambda: (service_pid() or before) != before and healthy(), timeout=180)
     facts["after"] = kept(ident, "6004")
-    facts["ended"] = wait("the logged-out repair's end", lambda: repair(ident).get("end"), timeout=90)
+    try:  # the service settles it at a tick after its start, ticks being 30 s apart
+        facts["ended"] = wait("the logged-out repair's end", lambda: repair(ident).get("end"), timeout=150)
+    except Failed:  # whatever still holds the one-repair lock says why
+        facts["ended"] = None
+        facts["lock"] = shell(f"lsof {REPAIRS}/lock").stdout.splitlines()
     facts["next"] = terminal_repair([str(ALT), "repair", "--engine", "codex", "--problem",
                                      f"A fictional problem after the logout.\nFIXTURE-RUN: {REPORT}"])
-    shell("pkill -f 'sleep 6004'")
+    shell(f"pkill -f 'sleep 6004'; kill {' '.join(facts['after']['recorder'])}")
     facts["passed"] = (facts["started"]["job"] and facts["started"]["sleeper"] == 1
                        and facts["after"] == {"job": False, "sleeper": 0, "recorder": []}
                        and facts["ended"] == "interrupted" and started(facts["next"]))
