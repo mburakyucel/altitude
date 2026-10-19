@@ -29,32 +29,32 @@ function L3Section({ name, data }: { name: string; data: ProjectDefaults }) {
   </section>;
 }
 
-/** Auto, Prefer or Only an engine for tasks. */
+/**
+ * Auto, Prefer or Only an engine for tasks. A pick shows at once and holds still until both of its fields land; a
+ * refused or half-applied one shows what is stored now, saying why, with Retry.
+ */
 function RoutingSection({ name, data }: { name: string; data: ProjectDefaults }) {
   const save = useSetDefault(name);
-  const client = useQueryClient();
-  const [error, setError] = useState<Error | null>(null);
+  const [state, setState] = useState<{ saving: boolean; error: Error | null; value: string }>({ saving: false, error: null, value: "" });
   const label = (engine: string) => data.engines.find((e) => e.value === engine)?.label ?? engine;
   const tasks = data.l2_engine ? `only:${data.l2_engine}` : data.l2_preference ? `prefer:${data.l2_preference}` : "";
-  const write = async (changes: [string, string | null, string | null | undefined][]) => {
-    setError(null);
-    try {
-      for (const [setting, value, expected] of changes)
-        if (value !== (expected ?? null)) await save.mutateAsync({ setting, value, expected: expected ?? null });
-    } catch (failure) {
-      setError(failure as Error);
-      // A refused or half-applied change shows what is stored now, not the choice that was refused.
-      void client.invalidateQueries({ queryKey: ["defaults", name] });
-    }
+  const write = async (value: string, changes: [string, string | null, string | null | undefined][]) => {
+    setState({ saving: true, error: null, value });
+    // Both fields go together, so the select never passes through a half-made pick.
+    const results = await Promise.allSettled(changes.filter(([, next, expected]) => next !== (expected ?? null))
+      .map(([setting, next, expected]) => save.mutateAsync({ setting, value: next, expected: expected ?? null })));
+    const refused = results.find((result) => result.status === "rejected");
+    setState({ saving: false, error: refused ? refused.reason as Error : null, value });
   };
   const chooseTasks = (value: string) => {
     const [kind, engine = null] = value ? value.split(":") : [""];
-    void write([
+    void write(value, [
       ["l2_engine", kind === "only" ? engine : null, data.l2_engine],
       ["l2_preference", kind === "prefer" ? engine : null, data.l2_preference],
     ]);
   };
   const preferred = data.l2_preference ? data.engines.find((e) => e.value === data.l2_preference) : undefined;
+  const { saving, error } = state;
   const changed = error instanceof ApiError && error.status === 409;
   return <section className="settings-section" id="routing" aria-labelledby="settings-routing">
     <div><h2 id="settings-routing">Routing</h2><p className="text-meta text-muted">
@@ -63,16 +63,17 @@ function RoutingSection({ name, data }: { name: string; data: ProjectDefaults })
       <label className="settings-row">
         <span><strong>Tasks</strong>{" "}<small>Auto, Prefer or Only an engine. Only keeps tasks on it, even with New tasks set; they wait while it is unavailable.</small>
           {preferred && !preferred.routed && !data.l2_engine ? <small>{preferred.label} is not in this project's custom routing, so Prefer has no effect.</small> : null}</span>
-        <select className="settings-select" aria-label="Tasks routing" value={tasks} disabled={save.isPending} onChange={(event) => chooseTasks(event.target.value)}>
+        <select className="settings-select" aria-label="Tasks routing" value={tasks} disabled={saving} onChange={(event) => chooseTasks(event.target.value)}>
           <option value="">Auto</option>
           {data.engines.map((e) => <option key={`p-${e.value}`} value={`prefer:${e.value}`}>Prefer {e.label}</option>)}
           {data.engines.map((e) => <option key={`o-${e.value}`} value={`only:${e.value}`}>Only {e.label}</option>)}
         </select>
       </label>
     </div>
-    {save.isPending ? <StatusMark label="Saving…" /> : null}
+    {saving ? <StatusMark label="Saving…" /> : null}
     {changed ? <p role="alert" className="text-meta text-danger">Changed in another window. The page shows the current routing.</p>
-      : error ? <p role="alert" className="text-meta text-danger">{error.message}</p> : null}
+      : error ? <p role="alert" className="text-meta text-danger">Not saved: {error.message}{" "}
+        <button type="button" className="link" onClick={() => chooseTasks(state.value)}>Retry</button></p> : null}
   </section>;
 }
 

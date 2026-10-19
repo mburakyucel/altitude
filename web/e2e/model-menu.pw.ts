@@ -97,8 +97,29 @@ test("the New tasks button picks what every project's new tasks start on", async
   const panel = page.getByRole("menu", { name: "Model and effort for new tasks", exact: true });
   await walk.state("02-new-tasks-panel", { visible: [column(panel, "Model"), column(panel, "Effort").getByText("Project setting or built-in")], hidden: [] });
   expect(await coordinator(request)).toEqual(before);
-  await column(panel, "Model").getByRole("menuitemradio", { name: "6.1 Sol", exact: true }).click();
+  // A pick shows on the button at the press while Altitude holds the save; a refused one goes back, saying why, with Retry.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let refuse = true;
+  await page.route("**/api/new-tasks", async (route) => {
+    await held;
+    return refuse ? route.fulfill({ status: 503, json: { error: "Altitude is busy." } }) : route.fallback();
+  });
+  const sol = column(panel, "Model").getByRole("menuitemradio", { name: "6.1 Sol", exact: true });
+  const tasksBeforeSol = await button.textContent();
+  await sol.click();
+  await expect(button).toContainText("6.1 Sol");
+  await expect(sol).toBeChecked();
+  await walk.state("02a-pick-at-the-press", { visible: [button, panel], hidden: [panel.getByRole("alert")] });
+  release();
+  const refused = panel.getByRole("alert").filter({ hasText: /^Could not save 6\.1 Sol · .+\. Altitude is busy\./ });
+  await walk.state("02b-pick-refused", { visible: [refused, refused.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
+  await expect(button).toHaveText(tasksBeforeSol!);
+  await expect(sol).not.toBeChecked();
+  refuse = false;
+  await refused.getByRole("button", { name: "Retry", exact: true }).click();
   await expect.poll(() => newTasks(request)).toMatchObject({ model: "gpt-6.1-sol" });
+  await page.unrouteAll({ behavior: "wait" });
   await page.keyboard.press("Escape");
   await expect(button).toContainText("6.1 Sol");
   await walk.state("03-new-tasks-saved", { visible: [button], hidden: [panel] });

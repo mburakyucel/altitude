@@ -3,10 +3,11 @@ import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
+import { useSaving } from "../data/saves";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
 import { HostingCard, networkSummary } from "../components/Network";
-import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateAutomatic, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, startUpdate, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
+import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, saveProjectsFolder, saveVoiceSettings, startUpdate, useDevices, useMachine, useMachineSwitch, useRemoveDevice, useSaveUpdates, useOverview, useProjectDefaults } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, PhoneShare, ProjectDefaults, Update } from "../data/api";
 import { ProjectModelSettingsSection } from "../components/Models";
 import { RepairRows, RepairsPage } from "../components/Repairs";
@@ -336,33 +337,34 @@ function ProjectsFolderForm({ roots }: { roots: string[] }) {
   </>;
 }
 
-/** One on/off setting for this computer; a failed change keeps the switch where it was and says why. */
-function MachineSwitch({ id, title, detail, enabled, unavailable, save: send }: {
+/**
+ * One on/off setting for this computer. The switch moves at the press and holds still until the save lands; a
+ * refused change moves it back and says why, with Retry.
+ */
+function MachineSwitch({ id, title, detail, enabled, unavailable, save }: {
   id: string; title: string; detail: string; enabled: boolean | undefined; unavailable?: string | null;
-  save: (on: boolean) => Promise<unknown>;
+  save: { isPending: boolean; error: Error | null; mutate: (on: boolean) => void; retry: () => void };
 }) {
-  const [save, setSave] = useState<{ status: "idle" | "saving" } | { status: "failed"; error: Error }>({ status: "idle" });
   const [showReason, setShowReason] = useState(false);
-  const change = async (on: boolean) => {
-    setSave({ status: "saving" });
-    try {
-      await send(on);
-      setSave({ status: "idle" });
-    } catch (error) {
-      setSave({ status: "failed", error: error as Error });
-    }
-  };
   return <div className="settings-row settings-switch-row">
     <label htmlFor={id}>
       <strong>{title}</strong>{" "}
       <small id={`${id}-reason`} className={unavailable && !showReason ? "sr-only" : undefined}>{unavailable ? `Not available here: ${unavailable}.` : detail}</small>
-      {save.status === "failed" ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
+      {save.error ? <small role="alert" className="text-danger">Not saved: {save.error.message}{" "}
+        <button type="button" className="link" onClick={save.retry}>Retry</button></small> : null}
     </label>
     {unavailable ? <button id={id} type="button" role="switch" className="settings-switch" aria-checked="false" aria-label={title}
       aria-disabled="true" aria-describedby={`${id}-reason`} onClick={() => setShowReason(!showReason)} />
       : <input id={id} type="checkbox" role="switch" className="settings-switch" checked={enabled ?? false}
-        disabled={enabled === undefined || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />}
+        disabled={enabled === undefined || save.isPending} onChange={(event) => save.mutate(event.target.checked)} />}
   </div>;
+}
+
+/** A machine switch's save: the change it sends and how a refused one is sent again. */
+function useSwitch(setting: "terminal" | "validation") {
+  const save = useMachineSwitch(setting);
+  const send = (on: boolean) => save.mutate(setting === "terminal" ? { terminal: on } : { validation: on });
+  return { isPending: save.isPending, error: save.error, mutate: send, retry: () => save.variables && save.mutate(save.variables) };
 }
 
 const reveals: Record<Reveal, string> = { task: "Project and task", project: "Project only", none: "Only that a decision waits" };
@@ -453,58 +455,52 @@ function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
 
 /** The operator's terminal, off after install. */
 function TerminalSwitch({ machine }: { machine: Machine | undefined }) {
-  const client = useQueryClient();
-  return <>
-    <MachineSwitch id="terminal-switch" title="Terminal" enabled={machine?.terminal} unavailable={machine?.terminal_unavailable}
-      detail="Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off."
-      save={async (on) => {
-        client.setQueryData(["machine"], await saveTerminalAccess(on));
-        await client.invalidateQueries({ queryKey: ["terminal"] });
-      }} />
-  </>;
+  return <MachineSwitch id="terminal-switch" title="Terminal" enabled={machine?.terminal} unavailable={machine?.terminal_unavailable}
+    detail="Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off."
+    save={useSwitch("terminal")} />;
 }
 
 /** The agents' validation runs, on after install; absent where this computer cannot run them. */
 function ValidationSwitch({ machine }: { machine: Machine }) {
-  const client = useQueryClient();
-  return <>
-    <MachineSwitch id="validation-switch" title="Validation runs" enabled={machine.validation}
-      detail="Agents test their unmerged changes in throwaway, isolated runs on this computer, and each run is recorded on its task. Turning this off stops a running one."
-      save={async (on) => { client.setQueryData(["machine"], await saveValidationAccess(on)); }} />
-  </>;
+  return <MachineSwitch id="validation-switch" title="Validation runs" enabled={machine.validation}
+    detail="Agents test their unmerged changes in throwaway, isolated runs on this computer, and each run is recorded on its task. Turning this off stops a running one."
+    save={useSwitch("validation")} />;
 }
 
 /** A date without its time: a device's last use is recorded at most daily. */
-/** One paired device; Remove asks once before it signs the device out. */
-function DeviceRow({ device, current, onRemoved }: { device: Device; current: boolean; onRemoved: () => void }) {
-  const [state, setState] = useState<{ status: "idle" | "confirm" | "removing" } | { status: "failed"; error: Error }>({ status: "idle" });
-  const remove = async () => {
-    setState({ status: "removing" });
-    try {
-      await revokeDevice(device.id);
-      onRemoved();
-    } catch (error) {
-      setState({ status: "failed", error: error as Error });
-    }
-  };
+/**
+ * One paired device; Remove asks once before it signs the device out. The row leaves at the press; a refused
+ * removal brings it back saying why, with Retry.
+ */
+function DeviceRow({ device, current, removing, failure, remove }: { device: Device; current: boolean; removing: boolean; failure: Error | undefined; remove: () => void }) {
+  const [confirm, setConfirm] = useState(false);
   return <li className="device-row">
     <span className="device-name"><span className="device-title"><strong>{device.name}</strong>{current ? <span className="device-current">This device</span> : null}</span>
       <small>Paired {dateText(device.paired)} · last used {dateText(device.used)}</small>
-      {state.status === "confirm" ? <small className="device-confirm">{current ? "This browser will need a new code to open Altitude again." : "It will need a new code to open Altitude again."}</small> : null}
-      {state.status === "failed" ? <small role="alert" className="text-danger">{state.error.message}</small> : null}
+      {confirm ? <small className="device-confirm">{current ? "This browser will need a new code to open Altitude again." : "It will need a new code to open Altitude again."}</small> : null}
+      {failure && !confirm ? <small role="alert" className="text-danger">Not removed: {failure.message}{" "}
+        <button type="button" className="link" onClick={remove}>Retry</button></small> : null}
     </span>
-    {state.status === "confirm" || state.status === "removing" ? <span className="device-actions" role="group" aria-label={`Remove ${device.name}?`}
-      onKeyDown={(event) => { if (event.key === "Escape" && state.status === "confirm") setState({ status: "idle" }); }}>
-      <button type="button" className="btn" autoFocus disabled={state.status === "removing"} onClick={() => setState({ status: "idle" })}>Cancel</button>
-      <button type="button" className="btn btn-danger" disabled={state.status === "removing"} onClick={() => void remove()}><BusyLabel busy={state.status === "removing"} label="Remove device" working="Removing…" /></button>
-    </span> : <button type="button" className="btn" onClick={() => setState({ status: "confirm" })}>Remove</button>}
+    {confirm ? <span className="device-actions" role="group" aria-label={`Remove ${device.name}?`}
+      onKeyDown={(event) => { if (event.key === "Escape") setConfirm(false); }}>
+      <button type="button" className="btn" autoFocus onClick={() => setConfirm(false)}>Cancel</button>
+      <button type="button" className="btn btn-danger" onClick={() => { setConfirm(false); remove(); }}>Remove device</button>
+    </span> : <button type="button" className="btn" disabled={removing} onClick={() => setConfirm(true)}>
+      <BusyLabel busy={removing} label="Remove" working="Removing…" /></button>}
   </li>;
 }
 
 /** Paired devices with Remove, and a one-time code for pairing another one. */
 function DevicesPage() {
-  const client = useQueryClient();
   const devices = useDevices();
+  const removal = useRemoveDevice();
+  const removing = useSaving<string>(["devices"]);
+  // Each removal's own answer, so a refused one still says why while another is on its way.
+  const [failures, setFailures] = useState<Record<string, Error>>({});
+  const remove = (id: string) => {
+    setFailures(({ [id]: _, ...rest }) => rest);
+    removal.mutateAsync(id).catch((error: Error) => setFailures((all) => ({ ...all, [id]: error })));
+  };
   const network = useMachine().data?.network;
   const local = network && !("error" in network) && network.scope === "local";
   const [code, setCode] = useState<{ status: "idle" | "making" } | { status: "made"; code: PairingCode } | { status: "failed"; error: Error }>({ status: "idle" });
@@ -522,7 +518,7 @@ function DevicesPage() {
       : devices.isError ? <p role="alert" className="text-danger">Could not load devices. <button className="link" onClick={() => void devices.refetch()}>Retry</button></p>
         : <ul className="settings-card device-list" aria-label="Paired devices">
           {devices.data.devices.map((device) => <DeviceRow key={device.id} device={device} current={device.id === devices.data.current}
-            onRemoved={() => void client.invalidateQueries({ queryKey: ["devices"] })} />)}
+            removing={removing.includes(device.id)} failure={failures[device.id]} remove={() => remove(device.id)} />)}
           {devices.data.devices.length === 0 ? <li className="text-muted">No browser is paired. This page is open through this computer’s own key.</li> : null}
         </ul>}
     <section className="settings-card device-pair" aria-label="Pair another device">
@@ -667,30 +663,22 @@ function QRCode({ rows, label }: { rows: string[]; label: string }) {
 /** An installed copy's version, retry and check/automatic preferences. */
 function VersionRows({ update }: { update: Update }) {
   const client = useQueryClient();
-  const [save, setSave] = useState<{ status: "idle" | "saving" } | { status: "failed"; error: Error }>({ status: "idle" });
-  const change = async (on: boolean, automatic = false) => {
-    setSave({ status: "saving" });
-    try {
-      const { update: status, ...machine } = await (automatic ? saveUpdateAutomatic(on) : saveUpdateCheck(on));
-      client.setQueryData(["machine"], machine);
-      client.setQueryData<Overview>(["overview"], (overview) => overview && { ...overview, update: status });
-      setSave({ status: "idle" });
-    } catch (error) {
-      setSave({ status: "failed", error: error as Error });
-    }
-  };
+  // The switches show a change at once and hold still until it lands; Try again asks Altitude to install.
+  const save = useSaveUpdates();
+  const [install, setInstall] = useState<{ status: "idle" | "starting" } | { status: "failed"; error: Error }>({ status: "idle" });
   const available = update.available;
   const failed = update.attempt?.state === "failed" && update.attempt.version === available?.version ? update.attempt : null;
   const retry = async () => {
-    setSave({ status: "saving" });
+    setInstall({ status: "starting" });
     try {
       const status = await startUpdate(failed!.version);
       client.setQueryData<Overview>(["overview"], (overview) => overview && { ...overview, update: status });
-      setSave({ status: "idle" });
+      setInstall({ status: "idle" });
     } catch (error) {
-      setSave({ status: "failed", error: error as Error });
+      setInstall({ status: "failed", error: error as Error });
     }
   };
+  const busy = save.isPending || install.status === "starting";
   if (update.managed === "image") return <div className="settings-row settings-version">
     <span><strong>Version</strong>{" "}<small>{update.current} · {update.reason}</small></span>
   </div>;
@@ -701,7 +689,7 @@ function VersionRows({ update }: { update: Update }) {
     </div>
     {failed ? <div className="settings-row">
       <span>The update to {failed.version} did not finish: {failed.error || UPDATE_FAILED} Altitude {update.current} keeps running.</span>
-      <button type="button" className="btn" disabled={save.status === "saving"} onClick={() => void retry()}>Try again</button>
+      <button type="button" className="btn" disabled={busy} onClick={() => void retry()}>Try again</button>
     </div> : null}
     <div className="settings-row settings-switch-row">
       <label htmlFor="update-check-switch">
@@ -709,7 +697,7 @@ function VersionRows({ update }: { update: Update }) {
         <small>Twice a day Altitude asks GitHub for the latest release. Nothing else is sent. Turning this off also stops automatic updates.</small>
       </label>
       <input id="update-check-switch" type="checkbox" role="switch" className="settings-switch" checked={update.check}
-        disabled={save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
+        disabled={busy} onChange={(event) => save.mutate({ update: { check: event.target.checked } })} />
     </div>
     <div className="settings-row settings-switch-row">
       <label htmlFor="update-automatic-switch">
@@ -717,10 +705,12 @@ function VersionRows({ update }: { update: Update }) {
         <small>Install new versions at the next quiet moment. Turn this off to be asked before installing.</small>
       </label>
       <input id="update-automatic-switch" type="checkbox" role="switch" className="settings-switch" checked={update.automatic}
-        disabled={!update.check || save.status === "saving"} onChange={(event) => void change(event.target.checked, true)} />
+        disabled={!update.check || busy} onChange={(event) => save.mutate({ update: { automatic: event.target.checked } })} />
     </div>
-    {save.status === "saving" ? <StatusMark label="Saving…" /> : null}
-    {save.status === "failed" ? <p role="alert" className="text-danger">{save.error.message}</p> : null}
+    {save.isPending ? <StatusMark label="Saving…" /> : install.status === "starting" ? <StatusMark label="Starting…" /> : null}
+    {save.error ? <p role="alert" className="text-danger">Not saved: {save.error.message}{" "}
+      <button type="button" className="link" onClick={() => save.variables && save.mutate(save.variables)}>Retry</button></p>
+      : install.status === "failed" ? <p role="alert" className="text-danger">{install.error.message}</p> : null}
   </>;
 }
 
