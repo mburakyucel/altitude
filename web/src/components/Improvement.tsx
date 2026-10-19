@@ -141,7 +141,9 @@ function Suggestion({ project, suggestion, tasks, busy, failed, press, choosing,
   choose: (action: SuggestionChange["action"]) => void;
 } & ReturnType<typeof usePress>) {
   const { ref, state } = suggestion;
-  const notSaved = refused ? <p className="irc-error text-danger" role="alert">Not saved: {refused.error.message}{" "}
+  // A refusal shows while the record, read again after it, still lacks the change: one saved despite a lost reply needs no word.
+  const unsaved = refused && (refused.change.action === "dismiss" ? state === "undecided" : state === "dismissed" && suggestion.undo);
+  const notSaved = unsaved ? <p className="irc-error text-danger" role="alert">Not saved: {refused.error.message}{" "}
     <button type="button" className="link" onClick={() => choose(refused.change.action)}>Retry</button></p> : null;
   const chip = <span className="chip" data-tone={suggestion.target === "How agents work" ? "held" : undefined}>{suggestion.target}</span>;
   const title = `${suggestion.n}. ${suggestion.title}`;

@@ -587,8 +587,11 @@ review left in the merge gate still blocks merge; and a footer naming the review
 **Technical details** and **Skip review**. Technical details shows the model, any fallback reason,
 focus, the captured proposal and the reviewed and assessed checkpoints. Skip review asks for
 confirmation without a reason; from the press the review reads skipped by you, here and on every question line
-that names it, stops blocking merge and keeps its findings visible. A refused skip returns the review with
-"Not saved: <reason>" and **Retry** under the boxes. **View**
+that names it, stops blocking merge and keeps its findings visible. A question line elsewhere names only its
+kind's latest review, so skipping an earlier one lowers that line's open count once Altitude answers. A refused
+skip returns the review with "Not saved: <reason>" and **Retry** under the boxes while it can still be skipped; a
+denied one reads "You do not have permission to request or change this review.", and one Altitude kept despite
+a lost reply stays skipped. **View**
 in task details, and a question's review box (§3.8.3), open and focus the card. Open findings block merge; no findings never means
 permission to merge.
 

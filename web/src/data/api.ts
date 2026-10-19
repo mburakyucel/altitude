@@ -647,6 +647,26 @@ const withSuggestions = (run: ImprovementRun, project: string, changes: Suggesti
 /** Needs you lists a run while a suggestion waits for a decision or its task (improve.waiting). */
 const waitsInNeedsYou = (run: ImprovementRun) => run.suggestions.some((suggestion) => suggestion.state === "undecided" || suggestion.state === "accepted" && !suggestion.task);
 
+/**
+ * Needs you's runs with the choices on their way. Undo in chat brings back a run Needs you had dropped, taken from the
+ * project read and placed where Altitude lists it (by project, newest run first); a run with nothing left waiting leaves.
+ */
+function waitingRuns(client: QueryClient, overview: Overview, changes: SuggestionChange[]): Overview["suggestions"] {
+  const order = overview.projects.map((project) => project.name);
+  const runs = [...overview.suggestions];
+  for (const change of changes) {
+    if (change.action !== "undo" || runs.some((run) => run.project === change.project && change.ref.startsWith(`${run.id}/`))) continue;
+    const listed = client.getQueryData<ProjectView>(["project", change.project])?.improvements ?? [];
+    const run = listed.find((item) => change.ref.startsWith(`${item.id}/`));
+    if (!run) continue;
+    const age = (id: string) => listed.findIndex((item) => item.id === id);
+    const before = runs.findIndex((item) => order.indexOf(item.project) > order.indexOf(change.project)
+      || item.project === change.project && age(item.id) < age(run.id));
+    runs.splice(before < 0 ? runs.length : before, 0, { ...run, project: change.project });
+  }
+  return runs.map((run) => ({ ...withSuggestions(run, run.project, changes), project: run.project })).filter(waitsInNeedsYou);
+}
+
 export function useSuggestionChanges() {
   return useSaving<SuggestionChange>(SUGGESTION_SAVES);
 }
@@ -1459,8 +1479,7 @@ export function useOverview(refetchOnMount = true) {
   const skips = useReviewSkips();
   const select = useCallback((data: Overview) => {
     const view = skipsOverview(saving.reduce(applyOverview, overlayOverview(client, data, pending)), skips);
-    return suggestions.length ? { ...view, suggestions: view.suggestions
-      .map((run) => ({ ...withSuggestions(run, run.project, suggestions), project: run.project })).filter(waitsInNeedsYou) } : view;
+    return suggestions.length ? { ...view, suggestions: waitingRuns(client, view, suggestions) } : view;
   }, [client, pending, saving, suggestions, skips]);
   return useQuery({ ...overviewQuery, refetchInterval: pollInterval, refetchOnMount, select });
 }
@@ -2007,11 +2026,18 @@ export async function taskReview(input: { project: string; slug: string; action:
 export type ReviewSkip = { project: string; slug: string; id: string; subject: ReviewSubject; unresolved: number; at: string };
 const SKIPS = ["review-skip"];
 const skipReads = ({ project, slug }: ReviewSkip) => [["task", project, slug], ["overview"], ["project", project]];
-const skipFor = (skips: ReviewSkip[], project: string, slug: string | null | undefined, id: string | null | undefined) =>
-  id ? skips.find((skip) => skip.project === project && skip.slug === slug && skip.id === id) : undefined;
-function skippedLine<Row extends { slug?: string | null; review?: Decision["review"] }>(row: Row, project: string, skips: ReviewSkip[]): Row {
-  const skip = skipFor(skips, project, row.slug, row.review?.id);
-  return skip && row.review ? { ...row, review: { ...row.review, state: "withdrawn", skipped_by: "operator", reason: "", open: Math.max(0, row.review.open - skip.unresolved) } } : row;
+/**
+ * A question line's review with the skips on their way: skipped by you when a skip names it, and its open count, which
+ * covers its kind's whole merge gate, less the findings of each skip Altitude has not yet taken off. A line knows only
+ * its kind's latest review, so by default only a skip of that one, still unskipped in the read, comes off.
+ */
+function skippedLine<Row extends { slug?: string | null; review?: Decision["review"] }>(row: Row, project: string, skips: ReviewSkip[],
+  counted = (skip: ReviewSkip) => skip.id === row.review?.id && row.review.state !== "withdrawn"): Row {
+  const review = row.review;
+  const mine = review ? skips.filter((skip) => skip.project === project && skip.slug === row.slug && skip.subject === review.subject) : [];
+  if (!review || !mine.length) return row;
+  const open = Math.max(0, review.open - mine.filter(counted).reduce((sum, skip) => sum + skip.unresolved, 0));
+  return { ...row, review: { ...review, open, ...(mine.some((skip) => skip.id === review.id) ? { state: "withdrawn" as const, skipped_by: "operator" as const, reason: "" } : {}) } };
 }
 const skippedReview = (review: Review, skip: ReviewSkip): Review => ({ ...review, state: "withdrawn", withdrawn_by: "operator",
   withdrawal_reason: "Skipped by the operator.", finished_at: skip.at, can_withdraw: false, can_cancel: false, can_again: false });
@@ -2025,16 +2051,19 @@ const skipsProject = (data: ProjectView, skips: ReviewSkip[]): ProjectView => sk
   ? { ...data, decisions: data.decisions.map((row) => skippedLine(row, data.name, skips)) } : data;
 function skipsTask(data: TaskView, project: string, skips: ReviewSkip[]): TaskView {
   const mine = skips.filter((skip) => skip.project === project && skip.slug === data.slug);
-  if (!mine.length) return data;
-  const line = (question: Decision) => skippedLine(question, project, mine);
-  const review = (entry: Review) => { const skip = skipFor(mine, project, data.slug, entry.id); return skip ? skippedReview(entry, skip) : entry; };
-  const subjects = data.review && Object.fromEntries(Object.entries(data.review.subjects).map(([subject, entry]) => [subject, entry && {
+  if (!mine.length || !data.review) return data;
+  // The task read lists every review, so a skip comes off its counts only while that review still reads unskipped.
+  const history = data.review.history;
+  const counted = (skip: ReviewSkip) => history.some((entry) => entry.id === skip.id && entry.state !== "withdrawn");
+  const line = (question: Decision) => skippedLine(question, project, mine, counted);
+  const review = (entry: Review) => { const skip = mine.find((item) => item.id === entry.id); return skip ? skippedReview(entry, skip) : entry; };
+  const subjects = Object.fromEntries(Object.entries(data.review.subjects).map(([subject, entry]) => [subject, entry && {
     ...entry, latest: entry.latest && review(entry.latest),
-    open: Math.max(0, entry.open - mine.filter((skip) => skip.subject === subject).reduce((sum, skip) => sum + skip.unresolved, 0)),
+    open: Math.max(0, entry.open - mine.filter((skip) => skip.subject === subject && counted(skip)).reduce((sum, skip) => sum + skip.unresolved, 0)),
   }]));
   return {
     ...data,
-    review: data.review && { ...data.review, history: data.review.history.map(review), subjects: subjects as typeof data.review.subjects },
+    review: { ...data.review, history: history.map(review), subjects: subjects as typeof data.review.subjects },
     question: data.question && line(data.question),
     questions: data.questions?.map(line),
     question_group: data.question_group && { ...data.question_group, questions: data.question_group.questions.map(line) },
@@ -2050,7 +2079,11 @@ export function useSkipReview() {
       client.refetchQueries({ queryKey: ["project", project], exact: true }),
     ]), skipReads);
 }
-export const useReviewSkipRefusals = () => useRefused<ReviewSkip>(SKIPS, reviewSkipId);
+/** Refused skips, by project, task and review. A skip the record no longer allows (409) needs no reason: the box shows where it stands. */
+export function useReviewSkipRefusals() {
+  const refused = useRefused<ReviewSkip>(SKIPS, reviewSkipId);
+  return useMemo(() => [...refused.values()].filter(({ error }) => !(error instanceof ApiError && error.status === 409)), [refused]);
+}
 const reviewSkipId = (skip: ReviewSkip) => `${skip.project}/${skip.slug}/${skip.id}`;
 
 export function useL3Reset(project: string) {

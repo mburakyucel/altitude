@@ -240,6 +240,33 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     expect(within(back).getByRole("button", { name: "Dismiss" })).toBeEnabled();
   });
 
+  it("a Dismiss Altitude saved despite a lost reply stays folded without Not saved", async () => {
+    setViewport(width);
+    const { state } = serve([posted([suggestion(1)])], () => {
+      state.runs = [posted([suggestion(1, { state: "dismissed", undo: true })])];
+      return json({ error: "lost" }, 503);
+    });
+    const { user, queryClient } = renderApp({ route: "/projects/altitude" });
+    const shown = await card();
+    await user.click(within(shown).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(queryClient.isMutating() + queryClient.isFetching()).toBe(0));
+    expect(within(shown).getByText("Dismissed", { exact: false })).toBeVisible();
+    expect(within(shown).queryByRole("alert")).toBeNull();
+  });
+
+  it("Undo in chat brings its card back to Needs you at the press", async () => {
+    setViewport(width);
+    let answer!: (response: Response) => void;
+    serve([posted([suggestion(1, { state: "dismissed", undo: true })])], () => new Promise<Response>((resolve) => { answer = resolve; }) as unknown as Response);
+    const { user, router } = renderApp({ route: "/projects/altitude" });
+    await user.click(within(await card()).getByRole("button", { name: "Undo" }));
+    await act(async () => { await router.navigate("/"); });
+    const back = within(await screen.findByRole("region", { name: "Suggestions" })).getByRole("article");
+    expect(within(back).getByRole("button", { name: "Dismiss" })).toBeDisabled();
+    await act(async () => answer(json({ error: "Altitude is busy." }, 503)));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Suggestions" })).toBeNull());
+  });
+
   it("a card with nothing waiting leaves Needs you", async () => {
     setViewport(width);
     serve([posted([suggestion(1, { state: "dismissed", undo: true }), suggestion(2, { state: "accepted", task: "cite-answers" })])]);

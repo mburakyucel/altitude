@@ -239,6 +239,30 @@ describe("Adversarial review", () => {
     expect(app.posts()).toHaveLength(2);
   });
 
+  it("a skip Altitude saved despite a lost reply claims no refusal, and its findings leave the merge gate once", async () => {
+    const earlier = ReviewSchema.parse({ ...completed, id: "review-earlier", requested_by: "operator", unresolved: ["one"],
+      dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs the storage owner's decision." }, completed.dispositions[1]] });
+    const latest = ReviewSchema.parse({ ...earlier, id: "review-open", requested_at: "2026-09-22T13:00:00Z" });
+    let answer!: (response: Response) => void;
+    const app = setup({ ...withReviews(earlier, latest), state: "blocked" } as typeof empty, () => new Promise<Response>((resolve) => { answer = resolve; }));
+    const gate = () => screen.queryAllByText("1 open in an earlier review, blocks merge");
+    await waitFor(() => expect(gate().length).toBeGreaterThan(0));
+    await app.user.click(card("review-open").getByRole("button", { name: "Show implementation review details" }));
+    await app.user.click(card("review-open").getByRole("button", { name: "Skip review" }));
+    await app.user.click(within(card("review-open").getByRole("group", { name: "Skip review" })).getByRole("button", { name: "Skip review" }));
+    expect((await card("review-open").findAllByText(/Skipped by you/))[0]).toBeVisible();
+    expect(gate().length).toBeGreaterThan(0);
+    // A read lands after Altitude saved the skip but before its reply: the skipped findings already left its count.
+    await app.update({ ...withReviews(earlier, ReviewSchema.parse({ ...latest, state: "withdrawn", withdrawn_by: "operator", can_withdraw: false })), state: "blocked" } as typeof empty);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(gate().length).toBeGreaterThan(0);
+    await act(async () => answer(json({ error: "Altitude is busy." }, 503)));
+    await app.settled();
+    expect(screen.queryByText(/^Not saved/)).toBeNull();
+    expect(card("review-open").getAllByText(/Skipped by you/)[0]).toBeVisible();
+    expect(gate().length).toBeGreaterThan(0);
+  });
+
   it("requires a successful status read after an uncertain POST and preserves the draft", async () => {
     const app = setup(empty, () => { app.failRead(true); return json({ error: "lost receipt" }, 502); });
     const field = await screen.findByLabelText("Message the L2");

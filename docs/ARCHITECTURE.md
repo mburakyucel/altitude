@@ -2569,9 +2569,11 @@ tasks, removing a device), suggestion Dismiss and Undo, and Skip review render t
 (a setting's own read; the project and overview reads for a suggestion; the task, project and overview reads
 for a skipped review) lay the saves still pending over the server's data, so every view shows the change.
 The control holds still until the save lands; the save ends only after those reads in flight are cancelled
-and the stored value is in the cache. A refused save stops overlaying, reads them again and offers Retry;
-`useRefused` keeps a change's latest refusal for every view, so a card that left at the press comes back
-saying why. Nothing is kept beyond those mutations, which live in memory only. Voice choices move
+and the stored value is in the cache. A refused or lost save keeps overlaying until those reads are fetched
+again, then offers Retry; `useRefused` keeps a change's latest refusal for every view, so a card that left at
+the press comes back saying why, and a view shows it only while the read still lacks the change, so a save
+Altitude kept despite a lost reply says nothing more. An overlay is idempotent: a skip takes its findings off
+a count only while the read still counts that review. Nothing is kept beyond those mutations, which live in memory only. Voice choices move
 **In use** at the press within the voice form, which already holds the saved choice it edits against.
 Screen-reader names retain the status words. Unavailable terminal, voice and alert
 controls disclose their reason on press without invoking the action. Authored blockers, errors,
