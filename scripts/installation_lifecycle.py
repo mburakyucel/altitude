@@ -1481,12 +1481,18 @@ class MacLifecycle(Lifecycle):
         self.uninstall(retained)
 
     def history(self, slug: str) -> dict:
-        """The fictional project's planned task as the app reads it: its title, its wait and its conversation."""
-        assert self.request("/api/project/fictional")["name"] == "fictional"
+        """The fictional project and its planned task as the app reads them: the project's registration, and the
+        task's title, request, wait and conversation."""
+        project = self.request("/api/project/fictional")
         view = self.request(f"/api/task/fictional/{slug}")
-        seen = {"title": view["title"], "state": view["state"], "wait": (view.get("planned_wait") or {}).get("reason"),
+        seen = {"project": project["config"], "tasks": [row["slug"] for row in project["tasks"]],
+                "title": view["title"], "state": view["state"], "request": (view.get("files") or {}).get("request"),
+                "wait": (view.get("planned_wait") or {}).get("reason"),
                 "messages": [[row["id"], row["role"], row["text"]] for row in view.get("messages") or []]}
+        assert Path(seen["project"]["path"]).expanduser() == self.home / "Projects/fictional", seen
+        assert seen["tasks"] == [slug], seen
         assert seen["title"] == "Fictional retained task" and seen["state"] == "queued", seen
+        assert "Fictional brief kept across the update." in (seen["request"] or ""), seen
         assert seen["wait"] == "Fictional wait kept across the update", seen
         assert [text for _, _, text in seen["messages"]] == ["Fictional message kept across the update."], seen
         return seen

@@ -1783,8 +1783,8 @@ it automatically at a quiet point, leave those caches where they were and downlo
 and checksum. Only a baseline from v0.8.0 or older, whose own check refuses the caches with its
 earlier error, updates without them, which its results record as a limit. The candidate must answer
 health with its own version and commit and pass `alt doctor`, recognize the same paired device, show
-the saved name, read the project and the task's title, state, wait and conversation exactly as the
-baseline did, and keep configuration, TLS identity and data unchanged before uninstall. A baseline
+the saved name, read the project's registration and the task's title, request, state, wait and conversation
+exactly as the baseline did, and keep configuration, TLS identity and data unchanged before uninstall. A baseline
 from before v0.7.0 must also have its machine key replaced (#947); a later one keeps it. Fictional
 files of an earlier voice runtime planted in `~/.altitude/speech` must be gone once the candidate has
 started (#940). Before uninstall, the task is rejected and the project removed through the app, since
