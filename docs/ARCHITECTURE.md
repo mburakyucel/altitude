@@ -2610,10 +2610,10 @@ alerts on keeps its change stream while hidden; every other hidden tab still clo
 A device is also woken while Altitude is closed. `altitude/push.py` keeps the VAPID signing key in
 the access folder, which no Altitude sandbox can read, and the subscribed endpoints in `~/.altitude/push.json`, both written only by the
 daemon; the switch registers its endpoint through `/api/alerts/subscription` and reads the public key
-from `/api/alerts`, and tells it again each time Altitude opens or returns to the screen there. The answer
-says whether altd still held the endpoint and whether that device's push service refuses Altitude's alerts;
-the page replaces a subscription made with an old key, or one altd dropped, and tells altd to forget the
-endpoint it replaces. Each tick, a decision key that newly may alert is recorded as owed to every device
+from `/api/alerts`, and with alerts on subscribes and tells it again each time Altitude opens or returns to
+the screen there, one step at a time with the switch. The answer says whether altd still held the endpoint
+and whether that device's push service refuses Altitude's alerts; the page replaces a subscription made with
+an old key, or one altd dropped, and tells altd to forget the endpoint it replaces. Each tick, a decision key that newly may alert is recorded as owed to every device
 (`owes`), which is woken with one empty, signed POST, and logs `push wakes <n> device(s) for <m> new
 decision(s)`; an owed device is tried each tick until its push service takes a wake for it, a decision
 whose task is moving again stays owed until the task rests, and a decision settled first is owed no more, so

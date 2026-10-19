@@ -185,7 +185,13 @@ type Told = { known?: boolean; refused?: string | null };
 
 /** What this device's push service last answered Altitude, as Altitude told this device: null while it takes alerts. */
 let refusal: Refusal | null = null;
-let subscribing: Promise<boolean | undefined> | undefined;
+/** Subscribing and unsubscribing run one after another, so the switch and Altitude opening here never overtake each other. */
+let queue: Promise<unknown> = Promise.resolve();
+function inTurn<T>(work: () => Promise<T>): Promise<T> {
+  const turn = queue.then(work);
+  queue = turn.catch(() => undefined);
+  return turn;
+}
 
 /** The push service first, then Altitude: an endpoint Altitude fails to forget is gone, and its next wake ends it. */
 async function replace(registration: ServiceWorkerRegistration, old: PushSubscription | null, key: Uint8Array<ArrayBuffer>) {
@@ -200,13 +206,13 @@ async function replace(registration: ServiceWorkerRegistration, old: PushSubscri
  * Ask the push service to wake this device for Altitude, and tell Altitude. True once Altitude holds a subscription
  * that can wake this device; false when the device cannot be woken — no key on the machine, no push service, or an
  * iPhone not added to the Home Screen — and alerts then arrive only while Altitude is open, which the note says;
- * undefined when Altitude could not be told, which changes nothing. A subscription made with a key Altitude no longer
- * signs with is replaced, and so, when `renewing`, is one Altitude no longer held because its push service ended it;
- * Altitude forgets the endpoint replaced, so no record outlives it. One call at a time: the switch and Altitude
- * opening here must not each replace the same subscription, nor turning alerts off overtake a renewal.
+ * undefined when Altitude could not be told or alerts went off meanwhile, which changes nothing. A subscription made
+ * with a key Altitude no longer signs with is replaced, and so, when `renewing`, is one Altitude no longer held because
+ * its push service ended it; Altitude forgets the endpoint replaced, so no record outlives it.
  */
-function subscribePush(renewing = false): Promise<boolean | undefined> {
-  subscribing ??= (async () => {
+function subscribePush(renewing: boolean): Promise<boolean | undefined> {
+  return inTurn(async () => {
+    if (readAlertState() !== "on") return undefined;
     const key = await fetch("/api/alerts").then((response) => response.json() as Promise<{ key?: string | null }>)
       .then((body) => body.key ?? null, () => undefined);
     if (key === undefined) return undefined;
@@ -231,11 +237,17 @@ function subscribePush(renewing = false): Promise<boolean | undefined> {
     } catch {
       return false; // the push service or the browser refused a subscription
     }
-  })().finally(() => { subscribing = undefined; });
-  return subscribing;
+  });
 }
 
-async function unsubscribePush(): Promise<void> {
+/** Whether Altitude can wake this device follows each definite answer while alerts are on; the note says which. */
+async function renewPush(renewing: boolean): Promise<void> {
+  const pushed = await subscribePush(renewing);
+  if (pushed !== undefined && readAlertState() === "on") store(ALERTS_PUSH_KEY, pushed ? "on" : null);
+  announce();
+}
+
+const unsubscribePush = () => inTurn(async () => {
   try {
     const registration = await navigator.serviceWorker.getRegistration("/sw.js");
     const subscription = await registration?.pushManager?.getSubscription();
@@ -246,7 +258,7 @@ async function unsubscribePush(): Promise<void> {
   } catch {
     // this device stops alerting either way, and altd drops an endpoint its push service rejects
   }
-}
+});
 
 function readSeen(): string[] | null {
   try {
@@ -293,8 +305,7 @@ export async function enableAlerts(pending: Attention[]): Promise<AlertState> {
   await rememberInWorker(waiting);
   store(ALERTS_KEY, "on");
   announce();
-  store(ALERTS_PUSH_KEY, await subscribePush() ? "on" : null);
-  announce();
+  await renewPush(false);
   return "on";
 }
 
@@ -303,8 +314,8 @@ export function disableAlerts(): void {
   store(ALERTS_PUSH_KEY, null);
   refusal = null;
   announce();
-  // After a renewal still under way, which would otherwise subscribe this device again behind the switch.
-  void (subscribing ?? Promise.resolve()).then(unsubscribePush);
+  void unsubscribePush(); // after a renewal under way, which would otherwise subscribe this device again
+
 }
 
 function watch(listener: () => void) {
@@ -448,24 +459,19 @@ export function useDecisionAlerts(overview: Overview | undefined, pathname: stri
     void deliver(fresh).catch(() => announce());
   }, [state, signature, pathname, pushed, chosen, due]);
 
+  const loaded = chosen !== undefined;
   const every = chosen?.every;
   useEffect(() => {
-    // Each time Altitude opens or returns here, a device push wakes tells Altitude about its subscription again: one
-    // made with an old key, or one Altitude ended, is made anew without the switch, Altitude's copy of the pace follows
-    // the device's own, and the note learns whether this device's push service refuses Altitude's alerts.
-    if (state !== "on" || !pushed || every === undefined) return;
-    const renew = () => {
-      if (document.hidden) return;
-      // A device that can no longer be woken says so; one that could not reach Altitude tries again next time.
-      void subscribePush(true).then((pushed) => {
-        if (pushed !== undefined && readAlertState() === "on") store(ALERTS_PUSH_KEY, pushed ? "on" : null);
-        announce();
-      });
-    };
+    // Each time Altitude opens or returns here with alerts on, the device makes sure push can wake it: a subscription
+    // made with an old key, or one Altitude ended, is made anew without the switch, one that failed is tried again,
+    // Altitude's copy of the pace follows the device's own, and the note learns whether this device's push service
+    // refuses Altitude's alerts.
+    if (state !== "on" || !loaded) return;
+    const renew = () => { if (!document.hidden) void renewPush(true); };
     renew();
     document.addEventListener("visibilitychange", renew);
     return () => document.removeEventListener("visibilitychange", renew);
-  }, [state, pushed, every]);
+  }, [state, loaded, every]);
 
   useEffect(() => {
     if (state !== "on") return;

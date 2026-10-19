@@ -198,13 +198,14 @@ logs each wake as `push wakes <n> device(s) for <m> new decision(s)`.
 
 A subscription the push service will never take again ends on Altitude's side: altd drops it from
 `~/.altitude/push.json` and logs `push to <host> ended with <status> <reason>: dropped`. Each time
-Altitude opens or returns to the screen on a device with alerts on, the device tells altd about its
-subscription again, and one that altd dropped or that was made with a key Altitude no longer signs
-with is made anew, with altd told to forget the endpoint it replaces. Nobody touches the switch.
+Altitude opens or returns to the screen on a device with alerts on, the device makes sure push can
+wake it: it tells altd about its subscription again, makes a new one in place of one altd dropped or
+one made with a key Altitude no longer signs with, telling altd to forget the endpoint it replaces,
+and tries again if subscribing failed last time. Nobody touches the switch.
 
 - `404` or `410`: the subscription has ended.
-- `400 VapidPkHashMismatch` (Apple): the subscription was made with another signing key. Other push
-  services answer a key mismatch with `404`, or the device notices the old key itself.
+- `400 VapidPkHashMismatch` (Apple): the subscription was made with another signing key. On other
+  services the device notices the old key itself when Altitude next opens there.
 
 Any other refusal keeps its device subscribed, and altd tries that device again on each tick until a
 push gets through, even for a decision another device already took, so a fix on either side takes

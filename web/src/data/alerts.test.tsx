@@ -161,10 +161,16 @@ function alertingBrowser(permission: NotificationPermission = "default", answer:
 }
 
 /** The permission the browser already holds, with alerts already switched on for this device. */
-function alreadyOn(seen: string[]) {
+function alreadyOn(seen: string[], pushes = false) {
   const browser = alertingBrowser("granted");
   localStorage.setItem(ALERTS_KEY, "on");
   localStorage.setItem(ALERTS_SEEN_KEY, JSON.stringify(seen));
+  if (pushes) { // subscribed, and Altitude holds its subscription
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    browser.registration.subscribed = browser.registration.subscription;
+  } else { // a browser without a push service: the open page alerts
+    Object.defineProperty(browser.registration, "pushManager", { value: undefined });
+  }
   return browser;
 }
 
@@ -233,8 +239,7 @@ describe("decision alerts", () => {
   });
 
   it("renews a subscription made with an old key each time Altitude opens, without the switch", async () => {
-    const browser = alreadyOn([KEY]);
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     const stale = {
       endpoint: "https://push.example/wake/old", options: { applicationServerKey: new Uint8Array(65).fill(9) },
       unsubscribe: vi.fn(async () => true),
@@ -263,8 +268,7 @@ describe("decision alerts", () => {
   });
 
   it("renews a subscription its push service ended, which altd no longer holds", async () => {
-    const browser = alreadyOn([KEY]);
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     const dead = { ...browser.registration.subscription, endpoint: "https://push.example/wake/dead", unsubscribe: vi.fn(async () => true) };
     browser.registration.subscribed = dead;
     ended.add(dead.endpoint);
@@ -281,24 +285,44 @@ describe("decision alerts", () => {
     expect(screen.getByText(/even when Altitude is closed/)).toBeVisible();
   });
 
-  it("says alerts arrive only while open when a renewal cannot subscribe again", async () => {
-    const browser = alreadyOn([KEY]);
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+  it("says alerts arrive only while open when a renewal cannot subscribe again, and tries again next time", async () => {
+    const browser = alreadyOn([KEY], true);
     browser.registration.subscribed = {
       endpoint: "https://push.example/wake/old", options: { applicationServerKey: new Uint8Array(65).fill(9) },
       unsubscribe: vi.fn(async () => true),
     };
-    browser.registration.pushManager.subscribe.mockRejectedValue(new DOMException("refused", "NotAllowedError"));
+    browser.registration.pushManager.subscribe.mockRejectedValueOnce(new DOMException("refused", "AbortError"));
     mockFetch([question]);
     renderApp({ route: "/" });
 
     expect(await screen.findByText(/only while Altitude is open/)).toBeVisible();
     expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBeNull();
+
+    // Back on screen, the push service takes the subscription, and nobody touched the switch.
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(await screen.findByText(/even when Altitude is closed/)).toBeVisible();
+    expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBe("on");
+  });
+
+  it("renews even when this device's alert choices cannot be read", async () => {
+    const browser = alreadyOn([KEY], true);
+    const stale = {
+      endpoint: "https://push.example/wake/old", options: { applicationServerKey: new Uint8Array(65).fill(9) },
+      unsubscribe: vi.fn(async () => true),
+    };
+    browser.registration.subscribed = stale;
+    deviceStore().set("/preferences", "{not json");
+    mockFetch([question]);
+    renderApp({ route: "/" });
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
+    })));
+    expect(stale.unsubscribe).toHaveBeenCalled();
   });
 
   it("keeps the switch off when it is turned off while a renewal is under way", async () => {
-    const browser = alreadyOn([KEY]);
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     let answer = () => {};
     keyRead = new Promise((resolve) => { answer = resolve; });
     mockFetch([question]);
@@ -314,6 +338,12 @@ describe("decision alerts", () => {
     expect(told.at(-1)).toBe(JSON.stringify({ endpoint: ENDPOINT, remove: true }));
     expect(browser.registration.subscription.unsubscribe).toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toBeVisible();
+
+    // On again: subscribing waits its turn too, so the device ends subscribed.
+    await user.click(screen.getByRole("button", { name: "Alert me about new decisions" }));
+    expect(await screen.findByText(/even when Altitude is closed/)).toBeVisible();
+    const after = vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/alerts/subscription").map(([, init]) => init?.body);
+    expect(after.at(-1)).toBe(JSON.stringify({ endpoint: ENDPOINT, every: 0 }));
   });
 
   it("keeps alerting while Altitude is open, and says so, when this device cannot be woken", async () => {
@@ -338,9 +368,7 @@ describe("decision alerts", () => {
     ["403 BadJwtToken", "Give Altitude a real contact address in ALTITUDE_PUSH_CONTACT on the computer it runs on."],
     ["429 TooManyRequests", "Altitude keeps trying until one gets through."],
   ])("names this device's push service refusing alerts (%s), with what to do", async (reason, todo) => {
-    const browser = alreadyOn([KEY]);
-    browser.registration.subscribed = browser.registration.subscription;
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     mockFetch([question], PUSH_KEY, false, reason);
     renderApp({ route: "/" });
 
@@ -451,8 +479,7 @@ describe("decision alerts", () => {
   });
 
   it("leaves alerting to the service worker on a device push wakes", async () => {
-    const browser = alreadyOn([KEY]);
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     const setQueue = mockFetch([question]);
     const { queryClient } = renderApp({ route: "/projects/altitude" });
     await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-retention"));
@@ -506,8 +533,7 @@ describe("decision alerts", () => {
   });
 
   it("stops alerting and gives up its push subscription when the switch goes off", async () => {
-    const browser = alreadyOn([]);
-    browser.registration.subscribed = browser.registration.subscription;
+    const browser = alreadyOn([], true);
     const setQueue = mockFetch([]);
     const { queryClient, user } = renderApp({ route: "/" });
     await user.click(await screen.findByRole("button", { name: "Alerts on" }));
@@ -524,8 +550,7 @@ describe("decision alerts", () => {
   });
 
   it("gives up the push subscription even while altd cannot be told", async () => {
-    const browser = alreadyOn([]);
-    browser.registration.subscribed = browser.registration.subscription;
+    const browser = alreadyOn([], true);
     mockFetch([], PUSH_KEY, true);
     const { user } = renderApp({ route: "/" });
 
@@ -572,9 +597,7 @@ describe("this device's alert preferences", () => {
   });
 
   it("brings Altitude's copy of this device's pace back to the device's own each time it opens", async () => {
-    const browser = alreadyOn([KEY]);
-    browser.registration.subscribed = browser.registration.subscription;
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     deviceStore({ every: 3600 });
     mockFetch([question]);
     renderApp({ route: "/" });
@@ -668,9 +691,7 @@ describe("Notifications in Settings", () => {
   });
 
   it("tells Altitude how often it may wake this device, and keeps the earlier pace when refused", async () => {
-    const browser = alreadyOn([KEY]);
-    browser.registration.subscribed = browser.registration.subscription;
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const browser = alreadyOn([KEY], true);
     const stored = deviceStore();
     mockFetch([question]);
     const { user } = renderApp({ route: "/settings" });
