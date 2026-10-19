@@ -13,11 +13,13 @@ const NOTES = "https://github.com/example/altitude/releases/tag/v0.2.0";
 const installed = { current: "v0.1.0", available: null, check: true, automatic: false, automatic_pending: false, installed: null, command: "alt update", checked: "2026-10-01T08:00:00Z", attempt: null, waiting_for: [] };
 const available = { ...installed, available: { version: "v0.2.0", notes: NOTES } };
 
-/** Every overview read carries `state.update`, which a test changes as the daemon would. */
-async function overlay(page: Page, state: { update: Json | null }) {
+/** Every overview read carries `state.update`, and `state.repair` when a test sets it, which a test changes as the
+ * daemon would. */
+async function overlay(page: Page, state: { update: Json | null; repair?: Json }) {
   await page.route("**/api/overview*", async (route) => {
     const response = await route.fetch();
-    await route.fulfill({ response, json: { ...((await response.json()) as Json), update: state.update } });
+    const body = (await response.json()) as Json;
+    await route.fulfill({ response, json: { ...body, update: state.update, ...(state.repair ? { repair: state.repair } : {}) } });
   });
 }
 
@@ -25,7 +27,7 @@ test("a newer release is offered, confirmed, installed or failed, and dismissed 
   test.setTimeout(120_000);
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
-  const state: { update: Json | null } = { update: null };
+  const state: { update: Json | null; repair?: Json } = { update: null };
   const posts: unknown[] = [];
   let refuse = true;
   await page.route("**/api/update", async (route) => {
@@ -81,13 +83,52 @@ test("a newer release is offered, confirmed, installed or failed, and dismissed 
   await page.reload();
   await expect(notice.getByText("Installing Altitude v0.2.0…")).toBeVisible();
 
-  state.update = { ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } };
+  state.update = { ...available, attempt: { version: "v0.2.0", state: "failed", error: "the download failed its certificate check." } };
   await page.reload();
+  const repair = notice.getByRole("button", { name: "Repair", exact: true });
+  const retry = notice.getByRole("button", { name: "Try again" });
   await walk.state("06-failed", {
-    visible: [notice.getByText(/The update to v0.2.0 did not finish\. Run alt repair in a terminal to find out why and fix it\. Altitude v0.1.0 keeps running\./),
-      notice.getByRole("button", { name: "Try again" }), dismiss],
+    visible: [notice.getByText("The update to v0.2.0 did not finish: the download failed its certificate check. Altitude v0.1.0 keeps running."),
+      repair, retry, dismiss],
     hidden: [update],
   });
+  await expect(repair).toHaveClass(/btn-primary/);
+  await expect(retry).not.toHaveClass(/btn-primary/);
+  const height = async (button: typeof repair) => (await button.boundingBox())!.height;
+  if (page.viewportSize()!.width < 1024) expect(await height(repair), "phone buttons are at least 44px high").toBeGreaterThanOrEqual(44);
+  await repair.click();
+  const sheet = page.getByRole("dialog", { name: "Start a repair" });
+  await walk.state("06a-failed-repair-sheet", {
+    visible: [sheet.getByRole("heading", { name: "Start a repair?" }),
+      sheet.getByRole("textbox", { name: "What’s wrong?" })],
+    hidden: [],
+  });
+  await expect(sheet.getByRole("textbox", { name: "What’s wrong?" })).toHaveValue("The update to v0.2.0 failed: the download failed its certificate check.");
+  await sheet.getByRole("button", { name: "Cancel" }).click();
+  await expect(sheet).toBeHidden();
+
+  state.update = { ...available, attempt: { version: "v0.2.0", state: "failed", error: "the connection was reset.", passing: true } };
+  await page.reload();
+  await walk.state("06b-failed-passing", { visible: [notice.getByText(/did not finish: the connection was reset\./), retry, repair], hidden: [update] });
+  await expect(retry).toHaveClass(/btn-primary/);
+  await expect(repair).not.toHaveClass(/btn-primary/);
+
+  state.repair = { running: { id: "f".repeat(32), route: "app", title: "Failed update to 0.2.0" }, questions: [] };
+  await page.reload();
+  await walk.state("06c-failed-repair-running", {
+    visible: [notice.getByText(/did not finish/), notice.getByText("Repair running"), notice.getByRole("link", { name: "Open" })],
+    hidden: [repair, retry],
+  });
+  await expect(notice.getByRole("link", { name: "Open" })).toHaveAttribute("href", `/repairs/${"f".repeat(32)}`);
+  state.repair = { running: { id: null, route: "terminal" }, questions: [] };
+  await page.reload();
+  await walk.state("06d-failed-terminal-repair", {
+    visible: [notice.getByText("A repair is running in a terminal on this computer")],
+    hidden: [repair, retry, notice.getByRole("link", { name: "Open" })],
+  });
+  state.repair = undefined;
+  state.update = { ...available, attempt: { version: "v0.2.0", state: "failed", error: "the download failed its certificate check." } };
+  await page.reload();
   await dismiss.click();
   await expect(notice).toBeHidden();
   await page.reload();
@@ -233,7 +274,7 @@ test("Settings shows the version, the command that installs a newer one and the 
     state.update = { ...available, automatic, attempt: { version: "v0.2.0", state: "running" } };
     return route.fulfill({ json: { update: state.update } });
   });
-  state.update = { ...available, automatic, attempt: { version: "v0.2.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } };
+  state.update = { ...available, automatic, attempt: { version: "v0.2.0", state: "failed", error: "the download failed its certificate check." } };
   await page.reload();
   await walk.state("15-automatic-failure", {
     visible: [notice.getByText(/The update to v0.2.0 did not finish/), notice.getByRole("button", { name: "Try again" })],

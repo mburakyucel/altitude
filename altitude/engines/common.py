@@ -109,6 +109,15 @@ def interactive(engine: str, prompt: str) -> list[str]:
     return [implementation(engine).binary(), prompt]
 
 
+def repair_session(engine: str, folder: Path, model: str | None) -> dict:
+    """A repair started from the app: the engine's headless full-access mode with no sandbox, its deny rules where it has
+    them, and the sign-in Altitude's own runs use. The repair's recorder, which cannot import Altitude, runs it one turn
+    at a time with the turn's prompt on standard input: `first` starts the session and `resume` continues it, its
+    `{session}` naming the id the event of type `session_type` carries under `session_key`. `env` joins the job's
+    environment; `sign_in` names a variable the recorder reads from a file at each turn."""
+    return implementation(engine).repair_session(folder, model)
+
+
 def install_command(engine: str) -> str:
     command = implementation(engine).INSTALL_COMMAND
     return command.replace("npm install -g", "npm install --prefix ~/.local -g") if platform.containerized() else command

@@ -2099,6 +2099,41 @@ class Handler(BaseHTTPRequestHandler):
             return f"{subject} requests from Altitude's own agents are refused."
         return None
 
+    def _repair_denied(self, *, json_body: bool) -> bool:
+        """Whether this request is not from a paired browser's own page. A request with the machine key, which the CLI,
+        L3 and anything that read it hold, is refused like one from Altitude's agents: a repair's page carries what an
+        agent with the operator's full access ran and read, and only that page steers it."""
+        if self.headers.get(access.KEY_HEADER) is not None or not self._device or self._page_denied(
+                json_body=json_body, subject="Repair"):
+            self.close_connection = True
+            return True
+        return False
+
+    def _repair_post(self, parts: list[str], o: dict) -> None:
+        """Start, message, answer, keep going and stop (`_repair_denied`); each request names itself, so a repeated tap
+        or a replayed request acts once."""
+        if self._repair_denied(json_body=True):
+            return self._json({"error": repair.FROM_BROWSER}, 403)
+        try:
+            if len(parts) == 2:
+                continues = o.get("continues")
+                return self._json(repair.start_app(o.get("problem"), o.get("request"),
+                                                   continues if isinstance(continues, str) else None))
+            action = parts[3] if len(parts) == 4 else ""
+            if action == "message":
+                return self._json(repair.message(parts[2], o.get("text"), o.get("request")))
+            if action == "answer":
+                return self._json(repair.answer(parts[2], o.get("question"), o.get("answer"), o.get("request")))
+            if action == "keep-going":
+                return self._json(repair.keep_going(parts[2], o.get("request")))
+            if action == "stop":
+                return self._json(repair.stop(parts[2], o.get("request")))
+            return self._json({"error": "not found"}, 404)
+        except repair.Refused as exc:
+            return self._json({"error": str(exc), **({"running": exc.running} if exc.running else {})}, 409)
+        except KeyError:
+            return self._json({"error": "That repair is not on this computer."}, 404)
+
     def _from_agent(self) -> bool:
         """Whether this connection comes from one of Altitude's own agents. One connection keeps one client socket, so
         its first request decides for the rest. A container installation infers nothing: its clients reach it through
@@ -2175,7 +2210,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, 409)
         except Exception as exc:  # noqa: BLE001 — record, lock and launch failures name private paths; they stay in the log
             log(f"update request failed: {exc!r}")
-            return self._json({"error": f"Altitude could not complete the update request. {installation.UPDATE_FAILED}"}, 503)
+            return self._json({"error": "Altitude could not complete the update request. Repair finds out why: Settings → About, or alt repair in a terminal."}, 503)
 
     def _in_line(self, call) -> None:
         """`alt task validate` and `alt task run`: `call(waiting, gone)` answered as JSON. A client that accepts NDJSON
@@ -2368,7 +2403,7 @@ class Handler(BaseHTTPRequestHandler):
                 changed = sorted(current)
             marks, quiet = current, quiet + CHANGE_SECONDS
             if changed:
-                projects = json.dumps({"projects": [name for name in changed if name]})
+                projects = json.dumps({"projects": [name for name in changed if name and name != REPAIRS_MARK]})
                 self.wfile.write(f"event: change\ndata: {projects}\n\n".encode())
             elif quiet >= CHANGE_KEEPALIVE_SECONDS:
                 self.wfile.write(b": keepalive\n\n")
@@ -2444,6 +2479,8 @@ class Handler(BaseHTTPRequestHandler):
             if api == "repairs" and len(parts) == 2:
                 return self._json(repair.listing())
             if api == "repairs" and len(parts) == 3:
+                if self._repair_denied(json_body=False):
+                    return self._json({"error": repair.PAGE_FROM_BROWSER}, 403)
                 try:
                     return self._json(repair.view(parts[2]))
                 except KeyError:
@@ -2577,7 +2614,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": UNPAIRED, "pair": True}, 401)
         if not self._machine and not owned and self._from_agent():
             self.close_connection = True
-            return self._json({"error": AGENT_REFUSED}, 403)
+            return self._json({"error": repair.FROM_BROWSER if parts[:2] == ["api", "repairs"] else AGENT_REFUSED}, 403)
         image_submission = False
         try:
             api = parts[1] if len(parts) > 1 and parts[0] == "api" else ""
@@ -2605,6 +2642,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._sign_in(parts[2], o)
             if api in ("update", "update-check", "update-automatic"):
                 return self._update_post(parts, o)
+            if api == "repairs":
+                return self._repair_post(parts, o)
             if parts == ["api", "validation-access"]:
                 return self._validation_post(o)
             if parts == ["api", "task", "door"]:
@@ -3176,6 +3215,17 @@ TERMINAL_WAIT_SECONDS = 1.0
 CHANGE_RETRY_MS = 3000
 
 
+#: The change stream's key for repairs, which no project name can take; it refreshes the shell, not a project.
+REPAIRS_MARK = " repairs"
+
+
+def repair_marks(mark) -> tuple:
+    """A repair's record moves the overview: the one running now, and the newest one, whose questions Needs you shows."""
+    newest = max(repair.home().glob("*/repair.json"), key=lambda path: path.parent.stat().st_ctime, default=None) \
+        if repair.home().is_dir() else None
+    return mark(repair.home() / "running.json"), newest and mark(newest)
+
+
 def change_marks() -> dict[str, tuple]:
     """What `/api/changes` compares each second: identity, size and modification time of the registry ("") and,
     per registered project, its hold, project log, archive folder and every open task's status (which
@@ -3188,7 +3238,7 @@ def change_marks() -> dict[str, tuple]:
             return None
         return st.st_ino, st.st_mtime_ns, st.st_size  # atomic replacement always changes the inode
 
-    marks: dict[str, tuple] = {"": (mark(config.PROJECTS_FILE),)}
+    marks: dict[str, tuple] = {"": (mark(config.PROJECTS_FILE),), REPAIRS_MARK: repair_marks(mark)}
     for project in config.load_projects():
         d = config.project_dir(project)
         rows = [mark(d / "hold.json"), mark(d / "events.log"), mark(S.archive_dir(project))]
@@ -3217,7 +3267,7 @@ def overview() -> dict:
             "engines": route.engine_readouts(), "new_tasks": new_tasks_view(),
             "roots": [home_relative(r) for r in config.project_roots()],
             "operator": config.operator_name(), "restart": restart_status(),
-            "update": installation.update_status(), "now": S.now()}
+            "update": installation.update_status(), "repair": repair.attention(), "now": S.now()}
 
 
 CHANGED_ELSEWHERE = "Changed in another window."
@@ -4033,6 +4083,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
         SPEECH.update_installed(reinstall_voice)
         restart_notice()
         settle_interrupted_machine_commands()
+        repair.service_started()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()
         threading.Thread(target=validation.reconcile, name="validation-reconcile", daemon=True).start()
     else:

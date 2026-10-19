@@ -29,7 +29,7 @@ test("a failed automatic update shows its cause, preserves automatic history, an
   expect(failed.current).toBe("versions/v0.4.0");
   await page.reload();
   await walk.state("update-02-failed-actionable", {
-    visible: [notice.getByText("The update to v0.5.0 did not finish. Archive checksum mismatch; the installed application is unchanged. Altitude v0.4.0 keeps running."),
+    visible: [notice.getByText("The update to v0.5.0 did not finish: Archive checksum mismatch; the installed application is unchanged. Altitude v0.4.0 keeps running."),
       notice.getByRole("button", { name: "Try again" })],
     hidden: [spinner, notice.getByText(/installs automatically/)],
   });

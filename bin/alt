@@ -622,6 +622,11 @@ def main(argv=None) -> None:
     reported.add_argument("--changed", required=True, help="what the repair changed")
     reported.add_argument("--remains", required=True, help="what remains")
     reported.add_argument("--try", dest="tried", help="what the operator should try to confirm it")
+    asking = repairing_actions.add_parser("ask", help="inside a repair from the app: ask the operator on its page, then "
+                                                      "end your turn; the answer arrives as your next message")
+    asking.add_argument("--command", required=True, help="the command to ask about, or the operator's step")
+    asking.add_argument("--reason", help="why it is needed: Go ahead or Don't")
+    asking.add_argument("--step", help="what the operator's own step does, such as one that needs their password")
 
     args = ap.parse_args(argv)
     if DOOR:
@@ -840,11 +845,19 @@ def main(argv=None) -> None:
                 repair.report(args.wrong, args.changed, args.remains, args.tried)
                 print("Report recorded. Altitude checks the result once the repair ends.")
                 return
+            if args.repair_action == "ask":
+                repair.ask(args.reason, args.command, args.step)
+                print("Asked on the repair's page. End your turn now; the operator's answer arrives as your next message.")
+                return
             sys.exit(repair.start(args.problem, args.engine))
         except repair.Refused as exc:
             sys.exit(str(exc))
     if c in ("install", "update", "recover", "uninstall", "doctor", "service"):
         from altitude import installation
+        if os.environ.get("ALTITUDE_REPAIR") and (c in ("install", "update", "recover")
+                                                   or c == "service" and args.operation in ("stop", "configure")):
+            from altitude import repair
+            repair.note_restarting()
         try:
             if c == "install":
                 result = installation.install(args.archive, args.sha256, args.prefix)

@@ -183,8 +183,9 @@ UPDATE_STALE_SECONDS = 1800
 # How long a detached update waits for work in flight once its request fences new work: an L3 turn's own limit and
 # margin (#1003). `alt update` in a terminal waits a minute.
 UPDATE_DRAIN_SECONDS = 1500
-# An attempt that ended without a known cause, such as an updater that stopped; its log or terminal has the rest.
-UPDATE_FAILED = "Run alt repair in a terminal to find out why and fix it."
+# An attempt that ended without a known cause, such as an updater that stopped; its log or terminal has the rest, and a
+# repair finds out why.
+UPDATE_FAILED = "the updater stopped without saying why."
 
 
 def _cause(exc: BaseException) -> str:
@@ -192,6 +193,24 @@ def _cause(exc: BaseException) -> str:
     shortened to ~; tracebacks stay in the update's log."""
     text = (str(exc).strip().splitlines() or [""])[0].replace(str(Path.home()), "~")[:300]
     return (text if text.endswith((".", "!", "?")) else text + ".") if text else UPDATE_FAILED
+
+
+def _passing(exc: BaseException) -> bool:
+    """Whether a failed update's cause passes on its own, such as a download cut off or a server that did not answer,
+    so the notice offers Try again first; any other cause, a refused certificate among them, leads with Repair."""
+    import http.client
+    from urllib.error import HTTPError, URLError
+    if isinstance(exc, HTTPError):
+        return exc.code >= 500 or exc.code == 429
+    if isinstance(exc, URLError) and isinstance(exc.reason, BaseException):
+        exc = exc.reason
+    return isinstance(exc, (TimeoutError, ConnectionError, http.client.IncompleteRead)) and not isinstance(exc, ssl.SSLError)
+
+
+def _retrying(record: dict, version: str) -> bool:
+    """Whether a new attempt repeats one that failed for the same release: after a failed retry Repair leads."""
+    last = record.get("attempt") or {}
+    return last.get("state") == "failed" and last.get("version") == version
 
 
 def _update_record() -> tuple[Path, dict]:
@@ -388,7 +407,7 @@ def request_update(version: str, *, automatic: bool = False) -> dict:
                         raise UpdateRefused("This release is not waiting for an automatic update")
                     record["automatic_attempts"] = [*record.get("automatic_attempts", []), version]
                 record["attempt"] = {"id": ident, "version": version, "state": "running", "started": time.time(),
-                                     "automatic": automatic}
+                                     "automatic": automatic, "retry": _retrying(record, version)}
         # The durable reservation owns this handoff; release the lock so an immediately
         # scheduled child can acquire it before detach returns.
         saved = json.loads(_settings().read_text())
@@ -400,17 +419,19 @@ def request_update(version: str, *, automatic: bool = False) -> dict:
         raise UpdateRefused("Another update or recovery is already running") from exc
     except (OSError, ValueError, RuntimeError) as exc:
         with contextlib.suppress(OSError, ValueError):
-            _finish_attempt(ident, "failed", _cause(exc))
+            _finish_attempt(ident, "failed", _cause(exc), _passing(exc))
         raise
     return update_status()
 
 
-def _finish_attempt(ident: str, state: str, error: str = UPDATE_FAILED) -> None:
-    """Only this transaction changes its receipt; a failure records its cause, and the traceback stays in its log."""
+def _finish_attempt(ident: str, state: str, error: str = UPDATE_FAILED, passing: bool = False) -> None:
+    """Only this transaction changes its receipt; a failure records its cause and whether it passes on its own, and
+    the traceback stays in its log."""
     with _changing_update_record() as record:
         attempt = record.get("attempt") or {}
         if attempt.get("state") == "running" and attempt.get("id") == ident:
-            record["attempt"] = {**attempt, "state": state, **({"error": error} if state == "failed" else {})}
+            record["attempt"] = {**attempt, "state": state,
+                                 **({"error": error, "passing": passing} if state == "failed" else {})}
 
 
 def update(version: str | None = None) -> dict:
@@ -431,7 +452,7 @@ def update(version: str | None = None) -> dict:
             return _update(version, ident)
         except (OSError, ValueError, RuntimeError) as exc:
             if ident:
-                _finish_attempt(ident, "failed", _cause(exc))
+                _finish_attempt(ident, "failed", _cause(exc), _passing(exc))
             raise
 
 
@@ -455,7 +476,7 @@ def _update(version: str | None, ident: str) -> dict:
     with _changing_update_record() as record:
         if (record.get("attempt") or {}).get("id") != ident:
             record["attempt"] = {"id": ident, "version": version, "state": "running", "started": time.time(),
-                                 "automatic": False}
+                                 "automatic": False, "retry": _retrying(record, version)}
     base = f"https://github.com/{repository}/releases/download/{version}/altitude-{version}.tar.gz"
     with tempfile.TemporaryDirectory(prefix="altitude-update-") as folder:
         archive = Path(folder) / f"altitude-{version}.tar.gz"
@@ -742,8 +763,8 @@ def describe_update(update: dict | None) -> list[str]:
         return []
     version, waiting, attempt = update["available"]["version"], update["waiting_for"], update.get("attempt") or {}
     if attempt.get("state") == "failed" and attempt.get("version") == version:
-        return [f"Update: the update to Altitude {version} did not finish. {attempt.get('error') or UPDATE_FAILED} "
-                "alt update tries again."]
+        return [f"Update: the update to Altitude {version} did not finish: {attempt.get('error') or UPDATE_FAILED} "
+                "alt update tries again; alt repair finds out why and fixes it."]
     if not update["automatic_pending"]:
         return [f"Update: Altitude {version} is available; alt update installs it."]
     listed = ", ".join(waiting[:-1]) + " and " + waiting[-1] if len(waiting) > 1 else "".join(waiting)

@@ -160,7 +160,7 @@ const CHANGE_RECONNECT_MS = 5_000;
 /**
  * The app's one subscription to `GET /api/changes`, mounted by the shell. A `change` event names the
  * projects whose task, decision or hold records moved; their mounted project and task queries refetch
- * with the overview and monitor. Every open, first or after a dropped connection or daemon activation,
+ * with the overview, monitor and repairs (a repair's record moving sends an event naming no project). Every open, first or after a dropped connection or daemon activation,
  * refetches all of them: the server reads its baseline before the stream opens, so nothing changed
  * between a snapshot and the subscription is lost. The chat conversation keeps its own reads.
  * EventSource retries network failures itself; a refused stream closes it and this reconnects. A hidden
@@ -176,6 +176,8 @@ export function useChangeStream() {
     const refresh = (projects?: string[]) => {
       void queryClient.invalidateQueries({ queryKey: ["overview"] });
       void queryClient.invalidateQueries({ queryKey: ["monitor"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: ["repair"] });
       for (const kind of ["project", "task"]) {
         for (const project of projects ?? [undefined]) {
           void queryClient.invalidateQueries({ queryKey: project === undefined ? [kind] : [kind, project] });
@@ -461,7 +463,9 @@ export const UpdateSchema = z.object({
   managed: z.literal("image").optional(),
   reason: z.string().optional(),
   checked: z.string().nullish(),
-  attempt: z.object({ version: z.string(), state: z.enum(["running", "failed"]), error: z.string().nullish() }).passthrough().nullish(),
+  /** `passing`: the failure's cause passes on its own; `retry`: the attempt repeated one that failed for the same release. */
+  attempt: z.object({ version: z.string(), state: z.enum(["running", "failed"]), error: z.string().nullish(),
+    passing: z.boolean().optional(), retry: z.boolean().optional() }).passthrough().nullish(),
   waiting_for: z.array(z.string()),
 });
 
@@ -520,6 +524,13 @@ export const OverviewSchema = z
     operator: z.string().nullish(),
     restart: RestartSchema.nullish(),
     update: UpdateSchema.nullish(),
+    /** The repair running now, and the newest app repair's questions that are open or expired with its session. */
+    repair: z.object({
+      running: z.object({ id: z.string().nullable(), route: z.string(), title: z.string().nullish() }).nullable(),
+      questions: z.array(z.object({ id: z.string(), kind: z.enum(["ask", "step"]), title: z.string(), reason: z.string().nullable(),
+        command: z.string(), asked: z.string(), answer: z.enum(["yes", "no", "ran", "expired"]).nullable(),
+        repair: z.string(), repair_title: z.string().nullish() })),
+    }).nullish(),
     now: z.string().nullish(),
   })
   .passthrough();
@@ -1054,28 +1065,65 @@ export function useMachine() {
 }
 
 /**
- * Repairs (docs/OPERATIONS.md#repairs): agent sessions you start with `alt repair` to find out what is wrong with this
- * installation and fix it. `outcome` is Altitude's own check, set once a repair has ended.
+ * Repairs (docs/OPERATIONS.md#repairs): agent sessions you start from this page or with `alt repair` to find out what
+ * is wrong with this installation and fix it. `status` is what the chip says: working or waiting while the session
+ * runs, stopped, checking, or the outcome of Altitude's own check once it has ended.
  */
 const RepairOutcomeSchema = z.enum(["repaired", "changed_by_hand", "confirm", "not_repaired", "no_report"]);
+const RepairStatusSchema = z.enum(["working", "waiting", "stopped", "checking", "repaired", "changed_by_hand", "confirm",
+  "not_repaired", "no_report"]);
+export type RepairStatus = z.infer<typeof RepairStatusSchema>;
 export const RepairRowSchema = z.object({
   id: z.string(), title: z.string(), route: z.string(), engine: z.string(), started: z.string(),
-  ended: z.string().nullable(), outcome: RepairOutcomeSchema.nullable(),
+  ended: z.string().nullable(), outcome: RepairOutcomeSchema.nullable(), status: RepairStatusSchema,
 });
 export type RepairRow = z.infer<typeof RepairRowSchema>;
+const RunningRepairSchema = z.object({ id: z.string().nullable(), route: z.string(), title: z.string().nullish() });
+export type RunningRepair = z.infer<typeof RunningRepairSchema>;
 export const RepairsSchema = z.object({
-  running: z.object({ id: z.string().nullable(), route: z.string() }).nullable(),
+  running: RunningRepairSchema.nullable(),
+  /** The coding agent a new repair would use now, which the start sheet names; none when no agent can run. */
+  engine: z.string().nullish(),
   repairs: z.array(RepairRowSchema),
 });
+const RepairReportSchema = z.object({ wrong: z.string(), changed: z.string(), remains: z.string(), try: z.string().optional() });
+const RepairCheckSchema = z.object({
+  at: z.string(), version: z.string().nullable(), running: z.string().nullish(), matches: z.boolean().nullable(),
+  failing: z.array(z.object({ name: z.string() }).passthrough()),
+});
+/** One line of an app repair's page, oldest first: a system line, what you wrote, the agent's words and steps, its
+ * questions, and an earlier round's report. */
+export const RepairItemSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("event"), at: z.string(), event: z.enum(["started", "restarting", "back", "kept_going", "failed"]),
+    text: z.string().nullish(), resumed: z.boolean().optional() }),
+  z.object({ kind: z.literal("you"), at: z.string(), text: z.string() }),
+  z.object({ kind: z.literal("say"), at: z.string().nullish(), text: z.string() }),
+  z.object({ kind: z.literal("step"), at: z.string().nullish(), verb: z.enum(["ran", "failed", "changed", "fetched", "running", "cut"]),
+    text: z.string(), detail: z.string(), output: z.string(), exit: z.number().nullish() }),
+  z.object({ kind: z.literal("question"), at: z.string(), id: z.string(), type: z.enum(["ask", "step"]), title: z.string(),
+    reason: z.string().nullable(), command: z.string(), answer: z.enum(["yes", "no", "ran", "expired"]).nullable(),
+    answered: z.string().nullable() }),
+  z.object({ kind: z.literal("report"), at: z.string().nullish(), report: RepairReportSchema, check: RepairCheckSchema.nullable(),
+    outcome: RepairOutcomeSchema.nullable() }),
+]);
+export type RepairItem = z.infer<typeof RepairItemSchema>;
 export const RepairSchema = RepairRowSchema.extend({
   problem: z.string().nullable(),
+  model: z.string().nullish(),
   update: z.object({ version: z.string(), error: z.string().nullish() }).nullable(),
-  report: z.object({ wrong: z.string(), changed: z.string(), remains: z.string(), try: z.string().optional() }).nullable(),
-  check: z.object({
-    at: z.string(), version: z.string().nullable(), running: z.string().nullish(), matches: z.boolean().nullable(),
-    failing: z.array(z.object({ name: z.string() }).passthrough()),
-  }).nullable(),
+  report: RepairReportSchema.nullable(),
+  check: RepairCheckSchema.nullable(),
   brief: z.string().nullable(),
+  /** How the session ended: its report, Stop, the time limit, a failure, or a recorder gone without its end. */
+  end: z.enum(["report", "stop", "time", "failed", "interrupted", "refused"]).nullish(),
+  stop: z.object({ at: z.string(), update: z.boolean() }).nullish(),
+  stop_unconfirmed: z.boolean().nullish(),
+  left_running: z.array(z.object({ kind: z.string(), name: z.string() })).nullish(),
+  timeline: z.array(RepairItemSchema).optional(),
+  /** Seconds left before the time limit while the session runs. */
+  left: z.number().nullish(),
+  keep_going: z.boolean().optional(),
+  stopping: z.boolean().optional(),
 }).passthrough();
 export type Repair = z.infer<typeof RepairSchema>;
 
@@ -1087,12 +1135,48 @@ export function useRepairs() {
   });
 }
 
+/** One repair; while its session runs the page follows its steps every two seconds. */
 export function useRepair(id: string | undefined) {
   return useQuery({
     queryKey: ["repair", id], enabled: Boolean(id),
     queryFn: async () => RepairSchema.parse(await api(`/api/repairs/${encodeURIComponent(id ?? "")}`)),
     retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 3,
-    refetchInterval: (query) => query.state.data && !query.state.data.outcome ? 5000 : false,
+    refetchInterval: (query) => !query.state.data ? false : !query.state.data.ended ? 2000 : !query.state.data.outcome ? 5000 : false,
+  });
+}
+
+/** Why a repair could not start or change, and the running repair a refusal names, which the sheet links. */
+export class RepairRefused extends ApiError {
+  constructor(status: number, message: string, readonly running: string | null) {
+    super(status, message);
+  }
+}
+
+/** A repair request: each names itself, so a repeated tap or a retried request acts once. */
+export async function repairRequest(path: string, body: Record<string, unknown>, request: string): Promise<Repair> {
+  const res = await fetch(path, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, request }) });
+  if (res.ok) return RepairSchema.parse(await res.json());
+  if (res.status === 401) window.dispatchEvent(new Event(UNPAIRED_EVENT));
+  const reply = await res.json().catch(() => ({})) as { error?: unknown; running?: unknown };
+  throw new RepairRefused(res.status, typeof reply.error === "string" && reply.error ? reply.error : `HTTP ${res.status}`,
+    typeof reply.running === "string" ? reply.running : null);
+}
+
+export function newRequest() {
+  return crypto.randomUUID();
+}
+
+/** Start, steer, extend or stop a repair; the page and every list of repairs follow the result. */
+export function useRepairAction<T>(request: (input: T) => Promise<Repair>) {
+  const client = useQueryClient();
+  return useMutation<Repair, RepairRefused | Error, T>({
+    mutationFn: request,
+    onSuccess: (repair) => client.setQueryData(["repair", repair.id], repair),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ["repairs"] });
+      void client.invalidateQueries({ queryKey: ["overview"] });
+    },
   });
 }
 

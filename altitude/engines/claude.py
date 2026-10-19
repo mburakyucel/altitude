@@ -983,6 +983,24 @@ STATUS_EVENTS = ("system", "rate_limit_event")  # background-task and status not
 session_context_source = _claude_path
 
 
+def repair_session(folder: Path, model: str | None) -> dict:
+    """`claude -p` without its permission prompts, in a Claude folder of the repair's own; its deny rules refuse the
+    file tools on Altitude's keys, certificate keys and engine sign-ins, the clearest cases of the repair's rules. A
+    shell command, with the session's own token in its environment, still reaches them: the rules stay instructions."""
+    secrets = [(access.DIR, True), (config.TLS_DIR, True), (OPERATOR_HOME / ".credentials.json", False),
+               (config.HOME / ".codex/auth.json", False)]
+    rules = [f"{tool}(/{Path(path).resolve()}{'/**' if tree else ''})"
+             for path, tree in secrets for tool in ("Read", "Edit")]
+    settings = folder / "claude-settings.json"
+    S.atomic_write(settings, json.dumps({"autoCompactWindow": config.AUTOCOMPACT_WINDOW,
+                                         "permissions": {"deny": rules}}, indent=2) + "\n")
+    command = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--verbose",
+               "--permission-mode", "bypassPermissions", "--settings", str(settings), *(["--model", model] if model else [])]
+    return {"first": command, "resume": [*command, "--resume", "{session}"], "session_type": "system",
+            "session_key": "session_id", "env": {"CLAUDE_CONFIG_DIR": str(folder / "claude")},
+            "sign_in": {"variable": "CLAUDE_CODE_OAUTH_TOKEN", "file": str(access.DIR / "claude.token")}}
+
+
 def worker_record(env):
     return {}
 

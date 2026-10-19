@@ -32,7 +32,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
   const shown = route.includes("/view/");
   const file = route.endsWith("/file");
   const captures = route.includes("/captures/");
-  const repair = route === "/settings/repairs/:id";
+  const repair = route === "/repairs/:id";
   test.use({ serviceScript: shown ? "shown-files-service.py" : captures ? "captures-service.py" : file ? "file-references-service.py"
     : repair ? "repairs-service.py" : "" });
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request, browserName }, info) => {
@@ -136,8 +136,8 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       for (const group of ["Projects", "Voice", "Devices and access", "Coding agents"]) {
         await expect(main.getByRole("region", { name: group, exact: true })).toBeVisible();
       }
-      // About tells how to start a repair, and holds the version rows once the overview reports an update state.
-      await expect(main.getByRole("region", { name: "About", exact: true }).getByText("alt repair", { exact: true })).toBeVisible();
+      // About starts a repair, and holds the version rows once the overview reports an update state.
+      await expect(main.getByRole("region", { name: "About", exact: true }).getByRole("button", { name: "Repair…", exact: true })).toBeVisible();
       await expect(main.getByRole("region", { name: "This project", exact: true })).toHaveCount(0);
       // Models are picked where they apply (beside quota, under a chat, in a task), never in Settings.
       await expect(main.getByRole("combobox")).toHaveCount(0);
@@ -149,10 +149,10 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("heading", { name: "Repairs", exact: true })).toBeVisible();
       await expect(main.getByText(/^No repairs yet\./)).toBeVisible();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
-    } else if (route === "/settings/repairs/:id") {
-      await expect(main.getByRole("heading", { name: "Voice input stopped working.", exact: true })).toBeVisible();
+    } else if (route === "/repairs/:id") {
+      await expect(page.getByRole("heading", { level: 1, name: "Repair · Voice input stopped working.", exact: true })).toBeVisible();
       await expect(main.getByRole("region", { name: "Report", exact: true }).getByText("Set voice input up again.", { exact: true })).toBeVisible();
-      await expect(main.getByRole("link", { name: "‹ Repairs", exact: true })).toHaveAttribute("href", "/settings/repairs");
+      await expect(main.getByRole("link", { name: "All repairs", exact: true })).toHaveAttribute("href", "/settings/repairs");
     } else if (route === "/settings/voice") {
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
       await expect(main.getByRole("heading", { level: 3 })).toHaveText(["This computer", "Browser recognition", "Your speech service"]);

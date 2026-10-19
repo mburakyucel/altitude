@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
 import FolderBrowser from "../components/FolderBrowser";
@@ -9,12 +9,12 @@ import { HostingCard, networkSummary } from "../components/Network";
 import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateAutomatic, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, startUpdate, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, PhoneShare, ProjectDefaults, Update } from "../data/api";
 import { ProjectModelSettingsSection } from "../components/Models";
-import { RepairPage, RepairRows, RepairsPage, useRepairTitle } from "../components/Repairs";
+import { RepairRows, RepairsPage } from "../components/Repairs";
 import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { INVALID_SERVICE, updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
-import { waitingText } from "../shell/UpdateNotice";
+import { UPDATE_FAILED, waitingText } from "../shell/UpdateNotice";
 import VoiceDiagnostics from "../components/VoiceDiagnostics";
 import { UnavailableAction } from "../components/UnavailableAction";
 import { dateText } from "../data/observed";
@@ -700,7 +700,7 @@ function VersionRows({ update }: { update: Update }) {
       {available && update.command ? <Command text={update.command} /> : null}
     </div>
     {failed ? <div className="settings-row">
-      <span>The update to {failed.version} did not finish. {failed.error} Altitude {update.current} keeps running.</span>
+      <span>The update to {failed.version} did not finish: {failed.error || UPDATE_FAILED} Altitude {update.current} keeps running.</span>
       <button type="button" className="btn" disabled={save.status === "saving"} onClick={() => void retry()}>Try again</button>
     </div> : null}
     <div className="settings-row settings-switch-row">
@@ -727,7 +727,7 @@ function VersionRows({ update }: { update: Update }) {
 const titles = {
   voice: "Voice input", projects: "Projects", "projects-folder": "Projects folder", name: "Your name",
   prerequisites: "Prerequisites", "incident-reports": "Incident reports", devices: "Devices", network: "Network",
-  repairs: "Repairs", repair: "Repair",
+  repairs: "Repairs",
 } as const;
 
 /** A machine setting the onboarding flow also sets: its form, saving in place with a Saved confirmation. */
@@ -777,11 +777,8 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   useEffect(() => {
     if (settings.data) updateVoiceSettings(settings.data);
   }, [settings.data]);
-  const repairId = useParams().id;
-  const repairTitle = useRepairTitle(page === "repair" ? repairId : undefined);
-  const title = page === "repair" ? repairTitle : page ? titles[page] : "Settings";
-  const back = page === "repair" ? <Link to="/settings/repairs" state={state} className="btn settings-back">‹ Repairs</Link>
-    : page ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
+  const title = page ? titles[page] : "Settings";
+  const back = page ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
     : <button type="button" className="btn settings-back" onClick={() => leaveSettings(navigate, state)}>‹ Back</button>;
   const voiceRow = settings.isPending ? <p className="settings-row"><StatusMark label="Loading voice settings…" /></p>
     : settings.isError ? <p role="alert" className="settings-row text-danger">Could not load voice settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
@@ -796,7 +793,6 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
         : page === "devices" ? <DevicesPage />
         : page === "network" ? <HostingCard detail />
         : page === "repairs" ? <RepairsPage state={state} />
-        : page === "repair" ? <RepairPage id={repairId ?? ""} />
         : page === "projects" ? <ProjectsPage state={state} />
         : page === "projects-folder" ? <>
         <p className="text-meta text-muted">First run offers the folders directly inside this folder. Altitude lists them only when you open First run or Add a folder; it never looks deeper or reads files.</p>

@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Overview, Update } from "../data/api";
 import { renderApp } from "../test/render";
@@ -8,7 +8,7 @@ const available: Update = { current: "v0.1.0", check: true, automatic: true, aut
   command: "alt update", available: { version: "v0.2.0", notes }, waiting_for: ["the validation run of atlas/check-the-lane"] };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 
-function fixture(initial: Update | null = available) {
+function fixture(initial: Update | null = available, repair: Overview["repair"] = null) {
   let update = initial;
   let automatic = initial?.automatic ?? true;
   let refuse = false;
@@ -28,9 +28,9 @@ function fixture(initial: Update | null = available) {
     }
     if (path === "/api/machine") return json(machine);
     if (path === "/api/project-model-settings") return json({ rows: [] });
-    if (path === "/api/repairs") return json({ running: null, repairs: [] });
+    if (path === "/api/repairs") return json({ running: null, engine: "Claude", repairs: [] });
     if (path === "/api/voice") return json({ backend: "host", selection: "fixture", host: { state: "ready", download_bytes: 698435338 } });
-    if (path === "/api/overview") return json({ projects: [], queue: [], engines: [], update,
+    if (path === "/api/overview") return json({ projects: [], queue: [], engines: [], update, repair,
       wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });
     return json({});
   }));
@@ -50,7 +50,7 @@ describe("Installed release updates", () => {
   });
   it("offers manual installation when a previously attempted version is offered again", async () => {
     fixture({ ...available, automatic_pending: false,
-      attempt: { version: "v0.3.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } });
+      attempt: { version: "v0.3.0", state: "failed", error: "the download failed its certificate check." } });
     renderApp({ route: "/" });
     expect(await screen.findByRole("button", { name: "Update" })).toBeVisible();
     expect(screen.queryByText(/installs automatically/)).toBeNull();
@@ -117,7 +117,7 @@ describe("Installed release updates", () => {
   });
 
   it("offers explicit retry for automatic failures and shows a later success even after dismissal", async () => {
-    const state = fixture({ ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } });
+    const state = fixture({ ...available, attempt: { version: "v0.2.0", state: "failed", error: "the download failed its certificate check." } });
     const { user, queryClient } = renderApp({ route: "/" });
     expect(await screen.findByText(/The update to v0.2.0 did not finish/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -137,6 +137,48 @@ describe("Installed release updates", () => {
     expect(await screen.findByText(/Altitude v0.3.0 installs automatically at the next quiet moment/)).toBeVisible();
   });
 
+  it("leads with Repair for a lasting cause and opens the sheet filled with it", async () => {
+    fixture({ ...available, automatic_pending: false, attempt: { version: "v0.2.0", state: "failed", error: "the download failed its certificate check." } });
+    const { user } = renderApp({ route: "/" });
+    expect(await screen.findByText("The update to v0.2.0 did not finish: the download failed its certificate check. Altitude v0.1.0 keeps running.")).toBeVisible();
+    const buttons = within(screen.getByRole("status", { name: "New version" })).getAllByRole("button").map((button) => button.textContent);
+    expect(buttons.slice(0, 2)).toEqual(["Repair", "Try again"]);
+    expect(screen.getByRole("button", { name: "Repair" })).toHaveClass("btn-primary");
+    expect(screen.getByRole("button", { name: "Try again" })).not.toHaveClass("btn-primary");
+    await user.click(screen.getByRole("button", { name: "Repair" }));
+    expect(await screen.findByRole("heading", { name: "Start a repair?" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "What’s wrong?" })).toHaveValue("The update to v0.2.0 failed: the download failed its certificate check.");
+    expect(await screen.findByText("Claude · uses your plan like a small task")).toBeVisible();
+  });
+
+  it.each([[{ passing: true }, "Try again"], [{ passing: true, retry: true }, "Repair"], [{}, "Repair"]] as const)(
+    "fills the button a cause %j calls for", async (flags, filled) => {
+      fixture({ ...available, automatic_pending: false, attempt: { version: "v0.2.0", state: "failed", error: "the connection was reset.", ...flags } });
+      renderApp({ route: "/" });
+      await screen.findByText(/did not finish: the connection was reset\./);
+      const notice = screen.getByRole("status", { name: "New version" });
+      expect(within(notice).getAllByRole("button")[0]).toHaveTextContent(filled);
+      expect(within(notice).getByRole("button", { name: filled })).toHaveClass("btn-primary");
+    });
+
+  it("says the stopped updater's own words without a cause", async () => {
+    fixture({ ...available, automatic_pending: false, attempt: { version: "v0.2.0", state: "failed" } });
+    renderApp({ route: "/" });
+    expect(await screen.findByText("The update to v0.2.0 did not finish: the updater stopped without saying why. Altitude v0.1.0 keeps running.")).toBeVisible();
+  });
+
+  it.each([[{ id: "r1", route: "app", title: "Failed update" }, "Repair running · Open"], [{ id: null, route: "terminal" }, "A repair is running in a terminal on this computer"]] as const)(
+    "gives way to the running repair %j", async (running, text) => {
+      fixture({ ...available, automatic_pending: false, attempt: { version: "v0.2.0", state: "failed", error: "the download failed its certificate check." } },
+        { running, questions: [] });
+      renderApp({ route: "/" });
+      const notice = await screen.findByRole("status", { name: "New version" });
+      await waitFor(() => expect(notice).toHaveTextContent(text));
+      expect(within(notice).queryByRole("button", { name: "Repair" })).toBeNull();
+      expect(within(notice).queryByRole("button", { name: "Try again" })).toBeNull();
+      if (running.id) expect(within(notice).getByRole("link", { name: "Open" })).toHaveAttribute("href", "/repairs/r1");
+    });
+
   it.each([null, { ...available, available: null, automatic: false, managed: "image" as const, reason: "Managed by its container image." }])(
     "does not offer native update switches for source or image-managed copies", async (update) => {
       fixture(update);
@@ -148,7 +190,7 @@ describe("Installed release updates", () => {
   );
 
   it("keeps Settings failure and retry available after the notice is dismissed", async () => {
-    fixture({ ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } });
+    fixture({ ...available, attempt: { version: "v0.2.0", state: "failed", error: "the download failed its certificate check." } });
     localStorage.setItem("altitude.update.dismissed", "v0.2.0:failed");
     const { user } = renderApp({ route: "/settings" });
     expect(await screen.findByText(/The update to v0.2.0 did not finish/)).toBeVisible();

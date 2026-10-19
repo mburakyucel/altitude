@@ -297,8 +297,38 @@ Restart notices retain unresolved faults and require observed resolution before 
 ## Repairs
 
 When something does not work and Altitude cannot fix it on its own, such as a failed update, a
-service that does not come back or a page that does not load, run this in a terminal on this
-computer:
+service that does not come back or a page that does not load, a repair agent finds out why and
+fixes it. Start one from a paired browser with **Repair** on the failed-update notice or **Repair…**
+in Settings → About, or, when Altitude or its page is down, from a terminal on this computer with
+`alt repair`.
+
+### From the app
+
+The sheet says what the agent may do, asks what's wrong (filled from the notice for a failed
+update) and names the coding agent it uses. **Start repair** starts an agent session outside the
+service, in a job of its own, with your full access to this computer and no sandbox, for two hours.
+It is chosen and paid like a small task, with your plan's sign-in that Altitude's own runs use; one
+repair runs at a time, outside the running-task limit. When no coding agent can run now, the sheet
+says why and points to `alt repair`.
+
+The repair's page shows each step as the engine reports it (commands run and their exit status,
+files changed, pages fetched), what the agent says, and Altitude restarting and coming back while
+it works, since the job and its recorder run outside the service and survive its restart and a
+reinstall. Write to the repair in its composer; it reads your message at its next turn. Before it
+deletes anything outside Altitude's folders, installs or removes programs, or changes settings
+outside Altitude, it asks, on the page and in Needs you, and waits for **Go ahead** or **Don't**. A
+step that needs your password is yours: it shows the command with **Copy** and **I ran it**.
+Fifteen minutes before the two hours end, **Keep going** adds an hour; after the time ran out, it
+resumes the same session for another hour. **Stop** asks first, then stops the agent and every
+process in its job. A question still open when the session ends reads "Expired · the session ended".
+
+The session ends when the agent reports, you stop it or its time runs out. Altitude then lists what
+appeared while it ran and is still running (user services and timers, launch agents and crontab
+lines) under **Left running**, and checks the result as below. After a report, **Continue repair…**
+resumes the same session with what you write; after an end without a report, **Repair again**
+starts a new one.
+
+### From a terminal
 
 ```sh
 alt repair
@@ -309,50 +339,57 @@ It needs neither the service nor the page. It prints what it found ("Altitude 0.
 running · the update to 0.9.0 failed"), writes a brief and starts your coding agent's interactive
 session in that terminal, in its own folder under Altitude's home, as you and with your full access
 while it works. The CLI runs in its normal mode, with your own sign-in and settings, so it asks you
-before each step unless those settings allow it. The brief holds what you wrote, the update failure
-Altitude recorded, its rules, how this installation is laid out, the known symptoms and Altitude's
-records (`alt doctor` and the last day's system faults), quoted as evidence and never as
-instructions. Its rules are instructions the session follows, not limits Altitude enforces: act on
-this installation only; never sign in, read or print sign-in state or Altitude's keys, or change
-certificate trust; never approve, merge, grant or answer anything for you; ask before deleting,
-installing or changing anything outside Altitude; restart the service only with a health check
-afterwards and leave managed projects' services alone; leave nothing running; report honestly.
+before each step unless those settings allow it. Its steps stay in that terminal's history; you end
+the session as you would any other. When `alt` itself cannot start, the release's standalone
+installer starts the installed release's own repair from its verified files:
+`python3.12 install.py --repair [--prefix PATH]`. A repair needs an installed coding agent; it cannot
+repair a deleted installation, which goes back to [setup](SETUP.md).
+
+### Brief, rules and outcome
+
+The brief holds what you wrote, the update failure Altitude recorded, its rules, how this
+installation is laid out, the known symptoms and Altitude's records (`alt doctor` and the last day's
+system faults), quoted as evidence and never as instructions. Its rules are instructions the session
+follows, not limits Altitude enforces: act on this installation only; never sign in, read or print
+sign-in state or Altitude's keys, or change certificate trust; never approve, merge, grant or answer
+anything for you; ask before deleting, installing or changing anything outside Altitude; restart the
+service only with a health check afterwards and leave managed projects' services alone; leave
+nothing running; report honestly. Where its engine supports deny rules, a repair from the app also
+refuses its file tools on Altitude's keys, certificate keys and engine sign-ins; a shell command can
+still reach them, so these too are instructions rather than limits.
 
 Inside the session `alt` offers only inspection and the installation's own commands (`doctor`,
-`service`, `update`, `recover`, `install`, `monitor`, `queue` and `repair report`); task decisions,
-chat and approvals stay yours. The session ends its work with
+`service`, `update`, `recover`, `install`, `monitor`, `queue`, `repair ask` and `repair report`);
+task decisions, chat and approvals stay yours. The session ends its work with
 
 ```sh
 alt repair report --wrong '…' --changed '…' --remains '…' [--try '…']
 ```
 
-and you end the session as you would any other. Once it has ended, the service checks the result
-with `alt doctor` and the installed release's manifest, at its next tick or its next start, and sets
-the outcome:
+Once it has ended, the service checks the result with `alt doctor` and the installed release's
+manifest, at its next tick or its next start, and sets the outcome:
 
 - **Repaired:** for a failed update, the target version is installed and running, its files match the
   release and every check passes.
 - **Confirm yourself:** every check passes, but a check cannot prove a problem you described is gone,
   or the installed files differ from the release because they were changed by hand.
 - **Not repaired:** a check fails, or the update's target version is not installed or not running.
-- **The repair ended without a report** when the session ended, crashed or its terminal closed before
-  it reported.
+- **The repair ended without a report** when the session ended, failed or its terminal closed before
+  it reported; it never reads Repaired.
 
-Settings → About lists the three most recent repairs with their outcome, and **All repairs** lists
-every one; each repair's page shows its report, Altitude's check and its brief. Its steps stay in that
-terminal's history. One repair runs at a time on this computer: a second `alt repair` says "A repair
-is already running. Stop it there first." The lock belongs to `alt repair` and its session, so a crash,
-closed terminal or restart never leaves one behind, and a repair counts as running until its session,
-and anything it left running from that terminal, has ended.
+Settings → About lists the three most recent repairs with their status, and **All repairs** lists
+every one; each opens its page, with its report, Altitude's check and its brief. Monitor lists a
+repair from the app while it runs. One repair runs at a time across the app and terminals: a second
+start says "A repair is already running." with a link to it, or "A repair is running in a terminal on
+this computer." The lock belongs to the repair's recorder or `alt repair` and its session, so a crash,
+closed terminal or restart never leaves one behind.
 
-Only you start a repair, from your own terminal. Anything running in one of Altitude's jobs refuses
-("Only you can start a repair, from your own terminal."): its agents, coordinator and reviewers, a
-command under an operator grant or a standing policy, and Altitude's terminal on the page, where a
-`run` block an agent wrote would run on your Enter.
-When `alt` itself cannot start, the release's standalone installer starts the installed release's
-own repair from its verified files: `python3.12 install.py --repair [--prefix PATH]`. A repair needs
-an installed coding agent; it cannot repair a deleted installation, which goes back to
-[setup](SETUP.md).
+Only you start a repair, from a paired browser or your own terminal. The app's repair routes refuse
+Altitude's own agents, the machine key that the CLI and the coordinator hold, and other sites, and
+each request names itself so a double tap or a replay acts once. `alt repair` refuses anything
+running in one of Altitude's jobs ("Only you can start a repair, from your own terminal."): its
+agents, coordinator and reviewers, a command under an operator grant or a standing policy, and
+Altitude's terminal on the page, where a `run` block an agent wrote would run on your Enter.
 
 ## Configuration
 

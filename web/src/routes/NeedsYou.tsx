@@ -6,14 +6,32 @@ import { ImprovementCard } from "../components/Improvement";
 import type { QuestionOrigin } from "../components/DecisionCard";
 import { useVisitReturn } from "../components/visitMemory";
 import { AlertStatus } from "../data/alerts";
-import { attentionSummary, decisionGroups, isStep } from "../data/decisions";
+import { attentionSummary, decisionGroups, isStep, openRepairQuestions } from "../data/decisions";
+import { RepairQuestion } from "../components/Repairs";
 import { useSelectedProject } from "../shell/scope";
+
+function plural(count: number, noun: string) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
 
 /** The subtitle: how much waits, across how many projects. */
 export function needsSummary(queue: Attention[]): string {
   const projects = new Set(queue.map((d) => d.project));
   const where = projects.size === 1 ? `in ${[...projects][0]}` : `across ${projects.size} projects`;
   return `${attentionSummary(queue)} ${where}`;
+}
+
+/** Altitude's own section, before the projects: a repair's questions (SPEC.md §3.8, §3.15). */
+function AltitudeSection({ overview }: { overview: Overview }) {
+  const questions = overview.repair?.questions ?? [];
+  if (!questions.length) return null;
+  return <section className="needs-project" aria-label="Altitude">
+    <h2 className="text-card-title font-semibold">Altitude</h2>
+    <div className="needs-project-cards">
+      {questions.map((question) => <RepairQuestion key={question.id} repair={question.repair} question={question}
+        ended={question.answer === "expired"} title={question.repair_title ?? "Repair"} />)}
+    </div>
+  </section>;
 }
 
 /** Section order (SPEC.md §3.8): the selected project first when it has items, then first appearance. */
@@ -83,6 +101,8 @@ export default function NeedsYou() {
         </div>
         {overview.isSuccess && overview.data.queue.length > 0 ? (
           <p className="needs-sub text-muted">{needsSummary(overview.data.queue)}</p>
+        ) : overview.isSuccess && openRepairQuestions(overview.data) ? (
+          <p className="needs-sub text-muted">{plural(openRepairQuestions(overview.data), "question")} from a repair</p>
         ) : null}
       </div>
       {overview.isError && overview.data ? <p className="text-danger" role="alert">Showing saved questions. Refresh before deciding. <button className="link" onClick={() => overview.refetch()}>Refresh</button></p> : null}
@@ -100,12 +120,13 @@ export default function NeedsYou() {
         </p>
       ) : overview.data!.queue.length === 0 ? (
         <>
-          <p className="text-muted">Nothing needs you.</p>
+          {overview.data!.repair?.questions.length ? <AltitudeSection overview={overview.data!} /> : <p className="text-muted">Nothing needs you.</p>}
           <Suggestions suggestions={overview.data!.suggestions} selected={selected} />
         </>
       ) : (
         <>
           <div className="needs-list" aria-label="Decisions" ref={list}>
+            <AltitudeSection overview={overview.data!} />
             {projectOrder(overview.data!.queue, selected).map((project) => {
               const items = overview.data!.queue.filter((decision) => decision.project === project);
               const open = !collapsed.has(project);
