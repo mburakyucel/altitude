@@ -534,7 +534,7 @@ def row_schedule() -> dict:
     def notice() -> str:
         """What `alt queue` prints to a terminal before its own output: the once-a-day line, if due."""
         shown = shell(f"/usr/bin/env -u ALTITUDE_ACTOR /usr/bin/script -q /dev/null {ALT} queue", timeout=60).stdout
-        return next((line.strip() for line in shown.splitlines() if "is available" in line), "")
+        return next((line[line.index("Altitude"):].strip() for line in shown.splitlines() if "is available" in line), "")
 
     settings = ROOT / "settings.json"
     current = json.loads(settings.read_text()) if settings.exists() else {}
