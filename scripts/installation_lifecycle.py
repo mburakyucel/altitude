@@ -39,6 +39,7 @@ import sys
 import tarfile
 import threading
 import time
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
 
@@ -1370,7 +1371,8 @@ class MacLifecycle(Lifecycle):
         """The published baseline installed through its public command, state made through the app and caches an outside
         process writes into the installed release, then the baseline's own daemon automatically installing the later
         candidate, published or built from source, which must leave those caches and keep that state and read it: the
-        same paired device, the operator's name and its machine settings, TLS identity, configuration and data."""
+        same paired device, the operator's name and its machine settings, a project with a planned task and its
+        conversation, TLS identity, configuration and data."""
         archive, checksum, package, before = self.prepare()
         _, _, candidate, after = self.archive(self.candidate, "candidate")
         self.engines("candidate-engine-settings", candidate)
@@ -1378,8 +1380,9 @@ class MacLifecycle(Lifecycle):
             "The published baseline's own files and the candidate's, served to the offline guest under GitHub's release "
             "addresses on this machine, "
             "not downloaded from GitHub by the guest; the 12-hour check schedule is advanced by rewriting update.json",
-            "Application state is a paired device, a machine setting, configuration, TLS identity and fictional data, "
-            "made under a throwaway HOME with fixture engines; no project, task or live provider",
+            "Application state is a paired device, a machine setting, a project with a planned task and its "
+            "conversation, configuration, TLS identity and fictional data, made under a throwaway HOME with fixture "
+            "engines; no task ran and no live provider was used",
             "The app is driven by the requests its page sends, without a browser; no login/logout, restart or sleep",
         ]
         repository = re.search(r"^REPOSITORY='https://github\.com/([^']+)'$", (self.baseline / "install.sh").read_text(), re.M)
@@ -1405,7 +1408,20 @@ class MacLifecycle(Lifecycle):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("Fictional retained installation acceptance data\n")
             retained = {path: digest(path) for path in [*sentinels, self.settings, *self.tls.glob("*")] if path.is_file()}
-            write_json(self.results / "state-before.json", {"device": device, "machine": self.request("/api/machine")})
+            # A project, a task and its conversation written by the baseline's own code (#226). The task is planned, so
+            # it waits and never dispatches, and every engine stays a refusing fixture.
+            history = ("import json,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); "
+                       "from altitude import config, tasks\n"
+                       "with config.add_project('fictional',path=Path(sys.argv[2])): pass\n"
+                       "task=tasks.new('fictional','Fictional retained task','Fictional brief kept across the update.',"
+                       "wait='Fictional wait kept across the update')\n"
+                       "tasks.message('fictional',task['slug'],config.OPERATOR_ACTOR,'Fictional message kept across the update.')\n"
+                       "print(json.dumps(task['slug']))\n")
+            slug = json.loads(self.run("history", sys.executable, "-B", "-c", history, self.prefix / "current",
+                                       self.home / "Projects/fictional").splitlines()[-1])
+            task_before = self.history(slug)
+            write_json(self.results / "state-before.json", {"device": device, "machine": self.request("/api/machine"),
+                                                            "task": task_before})
             # Upgrades from before v0.7.0: the machine key is replaced (#947) and the voice runtime that sat in the
             # worker-writable home is removed (#940). Later baselines keep their key; the planted folder goes either way.
             access = self.home / ".config/altitude/access"
@@ -1437,9 +1453,9 @@ class MacLifecycle(Lifecycle):
             self.doctor("updated", after)
             write_json(self.results / "automatic-update-record.json", self.record())
             # The candidate reads what the baseline wrote, through the device the baseline paired.
-            devices, machine = self.request("/api/devices"), self.request("/api/machine")
+            devices, machine, task_after = self.request("/api/devices"), self.request("/api/machine"), self.history(slug)
             key_after = {"sha256": digest(access / "machine.key"), "record": read_json(access / "key.json")}
-            write_json(self.results / "state-after.json", {"devices": devices, "machine": machine,
+            write_json(self.results / "state-after.json", {"devices": devices, "machine": machine, "task": task_after,
                                                            "key": {"before": key_before, "after": key_after},
                                                            "voice_folder_left": voice.exists()})
             earlier = (key_before["record"] or {}).get("generation") != key_after["record"]["generation"]
@@ -1448,6 +1464,7 @@ class MacLifecycle(Lifecycle):
             assert not voice.exists(), sorted(str(path.relative_to(voice)) for path in voice.rglob("*"))
             assert devices["current"] == device, (devices, device)
             assert machine["operator"] == operator, machine
+            assert task_after == task_before, (task_before, task_after)
             installed_now = self.request("/api/overview")["update"]["installed"]
             assert installed_now == {"version": after["version"],
                                      "notes": f"https://github.com/{self.repository}/releases/tag/{after['version']}"}, installed_now
@@ -1460,7 +1477,37 @@ class MacLifecycle(Lifecycle):
         downloads = sorted(item["path"].rsplit("/", 1)[1] for item in server.requests
                            if f"/releases/download/{after['version']}/" in item.get("path", ""))
         assert downloads == sorted([f"altitude-{after['version']}.tar.gz", f"altitude-{after['version']}.tar.gz.sha256"]), downloads
+        self.forget(slug)
         self.uninstall(retained)
+
+    def history(self, slug: str) -> dict:
+        """The fictional project's planned task as the app reads it: its title, its wait and its conversation."""
+        assert self.request("/api/project/fictional")["name"] == "fictional"
+        view = self.request(f"/api/task/fictional/{slug}")
+        seen = {"title": view["title"], "state": view["state"], "wait": (view.get("planned_wait") or {}).get("reason"),
+                "messages": [[row["id"], row["role"], row["text"]] for row in view.get("messages") or []]}
+        assert seen["title"] == "Fictional retained task" and seen["state"] == "queued", seen
+        assert seen["wait"] == "Fictional wait kept across the update", seen
+        assert [text for _, _, text in seen["messages"]] == ["Fictional message kept across the update."], seen
+        return seen
+
+    def forget(self, slug: str):
+        """The operator rejects the kept task and removes its project through the app, as uninstall keeps the
+        application while a registered project can still use its hooks."""
+        assert self.request("/api/task/action", {"project": "fictional", "slug": slug, "action": "reject"})["ok"]
+        deadline = time.monotonic() + 60
+        while self.request(f"/api/task/fictional/{slug}")["state"] != "rejected":
+            assert time.monotonic() < deadline, "The rejection did not finish"
+            time.sleep(1)
+        while True:
+            try:
+                assert self.request("/api/project/remove", {"name": "fictional"})["ok"]
+                break
+            except HTTPError as exc:  # 409 while the rejection's own task operation finishes
+                assert exc.code == 409 and time.monotonic() < deadline, exc
+                time.sleep(1)
+        managed = [row["name"] for row in self.request("/api/overview")["projects"] if row["managed"]]
+        assert "fictional" not in managed, managed
 
     def uninstall(self, retained: dict):
         port = int(self.env["ALTITUDE_PORT"])
