@@ -13,7 +13,7 @@ const ICONS: Record<Tab, string> = {
   monitor: "M3 15a7 7 0 1 1 14 0M10 15l3-5",
 };
 
-/** Which tab the current page belongs to; a task or decision page pushed over a tab keeps that tab lit. */
+/** Which tab the current page belongs to; a task, decision or Settings page pushed over a tab keeps that tab lit. */
 export function activeTab(pathname: string, state: unknown, search: string): Tab {
   if (pathname === "/") return "needs";
   if (pathname.startsWith("/monitor")) return "monitor";
@@ -23,6 +23,12 @@ export function activeTab(pathname: string, state: unknown, search: string): Tab
   }
   if (/^\/projects\/[^/]+\/decisions\//.test(pathname)) {
     return from === "work" || from === "chat" ? from : "needs";
+  }
+  // Settings keeps the tab it was opened from lit, as Needs you's alert link does.
+  const opener = state && typeof state === "object" ? (state as { settingsFrom?: unknown }).settingsFrom : null;
+  if (pathname.startsWith("/settings") && typeof opener === "string" && !opener.startsWith("/settings")) {
+    const [path = "", query = ""] = opener.split("?");
+    return activeTab(path, null, query);
   }
   return new URLSearchParams(search).get("tab") === "work" ? "work" : "chat";
 }

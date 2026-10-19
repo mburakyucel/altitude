@@ -537,7 +537,7 @@ export function useAlertStatus(): { label: string; tone?: "off" | "danger" } {
   if (state === "blocked") return { label: "Alerts blocked", tone: "off" };
   if (state === "off") return { label: "Alerts off", tone: "off" };
   if (!pushed) return { label: "Alerts while open" };
-  return refused ? { label: "Alerts refused", tone: "danger" } : { label: "Alerts on" };
+  return refused ? { label: "Push refused", tone: "danger" } : { label: "Alerts on" };
 }
 
 const BELL = "M5 13.5V9a5 5 0 0 1 10 0v4.5l1.5 1.5h-13zM8.5 17.5a1.7 1.7 0 0 0 3 0";
@@ -546,7 +546,8 @@ const BELL = "M5 13.5V9a5 5 0 0 1 10 0v4.5l1.5 1.5h-13zM8.5 17.5a1.7 1.7 0 0 0 3
 export function AlertStatus() {
   const { label, tone } = useAlertStatus();
   return (
-    <Link className="btn needs-alerts" to="/settings#notifications" state={{ settingsFrom: "/" }} data-tone={tone}>
+    <Link className="btn needs-alerts" to="/settings#notifications" state={{ settingsFrom: "/" }} data-tone={tone}
+      aria-label={`${label}, alert settings`}>
       <svg aria-hidden viewBox="0 0 20 20" width="16" height="16">
         <path d={BELL} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
         {tone === "off" ? <path d="M3.5 3.5l13 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /> : null}
