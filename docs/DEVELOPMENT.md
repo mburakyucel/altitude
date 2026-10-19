@@ -1787,7 +1787,8 @@ the saved name, read the project and the task's title, state, wait and conversat
 baseline did, and keep configuration, TLS identity and data unchanged before uninstall. A baseline
 from before v0.7.0 must also have its machine key replaced (#947); a later one keeps it. Fictional
 files of an earlier voice runtime planted in `~/.altitude/speech` must be gone once the candidate has
-started (#940).
+started (#940). Before uninstall, the task is rejected and the project removed through the app, since
+uninstall keeps the application while a project is registered.
 
 `RESULTS/macos-vm.json` records the source and harness commits, this Mac's macOS version, free disk
 and load average before and after, the guest's sizing, each image's restore image, macOS build,
