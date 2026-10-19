@@ -655,7 +655,13 @@ temporary folders, a stand-in for Altitude's port, other sockets, the keychain, 
 supervisor, a fixture app opened through LaunchServices, Apple Events, the Simulator service, the Desktop and
 mounted volumes, while system
 files, name resolution and its socket, other loopback ports, Git and its own sockets work, including
-one nested in a later folder, as a run's temporary folder is.
+one nested in a later folder, as a run's temporary folder is. `--only simulator-escapes`, which runs only when named, as the
+operator outside any sandbox (in a task, with `alt task run` under an operator grant), boots an
+iPhone in a private Simulator device set, as the operator boots one, and removes the set afterwards.
+Outside any profile, its Web Inspector socket must answer and a program spawned in it must write in
+the home folder; from the worker profile and the validation profile, both must be out of reach. It
+records whether Xcode's device services list devices from each; launching a program through them
+needs a paired device, which the probe does not have.
 
 A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),

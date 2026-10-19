@@ -595,6 +595,83 @@ def validation_confinement():
             f"reach; system files, name resolution, other loopback ports, own sockets in every root and git work ({xcode}{evidence})")
 
 
+# What a process tries against a Simulator iPhone booted outside its profile, as the operator boots one: the phone's
+# Web Inspector socket, a program spawned in the phone writing a marker in the home folder, and Xcode's device
+# services. Prints which succeeded.
+DEVICE_ATTEMPTS = r"""
+import json, socket, subprocess, sys
+inspector, devices, marker = sys.argv[1:4]
+seen = {}
+def attempt(name, action):
+    try:
+        action()
+        seen[name] = True
+    except Exception:
+        seen[name] = False
+def inspect():
+    with socket.socket(socket.AF_UNIX) as probe:
+        probe.settimeout(5)
+        probe.connect(inspector)
+def run(*argv):
+    subprocess.run(argv, check=True, capture_output=True, timeout=60)
+attempt("inspector", inspect)
+attempt("spawn", lambda: run("xcrun", "simctl", "--set", devices, "spawn", "booted", "/bin/sh", "-c", f"echo x > {marker}"))
+attempt("device-services", lambda: run("xcrun", "devicectl", "list", "devices", "--timeout", "10"))
+print(json.dumps(seen))
+"""
+
+
+@row
+def simulator_escapes():
+    """#705's residual paths: an iPhone booted outside any profile, in a private device set removed afterwards. Outside,
+    its Web Inspector socket answers and a program spawned in it writes in the home folder; from the worker profile and
+    the validation profile both must be out of reach. Xcode's device services are recorded as listed or not; launching
+    through them needs a paired device, which this probe does not have."""
+    if not DARWIN or "simulator-escapes" not in sys.argv:
+        return None  # Simulator runs on macOS only, and boots only when named
+    from altitude import simulator
+    try:
+        chosen = simulator.plan()
+    except ValueError:
+        return None  # no Xcode or iOS runtime: nothing to escape through
+    marker = Path.home() / f".altitude-probe-{NONCE}-spawned"
+    with tempfile.TemporaryDirectory() as folder, socket.socket() as reserved:
+        root = Path(folder).resolve()
+        devices = root / "devices"
+        reserved.bind(("127.0.0.1", 0))  # a stand-in for Altitude's port, which the validation profile names
+        seen = {}
+        try:
+            inspector = simulator.Phone(devices, chosen, root / "walks").boot()
+            argv = [sys.executable, "-I", "-c", DEVICE_ATTEMPTS, inspector, str(devices), str(marker)]
+            for where, command in (
+                    ("outside", argv),
+                    ("worker", platform.job_command(name("simulator"), argv, env(), writable=(root,), runtime_max=150)),
+                    ("validation", platform.validation_command(
+                        (root,), root / "validation.log", reserved.getsockname()[1], argv,
+                        {"HOME": str(root), "PATH": "/usr/bin:/bin", "LANG": "C"}))):
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=200)
+                lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
+                seen[where] = {**(json.loads(lines[-1]) if lines else {"error": result.stderr.strip()[-300:]}),
+                               "written": marker.exists()}
+                marker.unlink(missing_ok=True)
+        finally:
+            left = simulator.remove(devices)
+            marker.unlink(missing_ok=True)
+        check(left is None, f"the probe's Simulator device set stays: {left}")
+        outside = seen.get("outside", {})
+        check(outside.get("inspector") and outside.get("spawn") and outside.get("written"),
+              f"outside any profile {outside}, so the attempts inside show nothing")
+        for where in ("worker", "validation"):
+            found = seen.get(where, {})
+            check(found.get("inspector") is False and found.get("spawn") is False and found.get("written") is False,
+                  f"{where} profile: {found}")
+    services = ", ".join(f"{where} {'listed' if seen[where].get('device-services') else 'refused'}"
+                         for where in ("outside", "worker", "validation"))
+    return (f"an iPhone booted outside any profile ({chosen['device']}, {chosen['runtime']}): its Web Inspector socket and "
+            f"a program spawned in it are out of reach from the worker and validation profiles; Xcode's device services: "
+            f"{services}; launching through them needs a paired device, uncovered here ({chosen['xcode']})")
+
+
 @row
 def foreign_coalition():
     """Stop's member scan skips only exited processes, so an ordinary user must read every other user's coalition."""
