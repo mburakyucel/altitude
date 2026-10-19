@@ -779,6 +779,21 @@ select it and click **−**. `tccutil` is not needed and is best avoided: these 
 program rather than an app bundle, and `tccutil reset` without a bundle identifier clears that
 permission for every app on the Mac.
 
+## Stored sign-ins and agents
+
+The agents Altitude runs never see the sign-ins and keys your other programs keep in your home folder: SSH and GPG
+keys, the GitHub, GitLab, cloud, Kubernetes and container registry logins, package-publishing tokens, Git's saved
+passwords, password stores and the desktop keyring's files. On a Mac they also cannot ask the keychain for anything.
+You, your apps and repairs keep using all of them as before; the
+[isolation reference](ARCHITECTURE.md#isolation-and-landing) lists every place.
+
+A worker still reaches GitHub: its Git fetches and pushes over HTTPS with your GitHub CLI sign-in, even when a
+project's remote is named over SSH, so keep `gh auth status` signed in. If your Git settings send GitHub's HTTPS
+address to SSH (an `insteadOf` rule for `https://github.com/`), workers cannot push; remove that rule or scope it
+to your own shell. Agents cannot reach other hosts over SSH, sign commits, use cloud or cluster tools, publish
+packages or read private registries set up in your home. Secrets kept in shell start-up files, Git settings or
+shell histories stay readable to agents; keep secrets out of them.
+
 ## Validation runs
 
 Task owners run installation VMs, containers and ordinary sandboxed-browser checks through the

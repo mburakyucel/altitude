@@ -180,31 +180,17 @@ class TestSandboxedJob(AltitudeCase):
         self.assertEqual((operator / "auth.json").read_text(), "fictional sign-in", "the host's folder is unchanged")
 
 
-class TestOperatorsClaudeFolder(AltitudeCase):
-    """The operator's Claude folder and state file, named through the engine seam (`engines.operator_places`), in the
-    platform's own sandbox: bubblewrap on Linux, where `make sandbox-vm` runs it, and Seatbelt on macOS. A Claude
-    worker reads only what its launch reopens: the entries its own folder links to, the project's notes and a session
-    it resumes for the first time."""
+class HomeSandboxCase(AltitudeCase):
+    """A fictional home with the operator's own places, seen from a job in the platform's own sandbox: bubblewrap on
+    Linux, where `make sandbox-vm` runs it, and Seatbelt on macOS."""
 
     def setUp(self):
         super().setUp()
         # A dash, a dot and a space, which a profile must quote and match as written.
         self.home = Path(os.path.realpath(self.tmp)) / "fictional a-b.c home"
-        self.operator = self.home / ".claude"
-        for name, text in ((".credentials.json", "fictional sign-in"), ("settings.json", "fictional settings"),
-                           ("skills/fixture/SKILL.md", "fictional skill"),
-                           ("projects/-repo/memory/MEMORY.md", "fictional notes"),
-                           ("projects/-repo/sid-old.jsonl", "fictional resumed session"),
-                           ("projects/-repo/sid-other.jsonl", "fictional conversation")):
-            (self.operator / name).parent.mkdir(parents=True, exist_ok=True)
-            (self.operator / name).write_text(text)
-        for name in (".claude.json", ".claude.json.tmp.1.fixture", "dotfiles/claude.json"):
-            (self.home / name).parent.mkdir(parents=True, exist_ok=True)
-            (self.home / name).write_text("fictional state")
-        (self.home / ".claude.json.backup.fixture").symlink_to(self.home / "dotfiles/claude.json")
+        self.home.mkdir()
         self.patch(platform.Path, "home", return_value=self.home)
         self.patch(config, "HOME", self.home)
-        self.patch(engines.claude, "OPERATOR_HOME", self.operator)
         self.work = Path(os.path.realpath(self.tmp)) / "work"
         self.work.mkdir()
         self.temporary = tempfile.mkdtemp(prefix="altitude-", dir=self.tmp)
@@ -238,6 +224,28 @@ class TestOperatorsClaudeFolder(AltitudeCase):
         out, err = job.communicate(timeout=60)
         self.assertEqual(job.returncode, 0, err)
         return json.loads(out)
+
+
+class TestOperatorsClaudeFolder(HomeSandboxCase):
+    """The operator's Claude folder and state file, named through the engine seam (`engines.operator_places`). A
+    Claude worker reads only what its launch reopens: the entries its own folder links to, the project's notes and a
+    session it resumes for the first time."""
+
+    def setUp(self):
+        super().setUp()
+        self.operator = self.home / ".claude"
+        for name, text in ((".credentials.json", "fictional sign-in"), ("settings.json", "fictional settings"),
+                           ("skills/fixture/SKILL.md", "fictional skill"),
+                           ("projects/-repo/memory/MEMORY.md", "fictional notes"),
+                           ("projects/-repo/sid-old.jsonl", "fictional resumed session"),
+                           ("projects/-repo/sid-other.jsonl", "fictional conversation")):
+            (self.operator / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.operator / name).write_text(text)
+        for name in (".claude.json", ".claude.json.tmp.1.fixture", "dotfiles/claude.json"):
+            (self.home / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.home / name).write_text("fictional state")
+        (self.home / ".claude.json.backup.fixture").symlink_to(self.home / "dotfiles/claude.json")
+        self.patch(engines.claude, "OPERATOR_HOME", self.operator)
 
     def claude_files(self, own: Path) -> dict:
         return {"sign-in": self.operator / ".credentials.json", "state": self.home / ".claude.json",
@@ -313,6 +321,65 @@ class TestOperatorsClaudeFolder(AltitudeCase):
         self.assertEqual(seen, {"sign-in": errno.EPERM, "conversation": errno.EPERM,
                                 "linked settings": "fictional settings", "write": errno.EPERM, "listing": errno.EPERM})
         self.assertEqual((operator / "config.toml").read_text(), "fictional settings", "the host's folder is unchanged")
+
+
+class TestOperatorsCredentials(HomeSandboxCase):
+    """The operator's stored credentials in the home (`platform.credential_places`), each holding a fictional key: a
+    job reads none of them, also through a link, while a worker's GitHub CLI and Git still sign in to GitHub with the
+    task's token (`engines.task_tool_env`)."""
+
+    #: The places that are files; the others are folders.
+    FILES = {".git-credentials", ".config/git/credentials", ".netrc", ".docker/config.json",
+             ".config/containers/auth.json", ".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml",
+             ".gem/credentials", ".terraform.d/credentials.tfrc.json", ".vault-token"}
+
+    def setUp(self):
+        super().setUp()
+        self.keys = {}
+        for place in platform.CREDENTIAL_HOME:
+            key = self.home / place if place in self.FILES else self.home / place / "fixture-key"
+            key.parent.mkdir(parents=True, exist_ok=True)
+            key.write_text("fictional key")
+            self.keys[place] = key
+        # A dotfiles manager's link: hidden where it leads.
+        (self.home / "dotfiles").mkdir()
+        (self.home / ".ssh").rename(self.home / "dotfiles/ssh")
+        (self.home / ".ssh").symlink_to(self.home / "dotfiles/ssh")
+
+    def test_a_job_reads_none_of_the_operators_stored_credentials(self):
+        files = {**self.keys, "linked ssh, by the target": self.home / "dotfiles/ssh/fixture-key"}
+        seen = self.job(files, self.home / ".ssh/written", self.home / ".ssh", hidden=platform._operator_places())
+        # Linux shows a hidden folder empty and refuses a hidden file; Seatbelt refuses both.
+        darwin = NATIVE_PLATFORM == "darwin"
+        self.assertEqual(seen, {**{name: errno.EPERM if darwin else errno.EACCES if name in self.FILES else errno.ENOENT
+                                   for name in files},
+                                "write": errno.EPERM if darwin else "written",
+                                "listing": errno.EPERM if darwin else []})
+        self.assertFalse((self.home / "dotfiles/ssh/written").exists(), "a write lands in the job's own empty folder")
+        for key in self.keys.values():
+            self.assertEqual(key.read_text(), "fictional key", "the host's files are unchanged")
+
+    @unittest.skipUnless(shutil.which("gh") and shutil.which("git"), "the GitHub CLI and Git")
+    def test_a_workers_github_cli_and_git_sign_in_to_github_with_the_tasks_token(self):
+        (self.home / ".gitconfig").write_text("[credential]\n\thelper = store\n")  # the operator's own helper
+        env = engines.task_tool_env({"HOME": str(self.home), "PATH": os.environ["PATH"], "GH_TOKEN": "fictional-token"},
+                                    self.work / "scratch")
+        probe = ("import json, subprocess\n"
+                 "def run(*args, text=None):\n"
+                 "    done = subprocess.run(args, input=text, capture_output=True, text=True)\n"
+                 "    return [done.returncode, done.stdout.strip()]\n"
+                 "print(json.dumps({'token': run('gh', 'auth', 'token'),\n"
+                 "                  'url': run('git', 'ls-remote', '--get-url', 'git@github.com:fixture/demo.git'),\n"
+                 "                  'credential': run('git', 'credential', 'fill',\n"
+                 "                                    text='protocol=https\\nhost=github.com\\npath=fixture/demo.git\\n\\n')}))\n")
+        done = subprocess.run([*self.sandbox(hidden=platform._operator_places()), sys.executable, "-I", "-c", probe],
+                              capture_output=True, text=True, timeout=60, cwd=self.work, env=env)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        seen = json.loads(done.stdout)
+        self.assertEqual(seen["token"], [0, "fictional-token"], "gh keeps settings of its own, beside the hidden ones")
+        self.assertEqual(seen["url"], [0, "https://github.com/fixture/demo.git"])
+        self.assertEqual(seen["credential"], [0, "protocol=https\nhost=github.com\nusername=x-access-token\n"
+                                                 "password=fictional-token"])
 
 
 class TestJobTemporaryFolder(AltitudeCase):

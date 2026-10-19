@@ -187,6 +187,59 @@ class TestCredentialsHidden(AltitudeCase):
         self.assertEqual(push.KEY.parent, access.DIR, "no task can sign a wake for the operator's devices")
         self.assertNotEqual(tls.record().parent, access.DIR, "a sandboxed owner's alt still finds Altitude")
 
+    def test_every_altitude_sandbox_refuses_the_operators_stored_credentials_and_the_macos_keychain(self):
+        home = Path(os.path.realpath(self.tmp)) / "fictional home"
+        self.patch(platform.Path, "home", return_value=home)
+        keys = self.tmp / "dotfiles" / "ssh"  # a key folder a dotfiles manager links in
+        keys.mkdir(parents=True)
+        (home / ".docker").mkdir(parents=True)
+        (home / ".ssh").symlink_to(keys)
+        (home / ".aws").mkdir()
+        for name in (".netrc", ".docker/config.json"):
+            (home / name).write_text("fictional")
+        places = platform.credential_places()
+        self.assertEqual(places, tuple(str(home / place) for place in platform.CREDENTIAL_HOME))
+        hidden = platform._operator_places()
+        resolved = [os.path.realpath(place) for place in places]
+        self.assertLessEqual(set(resolved), set(hidden), "present or not, and where a link leads")
+        self.assertIn(os.path.realpath(keys), hidden)
+        self.assertNotIn(str(home / ".docker"), hidden, "Docker's other files stay readable")
+
+        args = platform.bubblewrap_profile([str(self.tmp / "work")], temporary=str(self.tmp / "job-tmp"), hidden=hidden)
+        pairs = [args[n:n + 3] for n in range(len(args))]
+        for folder in (keys, home / ".aws"):
+            self.assertIn(["--tmpfs", os.path.realpath(folder)], [pair[:2] for pair in pairs])
+        for file in (".netrc", ".docker/config.json"):
+            self.assertIn(["--ro-bind", "/dev/null", str(home / file)], pairs)
+        self.assertNotIn(str(home / ".kube"), args, "a place absent at launch gets no mount, which would create it")
+
+        profile = platform.seatbelt_profile([str(self.tmp / "work")], temporary=str(self.tmp / "job-tmp"),
+                                            hidden=hidden)
+        for place in (os.path.realpath(keys), str(home / ".kube"), str(home / ".netrc")):
+            self.assertIn(f'(deny file-read* file-write* (subpath "{place}"))', profile)
+        self.assertIn('(global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))', profile,
+                      "the keychain answers no job")
+
+        present = platform.operator_paths(places)
+        self.assertLessEqual({os.path.realpath(keys), str(home / ".aws"), str(home / ".netrc")}, set(present))
+        self.assertNotIn(str(home / ".kube"), present, "Codex's sandbox names only paths present")
+        worktree = self.tmp / "worktree"
+        worktree.mkdir()
+        # This case's home lies in the shared temporary folder, which a Codex profile refuses whole.
+        with mock.patch.object(platform, "operator_paths", return_value=["/home/fictional/.ssh"]) as named:
+            rules = next(s for s in engines.codex_l3_permissions(worktree, project=self.project) if ".filesystem=" in s)
+        self.assertLessEqual(set(places), set(named.call_args.args[0]))
+        self.assertIn('"/home/fictional/.ssh"="deny"', rules)
+
+    def test_a_workers_git_reaches_github_over_https_with_the_github_cli(self):
+        env = engines.task_tool_env({"HOME": "/fixture/home"}, self.tmp / "scratch")
+        self.assertTrue(env["GH_CONFIG_DIR"].startswith(str(self.tmp / "scratch")), "the CLI's settings are the task's")
+        count = int(env["GIT_CONFIG_COUNT"])
+        settings = [(env[f"GIT_CONFIG_KEY_{n}"], env[f"GIT_CONFIG_VALUE_{n}"]) for n in range(count)]
+        self.assertEqual(settings, list(engines.common.GITHUB_GIT))
+        helpers = [value for key, value in settings if key == "credential.https://github.com.helper"]
+        self.assertEqual(helpers, ["", "!gh auth git-credential"], "the operator's own helpers are cleared first")
+
 
 class TestBubblewrapProfile(AltitudeCase):
     """Altitude's Linux sandbox as the arguments bubblewrap receives; tests/test_session_sockets.py runs it."""
