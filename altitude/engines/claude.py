@@ -338,7 +338,7 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
                  timeout: int = config.L3_TURN_TIMEOUT, restricted: bool = False,
                  add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None,
                  images: list[dict] | tuple = (),
-                 sends: Path | None = None, on_send=None, home: Path) -> dict:
+                 sends: Path | None = None, on_send=None, home: Path, sockets: tuple[Path, ...] = ()) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
     raw_stdout/raw_stderr; `limited` (scope and optional reset) when an allowance is exhausted — the call is not even
     made while a hold is in force.
@@ -347,7 +347,8 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
     at that point of the turn with the reply streamed since the previous one, and `text` holds only what follows.
 
     The turn runs as the job `unit`, which holds every process it starts and ends it after `timeout` seconds, with
-    `home` as its own Claude folder. `on_start(pid)` is called the moment the job's launcher exists."""
+    `home` as its own Claude folder, reaching only the Unix `sockets` outside its folders (a coordinator's broker).
+    `on_start(pid)` is called the moment the job's launcher exists."""
     config.task_effort("claude", effort, role="l3")
     content = common._engine_input("claude", prompt, images)
     held = common.usage_hold()
@@ -386,7 +387,7 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
     if effort is not None:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     driver = platform.job_command(unit, common._driver_command(), common.launch_env(env), runtime_max=timeout,
-                                  writable=(Path(cwd), config.ROOT, Path(home)))
+                                  writable=(Path(cwd), config.ROOT, Path(home)), sockets=sockets)
     env = common.launch_env(env, retain_user_bus=True)
     # prompt goes through the driver's input: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(driver, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

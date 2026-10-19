@@ -378,6 +378,17 @@ class Installation(InstallationCase):
                 continue
             self.assertEqual(checks["agent sandbox"]["state"], "unavailable")
             self.assertIn("Install bubblewrap", checks["agent sandbox"]["detail"])
+            self.assertNotIn("agent sandbox abstract sockets", checks, "nothing is confined without bubblewrap")
+            for scoped, state, detail in ((True, "configured", "Agents in Altitude's sandbox reach only abstract sockets "
+                                           "they made."), (False, "unavailable", platform.UNSCOPED)):
+                tool = {"enabled": True, "command": None, "scoped": scoped, "detail": "/usr/bin/bwrap"}
+                with mock.patch.object(platform, "sandbox_tool", return_value=tool), \
+                        mock.patch.object(installation, "_gh_signed_in", return_value=False), \
+                        mock.patch.object(installation.shutil, "which", return_value=None), \
+                        mock.patch.object(tls, "info", side_effect=OSError("fixture: no certificate")):
+                    row = {check["name"]: check for check in installation.doctor()["checks"]}["agent sandbox abstract sockets"]
+                self.assertEqual(row, {"name": "agent sandbox abstract sockets", "state": state, "detail": detail},
+                                 "a kernel without Landlock's abstract-socket scope says what stays reachable")
             self.assertEqual(checks["runs without a login"],
                              {"name": "runs without a login", "state": "configured" if lingers else "unavailable",
                               "detail": "fixture lingering"})

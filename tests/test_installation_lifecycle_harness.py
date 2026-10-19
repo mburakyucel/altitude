@@ -1439,6 +1439,20 @@ class TestInstallationMacosVm(AltitudeCase):
         self.assertFalse((self.tmp / "results").exists())
 
 
+class TestSandboxVm(AltitudeCase):
+    """The sandbox lane's guest: real bubblewrap, admitted to user namespaces as on an Ubuntu desktop, on a kernel with
+    Landlock's abstract-socket scope; no VM, image download or KVM access."""
+
+    def test_guest_installs_bubblewrap_its_profile_and_the_newer_kernel_while_online(self):
+        from scripts import installation_vm as vm, sandbox_vm
+        data = vm.user_data("ssh-ed25519 AAAA fixture", sandbox_vm.PACKAGES, sandbox_vm.COMMANDS)
+        self.assertIn("packages: [bubblewrap, apparmor-profiles, linux-generic-hwe-24.04]\n", data)
+        commands = [json.loads(line[4:]) for line in data.split("runcmd:\n", 1)[1].splitlines() if line.startswith("  - ")]
+        self.assertEqual(commands, list(sandbox_vm.COMMANDS))
+        self.assertTrue(all("bwrap-userns-restrict" in command for command in commands), "Ubuntu's own profile")
+        self.assertNotIn("runcmd:", vm.user_data("ssh-ed25519 AAAA fixture"), "the installation lane runs no commands")
+
+
 class TestLinuxVmMac(AltitudeCase):
     def test_guest_starts_its_clock_and_ssh_relay_before_system_initialization(self):
         from scripts import linux_vm_mac as vm

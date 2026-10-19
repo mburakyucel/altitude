@@ -174,7 +174,7 @@ class TestPrerequisites(OnboardingCase):
         self.assertEqual(one["agents"]["label"], "Install a coding agent: Claude")
 
     def test_the_agent_sandbox_row_follows_the_agents_that_need_it(self):
-        missing = {"enabled": False, "command": "sudo apt install bubblewrap", "detail": "Install bubblewrap"}
+        missing = {"enabled": False, "command": "sudo apt install bubblewrap", "scoped": True, "detail": "Install bubblewrap"}
         fresh = self.items(gh=True, signed={"claude": False, "codex": False}, installed={"claude": False, "codex": False},
                            sandbox=missing)
         self.assertEqual(list(fresh), ["github", "agents", "sandbox", "git"])
@@ -196,8 +196,12 @@ class TestPrerequisites(OnboardingCase):
                              sandbox={**missing, "command": None})
         self.assertIn("package manager", unknown["sandbox"]["detail"])
         ready = self.items(gh=True, signed={"claude": True, "codex": True}, installed={"claude": True, "codex": True},
-                           sandbox={"enabled": True, "command": "sudo apt install bubblewrap", "detail": "/usr/bin/bwrap"})
-        self.assertEqual((ready["sandbox"]["state"], ready["sandbox"]["command"]), ("met", None))
+                           sandbox={**missing, "enabled": True, "detail": "/usr/bin/bwrap"})
+        self.assertEqual((ready["sandbox"]["state"], ready["sandbox"]["command"], ready["sandbox"]["detail"]), ("met", None, None))
+        older = self.items(gh=True, signed={"claude": True, "codex": True}, installed={"claude": True, "codex": True},
+                           sandbox={**missing, "enabled": True, "scoped": False, "detail": "/usr/bin/bwrap"})
+        self.assertEqual((older["sandbox"]["state"], older["sandbox"]["detail"]), ("met", platform.UNSCOPED),
+                         "a kernel without the abstract-socket scope still runs agents and says what stays reachable")
 
     def test_a_github_cli_that_cannot_land_shows_the_command_that_replaces_it(self):
         items = self.items(gh=True, lacks=("baseRefOid",), signed={"claude": True, "codex": True},

@@ -410,9 +410,9 @@ class TestL3CheckoutConfinement(AltitudeCase):
         root_write = f'{json.dumps(str(config.ROOT.resolve()))}="write"'
         self.assertFalse(any(root_write in value for value in settings),
                          "Altitude state is writable only through the daemon verb socket")
-        bus = f"/run/user/{l3.os.getuid()}/bus"
-        self.assertTrue(any(bus in value and '="deny"' in value for value in settings),
-                        "Codex cannot reconstruct the user bus and control the service")
+        bus = f'{json.dumps(f"/run/user/{l3.os.getuid()}")}="deny"'
+        self.assertTrue(any(bus in value for value in settings),
+                        "Codex cannot reach the user bus in the runtime folder and control the service")
         self.assertTrue(any(str(self.repo.resolve()) in value and '="read"' in value
                             for value in settings), "the deployment checkout is explicitly read-only")
         self.assertFalse(any("network.unix_sockets" in value for value in settings),

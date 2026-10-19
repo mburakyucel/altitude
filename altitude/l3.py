@@ -1889,7 +1889,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         try:
             res = engines.claude_print(
                 text, cwd=runtime, unit=_turn_job(project, active_turn), resume=None if fresh else sid,
-                home=_engine_home(project, engine),
+                home=_engine_home(project, engine), sockets=(verb_socket_path(project),),
                 persona=config.PERSONAS / "l3.md", allowed_tools=engines.L3_ALLOWED_TOOLS, tools=L3_TOOLS,
                 permission_mode="dontAsk", permission_prompts="none", restricted=True,
                 add_dirs=(config.project_path(project), config.ROOT),
