@@ -436,6 +436,123 @@ class TestChatTurns(AltitudeCase):
         self.assertEqual(calls[0][2], "Waiting on the command.")
         self.assertEqual(result["text"], f"Read: {TEXT}")
 
+    def scripted(self, name: str, events: list[dict]) -> str:
+        """A fictional engine CLI that reads its input and prints `events` as its JSON stream."""
+        script = self.tmp / name
+        lines = "".join(json.dumps(event) + "\n" for event in events)
+        script.write_text(f"#!{sys.executable}\nimport sys\nsys.stdin.read()\nsys.stdout.write({lines!r})\n")
+        script.chmod(0o755)
+        return str(script)
+
+    def test_claude_text_around_a_tool_call_streams_and_stores_the_same_paragraphs(self):
+        """The operator's report: words, then a tool call, then more words, in one turn."""
+        def delta(text):
+            return {"type": "stream_event", "event": {"type": "content_block_delta", "index": 0,
+                                                      "delta": {"type": "text_delta", "text": text}}}
+
+        def block(content):
+            return {"type": "assistant", "message": {"model": "fake-model", "content": [content]}}
+
+        events = [{"type": "system", "subtype": "init", "session_id": "s"},
+                  delta("A clear request, "), delta("so I'll check the code first."),
+                  block({"type": "text", "text": "A clear request, so I'll check the code first."}),
+                  block({"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "grep -n busy web"}}),
+                  {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "fixture"}]}},
+                  delta("Found it."), block({"type": "text", "text": "Found it."}),
+                  {"type": "result", "subtype": "success", "is_error": False, "result": "Found it.", "session_id": "s"}]
+        streamed = []
+        with mock.patch.object(config, "CLAUDE_BIN", self.scripted("claude-turn", events)):
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home",
+                                          cwd=self.repo, timeout=30, on_text=streamed.append)
+        self.assertIsNone(result["error"], result)
+        self.assertEqual(result["text"], "A clear request, so I'll check the code first.\n\nFound it.")
+        self.assertEqual("".join(streamed), result["text"])
+        self.assertEqual(result["tools"], [engines.common._tool("Bash", "grep -n busy web")])
+
+    def test_claude_paragraphs_hold_when_one_assistant_event_carries_a_whole_message(self):
+        """A thinking block opens the turn without a leading break; text and tool use may arrive as one event."""
+        def delta(text):
+            return {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": text}}}
+
+        events = [{"type": "assistant", "message": {"model": "fake-model", "content": [{"type": "thinking", "thinking": "Plan."}]}},
+                  delta("Checking."),
+                  {"type": "assistant", "message": {"model": "fake-model", "content": [
+                      {"type": "text", "text": "Checking."}, {"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}},
+                  delta("Done."), {"type": "result", "subtype": "success", "is_error": False, "result": "Done.", "session_id": "s"}]
+        streamed = []
+        with mock.patch.object(config, "CLAUDE_BIN", self.scripted("claude-whole", events)):
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home",
+                                          cwd=self.repo, timeout=30, on_text=streamed.append)
+        self.assertEqual(streamed, ["Checking.", "\n\nDone."])
+        self.assertEqual(result["text"], "Checking.\n\nDone.")
+
+    def test_claude_text_sent_without_streaming_still_joins_the_reply_in_order(self):
+        """The operator's second report: an opening line, then the whole answer arriving as one finished message with
+        an `alt task offer` call (no text deltas), then a closing line; the answer must not vanish. A stream cut short
+        is completed by its message."""
+        def delta(text):
+            return {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": text}}}
+
+        def message(*content):
+            return {"type": "assistant", "message": {"model": "fake-model", "content": list(content)}}
+
+        answer = "Yes, I understand.\n\nDecided myself: offered as one small task below."
+        events = [delta("I follow you."), message({"type": "text", "text": "I follow you."}),
+                  message({"type": "tool_use", "id": "t1", "name": "Grep", "input": {}}),
+                  message({"type": "text", "text": answer},
+                          {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "alt task offer -"}}),
+                  delta("Press the offered "), message({"type": "text", "text": "Press the offered task if you want it."}),
+                  {"type": "result", "subtype": "success", "is_error": False, "result": "Press the offered task if you want it.",
+                   "session_id": "s"}]
+        streamed = []
+        with mock.patch.object(config, "CLAUDE_BIN", self.scripted("claude-unstreamed", events)):
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home",
+                                          cwd=self.repo, timeout=30, on_text=streamed.append)
+        self.assertEqual(result["text"], f"I follow you.\n\n{answer}\n\nPress the offered task if you want it.")
+        self.assertEqual(streamed, ["I follow you.", f"\n\n{answer}", "\n\nPress the offered ", "task if you want it."])
+        self.assertEqual([tool["name"] for tool in result["tools"]], ["Grep", "Bash"])
+
+    def test_claude_keeps_the_finished_message_when_its_stream_disagrees(self):
+        """After Send now splits the reply, two streamed blocks of one message stay once, and a message Claude rewrote
+        after part of it streamed is stored as it finished, in its paragraph."""
+        def delta(text):
+            return {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": text}}}
+
+        def message(*content):
+            return {"type": "assistant", "message": {"model": "fake-model", "content": list(content)}}
+
+        tool = {"type": "tool_use", "id": "t1", "name": "Read", "input": {}}
+        events = [delta("First."), message({"type": "text", "text": "First."}), message(tool),
+                  {"type": "altitude.send", "message_id": "m1", "outcome": "delivered"},
+                  delta("Two blocks: "), delta("one, two."),
+                  message({"type": "text", "text": "Two blocks: "}, {"type": "text", "text": "one, two."}), message(tool),
+                  delta("Partial answ"), message({"type": "text", "text": "The whole answer, rewritten."}),
+                  {"type": "result", "subtype": "success", "is_error": False, "result": "The whole answer, rewritten.",
+                   "session_id": "s"}]
+        streamed, calls = [], []
+        with mock.patch.object(config, "CLAUDE_BIN", self.scripted("claude-rewritten", events)):
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home",
+                                          cwd=self.repo, timeout=30, on_text=streamed.append,
+                                          on_send=lambda *call: calls.append(call))
+        self.assertEqual(calls, [("m1", "delivered", "First.")])
+        self.assertEqual(result["text"], "Two blocks: one, two.\n\nThe whole answer, rewritten.")
+        self.assertEqual(streamed, ["First.", "Two blocks: ", "one, two.", "\n\nPartial answ"])
+
+    def test_a_codex_turn_keeps_every_message_it_wrote_around_its_commands(self):
+        def item(kind, **fields):
+            return {"type": "item.completed", "item": {"id": f"item-{kind}-{len(fields)}", "type": kind, **fields}}
+
+        events = [{"type": "thread.started", "thread_id": "fake-thread"}, {"type": "turn.started"},
+                  item("agent_message", text="A clear request, so I'll check the code first."),
+                  item("command_execution", command="grep -n busy web", aggregated_output="fixture", exit_code=0, status="completed"),
+                  item("agent_message", text="Found it.\n"),
+                  {"type": "turn.completed", "usage": {"input_tokens": 5, "output_tokens": 2}}]
+        with mock.patch.object(config, "CODEX_BIN", self.scripted("codex-turn", events)):
+            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=30)
+        self.assertIsNone(result["error"], result)
+        self.assertEqual(result["text"], "A clear request, so I'll check the code first.\n\nFound it.")
+        self.assertEqual(result["tools"], [engines.common._tool("Bash", "grep -n busy web")])
+
     def test_a_codex_exec_that_exits_at_once_reports_its_own_error(self):
         script = self.tmp / "signed-out"
         script.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('codex: not signed in\\n')\nsys.exit(3)\n")

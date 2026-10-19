@@ -2625,7 +2625,13 @@ a non-Auto pin stays named in the phone header. It pins the project's L3 to one 
 `engines[]` reports it, until set back to Auto; Auto uses project preference tiers, weekly headroom
 within ties and the session continuity rule described above. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
-lands in the history. Each send carries a page-made UUID `request_id`, kept as the stored user row's
+lands in the history. Its reply is everything the coordinator wrote in the turn, in order: a Claude
+turn streams its text as written, each text after a tool call starting a new paragraph, and stores that
+same text, taking from each finished message any text the stream did not carry (Claude can send a message
+without streaming it), and keeping a message Claude rewrote after part of it streamed as it finished, which the
+page shows once the turn ends; a Codex turn streams nothing and stores its messages joined the same way. The typing indicator
+stays under the streamed words until the stream ends, and with no stream open, while `active` names the
+turn. Each send carries a page-made UUID `request_id`, kept as the stored user row's
 `request_id`, as the queue row's `id` and, once delivered from the queue, in that row's `queue_ids`.
 Until the server shows it, the message and the reply it streams live in a project outbox in the client
 query cache under `chat-outbox` and the project name, one entry per send id, with no timed eviction.
