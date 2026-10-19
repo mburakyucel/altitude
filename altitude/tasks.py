@@ -524,13 +524,13 @@ def shown_view(project: str, slug: str, shown: dict, identity: str, revision: in
 
 
 def _pr_tip(task: dict) -> tuple[int, str, str] | None:
-    """The task's current PR with the head and base commit its delivery or adoption recorded."""
+    """The task's current PR with the head and base commit its delivery recorded; landing an adopted PR records one."""
     number = (task.get("prs") or [None])[-1]
-    for record in (task.get("delivery"), task.get("adopted_pr")):
-        head, base = (record or {}).get("head"), (record or {}).get("base")
-        if (number and (record or {}).get("number") == number and isinstance(head, str) and isinstance(base, str)
-                and re.fullmatch(r"[0-9a-f]{40}", head) and re.fullmatch(r"[0-9a-f]{40}", base)):
-            return number, head, base
+    record = task.get("delivery") or {}
+    head, base = record.get("head"), record.get("base")
+    if (number and record.get("number") == number and isinstance(head, str) and isinstance(base, str)
+            and re.fullmatch(r"[0-9a-f]{40}", head) and re.fullmatch(r"[0-9a-f]{40}", base)):
+        return number, head, base
     return None
 
 

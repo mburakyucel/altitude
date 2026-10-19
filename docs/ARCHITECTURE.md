@@ -3464,7 +3464,7 @@ checks presence and size; reads verify each hash, so changed content of the same
 reader's unavailable state).
 
 A held PR's merge card carries the pictures the PR changes. `tasks.pr_images` reads the current PR's
-recorded head and base commit from its delivery or adoption and, once per head, lists the diff from their
+recorded head and base commit from its delivery and, once per head, lists the diff from their
 merge base with Git's raw output: blob ids, modes and paths, with renames paired and no diff drivers or
 textconv. It reads the blobs as Git objects from the project's repository, never the worktree, so later
 edits, a moved branch or a link change nothing shown. Each picture passes the shown-image checks and
