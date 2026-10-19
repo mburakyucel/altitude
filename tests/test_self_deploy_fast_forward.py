@@ -105,8 +105,8 @@ class SelfDeployFastForward(AltitudeCase):
         for loose in store.glob("??/*"):
             if git("cat-file", "-t", loose.parent.name + loose.name, cwd=self.repo).strip() != "commit":
                 loose.unlink()
-        planted = subprocess.run(["git", "hash-object", "-w", "--stdin"], input="# a worker's\n", cwd=self.repo,
-                                 capture_output=True, text=True, check=True).stdout.strip()
+        (self.tmp / "planted").write_text("# a worker's\n")
+        planted = git("hash-object", "-w", str(self.tmp / "planted"), cwd=self.repo).strip()
         git("update-ref", f"refs/replace/{merged}", planted, cwd=self.repo)
         self.assertEqual(git_policy.deploy_source(self.repo, "main"), (self.head, tip, ["altitude/x.py"]))
         self.assertEqual((self.repo / "altitude" / "x.py").read_text(), "# merged\n")

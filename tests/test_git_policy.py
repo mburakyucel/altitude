@@ -500,6 +500,12 @@ class TestGitPolicy(unittest.TestCase):
             git_policy.repair_hooks(self.repo, combine=True, expected=tampered["fingerprint"])
         self.assertEqual((managed / "pre-commit").read_text(), "#!/bin/sh\nexit 0\n")
         self.assertEqual(self.git("config", "--get", "core.hooksPath").stdout.strip(), str(managed))
+        # Selecting the folder that holds the managed compositions is not combinable either.
+        shutil.copy2(managed / "pre-commit", managed.parent / "pre-commit")
+        self.git("config", "core.hooksPath", str(managed.parent))
+        folder = git_policy.inspect_hooks(self.repo)
+        self.assertEqual((folder["status"], folder["can_combine"]), ("conflict", False))
+        self.assertEqual(folder["detail"], "The managed hook files changed; L3 needs to inspect them.")
 
     def test_worktree_consent_cannot_be_reused_by_a_sibling_worktree(self):
         git_policy.install_hooks(self.repo)
