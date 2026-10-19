@@ -1834,9 +1834,12 @@ terminal, never in the URL or history, shows the terminal and, once its screen h
 stayed quiet for 300 ms, hands it over with `command`. altd types it, framed as a paste when xterm reports the
 shell's bracketed paste mode and never with Enter, and follows that one command in memory: the first Enter the
 operator types after it starts it, and a Ctrl+C before that Enter drops it. altd types nothing, and says why,
-while a program holds the foreground or a command it typed still waits for that Enter or Ctrl+C, so opening the
-command again (a second tap, after a reload, from another page) never joins a second copy to the line; altd
-cannot see other edits, so a line the operator cleared by hand takes Ctrl+C first. The command has finished once
+while a program holds the foreground or it still follows a command it typed (waiting for that Enter or Ctrl+C, or
+run and not yet finished), so opening the command again (a second tap, after a reload, from another page) never
+joins a second copy to the line. A command typed in part when its write fails stays followed, as what reached the
+line still waits for Enter or Ctrl+C. altd cannot see other edits, so a line the operator cleared by hand takes
+Ctrl+C first. Input and the command's typing take the terminal's descriptor in turn, so no keystroke lands between
+the check and the command. The command has finished once
 the shell has held the foreground (`tcgetpgrp` equal to the shell's session) for a second after that Enter and
 no process group that held the foreground since still exists, so a job suspended with Ctrl+Z or sent to the
 background has not. The reader looks every 0.2 seconds, so a job suspended sooner than that after it starts

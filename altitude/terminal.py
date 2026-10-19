@@ -218,9 +218,10 @@ def _read(term: Terminal) -> None:
     with term.cond:
         term.ended = True
         term.cond.notify_all()
-    if term.command:
-        _notice(term, f"the {term.place} terminal ended ({term.reason}) before "
-                + ("the command you handed the operator finished" if term.command.get("entered")
+    command = term.command
+    if command:
+        _notice(term, command, f"the {term.place} terminal ended ({term.reason}) before "
+                + ("the command you handed the operator finished" if "entered" in command
                    else "the operator ran the command you handed them"))
 
 
@@ -270,10 +271,11 @@ def _running(project: str, slug: str | None, ident) -> Terminal:
 def view(term: Terminal | None) -> dict:
     if term is None:
         return {"state": "none", "enabled": enabled()}
+    busy = _busy(term)  # before the output lock: input takes the descriptor's lock, then that one
     with term.cond:
         return {"state": "exited" if term.ended else "running", "id": term.id, "enabled": enabled(),
                 "folder": str(term.folder), "offset": term.end, "exit_code": term.exit_code,
-                "reason": term.reason, "error": term.error, "busy": None if term.ended else _busy(term)}
+                "reason": term.reason, "error": term.error, "busy": None if term.ended else busy}
 
 
 def status(project: str, slug: str | None) -> dict:
@@ -283,11 +285,16 @@ def status(project: str, slug: str | None) -> dict:
 def _busy(term: Terminal) -> str | None:
     """The command in the foreground, when it is not the shell itself: what Close would stop."""
     with term.io:
-        try:
-            group = os.tcgetpgrp(term.fd)
-            shell = platform.terminal_session(term.fd)
-        except OSError:
-            return None
+        return _foreground(term)
+
+
+def _foreground(term: Terminal) -> str | None:
+    """`_busy` for a caller that holds the descriptor."""
+    try:
+        group = os.tcgetpgrp(term.fd)
+        shell = platform.terminal_session(term.fd)
+    except OSError:
+        return None
     if group in (shell, -1, 0) or shell <= 0:
         return None
     return platform.process_name(group) or "A command"
@@ -296,30 +303,28 @@ def _busy(term: Terminal) -> str | None:
 def hand(project: str, slug: str | None, ident, text, bracketed=False) -> None:
     """Type the command the page hands over from a `run` block at the shell's prompt, without Enter, and follow it so
     the terminal's reader hears when it has run. `bracketed` frames it as a paste, as the shell asked. Nothing is
-    typed while a program holds the foreground or a handed command still waits for Enter on the line: typed again,
-    it would join that copy and one Enter would run both."""
+    typed while a program holds the foreground or a handed command is still followed: typed again before its Enter,
+    it would join that copy and one Enter would run both. Typing holds the descriptor, as other input does, so no
+    keystroke lands between the check and the command."""
     if not isinstance(text, str) or not text.strip() or len(text) > INPUT_LIMIT or not isinstance(bracketed, bool):
         raise TerminalError("Send the command as text.", 400)
     term = _running(project, slug, ident)
     # A later attempt's owner did not hand it; a project has one coordinator.
     attempt = None if slug is None else S.load_task(project, slug).get("attempt")
-    busy = _busy(term)
-    if busy:
-        raise TerminalError(f"{busy} is running, so the command wasn't typed.")
-    command = {"text": text, "attempt": attempt}
-    with term.cond:
-        if term.command and "entered" not in term.command:
-            raise TerminalError(("This command is already typed at the prompt." if term.command["text"] == text else
-                                 "Another command is already typed at the prompt, so this one wasn't typed.")
-                                + " Press Enter to run it, or Ctrl+C to clear the line.")
-        term.command = command
-    try:
-        _send(term, f"\x1b[200~{text}\x1b[201~" if bracketed else text)
-    except TerminalError:
+    with term.io:
+        busy = _foreground(term)
+        if busy:
+            raise TerminalError(f"{busy} is running, so the command wasn't typed.")
         with term.cond:
-            if term.command is command:
-                term.command = None
-        raise
+            if term.command and "entered" in term.command:
+                raise TerminalError("The last command Altitude typed here hasn't finished, so this one wasn't typed.")
+            if term.command:
+                raise TerminalError(("This command is already typed at the prompt." if term.command["text"] == text else
+                                     "Another command is already typed at the prompt, so this one wasn't typed.")
+                                    + " Press Enter to run it, or Ctrl+C to clear the line.")
+            # Kept when typing fails part way: what reached the line still waits for Enter or Ctrl+C.
+            term.command = {"text": text, "attempt": attempt}
+        _send(term, f"\x1b[200~{text}\x1b[201~" if bracketed else text)
 
 
 def _typed(term: Terminal, data: str) -> None:
@@ -356,7 +361,8 @@ def _follow(term: Terminal) -> None:
     now = time.monotonic()
     if now - command.setdefault("shell", now) >= COMMAND_SETTLE_SECONDS and not any(
             map(_alive, command.get("groups", ()))):
-        _notice(term, f"the command you handed the operator looks finished in the {term.place} terminal", finished=True)
+        _notice(term, command, f"the command you handed the operator looks finished in the {term.place} terminal",
+                finished=True)
 
 
 def _alive(group: int) -> bool:
@@ -369,16 +375,16 @@ def _alive(group: int) -> bool:
     return True
 
 
-def _notice(term: Terminal, what: str, finished: bool = False) -> None:
+def _notice(term: Terminal, command: dict, what: str, finished: bool = False) -> None:
     """Tell the terminal's reader: the task's owner, waking it when it waits, or the project's coordinator, as a
     queued turn. Altitude sees the shell, not the command's exit status. On a task, the notice marks the open question
     that handed the command as run or ended first. A command that looks finished clears the operator step it ran; a
     terminal that ended first leaves the step for the operator. The notice waits for the
     project lock on its own thread, so the reader keeps draining output meanwhile."""
     with term.cond:
-        command, term.command = term.command, None
-    if not command:
-        return
+        if term.command is not command:  # dropped or reported meanwhile
+            return
+        term.command = None
     text = (f"Terminal: {what}: `{command['text']}`. This is a prompt to check, not proof: read its output with "
             f"`alt {term.place} terminal` and verify that the command actually ended and how. Altitude does not see "
             "its exit status, and a command waiting for input, such as `read`, can look finished. Then continue or "
@@ -412,27 +418,28 @@ def write(project: str, slug: str | None, ident, data: str) -> None:
     if not isinstance(data, str) or len(data) > INPUT_LIMIT:
         raise TerminalError("Send terminal input as text.", 400)
     term = _running(project, slug, ident)
-    _send(term, data)
-    _typed(term, data)
+    with term.io:
+        _send(term, data)
+        _typed(term, data)
 
 
 def _send(term: Terminal, data: str) -> None:
+    """Write `data` to the shell; the caller holds the descriptor."""
     raw = data.encode()
     deadline = time.monotonic() + WRITE_SECONDS
-    with term.io:
-        while raw:
-            if term.fd < 0 or term.closing:
-                raise TerminalError("The terminal has closed.", 410)
-            try:
-                raw = raw[os.write(term.fd, raw):]
-                continue
-            except BlockingIOError:
-                pass
-            except OSError as exc:
-                raise TerminalError("The terminal has closed.", 410) from exc
-            if time.monotonic() >= deadline:
-                raise TerminalError("The terminal is not reading input. Press Ctrl+C or close it.")
-            select.select([], [term.fd], [], POLL_SECONDS)
+    while raw:
+        if term.fd < 0 or term.closing:
+            raise TerminalError("The terminal has closed.", 410)
+        try:
+            raw = raw[os.write(term.fd, raw):]
+            continue
+        except BlockingIOError:
+            pass
+        except OSError as exc:
+            raise TerminalError("The terminal has closed.", 410) from exc
+        if time.monotonic() >= deadline:
+            raise TerminalError("The terminal is not reading input. Press Ctrl+C or close it.")
+        select.select([], [term.fd], [], POLL_SECONDS)
 
 
 def _winsize(fd: int, rows: int, cols: int) -> None:

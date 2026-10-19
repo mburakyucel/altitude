@@ -456,11 +456,64 @@ class TestHandedCommand(TerminalCase):
             terminal.hand(self.project, self.slug, self.ident, "echo framed", bracketed="yes")
         self.assertEqual(caught.exception.status, 400)
 
-    def test_a_command_that_could_not_be_typed_is_not_followed(self):
-        with mock.patch.object(terminal, "_send", side_effect=terminal.TerminalError("The terminal is not reading input.")):
-            with self.assertRaises(terminal.TerminalError):
-                self.hand("echo lost")
-        self.assertIsNone(self.current(self.slug).command)
+    def test_a_command_typed_in_part_stays_guarded_until_ctrl_c(self):
+        # Review finding: a write that failed part way dropped the guard, so opening it again joined the prefix.
+        write = os.write
+        sizes = iter([4])
+
+        def stalls_after_a_prefix(fd, data):
+            size = next(sizes, None)
+            if size is None:
+                raise BlockingIOError
+            return write(fd, data[:size])
+        with mock.patch.object(terminal, "WRITE_SECONDS", .3), \
+                mock.patch.object(terminal.os, "write", side_effect=stalls_after_a_prefix), \
+                self.assertRaises(terminal.TerminalError) as caught:
+            self.hand("echo partial")
+        self.assertEqual(str(caught.exception), "The terminal is not reading input. Press Ctrl+C or close it.")
+        with self.assertRaises(terminal.TerminalError) as caught:
+            self.hand("echo partial")
+        self.assertIn("already typed at the prompt", str(caught.exception))
+        self.type("\x03", self.slug)
+        self.hand("echo partial")
+
+    def test_input_waits_for_the_command_being_typed(self):
+        # Review finding: a Ctrl+C or Enter could land between the check and the command's own text.
+        typing, release = threading.Event(), threading.Event()
+        send = terminal._send
+
+        def held(term, data):
+            if data == "echo handed":
+                typing.set()
+                release.wait(5)
+            send(term, data)
+        with mock.patch.object(terminal, "_send", side_effect=held):
+            handing = threading.Thread(target=self.hand, args=("echo handed",))
+            handing.start()
+            self.assertTrue(typing.wait(5))
+            interrupt = threading.Thread(target=self.type, args=("\x03", self.slug))
+            interrupt.start()
+            time.sleep(.3)
+            self.assertTrue(interrupt.is_alive())  # waiting for the command to be typed
+            release.set()
+            handing.join(5)
+            interrupt.join(5)
+        self.assertIsNone(self.current(self.slug).command)  # the Ctrl+C came after the command and dropped it
+        self.hand("echo handed")
+
+    def test_an_entered_command_is_followed_to_its_end_before_another_is_typed(self):
+        # Review finding: a new command replaced one still settling, and its notice was lost.
+        self.hand("sleep 30")
+        self.type("\r", self.slug)
+        self.wait(lambda: terminal.status(self.project, self.slug)["busy"] == "sleep")
+        time.sleep(terminal.POLL_SECONDS * 3)  # the reader has seen sleep hold the foreground
+        self.type("\x1a", self.slug)
+        self.output(self.slug, until="Stopped")
+        self.wait(lambda: terminal.status(self.project, self.slug)["busy"] is None)
+        with self.assertRaises(terminal.TerminalError) as caught:
+            self.hand("echo next")
+        self.assertEqual(str(caught.exception), "The last command Altitude typed here hasn't finished, so this one wasn't typed.")
+        self.assertEqual(self.current(self.slug).command["text"], "sleep 30")
 
     def test_ctrl_c_before_enter_drops_the_command_so_a_later_enter_is_not_it(self):
         self.hand("echo handed")
