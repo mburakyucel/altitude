@@ -303,7 +303,7 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   expect(writes, "Work is a read-only task overview").toBe(0);
 });
 
-test("Needs you: empty, recommendation and chat entry, sending, sent, failed, error, loading", async ({ page, request }, info) => {
+test("Needs you: empty, recommendation and chat entry, at the press, saved, not sent, error, loading", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const { tasks } = await liveRows(request, project.name);
   const running = tasks.find((t) => t.state === "running");
@@ -333,12 +333,12 @@ test("Needs you: empty, recommendation and chat entry, sending, sent, failed, er
   };
   await clearRoutes(page);
   await overlay(page, project.name, state);
-  await interceptWrites(page, {
-    decide: async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_200));
-      state.queue = [second];
-    },
-  });
+  // Altitude holds each answer until the walk releases it, then records it as the server does.
+  let release!: () => void;
+  const writes: Parameters<typeof interceptWrites>[1] = {
+    decide: () => new Promise<void>((resolve) => { release = () => { state.queue = state.queue!.filter((row) => row !== decision); resolve(); }; }),
+  };
+  await interceptWrites(page, writes);
   await walk.open("/");
   const card = v.card(title);
   await walk.state("02-cards-overlay", {
@@ -367,28 +367,69 @@ test("Needs you: empty, recommendation and chat entry, sending, sent, failed, er
   await saved.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(card.getByRole("button", { name: "Fast-forward it", exact: true })).toBeEnabled();
   await card.getByRole("button", { name: "Fast-forward it", exact: true }).click();
-  await walk.state("04-sending-overlay", {
-    action: () => card.getByRole("button", { name: "Send 1 answer", exact: true }).click(),
-    visible: [card.getByRole("button", { name: "Send 1 answer", disabled: true })],
-    hidden: [],
-  });
+  // SPEC.md §1.1: the card and its count leave at the press, before Altitude answers.
   const oneLeft = v.main.getByText(/^1 stopped task/);
-  await walk.state("05-sent-card-gone-overlay", {
-    action: settles(oneLeft),
+  const sent = page.waitForRequest((row) => new URL(row.url()).pathname === "/api/decide");
+  await walk.state("04-answer-leaves-at-the-press-overlay", {
+    action: () => card.getByRole("button", { name: "Send 1 answer", exact: true }).click(),
     visible: [v.card(second.title), oneLeft],
+    hidden: [card, page.getByText("Answer saved", { exact: true })],
+  });
+  expect((await sent).postDataJSON().request_id).toMatch(/^[0-9a-f]{32}$/);
+  const stoppedCard = await v.card(second.title).elementHandle();
+  // A question asked while the answer is on its way is not covered by it, so it shows at the next read.
+  const later = { ...decision, id: "walk-later", anchor_id: "walk-later-anchor", asked: minutesAgo(0),
+    question: "Should the fast-forward also prune merged branches?", options: null, recommended_key: null, recommendation: null };
+  state.queue = [decision, second, later];
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange", { bubbles: true })));
+  await walk.state("04b-a-newer-question-still-shows-overlay", {
+    visible: [card.getByText(later.question, { exact: true }), v.main.getByText(/^1 question · 1 stopped task/)],
+    hidden: [card.getByText(decision.question, { exact: true })],
+  });
+  state.queue = [decision, second];
+  release();
+  await walk.state("05-saved-in-place-overlay", {
+    action: settles(page.getByText("Answer saved", { exact: true })),
+    visible: [v.card(second.title), page.getByRole("button", { name: "Open L2 chat", exact: true })],
     hidden: [card],
   });
+  expect(await v.card(second.title).evaluate((node, earlier) => node === earlier, stoppedCard), "the other card stays in place").toBe(true);
 
   await clearRoutes(page);
   state.queue = [decision, second];
   await overlay(page, project.name, state);
-  await interceptWrites(page, { decideStatus: 503 });
+  const refusing: Parameters<typeof interceptWrites>[1] = { decideStatus: 503 };
+  await interceptWrites(page, refusing);
   await walk.open("/");
   await card.getByRole("button", { name: "Fast-forward it", exact: true }).click();
-  await walk.state("06-send-failed-overlay", {
+  // No answer, and the task's next read lists none: the card returns with its pick and Not sent in view.
+  const notSent = card.getByRole("alert").filter({ hasText: /^Not sent\. Retry$/ });
+  await walk.state("06-not-sent-returns-the-card-overlay", {
     action: () => card.getByRole("button", { name: "Send 1 answer", exact: true }).click(),
-    visible: [card.getByRole("alert"), card.getByRole("button", { name: "Fast-forward it", exact: true })],
-    hidden: [card.locator(".spinner")],
+    visible: [notSent, card.getByRole("button", { name: "Fast-forward it", exact: true, pressed: true })],
+    hidden: [page.getByText("Answer not sent", { exact: true })],
+  });
+  await expect(notSent).toBeInViewport();
+  refusing.decideStatus = 200;
+  refusing.decide = () => { state.queue = [second]; };
+  await walk.state("06a-retry-leaves-again-overlay", {
+    action: () => notSent.getByRole("button", { name: "Retry", exact: true }).click(),
+    visible: [v.card(second.title)], hidden: [card],
+  });
+
+  // A reload during a held send starts from Altitude's record, which does not have the answer yet.
+  await clearRoutes(page);
+  state.queue = [decision, second];
+  await overlay(page, project.name, state);
+  await interceptWrites(page, { decide: () => new Promise<void>(() => {}) });
+  await walk.open("/");
+  await card.getByRole("button", { name: "Fast-forward it", exact: true }).click();
+  await card.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect(card).toBeHidden();
+  await walk.state("06c-reload-shows-the-record-overlay", {
+    action: () => page.reload(),
+    visible: [card, card.getByRole("button", { name: "Fast-forward it", exact: true, pressed: false })],
+    hidden: [card.getByRole("alert")],
   });
 
   await clearRoutes(page);

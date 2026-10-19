@@ -29,9 +29,10 @@ function setup({ archived = false, denied = false, missing = false } = {}) {
     if (path === "/api/task/atlas/index") return json(task);
     if (path === "/api/decide") {
       if (refuse) return json({ error: "Access denied" }, 403);
-      // The server saves the chosen option's text, and the message joins the question with it.
-      const closed = { ...question, response: { text: "Keep it for seven days.", at, message_id: "answer" } };
-      task = { ...task, state: "running", handed_back: handed, question: closed, questions: [closed], messages: [...task.messages!, { id: "answer", role: operator, text: `${question.question}\nKeep it for seven days.`, at }] };
+      // The server saves the chosen option's text under the browser's send id, and the message joins the question with it.
+      const id = JSON.parse(String(init?.body)).request_id;
+      const closed = { ...question, response: { text: "Keep it for seven days.", at, message_id: id } };
+      task = { ...task, state: "running", handed_back: handed, question: closed, questions: [closed], messages: [...task.messages!, { id, role: operator, text: `${question.question}\nKeep it for seven days.`, at }] };
       return json({ question: closed });
     }
     if (path === "/api/l2/message") {
@@ -50,6 +51,8 @@ const convo = () => screen.getByRole("region", { name: "Task conversation" });
 
 function setupGroup() {
   let failure = 0;
+  // What a failed send left in the record: a save whose answer was lost, or part of one.
+  let saved: ((value: typeof group) => typeof group) | null = null;
   let handedBack: string | null = null;
   let group = QuestionGroupSchema.parse({ id: "rollout", revision: 1, anchor_id: question.anchor_id, questions: [
     { ...question, group_id: "rollout", group_revision: 1, recommended_key: "seven", options: [
@@ -66,13 +69,16 @@ function setupGroup() {
     if (route === "/api/project/atlas") return json({ name: "atlas", tasks: [] });
     if (route === "/api/task/atlas/index") return json({ ...initial, handed_back: handedBack, question_group: group, question: group.questions.find((q) => q.status === "open"), questions: group.questions, messages });
     if (route === "/api/decide") {
-      if (failure) return json({ error: "Send unavailable" }, failure);
-      handedBack = handed;
       const body = JSON.parse(String(init?.body));
+      if (failure) {
+        if (saved) group = saved(group);
+        return json({ error: "Send unavailable" }, failure);
+      }
+      handedBack = handed;
       const answers = body.answers ?? [body];
       group = { ...group, questions: group.questions.map((q) => {
         const chosen = answers.find((answer: { question_id: string }) => answer.question_id === q.id);
-        return { ...q, ...(chosen ? { response: { text: chosen.text ?? q.options!.find((o) => o.key === chosen.option_key)!.text, at, message_id: "group-answer" } } : {}) };
+        return { ...q, ...(chosen ? { response: { text: chosen.text ?? q.options!.find((o) => o.key === chosen.option_key)!.text, at, message_id: body.request_id } } : {}) };
       }) };
       return json({ question: group.questions[0], question_group: group });
     }
@@ -84,25 +90,37 @@ function setupGroup() {
     return json({}, 404);
   });
   vi.stubGlobal("fetch", fetch);
-  return { fetch, fail: (status: number) => { failure = status; }, update: (change: (value: typeof group) => typeof group) => { group = change(group); } };
+  return { fetch, fail: (status: number, change?: (value: typeof group) => typeof group) => { failure = status; saved = change ?? null; },
+    update: (change: (value: typeof group) => typeof group) => { group = change(group); } };
 }
 
 describe("Independent questions in one conversation", () => {
-  it.each(["missing", "new revision", "different text"])("keeps a failed batch unresolved when a response has %s evidence", async (caseName) => {
+  // A send without an answer waits for the next read: only both answers saved as sent settle it; anything else is Not sent.
+  it("turns a send with no answer into Not sent when the read does not show both answers", async () => {
     const server = setupGroup();
-    server.fail(500);
-    const { user, queryClient } = renderApp({ route: path });
+    server.fail(500, (g) => ({ ...g, questions: g.questions.map((q) => q.id === "q-index"
+      ? { ...q, response: { text: "Keep the index for fourteen days.", at, message_id: "saved" } } : q) }));
+    const { user } = renderApp({ route: path });
     await user.click(await screen.findByRole("button", { name: "14 days" }));
     await user.type(screen.getByRole("textbox", { name: "Your answer to: Which region should host the backup?" }), "Europe");
     await user.click(screen.getByRole("button", { name: "Send 2 answers" }));
-    await screen.findByText("Could not send answers. Your responses are kept here.");
-    server.update((g) => ({ ...g, questions: g.questions.map((q) => q.id === "q-index"
-      ? { ...q, response: { text: "Keep the index for fourteen days.", at, message_id: "saved" } }
-      : caseName === "missing" ? q : { ...q, revision: caseName === "new revision" ? 2 : q.revision,
-        response: { text: caseName === "different text" ? "West" : "Europe", at, message_id: "saved" } }) }));
-    await act(() => queryClient.invalidateQueries({ queryKey: ["task", "atlas", "index"] }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^Not sent\. Retry$/);
+    expect(screen.getByRole("textbox", { name: "Your answer to: Which region should host the backup?" })).toHaveValue("Europe");
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
-    expect(screen.getByText("Could not send answers. Your responses are kept here.")).toBeVisible();
+  });
+
+  it("settles a send with no answer as sent when the read shows both answers saved", async () => {
+    const server = setupGroup();
+    const answered = { "q-index": "Keep the index for fourteen days.", "q-region": "Europe" } as Record<string, string>;
+    server.fail(500, (g) => ({ ...g, questions: g.questions.map((q) => ({ ...q, response: { text: answered[q.id!]!, at, message_id: "saved" } })) }));
+    const { user } = renderApp({ route: path });
+    await user.click(await screen.findByRole("button", { name: "14 days" }));
+    await user.type(screen.getByRole("textbox", { name: "Your answer to: Which region should host the backup?" }), "Europe");
+    await user.click(screen.getByRole("button", { name: "Send 2 answers" }));
+    await waitFor(() => expect(server.fetch.mock.calls.filter(([url]) => url === "/api/task/atlas/index").length).toBeGreaterThan(1));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Send 2 answers" })).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("mixes Other and a plain answer in one send and hands the turn back", async () => {
@@ -167,8 +185,8 @@ describe("Independent questions in one conversation", () => {
     const plain = screen.getByRole("textbox", { name: "Your answer to: Which region should host the backup?" });
     await user.type(plain, "Europe");
     await user.click(screen.getByRole("button", { name: "Send 2 answers" }));
-    await screen.findByText("Could not send answers. Your responses are kept here.");
-    expect(plain).toHaveValue("Europe");
+    await screen.findByText("Not sent.");
+    expect(screen.getByRole("textbox", { name: "Your answer to: Which region should host the backup?" })).toHaveValue("Europe");
     expect(screen.getByRole("button", { name: "14 days" })).toHaveAttribute("aria-pressed", "true");
     server.fail(0);
     await user.click(screen.getByRole("button", { name: "Retry" }));
@@ -201,7 +219,7 @@ describe("Independent questions in one conversation", () => {
     await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
     await within(convo()).findByText("Sent · the L2 has your reply.");
     const call = server.fetch.mock.calls.find(([url]) => url === "/api/decide")!;
-    expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", group_id: "rollout", group_revision: 1, answers: [{ question_id: "q-index", revision: 1, option_key: "fourteen" }] });
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", group_id: "rollout", group_revision: 1, answers: [{ question_id: "q-index", revision: 1, option_key: "fourteen" }], request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
     expect(screen.queryByRole("button", { name: "Send 1 answer" })).toBeNull();
   });
 
@@ -219,7 +237,7 @@ describe("Independent questions in one conversation", () => {
     await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
     await within(convo()).findByText("Sent · the L2 has your reply.");
     const call = fetch.mock.calls.find(([url]) => url === "/api/decide")!;
-    expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", group_id: "rollout", group_revision: 1, answers: [{ question_id: "q-index", revision: 1, option_key: "fourteen" }] });
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", group_id: "rollout", group_revision: 1, answers: [{ question_id: "q-index", revision: 1, option_key: "fourteen" }], request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
     expect(screen.queryByRole("textbox", { name: "Your answer to: Which region should host the backup?" })).toBeNull();
     expect(screen.queryByRole("button", { name: "14 days" })).toBeNull();
     await waitFor(() => expect(queryClient.getQueryData<{ queue: { id: string }[] }>(["overview"])?.queue).toEqual([]));
@@ -306,7 +324,7 @@ describe("Conversation-first decisions", () => {
     expect(within(convo()).queryByText("Decision recorded")).toBeNull();
     const calls = fetch.mock.calls.filter(([url]) => url === "/api/decide");
     expect(calls).toHaveLength(1);
-    expect(JSON.parse(String(calls[0]![1]?.body))).toEqual({ project: "atlas", slug: "index", question_id: "q-index", revision: 1, option_key: "recommended" });
+    expect(JSON.parse(String(calls[0]![1]?.body))).toEqual({ project: "atlas", slug: "index", question_id: "q-index", revision: 1, option_key: "recommended", request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
   });
 
   it("closes an obsolete dilemma with its reason and removes acceptance when the owner records changed direction", async () => {

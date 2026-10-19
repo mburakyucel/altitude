@@ -283,9 +283,12 @@ class TestOfflineJourneys(AltitudeCase):
         slug = task["slug"]
         question = T.block(self.project, slug, "Use the existing index?", actor="l2",
                            updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, recommendation="Use the existing index.")["questions"][-1]
-        body = {"project": self.project, "slug": slug, "question_id": question["id"], "revision": 1}
+        send_id = "5f0c8a52-6a2f-4c6e-9d4e-0b1f7a3c2d11"
+        body = {"project": self.project, "slug": slug, "question_id": question["id"], "revision": 1, "request_id": send_id}
         with mock.patch.object(server, "spawn", return_value=False):
             accepted = self.request("/api/decide", body)
+        # The browser's send id names the saved message, so the answer it shows at the press is the saved one.
+        self.assertEqual(accepted["response"]["message_id"], send_id.replace("-", ""))
         self.assertIn(slug, dispatch.resume_due(self.project), "the durable request survives a lost immediate scheduler call")
         started, release = threading.Event(), threading.Event()
         self.addCleanup(release.set)

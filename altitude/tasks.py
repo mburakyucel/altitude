@@ -2892,19 +2892,21 @@ def accept_question(project: str, slug: str, identity: str, revision: int, optio
 
 
 def accept_question_result(project: str, slug: str, identity: str, revision: int, option_key: str | None = None,
-                           *, text: object = _UNSET) -> dict:
+                           *, text: object = _UNSET, request_id: str | None = None) -> dict:
     if text is not _UNSET and option_key is not None:
         raise TransitionError("send a quick option or custom text, not both")
     answer = {"option_key": option_key} if text is _UNSET else {"text": text}
-    return _accept_questions(project, slug, [{"question_id": identity, "revision": revision, **answer}])
+    return _accept_questions(project, slug, [{"question_id": identity, "revision": revision, **answer}], request_id=request_id)
 
 
-def accept_questions(project: str, slug: str, group_id: str, group_revision: int, answers: list[dict]) -> dict:
-    """Atomically record a selected subset of a group with one normal message and wake request."""
+def accept_questions(project: str, slug: str, group_id: str, group_revision: int, answers: list[dict],
+                     *, request_id: str | None = None) -> dict:
+    """Atomically record a selected subset of a group with one normal message and wake request. The browser's send id
+    (`request_id`) becomes the message's id, so the answer it shows at the press is the saved one (SPEC.md §3.8.2)."""
     if (not isinstance(group_id, str) or not group_id or isinstance(group_revision, bool)
             or not isinstance(group_revision, int)):
         raise TransitionError("batch response must name the question group and its integer revision")
-    return _accept_questions(project, slug, answers, group_id=group_id, group_revision=group_revision)
+    return _accept_questions(project, slug, answers, group_id=group_id, group_revision=group_revision, request_id=request_id)
 
 
 def _submission_response(project: str, task: dict, saved: dict) -> dict:
@@ -2915,7 +2917,7 @@ def _submission_response(project: str, task: dict, saved: dict) -> dict:
 
 
 def _accept_questions(project: str, slug: str, answers: list[dict], *,
-                      group_id: str | None = None, group_revision: int | None = None) -> dict:
+                      group_id: str | None = None, group_revision: int | None = None, request_id: str | None = None) -> dict:
     if not isinstance(answers, list) or not 1 <= len(answers) <= 3:
         raise TransitionError("submit one to three explicit answers")
     if any(not isinstance(answer, dict) or set(answer) not in (
@@ -2965,7 +2967,7 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
             raise TransitionError("question is no longer open for responses; refresh the conversation")
         for question, _ in chosen:
             require_shown(project, slug, question)
-        at, message_id = _conversation_time(), uuid.uuid4().hex
+        at, message_id = _conversation_time(), request_id or uuid.uuid4().hex
         text = "\n\n".join(f"{q['question']}\n{o['text']}" for q, o in chosen)
         row = {"id": message_id, "at": at, "role": OPERATOR_MESSAGE_ROLE, "by": OPERATOR_MESSAGE_ROLE,
                "text": text, "group_id": group["id"], "group_revision": group["revision"],

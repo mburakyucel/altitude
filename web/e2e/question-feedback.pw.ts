@@ -137,7 +137,8 @@ test("a saved response replaces a lost-reply error with the hand-back in the mou
     await route.abort("connectionfailed");
   }, { times: 1 });
   await group.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await expect(group.getByRole("alert")).toContainText("Could not send answers");
+  // The read still shows the question unanswered, so the send counts as not sent; the next read shows it saved.
+  await expect(group.getByRole("alert")).toContainText("Not sent");
   await expect(card.getByRole("textbox")).toHaveValue("21 days");
   await page.unroute("**/api/task/atlas/choose-rollout-settings");
   await expect(handedBack(page)).toBeVisible({ timeout: 25_000 });

@@ -100,6 +100,16 @@ accessible description; pressing them never performs the unavailable action. Tas
 sentences repeating their state chip, question card or composer. Live session follow state uses
 its existing control and a quiet dot; recorded historical boundaries stay readable.
 
+**Actions answer at once.** A press that saves the operator's own choice (an answer, an approval, a message)
+shows its designed result immediately, in the component the design specifies for it, marked only by the
+pending state that component already has (a message's Waiting clock); it settles in place when Altitude
+confirms, with no flash, reorder or duplicate, and a reload or another device shows the same because it
+comes from the saved record. A refused save puts the screen back as it was, with the choice kept, **Not
+sent** and Retry; a save whose outcome is unknown stays Waiting until Altitude's next read settles it. A
+press that asks Altitude to do something it must carry out or decide (stop, switch, review, update, create a
+task, remove a queued message) shows that work's in-progress state at once and its result when Altitude
+observes it. No action shows a provisional rendering first and the designed one later.
+
 ## 2. Information architecture
 
 The container recovery notice uses the shell's existing status-banner treatment on phone and
@@ -899,14 +909,17 @@ the owner's checkpoint; the owner considers an earlier answer with later guidanc
 The recommendation body and response controls are the same component as the open question at the
 end of the chat. Loading uses a skeleton with no inferred count; empty Needs you says
 **Nothing needs you.** A read failure offers Retry. Cached failure keeps saved cards with an explicit
-refresh notice and disabled sending. During submission, **Send N answers** keeps its label with a
-spinner and cannot be repeated. Sending anything hands the turn back: the task's card leaves Needs you
-and the badge drops, though every question stays open in the record. The chat shows each answer as
-§3.8.2 describes. When
+refresh notice and disabled sending. Sending shows the answers at once (§1.1 Actions answer at once) and
+hands the turn back: the task's card leaves Needs you and the badge drops, though every question stays
+open in the record, and the chat shows each answer as §3.8.2 describes, Waiting until Altitude saves it.
+A question asked after the press still shows. A refused send returns the card with the answers still
+chosen and **Not sent** with Retry beside the send button, scrolled into view; from elsewhere a toast
+offers Show. A send whose answer is lost stays Waiting until the task's next read shows whether it was
+saved; Retry of the same picks is the same send, never a second message. When
 the owner parks again, still-needed questions return labelled **asked again**; a revised question
 is new. This records delivery, not agreement:
 the L2 interprets presets and typed responses alike, records clear decisions, and discusses follow-ups.
-Failure retains responses with Retry. Denied writes require a refreshed read. A changed question
+Denied writes require a refreshed read. A changed question
 clears only its own stale draft; independent drafts survive refresh and another member's submission.
 The send row follows the questions in normal flow on phone and desktop and scrolls with them.
 With the phone keyboard open, the focused answer stays unobscured; scroll to the end to send.
@@ -1007,10 +1020,10 @@ A message is an approval when its text is exactly the one the merge check accept
 #N.", optionally with "at" and a short head), so those words typed in the composer show as the action
 too. Both come from the saved conversation, so a reload, another device and a mixed batch look the same.
 
-On a card, in Needs you and the chat, **Approve merge** is the primary pill and changes in place: accent
-fill and a spinner while sending, keeping focus and ignoring presses; then a clock while the message
-waits for the L2. A refused or failed send turns it into a red **Retry** with **Not sent**
-(`role=alert`), and a denied write disables it with "You cannot approve here." **View PR #N** and the
+On a card, in Needs you and the chat, **Approve merge** is the primary pill and changes in place: a
+clock at once while the message waits for the L2, keeping focus and ignoring presses. A refused send keeps
+**Approve merge** with the retry mark and **Not sent** (`role=alert`), and a denied write disables it with
+"You cannot approve here." **View PR #N** and the
 hint stay beside it. Saving hands the turn back and the card leaves Needs you. Where a card stays in
 view with a saved answer (the owning chat after re-parking, or a member answered in another window),
 an option shows its pill and a typed answer its words under its delivery state, until the owner

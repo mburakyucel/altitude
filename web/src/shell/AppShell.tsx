@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useMatch, useParams } from "react-router";
 import { useDecisionAlerts } from "../data/alerts";
 import { ToastViewport } from "../data/Toast";
-import { useChangeStream, useOverview } from "../data/api";
+import { useChangeStream, useOverview, useOverviewRecord } from "../data/api";
 import { ImageViewerHost } from "../components/MessageImages";
 import FirstRun from "../routes/FirstRun";
 import { LAYOUT_SIZES, useViewport } from "./breakpoints";
@@ -24,8 +24,10 @@ export default function AppShell() {
   const { phone } = useViewport();
   const params = useParams();
   const location = useLocation();
-  // One place watches the queue, so an alert arrives on any page and on none twice (issue #221).
-  useDecisionAlerts(overview.data, location.pathname);
+  // One place watches the queue, so an alert arrives on any page and on none twice (issue #221). It reads the
+  // record, so a send on its way never changes which decisions count as seen (SPEC.md §1.1 Actions answer at once).
+  const record = useOverviewRecord();
+  useDecisionAlerts(record.data, location.pathname);
   const [addingFolder, setAddingFolder] = useState(false);
   const closeFirstRun = useCallback(() => setAddingFolder(false), []);
   const shell = useRef<HTMLDivElement>(null);

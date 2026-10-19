@@ -1,8 +1,11 @@
-import { Fragment, useContext, useEffect, useMemo, useState } from "react";
+import { Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, sendL2Message, useDecide, useProject } from "../data/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { ApiError, sendAnswers, sendApproval, useProject } from "../data/api";
 import type { DecideInput, Decision, QuestionAnswer, QuestionGroup, Step } from "../data/api";
+import { chatOnScreen, dropPending, shownOnScreen, usePending } from "../data/pending";
+import type { PendingAnswer, PendingWrite } from "../data/pending";
+import { notDone } from "./Bubbles";
 import { useToast } from "../data/Toast";
 import { decisionKind, optionsFor, questionPath } from "../data/decisions";
 import { requestCommand } from "../data/terminalCommand";
@@ -73,24 +76,25 @@ function Ran({ ran }: { ran: NonNullable<Decision["ran"]> }) {
   </div>;
 }
 
+/** Refused sends whose Not sent line was already brought into view, so returning to the card does not scroll again. */
+const noticed = new Set<string>();
+
 /** Preset and custom answers share one conversational handoff in Needs you and chat. */
 export function QuestionSet({ decisions, group, target, disabled = false, onDenied, onRefresh, refreshKey, chat = false, from = "project", deliveries }: QuestionProps & {
   decisions: Decision[]; group?: QuestionGroup | null; target?: Decision;
 }) {
-  const decide = useDecide();
-  useEffect(() => { decide.reset(); }, [refreshKey]);
-  useEffect(() => {
-    if (!decide.isError || !decide.variables) return;
-    const input = decide.variables;
-    const answers = "answers" in input ? input.answers : [input];
-    if (answers.every((answer) => {
-      const question = decisions.find((q) => q.project === input.project && q.slug === input.slug && q.id === answer.question_id && q.revision === answer.revision);
-      if (!question?.response) return false;
-      const text = "text" in answer ? answer.text : optionsFor(question).find((option) => option.key === answer.option_key)?.text;
-      return question.response.text === text;
-    })) decide.reset();
-  }, [decisions, decide.isError, decide.variables]);
   const queryClient = useQueryClient();
+  // A send shows its answers everywhere at the press (SPEC.md §3.8); a refused one returns here with its picks
+  // chosen again and Not sent, until Retry or an edit.
+  const keys = new Set(decisions.map(draftKey));
+  const refused: PendingWrite | undefined = usePending().filter((entry) => entry.kind === "answers" && entry.state === "refused"
+    && Object.keys(entry.picks ?? {}).some((key) => keys.has(key))).at(-1);
+  const alert = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!refused || noticed.has(refused.id)) return;
+    noticed.add(refused.id);
+    alert.current?.scrollIntoView({ block: "nearest" });
+  }, [refused?.id]);
   const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -108,6 +112,13 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
     const current = new Set(signature.split("|"));
     setDrafts((old) => Object.fromEntries(Object.entries(old).filter(([key]) => current.has(key))));
   }, [signature]);
+  // Editing a refused send's picks, or Retry, makes them the card's own drafts again.
+  const release = () => {
+    if (!refused) return;
+    setDrafts((old) => ({ ...refused.picks, ...old }));
+    dropPending(queryClient, refused.id);
+  };
+  useEffect(() => { if (refreshKey) release(); }, [refreshKey]);
   const first = decisions[0];
   if (!first) return null;
   const grouped = decisions.length > 1;
@@ -116,29 +127,44 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
   const shown = chat ? decisions : decisions.filter((q) => q.status !== "resolved");
   // While a member is open, closed members fold into one collapsed row so the card leads with what is current.
   const earlier = shown.some((q) => q.status !== "resolved") ? shown.filter((q) => q.status === "resolved") : [];
-  const denied = decide.error instanceof ApiError && [401, 403].includes(decide.error.status);
-  const stale = decide.error instanceof ApiError && decide.error.status === 409;
+  const error = refused?.error;
+  const denied = error instanceof ApiError && [401, 403].includes(error.status);
+  const stale = error instanceof ApiError && error.status === 409;
   const groupId = group?.id ?? first.group_id;
   const groupRevision = group?.revision ?? first.group_revision;
-  const unavailable = disabled || denied || stale || decide.isPending || (grouped && (!groupId || groupRevision == null));
+  const unavailable = disabled || denied || stale || (grouped && (!groupId || groupRevision == null));
+  const draftOf = (q: Decision): Draft | undefined => drafts[draftKey(q)] ?? refused?.picks?.[draftKey(q)];
   const answer = (q: Decision, key: string): QuestionAnswer => ({ question_id: q.id!, revision: q.revision!, option_key: key });
   const selected: QuestionAnswer[] = open.flatMap((q) => {
-    const draft = drafts[draftKey(q)];
+    const draft = draftOf(q);
     if (!q.id || q.revision == null || !draft) return [];
     if (draft.option) return [answer(q, draft.option)];
     return draft.text?.trim() ? [{ question_id: q.id, revision: q.revision, text: draft.text.trim() }] : [];
   });
   const perform = (input: DecideInput) => {
-    decide.mutate(input, {
-      onSuccess: () => {
-        const sent = "answers" in input ? input.answers : [input];
-        setDrafts((old) => Object.fromEntries(Object.entries(old).filter(([key]) => !sent.some((a) => key === draftKey({ ...first, id: a.question_id, revision: a.revision })))));
-        if (!chat) toast.show({ message: "Sent to L2", action: { label: "Open L2 chat", onClick: () => {
-          setSelectedProject(first.project);
-          navigate(questionPath(first), { state: { from, tab: from === "needs" ? "needs" : "work" } });
-        } } });
-      },
-      onError: (error) => { if (error instanceof ApiError && [401, 403].includes(error.status)) onDenied?.(); },
+    const sent = "answers" in input ? input.answers : [input];
+    const keyOf = (a: QuestionAnswer) => draftKey({ ...first, id: a.question_id, revision: a.revision });
+    const answers: PendingAnswer[] = sent.map((a) => ({ question_id: a.question_id, revision: a.revision,
+      text: a.text ?? optionsFor(decisions.find((q) => q.id === a.question_id && q.revision === a.revision) ?? first).find((option) => option.key === a.option_key)?.text ?? "" }));
+    const picks = Object.fromEntries(sent.map((a) => [keyOf(a), a.option_key ? { option: a.option_key } : { text: a.text }]));
+    const again = refused && JSON.stringify(refused.picks) === JSON.stringify(picks) ? refused.id : undefined;
+    if (refused) dropPending(queryClient, refused.id);
+    setDrafts((old) => Object.fromEntries(Object.entries(old).filter(([key]) => !sent.some((a) => key === keyOf(a)))));
+    // The outcome may come after the card has left this page, so where it opens is fixed at the press.
+    const { project, slug } = first;
+    const open = () => {
+      setSelectedProject(project);
+      navigate(questionPath(first), { state: { from, tab: from === "needs" ? "needs" : "work" } });
+    };
+    const noun = sent.length === 1 ? "Answer" : "Answers";
+    void sendAnswers(queryClient, input, answers, picks, again).then((outcome) => {
+      if (outcome.state === "saved") {
+        if (!chatOnScreen(project, slug)) toast.show({ message: `${noun} saved`, action: { label: "Open L2 chat", onClick: open } });
+        return;
+      }
+      if (outcome.error instanceof ApiError && [401, 403].includes(outcome.error.status)) onDenied?.();
+      // Where the card returns on screen, its Not sent line comes into view instead.
+      if (!shownOnScreen(project, slug)) toast.show({ message: `${noun} not sent`, action: { label: "Show", onClick: open } });
     });
   };
   const submit = (answers: QuestionAnswer[]) => {
@@ -149,11 +175,11 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
     } else perform({ project: first.project, slug: first.slug, ...single });
   };
   const edit = (question: Decision, draft: Draft) => {
-    decide.reset();
+    release();
     setDrafts((old) => ({ ...old, [draftKey(question)]: draft }));
   };
   const refresh = () => {
-    decide.reset();
+    release();
     onRefresh?.();
     for (const queryKey of [["overview"], ["project", first.project], ["task", first.project, first.slug]]) void queryClient.invalidateQueries({ queryKey });
   };
@@ -165,7 +191,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
     const resolved = question.status === "resolved";
     const withdrawn = question.resolution?.disposition === "withdrawn";
     const options = optionsFor(question);
-    const draft = drafts[draftKey(question)];
+    const draft = draftOf(question);
     const custom = !options.length || draft?.text !== undefined;
     const actionable = open.includes(question);
     // A question whose shown files are gone takes no answer until the owner shows them again (SPEC.md §3.9.1).
@@ -230,14 +256,14 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       </details> : null}
       {shown.filter((question) => !earlier.includes(question)).map(render)}
       {open.length ? <div className="question-batch">
-        <button type="button" className="btn btn-primary" aria-busy={decide.isPending || undefined} disabled={unavailable || !selected.length} onClick={() => submit(selected)}>{decide.isPending ? <span className="spinner" aria-hidden /> : null}{selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"}</button>
+        <button type="button" className="btn btn-primary" disabled={unavailable || !selected.length} onClick={() => submit(selected)}>{selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"}</button>
         {repository && pr != null ? <a className="btn btn-ghost" href={`${repository}/pull/${pr}`} target="_blank" rel="noopener noreferrer">View PR #{pr}</a> : null}
+        {refused ? <p ref={alert} className="text-meta text-danger" role="alert">
+          {denied ? "You cannot send answers here. Refresh after access is restored." : stale ? "These questions have changed. Refresh and review the current choices." : notDone("Not sent", error instanceof ApiError ? error.message : undefined)}{" "}
+          {denied || stale ? (!denied || !onDenied ? <button type="button" className="link" onClick={refresh}>Refresh</button> : null) : <button type="button" className="link" onClick={() => submit(selected)} disabled={unavailable || !selected.length}>Retry</button>}
+        </p> : null}
         {selected.length ? <p className="text-meta text-muted">Only these answers will be sent. You can answer the rest later.</p> : null}
       </div> : null}
-      {decide.isError ? <p className="text-meta text-danger" role="alert">
-        {denied ? "You cannot send answers here. Refresh after access is restored." : stale ? "These questions have changed. Refresh and review the current choices." : "Could not send answers. Your responses are kept here."}{" "}
-        {denied || stale ? (!denied || !onDenied ? <button type="button" className="link" onClick={refresh}>Refresh</button> : null) : <button type="button" className="link" onClick={() => decide.variables && perform(decide.variables)} disabled={disabled || decide.isPending}>Retry</button>}
-      </p> : null}
     </div>
   );
 }
@@ -252,32 +278,40 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const refresh = () => {
-    for (const queryKey of [["overview"], ["project", decision.project], ["task", decision.project, decision.slug]]) void queryClient.invalidateQueries({ queryKey });
+  const navigate = useNavigate();
+  // The approval shows in the chat at the press and the card leaves (SPEC.md §3.8.2); a refused one returns here
+  // with Not sent and Retry, unless the review changed meanwhile and the task's current state replaces the card.
+  const sent = usePending().filter((entry) => entry.kind === "approval" && entry.project === decision.project
+    && entry.slug === decision.slug && entry.pr === decision.pr && entry.hold === (decision.review_hold_id ?? null)).at(-1);
+  const error = sent?.state === "refused" ? sent.error : undefined;
+  const denied = error instanceof ApiError && [401, 403].includes(error.status);
+  const state: ChoiceState = !sent ? "ready" : sent.state === "refused" ? denied ? "ready" : "fail" : "wait";
+  const approve = () => {
+    if (sent) dropPending(queryClient, sent.id);
+    const { project, slug } = decision;
+    void sendApproval(queryClient, decision).then((outcome) => {
+      if (outcome.state === "saved") {
+        if (!chatOnScreen(project, slug)) toast.show({ message: "Approval saved", action: { label: "Open L2 chat", onClick: () => {
+          setSelectedProject(project);
+          navigate(`/projects/${project}/tasks/${slug}`, { state: { from, tab: from === "needs" ? "needs" : "work" } });
+        } } });
+      } else if (!shownOnScreen(project, slug)) {
+        toast.show({ message: "Approval not sent", action: { label: "Show", onClick: () => {
+          setSelectedProject(project);
+          navigate(`/projects/${project}/tasks/${slug}`, { state: { from, tab: from === "needs" ? "needs" : "work" } });
+        } } });
+      }
+    });
   };
-  const approve = useMutation({
-    mutationFn: () => sendL2Message({ project: decision.project, slug: decision.slug,
-      text: `Approved: merge PR #${decision.pr}.`, review_pr: decision.pr ?? undefined,
-      review_hold_id: decision.review_hold_id ?? null }),
-    onSuccess: () => {
-      refresh();
-      if (!chat) toast.show({ message: "Approval sent to L2" });
-    },
-    // A refused stale card is replaced by the task's current state instead of offering a Retry that cannot pass.
-    onError: (error) => { if (error instanceof ApiError && error.status === 409) refresh(); },
-  });
-  const denied = approve.error instanceof ApiError && [401, 403].includes(approve.error.status);
-  // Approve merge changes in place (SPEC.md §3.8.2): it spins while sending and then waits to be read.
-  const state: ChoiceState = approve.isPending ? "busy" : approve.isSuccess ? "wait" : approve.isError && !denied ? "fail" : "ready";
   return <div className="question-set" data-review-pr={decision.pr ?? undefined} data-review-task={`${decision.project}/${decision.slug}`}>
     <QuestionProse className="decision-question" text={decision.question || `Review PR #${decision.pr} before merge`} />
     {decision.detail ? <QuestionProse className="decision-why" text={decision.detail} /> : null}
     {decision.pr_images ? <PrPictures pictures={decision.pr_images} /> : null}
     <ReviewLink decision={decision} from={chat ? undefined : from} />
     <div className="decision-options" role="group" aria-label="Merge review">
-      <Choice primary label={state === "fail" ? "Retry" : "Approve merge"} state={state} disabled={disabled || denied}
-        spoken={state === "busy" ? "sending" : state === "wait" ? "waiting for the L2" : state === "fail" ? "Approve merge" : undefined}
-        error={approve.isError ? denied ? "You cannot approve here." : "Not sent" : null} onPress={() => approve.mutate()} />
+      <Choice primary label="Approve merge" state={state} disabled={disabled || denied}
+        spoken={state === "wait" ? "waiting for the L2" : state === "fail" ? "retry" : undefined}
+        error={error ? denied ? "You cannot approve here." : notDone("Not sent", error instanceof ApiError ? error.message : undefined) : null} onPress={approve} />
       {repository && decision.pr != null ? <a className="btn btn-ghost" href={`${repository}/pull/${decision.pr}`} target="_blank" rel="noopener noreferrer">View PR #{decision.pr}</a> : null}
     </div>
     <p className="text-meta text-muted">{chat ? "Or ask below. " : ""}Approving sends your message; nothing merges before the L2 checks the same PR again.</p>
