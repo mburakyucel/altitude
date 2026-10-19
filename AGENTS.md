@@ -239,8 +239,8 @@ names the service is that authorization for its owner, and every command under i
 
 By the operator's decision of 2026-10-19, a [repair](docs/OPERATIONS.md#repairs) is the one
 deliberate exception to confinement: an agent session that runs as the operator outside every sandbox,
-only when the operator starts it with `alt repair` or `install.py --repair` in their own terminal,
-recorded with Altitude's own check of the result. Nothing else starts one: not a grant, a `run`
+only when the operator starts it from a paired browser or with `alt repair` or `install.py --repair`
+in their own terminal, recorded with Altitude's own check of the result. Nothing else starts one: not a grant, a `run`
 block, a standing policy or an agent's request. Its rules are instructions to the session, not
 limits Altitude enforces.
 

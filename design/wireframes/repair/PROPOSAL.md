@@ -1,8 +1,9 @@
 # Repair sessions: proposal
 
 Status: the operator approved this design on 2026-10-19, after their direction that a repair has
-broad privileges and its independent review. Step 1 of the rollout, the terminal route, is built;
-[repairs](../../../docs/OPERATIONS.md#repairs) describes it, and the app route follows.
+broad privileges and its independent review. Steps 1 and 2 of the rollout, the terminal route and
+repairs from the app, are built; [repairs](../../../docs/OPERATIONS.md#repairs) describes them, and
+step 3 follows.
 
 ## What it is for
 

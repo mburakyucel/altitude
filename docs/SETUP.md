@@ -452,8 +452,9 @@ values remain distinct. See [model choices](CLI.md#model-choices) for precedence
 
 ## When something does not work
 
-Run `alt repair` in a terminal on this computer: a coding agent finds out why and fixes it, with your
-full access while it works, and Altitude checks the result
+Start a repair: **Repair** on a failed update's notice or **Repair…** in Settings → About, or, when
+Altitude or its page is down, `alt repair` in a terminal on this computer. A coding agent finds out
+why and fixes it, with your full access while it works, and Altitude checks the result
 ([repairs](OPERATIONS.md#repairs)). When `alt` itself cannot start, run
 `python3.12 install.py --repair` from the release. Settings are in
 [configuration](OPERATIONS.md#configuration).

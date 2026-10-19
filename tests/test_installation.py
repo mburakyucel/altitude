@@ -1263,7 +1263,7 @@ class NewVersionNotice(NoticeCase):
         # The page and alt doctor show the failure's own cause; a stalled updater has none to show.
         self.assertEqual(status["attempt"]["error"], "fixture: not published.")
         self.assertEqual(installation.describe_update(status),
-                         ["Update: the update to Altitude v0.2.0 did not finish. fixture: not published. alt update tries again."])
+                         ["Update: the update to Altitude v0.2.0 did not finish: fixture: not published. alt update tries again; alt repair finds out why and fixes it."])
         installation.request_update("v0.2.0")
         self.assertEqual(len(self.detached), 2)
         with mock.patch.object(installation.time, "time", return_value=time.time() + 1801):
@@ -1762,7 +1762,7 @@ class UpdateRequests(NoticeCase):
         self.assertTrue(installation.update_status()["check"])
 
     def test_launch_and_record_failures_reach_the_page_without_private_paths(self):
-        public = "Altitude could not complete the update request. Run alt repair in a terminal to find out why and fix it."
+        public = "Altitude could not complete the update request. Repair finds out why: Settings → About, or alt repair in a terminal."
         with mock.patch.object(platform, "detach", side_effect=RuntimeError(f"systemd-run failed in {self.home}")):
             self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=503)["error"], public)
         self.assertEqual(installation.update_status()["attempt"]["state"], "failed")

@@ -6,8 +6,13 @@ export const isStep = (row: Attention): row is Step => row.slug === null;
 /** Unknown attention never looks like a known empty inbox. */
 export function attentionCount(overview: Overview | undefined, failed: boolean) {
   if (!overview) return { text: failed ? "?" : "…", label: failed ? "Attention unavailable" : "Loading attention" };
-  const count = overview.queue.length;
+  const count = overview.queue.length + openRepairQuestions(overview);
   return count || failed ? { text: `${count}${failed ? " · saved" : ""}`, label: `${count} pending${failed ? ", saved count" : ""}` } : null;
+}
+
+/** A running repair's questions waiting for an answer; one that expired with its session is shown, not counted. */
+export function openRepairQuestions(overview: Overview): number {
+  return overview.repair?.questions.filter((question) => question.answer === null).length ?? 0;
 }
 
 /** The badge counts questions individually and operational attention items separately. */

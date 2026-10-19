@@ -1313,6 +1313,9 @@
 }
 .restart-banner-summary { flex: 1; }
 .update-notice-error { flex-basis: 100%; }
+.update-notice-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.shell[data-phone] .update-notice-buttons { flex-basis: 100%; padding-bottom: 6px; }
+.shell[data-phone] .update-notice-buttons .btn { min-height: 44px; }
 .restart-details { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .restart-banner-text {
   display: flex;

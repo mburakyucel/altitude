@@ -829,11 +829,16 @@ Altitude's jobs refuses it ("Only you can start a repair, from your own terminal
 commands under an operator grant and the page's terminal, where `run` blocks run. So does a second repair
 while one runs ("A repair is already running. Stop it there first."). Inside the
 session `alt` allows inspection and `doctor`, `service`, `update`, `recover`, `install`, `monitor`,
-`queue` and `repair report`; `alt repair report --wrong … --changed … --remains … [--try …]` records the
-session's report, at most 4,000 characters a part, until the session ends. `python3.12 install.py
---repair [--prefix PATH]` starts the installed release's own repair from its verified files when `alt`
-cannot start. Settings → About and `GET /api/repairs` (and `/api/repairs/<id>`) list repairs and their
-outcomes.
+`queue`, `repair ask` and `repair report`; `alt repair report --wrong … --changed … --remains … [--try …]`
+records the session's report, at most 4,000 characters a part, until the session ends. Inside a repair
+from the app, `alt repair ask --reason … --command …` asks the operator on its page before a step that
+deletes, installs or changes something outside Altitude, and `alt repair ask --step … --command …` hands
+them a step of their own, such as one needing their password; the agent then ends its turn and the
+answer arrives as its next message. `python3.12 install.py --repair [--prefix PATH]` starts the
+installed release's own repair from its verified files when `alt` cannot start. Settings → About and
+`GET /api/repairs` (and `/api/repairs/<id>`) list repairs and their outcomes; a paired browser starts and
+steers repairs from the app with `POST /api/repairs` and `/api/repairs/<id>/{message,answer,keep-going,stop}`,
+which refuse the machine key.
 
 `alt pair` prints a one-time code that pairs one browser with Altitude, the running service's
 address to open on that browser (or the reason there is none), a QR code of that address when a

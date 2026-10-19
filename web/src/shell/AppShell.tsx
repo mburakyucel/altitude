@@ -92,14 +92,14 @@ export default function AppShell() {
         <>
           <RestartBanner restart={overview.data?.restart} />
           <ContainerNotice lifecycle={overview.data?.lifecycle} />
-          <UpdateNotice update={overview.data?.update} />
-          {((!projectPage && !taskPage && !taskLive && !taskTerminal && !projectTerminal) || missingProject) && !location.pathname.startsWith("/settings") ? <PhoneHeader overview={overview} /> : null}
+          <UpdateNotice update={overview.data?.update} repair={overview.data?.repair?.running} />
+          {((!projectPage && !taskPage && !taskLive && !taskTerminal && !projectTerminal) || missingProject) && !/^\/(settings|repairs)(\/|$)/.test(location.pathname) ? <PhoneHeader overview={overview} /> : null}
         </>
       ) : (
         <Rail overview={overview} onAddFolder={() => setAddingFolder(true)} />
       )}
       <main className="shell-main">
-        {phone ? null : <><RestartBanner restart={overview.data?.restart} /><ContainerNotice lifecycle={overview.data?.lifecycle} /><UpdateNotice update={overview.data?.update} /></>}
+        {phone ? null : <><RestartBanner restart={overview.data?.restart} /><ContainerNotice lifecycle={overview.data?.lifecycle} /><UpdateNotice update={overview.data?.update} repair={overview.data?.repair?.running} /></>}
         {missingProject ? (
           <div className="page first-run-page">
             {projects.length ? <>

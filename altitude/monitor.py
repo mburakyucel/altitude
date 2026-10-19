@@ -2,12 +2,22 @@
 from __future__ import annotations
 import time
 
-from . import engines, config, route, state as S
+from . import engines, config, repair, route, state as S
 
 
 def sessions() -> list[dict]:
-    """The sessions Altitude runs: each project's L3 and its live task owners (L2)."""
+    """The sessions Altitude runs: a repair from the app while its session runs, each project's L3 and its live task
+    owners (L2)."""
     out = []
+    now = repair.running()
+    if now and now.get("route") == "app" and now.get("id"):
+        try:
+            row = repair.record(now["id"])
+        except (KeyError, ValueError):
+            row = None
+        if row and not row.get("ended"):
+            out.append({"kind": "repair", "id": row["id"], "title": row.get("title"), "engine": row.get("engine"),
+                        "model": row.get("model"), "state": repair.status(row), "at": row.get("started")})
     for name in config.load_projects():
         inf = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
         if inf:

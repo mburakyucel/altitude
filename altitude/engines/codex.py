@@ -1025,6 +1025,17 @@ def legacy_unit(task):
 def stop_legacy_worker(worker_id):
     raise RuntimeError("Worker ownership record is unavailable; stop is unconfirmed")
 
+def repair_session(folder: Path, model: str | None) -> dict:
+    """`codex exec` with no sandbox and no approvals, on the CLI's own sign-in. Codex has deny rules only inside its
+    sandbox, so the repair's rules stay its instructions."""
+    settings = ["--json", "--strict-config", "--skip-git-repo-check", "--ignore-user-config",
+                "-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"',
+                *(["-m", model] if model else [])]
+    return {"first": [config.CODEX_BIN, "exec", *settings, "-C", str(folder), "-"],
+            "resume": [config.CODEX_BIN, "exec", "resume", *settings, "{session}", "-"],
+            "session_type": "thread.started", "session_key": "thread_id", "env": {}, "sign_in": None}
+
+
 def binary():
     return config.CODEX_BIN
 

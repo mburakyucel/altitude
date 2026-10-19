@@ -1836,6 +1836,33 @@ def job_active(name: str, env: dict) -> bool:
     raise RuntimeError("Worker unit status is unavailable")
 
 
+def user_jobs(env: dict | None = None) -> list[dict]:
+    """What a process running as the operator can leave running outside its own job: user services and timers (launch
+    agents on macOS) and crontab lines, each {kind, name}. A repair lists those that appeared while it ran; Altitude's
+    own jobs and desktop applications' units are not among them. A source that cannot be read adds nothing."""
+    def lines(*command: str) -> list[str]:
+        try:
+            done = subprocess.run(command, capture_output=True, text=True, timeout=30, env=env)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        return done.stdout.splitlines() if done.returncode == 0 else []
+
+    found = {("scheduled job", line.strip()) for line in lines("crontab", "-l")
+             if line.strip() and not line.lstrip().startswith("#")}
+    if _darwin():
+        labels = {line.split("\t")[-1] for line in lines(LAUNCHCTL, "list")[1:]}
+        agents = Path.home() / "Library/LaunchAgents"
+        labels |= {path.stem for path in agents.glob("*.plist")} if agents.is_dir() else set()
+        found |= {("launch agent", label) for label in labels if label and not label.startswith(("com.apple.", "dev.altitude."))}
+    else:
+        units = {line.split()[0] for command in ("list-units", "list-unit-files")
+                 for line in lines(SYSTEMCTL, "--user", command, "--all", "--type=service,timer", "--no-legend", "--plain")
+                 if line.split()}
+        found |= {("user timer" if unit.endswith(".timer") else "user service", unit) for unit in units
+                  if not unit.startswith(("altitude", "app-", "dbus-:"))}
+    return [{"kind": kind, "name": name} for kind, name in sorted(found)]
+
+
 def job_stop(name: str, env: dict | None = None, *, timeout: int = 120) -> None:
     """Stop the job; `KillMode=control-group` takes every descendant with it (on macOS, every member of the job's
     coalition). A name with `*` stops every job it matches. Callers confirm with `job_active`."""

@@ -5,6 +5,14 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- When something does not work, a repair agent finds out why and fixes it: **Repair** on a failed
+  update's notice or **Repair…** in Settings → About starts one with your full access for two hours,
+  and its page shows each step it takes, asks you before it deletes, installs or changes anything
+  outside Altitude, and ends with its report and Altitude's own check. Stop ends it and everything it
+  started; Keep going adds an hour. When Altitude or its page is down, `alt repair` starts one in a
+  terminal on this computer.
+- A failed update says why it did not finish and leads with Repair, or with Try again when the cause
+  usually passes on its own.
 - A device whose alert subscription stopped working, such as one made before Altitude's alert key
   changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
   old subscription. The warning under the alert switch shows only on the device it concerns, and only

@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { StatusMark } from "../components/StatusMark";
 import { useMonitor, useOverview } from "../data/api";
 import type { EngineReadout, MonitorSeat, RoutingRow, Session } from "../data/api";
@@ -258,7 +259,26 @@ function RoutingCard({ rows, label }: { rows: RoutingRow[]; label: (engine: unkn
   );
 }
 
+/** A repair from the app while its session runs: full access as the operator, outside the task workers (SPEC.md §3.15). */
+function RepairSessionRow({ session, label }: { session: Session; label: (engine: unknown) => string }) {
+  const model = str(session["model"]);
+  const meta = [label(session.engine), model ? modelName(model) : "", "full access",
+    session.state === "waiting" ? "waiting for you" : "working"].filter(Boolean);
+  const observed = agoText(session.at);
+  return (
+    <li className="card monitor-card monitor-session">
+      <div className="monitor-row">
+        <span className="chip">REPAIR</span>
+        <Link className="monitor-session-title link" to={`/repairs/${str(session["id"])}`}>{str(session["title"]) || "Repair"}</Link>
+        {observed ? <span className="monitor-age" title={exactTime(session.at)}>{observed}</span> : null}
+      </div>
+      <p className="monitor-muted">{meta.join(" · ")}</p>
+    </li>
+  );
+}
+
 function SessionRow({ session, label, engines }: { session: Session; label: (engine: unknown) => string; engines: EngineReadout[] }) {
+  if (session.kind === "repair") return <RepairSessionRow session={session} label={label} />;
   const project = str(session.project);
   const slug = str(session.slug);
   const model = str(session["model"]);

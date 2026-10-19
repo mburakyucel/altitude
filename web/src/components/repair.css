@@ -1,0 +1,68 @@
+/* Repairs (SPEC.md §3.15): the start sheet, the repair page and its question cards. */
+
+/* The start sheet and Stop's confirmation: a bottom sheet on the phone, a 480px dialog on desktop. */
+.overlay[data-side="center"] .overlay-panel:has(.repair-sheet) { width: min(480px, 100%); }
+.repair-sheet { display: flex; flex-direction: column; gap: 12px; padding: 20px; }
+.repair-sheet h2 { font-size: var(--text-card-title); font-weight: 600; }
+.repair-sheet p { line-height: 1.5; }
+.repair-sheet-grab { align-self: center; width: 36px; height: 4px; margin: -8px 0 4px; border-radius: 2px; background: var(--border); }
+.repair-sheet-label { font-weight: 600; }
+.repair-sheet textarea {
+  width: 100%; min-height: 64px; max-height: 40dvh; resize: none; overflow-y: auto; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--text-primary); font: inherit;
+}
+.repair-sheet textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.repair-sheet-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.shell[data-phone] .repair-sheet-buttons .btn { flex: 1; min-height: 44px; }
+.repair-sheet-error code, .repair-question code { overflow-wrap: anywhere; }
+
+/* The page: header with the status and Stop, then what happened in order. */
+.repair-header { gap: 8px; padding: 4px 8px; }
+.repair-header .settings-back { min-width: 44px; min-height: 44px; font-size: 22px; }
+.repair-head { display: flex; align-items: flex-start; gap: 12px; }
+.repair-head-text { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.repair-head-text h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.repair-header h1 { font-size: var(--text-card-title); }
+.repair-head-meta { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: var(--text-meta); color: var(--text-muted); }
+.repair-head-meta > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repair-stop { flex: none; min-height: 44px; }
+.repair-page { gap: 14px; }
+.repair-access { font-size: var(--text-meta); color: var(--text-secondary); }
+.repair-access[data-low] { color: var(--chip-claimed-text); font-weight: 500; }
+.repair-access .link { min-height: 44px; }
+.repair-timeline { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.repair-sys { padding: 4px 0; }
+.repair-center { display: flex; justify-content: center; text-align: center; }
+.repair-you { white-space: pre-wrap; }
+.repair-say { min-width: 0; overflow-wrap: anywhere; }
+
+/* One step per line, cut with an ellipsis; Show has a 44px tap area. */
+.repair-step { min-width: 0; font-size: var(--text-meta); }
+.repair-step-line { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.repair-step-line .spinner { width: 12px; height: 12px; flex: none; }
+.repair-step-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--text-muted); }
+.repair-step-dot[data-bad] { background: var(--danger); }
+.repair-step-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.repair-show { flex: none; min-width: 44px; min-height: 44px; margin: -12px 0; }
+.repair-step-detail { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 0 14px; }
+.repair-step-detail pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .repair-step-line .spinner, .repair-head-meta .spinner { animation: none; } }
+
+/* Question cards, on the page and in Needs you. */
+.repair-question h3 { font-size: var(--text-card-title); font-weight: 600; }
+.repair-command { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--bubble); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-meta); }
+.repair-question-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.shell[data-phone] .repair-question-buttons .btn { min-height: 44px; }
+.chip.repair-waiting { background: var(--accent-tint); color: var(--accent-text); }
+
+/* The report: its outcome, Altitude's check and what was left running. */
+.repair-outcome { display: flex; flex-direction: column; gap: 6px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
+.repair-outcome h2 { font-size: var(--text-card-title); font-weight: 600; }
+.repair-outcome[data-tone="ok"] h2 { color: var(--success-text); }
+.repair-outcome[data-tone="bad"] h2 { color: var(--danger); }
+.repair-outcome h3 { margin-top: 6px; font-size: var(--text-meta); font-weight: 600; color: var(--text-secondary); }
+.repair-outcome p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.repair-check { margin-top: 6px; font-size: var(--text-meta); color: var(--text-secondary); }
+.repair-left { margin: 0; padding-left: 18px; font-size: var(--text-meta); }
+.repair-left code { overflow-wrap: anywhere; }
+.repair-composer { padding-top: 8px; }

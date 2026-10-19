@@ -1,12 +1,14 @@
 import { Link } from "react-router";
 import type { Location } from "react-router";
-import { StatusMark } from "./StatusMark";
-import { Command } from "./Onboarding";
-import { ApiError, useRepair, useRepairs } from "../data/api";
-import type { Repair, RepairRow } from "../data/api";
+import { CopyButton } from "./CodeBlock";
+import { RepairButton } from "./RepairSheet";
+import { BusyLabel, StatusMark } from "./StatusMark";
+import { newRequest, repairRequest, useRepairAction, useRepairs } from "../data/api";
+import type { RepairRow, RepairStatus } from "../data/api";
 import { when } from "../data/observed";
+import "./repair.css";
 
-/** Repairs in Settings → About (SPEC.md §3.15): how to start one, the recent ones and each one's page. */
+/** Repairs in Settings → About (SPEC.md §3.15): Repair…, the recent repairs and All repairs; each opens its page. */
 
 const RECENT = 3;
 
@@ -15,48 +17,60 @@ function day(value: string) {
   return then == null ? "" : new Date(then).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function moment(value: string) {
+export function moment(value: string) {
   const then = when(value);
   return then == null ? "" : new Date(then).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
 
-/** The outcome chip: Altitude's own check once the repair has ended. */
-export function RepairChip({ row, running }: { row: RepairRow; running: boolean }) {
-  if (running) return <span className="chip repair-busy"><span className="spinner" aria-hidden="true" />Running</span>;
-  if (!row.outcome) return <span className="chip repair-busy"><span className="spinner" aria-hidden="true" />Checking</span>;
-  if (row.outcome === "repaired") return <span className="chip" data-tone="ok">✓ Repaired</span>;
-  if (row.outcome === "confirm" || row.outcome === "changed_by_hand") return <span className="chip repair-confirm">Confirm yourself</span>;
+/** The status chip: what the session is doing while it runs, then the outcome of Altitude's own check. */
+export function RepairChip({ status }: { status: RepairStatus }) {
+  if (status === "working" || status === "checking") {
+    return <span className="chip repair-busy"><span className="spinner" aria-hidden="true" />{status === "working" ? "Working" : "Checking"}</span>;
+  }
+  if (status === "waiting") return <span className="chip repair-waiting">Waiting for you</span>;
+  if (status === "stopped") return <span className="chip">Stopped</span>;
+  if (status === "repaired") return <span className="chip" data-tone="ok">✓ Repaired</span>;
+  if (status === "confirm" || status === "changed_by_hand") return <span className="chip repair-confirm">Confirm yourself</span>;
   return <span className="chip" data-tone="danger">✕ Not repaired</span>;
 }
 
-function RepairLink({ row, running, state }: { row: RepairRow; running: boolean; state: Location["state"] }) {
-  return <Link className="settings-row repair-row" to={`/settings/repairs/${row.id}`} state={state}>
+function RepairLink({ row, state }: { row: RepairRow; state: Location["state"] }) {
+  return <Link className="settings-row repair-row" to={`/repairs/${row.id}`} state={state}>
     <span className="repair-row-text">
       <span className="repair-row-title">{day(row.started)} · {row.title}</span>
       {row.route === "terminal" ? <small>From a terminal</small> : null}
     </span>
-    <RepairChip row={row} running={running} />
+    <RepairChip status={row.status} />
     <span aria-hidden>›</span>
   </Link>;
 }
 
-/** The Repair rows: what a repair is and how to start one, then up to three recent repairs and All repairs. */
+/** The Repair rows: Repair… (or the one running), then up to three recent repairs and All repairs. */
 export function RepairRows({ state }: { state: Location["state"] }) {
   const repairs = useRepairs();
   const running = repairs.data?.running;
   const rows = repairs.data?.repairs ?? [];
   return <>
     <div className="settings-row repair-start">
-      <span><strong>Repair</strong>{" "}<small>Something not working? Run this in a terminal on this computer: an agent finds out why and fixes it, with your full access while it works.</small></span>
-      {running ? <small className="repair-busy"><span className="spinner" aria-hidden="true" />Running in a terminal</small> : <Command text="alt repair" />}
+      <span><strong>Repair</strong>{" "}<small>Something not working? A repair agent finds out why and fixes it, with full access while it works.</small></span>
+      {running ? <RunningRepair id={running.id} /> : <RepairButton label="Repair…" />}
     </div>
     {repairs.isPending ? <p className="settings-row"><StatusMark label="Loading repairs…" /></p>
       : repairs.isError ? <p role="alert" className="settings-row text-danger">Could not load repairs. <button type="button" className="link" onClick={() => void repairs.refetch()}>Retry</button></p>
-        : rows.slice(0, RECENT).map((row) => <RepairLink key={row.id} row={row} running={running?.id === row.id} state={state} />)}
+        : rows.slice(0, RECENT).map((row) => <RepairLink key={row.id} row={row} state={state} />)}
     {rows.length > RECENT ? <Link className="settings-row" to="/settings/repairs" state={state}>
       <span><strong>All repairs</strong>{" "}<small>{rows.length} repairs</small></span><span aria-hidden>›</span>
     </Link> : null}
   </>;
+}
+
+/** The repair running now: Running · Open for one from the app, without a link for one in a terminal. */
+export function RunningRepair({ id, long = false }: { id: string | null; long?: boolean }) {
+  return <small className="repair-busy">
+    <span className="spinner" aria-hidden="true" />
+    {id ? <>{long ? "Repair running" : "Running"} · <Link className="link" to={`/repairs/${id}`}>Open</Link></>
+      : long ? "A repair is running in a terminal on this computer" : "Running in a terminal"}
+  </small>;
 }
 
 /** All repairs, newest first, in the same row format. */
@@ -64,59 +78,49 @@ export function RepairsPage({ state }: { state: Location["state"] }) {
   const repairs = useRepairs();
   if (repairs.isPending) return <p><StatusMark label="Loading repairs…" /></p>;
   if (repairs.isError) return <p role="alert" className="text-danger">Could not load repairs. <button type="button" className="link" onClick={() => void repairs.refetch()}>Retry</button></p>;
-  if (!repairs.data.repairs.length) return <p className="text-meta text-muted">No repairs yet. Run <code>alt repair</code> in a terminal on this computer to start one.</p>;
+  if (!repairs.data.repairs.length) return <p className="text-meta text-muted">No repairs yet. Start one with Repair… in Settings → About.</p>;
   return <div className="settings-group">
-    {repairs.data.repairs.map((row) => <RepairLink key={row.id} row={row} running={repairs.data.running?.id === row.id} state={state} />)}
+    {repairs.data.repairs.map((row) => <RepairLink key={row.id} row={row} state={state} />)}
   </div>;
 }
 
-function Checked({ repair }: { repair: Repair }) {
-  const check = repair.check;
-  if (!repair.ended) return <p className="text-meta text-muted">Altitude checks the result once the repair ends.</p>;
-  if (!check) return <p className="text-meta text-muted repair-busy"><span className="spinner" aria-hidden="true" />Altitude is checking the result…</p>;
-  const parts = [check.version ? `version ${check.version.replace(/^v/, "")}` : null,
-    check.matches === true ? "matches its release" : null].filter(Boolean);
-  return <>
-    <p className="text-meta">Altitude checked: {[...parts, check.failing.length ? null : "all checks pass"].filter(Boolean).join(" · ")}</p>
-    {check.matches === false ? <p className="text-meta text-danger">The installed files differ from the release: the installation was changed by hand.</p> : null}
-    {check.failing.length ? <p className="text-meta text-danger">Failing: {check.failing.map((item) => item.name).join(", ")}</p> : null}
-    {repair.update && repair.report && check.version !== repair.update.version
-      ? <p className="text-meta text-danger">The update to {repair.update.version.replace(/^v/, "")} is not installed.</p>
-      : repair.update && repair.report && check.running !== repair.update.version
-        ? <p className="text-meta text-danger">Altitude’s service still runs {(check.running ?? "another version").replace(/^v/, "")}.</p> : null}
-  </>;
+export interface RepairAsk {
+  id: string;
+  kind: "ask" | "step";
+  title: string;
+  reason: string | null;
+  command: string;
+  answer: "yes" | "no" | "ran" | "expired" | null;
 }
 
-/** One repair's page: its outcome, report and Altitude's check; a terminal repair's steps stay in that terminal. */
-export function RepairPage({ id }: { id: string }) {
-  const repair = useRepair(id);
-  const repairs = useRepairs();
-  if (repair.isPending) return <p><StatusMark label="Loading repair…" /></p>;
-  if (repair.isError && repair.error instanceof ApiError && repair.error.status === 404) return <p className="text-meta text-muted">That repair is not on this computer.</p>;
-  if (repair.isError) return <p role="alert" className="text-danger">Could not load this repair. <button type="button" className="link" onClick={() => void repair.refetch()}>Retry</button></p>;
-  const data = repair.data;
-  const running = repairs.data?.running?.id === data.id;
-  const report = data.report;
-  return <div className="repair-page">
-    <p className="repair-meta">
-      <RepairChip row={data} running={running} />
-      <small>{data.route === "terminal" ? "From a terminal · " : ""}started {moment(data.started)}{data.ended ? ` · ended ${moment(data.ended)}` : ""}</small>
-    </p>
-    {data.outcome === "changed_by_hand" ? <p className="text-meta">Confirm yourself · the installation was changed by hand.</p> : null}
-    {report ? <section className="repair-report" aria-label="Report">
-      <h2>What was wrong</h2><p>{report.wrong}</p>
-      <h2>What changed</h2><p>{report.changed}</p>
-      <h2>What remains</h2><p>{report.remains}</p>
-      {report.try ? <p><strong>Try:</strong> {report.try}</p> : null}
-    </section> : data.ended ? <p className="text-meta">The repair ended without a report.</p> : null}
-    <Checked repair={data} />
-    {data.route === "terminal" ? <p className="text-meta text-muted">Its steps are in that terminal’s history.</p> : null}
-    {data.brief ? <details className="repair-brief"><summary>Brief</summary><pre>{data.brief}</pre></details> : null}
-  </div>;
-}
+const ANSWERED = { yes: "Went ahead · by you", no: "Not done · declined by you", ran: "Done · you ran it", expired: "Expired · the session ended" } as const;
 
-/** The title a repair's page shows; Repair while it loads. */
-export function useRepairTitle(id: string | undefined) {
-  const repair = useRepair(id);
-  return id ? repair.data?.title ?? "Repair" : "Repairs";
+/**
+ * A repair's question, on its page and in Needs you: Go ahead with a command that deletes, installs or changes
+ * something outside Altitude, or the operator's own step, such as one needing their password, to run in their terminal.
+ */
+export function RepairQuestion({ repair, question, ended, title }: { repair: string; question: RepairAsk; ended: boolean; title?: string }) {
+  const answer = useRepairAction((choice: string) => repairRequest(`/api/repairs/${repair}/answer`, { question: question.id, answer: choice }, newRequest()));
+  const settled = question.answer ?? (ended ? "expired" : null);
+  const chosen = answer.isPending ? answer.variables : null;
+  return <article className="decision repair-question" aria-label={question.title}>
+    <p className="text-meta text-muted">{title ? <>Asked by the repair · <Link className="link" to={`/repairs/${repair}`}>{title}</Link></> : "Asked by the repair"}</p>
+    <h3>{question.title}</h3>
+    {question.reason ? <p>{question.reason}</p> : null}
+    <pre className="repair-command"><code>{question.command}</code></pre>
+    {settled ? <p className="text-meta text-muted">{ANSWERED[settled]}</p>
+      : <div className="repair-question-buttons">
+        {question.kind === "step" ? <>
+          <CopyButton text={question.command} />
+          <button type="button" className="btn btn-primary" disabled={answer.isPending} onClick={() => answer.mutate("ran")}>
+            <BusyLabel busy={chosen === "ran"} label="I ran it" working="Sending…" /></button>
+        </> : <>
+          <button type="button" className="btn btn-primary" disabled={answer.isPending} onClick={() => answer.mutate("yes")}>
+            <BusyLabel busy={chosen === "yes"} label="Go ahead" working="Sending…" /></button>
+          <button type="button" className="btn" disabled={answer.isPending} onClick={() => answer.mutate("no")}>
+            <BusyLabel busy={chosen === "no"} label="Don’t" working="Sending…" /></button>
+        </>}
+      </div>}
+    {answer.isError ? <p className="text-danger text-meta" role="alert">{answer.error.message}</p> : null}
+  </article>;
 }
