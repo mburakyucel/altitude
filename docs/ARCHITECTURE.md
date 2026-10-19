@@ -2473,11 +2473,11 @@ recorder or a reboot leaves none behind.
 A terminal repair's session is `engines.interactive(engine, prompt)`, the engine's own CLI in its
 normal mode with the operator's sign-in and settings, run with `ALTITUDE_REPAIR=<id>` in the repair's
 folder. A repair from the app runs `engines.repair_session(engine, folder, model)`: the engine's
-headless mode with its permission prompts and sandbox off, its own configuration folder inside the
-repair's, deny rules for Altitude's keys, certificate keys and engine sign-ins where the engine has
-them, and the sign-in Altitude's own runs use, read from its file at each turn. That is the only place
-an engine's unconfined mode is spelled (`tests/test_repair_app.py` keeps it so); ordinary workers keep
-their confinement. The engine and model are chosen as for a small task (`route.pick_engine("l2")`),
+headless mode with its permission prompts and sandbox off, outside Altitude's sandbox, with deny rules
+for Altitude's keys, certificate keys and engine sign-ins where the engine has them, and the sign-in
+Altitude's own runs use (for Claude, its own configuration folder inside the repair's and the token
+read from its file at each turn). Only the repair module builds this session, and every task worker
+and reviewer still launches inside Altitude's sandbox (`tests/test_repair_app.py` keeps both so). The engine and model are chosen as for a small task (`route.pick_engine("l2")`),
 and a repair counts toward no running-task limit.
 
 `repair.start_app` writes the brief and the record, then copies `altitude/repair_job.py`, which uses

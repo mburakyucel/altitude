@@ -581,19 +581,29 @@ class WhoSteers(AppRepairCase):
 
 class Confinement(AppRepairCase):
     def test_full_access_appears_only_in_the_repair_session(self):
-        """Ordinary workers keep their confinement: each engine's full-access setting is spelled only where a repair's
-        session is built."""
-        for name in ("claude", "codex"):
-            source = Path(engines.__file__).with_name(f"{name}.py")
-            tree = ast.parse(source.read_text())
-            for function in ast.walk(tree):
-                if not isinstance(function, ast.FunctionDef):
-                    continue
-                for node in ast.walk(function):
-                    if isinstance(node, ast.Constant) and isinstance(node.value, str) and (
-                            "bypassPermissions" in node.value or "danger-full-access" in node.value):
-                        with self.subTest(engine=name, function=function.name):
-                            self.assertEqual(function.name, "repair_session")
+        """Ordinary workers keep their confinement: only the repair module builds a repair's session, a task worker or
+        reviewer always launches inside Altitude's sandbox with its writable roots, and Claude's prompt-free mode,
+        which no sandbox wraps outside a job, is spelled only where a repair's session is built."""
+        package = Path(engines.__file__).parents[1]
+        callers = {path.relative_to(package).as_posix() for path in package.rglob("*.py")
+                   for node in ast.walk(ast.parse(path.read_text())) if isinstance(node, ast.Call)
+                   and isinstance(node.func, ast.Attribute) and node.func.attr == "repair_session"}
+        self.assertEqual(callers, {"repair.py", "engines/common.py"})
+        common = ast.parse(Path(engines.__file__).with_name("common.py").read_text())
+        launches = [node for node in ast.walk(common) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "job_command"]
+        self.assertTrue(launches)
+        for launch in launches:
+            with self.subTest(line=launch.lineno):
+                self.assertIn("writable", {keyword.arg for keyword in launch.keywords})
+        tree = ast.parse(Path(engines.__file__).with_name("claude.py").read_text())
+        for function in ast.walk(tree):
+            if not isinstance(function, ast.FunctionDef):
+                continue
+            for node in ast.walk(function):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and "bypassPermissions" in node.value:
+                    with self.subTest(function=function.name):
+                        self.assertEqual(function.name, "repair_session")
 
     def test_the_failed_update_notice_learns_whether_its_cause_passes(self):
         import http.client as client
