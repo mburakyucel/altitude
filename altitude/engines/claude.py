@@ -731,7 +731,7 @@ def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, sett
             claude_stop(row["id"])
     git_writable, read_only = git_policy.worker_git_access(cwd)
     home = Path(job_root) / "claude"
-    return cmd, content, (Path(cwd), *git_writable, scratch, home), read_only, job_env(home)
+    return cmd, content, (Path(cwd), *git_writable, scratch, home), read_only, job_env(home), {}
 
 
 worker_unit_name = _claude_unit
@@ -1061,7 +1061,15 @@ def review_launch_env(runtime):
 
 
 CONFINEMENT = 'Claude permission rules'
-JOB_PROFILE = True
+
+
+def operator_places():
+    """None: a Claude job reads the operator's Claude folder its own folder links to (`_own_folder`)."""
+    return ()
+
+
+def worker_sign_in():
+    return {"error": "A Claude worker's sign-in arrives in its launch input."}
 
 
 def delivered_context(record: dict) -> list[str]:

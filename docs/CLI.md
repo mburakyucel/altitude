@@ -2227,8 +2227,8 @@ The grant reaches each engine's own guard through the engine seam. A Claude owne
 settings carry one allow rule, `Bash(alt task run <slug> *)`, which Claude Code resolves before its
 auto-mode classifier, so a granted command is not judged again; without a current grant altd refuses
 the call, so the rule adds nothing, and a grant or revocation takes effect in the running session.
-A Codex owner's sandbox is unchanged: its shell reaches altd as for any `alt` verb, and the granted
-command runs outside the sandbox, so the worker's own shell still never reaches the user service bus.
+A Codex owner asks for no approvals: its shell reaches altd as for any `alt` verb, and the granted
+command runs outside Altitude's sandbox, so the worker's own shell still never reaches the user service bus.
 Whether Claude Code admits a particular call is observed on use, not by the provider-free tests; when
 a guard still refuses, the owner puts that one command in a `run` block for the operator's terminal
 rather than rewording it. Rules Altitude does not control, such as a repository ruleset or billing, are

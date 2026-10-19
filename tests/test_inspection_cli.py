@@ -391,7 +391,7 @@ class TestInspectionCLI(AltitudeCase):
                                  "type": "command_execution", "command": wrapped}})]) + "\n"
         process = SimpleNamespace(pid=1, returncode=0, stdin=io.StringIO(), communicate=lambda *_a, **_k: (events, ""))
         with mock.patch.object(engines.common.subprocess, "Popen", return_value=process):
-            parsed = engines.codex_exec("prompt", unit="altitude-coordinator-fixture.service", cwd=self.tmp)
+            parsed = engines.codex_exec("prompt", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.tmp)
         self.assertEqual(parsed["tools"], [{"name": "Bash", "command": wrapped}])
 
     def test_service_status_is_one_read_only_systemctl_call(self):

@@ -6,7 +6,9 @@ reads. FAKE_ENGINE_SESSION, FAKE_ENGINE_MODEL and FAKE_ENGINE_TEXT replace the s
 the first turn starts a long command and writes "running" to that path; the command finishes only once a Send now
 message reaches the turn (for Claude, its input line and the `background_tasks` request). With FAKE_ENGINE_ASK set,
 the Codex server asks the client for an approval first and records the answer. With FAKE_ENGINE_REFUSE_STEER set, the
-Codex server refuses the first steer of a running turn and ends that turn a second later.
+Codex server refuses the first steer of a running turn and ends that turn a second later. The Codex server accepts a
+sign-in handed over by its client unless FAKE_ENGINE_REFUSE_SIGN_IN is set; with FAKE_ENGINE_EXPIRE set, its turn
+asks the client for a fresh access token, as Codex does when the provider refuses one, and ends once answered.
 """
 import json
 import os
@@ -45,7 +47,8 @@ def read():
         with open(os.environ["FAKE_ENGINE_LOG"], "a") as log:
             log.write(json.dumps({"environment": {"GH_TOKEN": os.environ.get("GH_TOKEN")}, "argv": sys.argv[1:],
                                   "claude": {key: os.environ.get(key) for key in ("CLAUDE_CONFIG_DIR",
-                                                                                  "CLAUDE_CODE_OAUTH_TOKEN")}}) + "\n")
+                                                                                  "CLAUDE_CODE_OAUTH_TOKEN")},
+                                  "codex": os.environ.get("CODEX_HOME")}) + "\n")
     for raw in sys.stdin:
         message = json.loads(raw)
         if os.environ.get("FAKE_ENGINE_LOG"):
@@ -137,6 +140,13 @@ def codex() -> None:
         method, identity, params = message.get("method"), message.get("id"), message.get("params") or {}
         if method == "initialize":
             reply(identity, {"userAgent": "fake"})
+        elif method == "account/login/start":
+            if os.environ.get("FAKE_ENGINE_REFUSE_SIGN_IN"):
+                reply(identity, error={"code": -32600, "message": "external auth is not supported"})
+            else:
+                reply(identity, {"type": "chatgptAuthTokens"})
+        elif identity == "refresh-1" and not method:  # the client's fresh token: the retried request succeeds
+            complete(TEXT)
         elif method in ("thread/start", "thread/resume"):
             thread = params.get("threadId") or thread
             reply(identity, {"thread": {"id": thread}, "model": MODEL})
@@ -147,7 +157,10 @@ def codex() -> None:
             notify("turn/started", {"turn": {"id": "turn-1"}})
             if os.environ.get("FAKE_ENGINE_HELPERS"):
                 helpers()
-            if TOOL:
+            if os.environ.get("FAKE_ENGINE_EXPIRE"):
+                out({"id": "refresh-1", "method": "account/chatgptAuthTokens/refresh",
+                     "params": {"reason": "unauthorized", "previousAccountId": "fixture-account"}})
+            elif TOOL:
                 active = "turn-1"
                 notify("item/started", {"item": {"type": "commandExecution", "id": "tool-1", "command": "sleep 3600",
                                                  "status": "inProgress"}})

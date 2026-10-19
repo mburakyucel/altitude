@@ -140,10 +140,8 @@ def missing_tool(project: str) -> str | None:
     # A status command that could not answer does not hold the first turn: only a reported sign-out does.
     signed = [engine for engine in installed if engines.sign_in(engine)["signed_in"] is not False]
     sandbox = platform.sandbox_tool()
-    if any(not engines.common.implementation(engine).JOB_PROFILE or not sandbox or sandbox["enabled"] for engine in signed):
-        return None
     if signed:
-        return "Install the agent sandbox"
+        return None if not sandbox or sandbox["enabled"] else "Install the agent sandbox"
     if installed:
         return f"Sign in to {config.ENGINE_LABELS[installed[0]]}"
     return f"Install {config.ENGINE_LABELS[routed[0]]}" if routed else None

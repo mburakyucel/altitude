@@ -1322,17 +1322,10 @@ def phase_jobs(guest: Guest, repository: str, results: Path, record: dict, input
 
 def phase_read_only_home(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """The suite's read-only-home cases, which no validation run or worker can start: each must run and pass, none
-    skipped, its child confined by a Seatbelt profile that keeps Altitude's home read-only, or by Codex's own sandbox
-    with a task's permissions. This Mac's Codex CLI is copied in, with an empty settings folder and no sign-in; it
-    asks no model. The suite's home lies outside the temporary folders Codex's sandbox admits, as in a validation run."""
-    codex = shutil.which(os.environ.get("CODEX_BIN", "codex"))
-    if not codex:
-        raise Stop("the read-only-home phase needs the Codex CLI on this Mac, whose own sandbox it runs in the guest")
-    guest.copy(Path(codex).resolve(), f"{SHARED}/codex", timeout=900)
-    environment = (f"ALTITUDE_VALIDATION=1 TMPDIR={SHARED}/tmp CODEX_HOME={SHARED}/codex-home CODEX_BIN={SHARED}/codex "
-                   "ALTITUDE_TEST_CODEX_SANDBOX=1")
-    record["codex"] = guest.ssh(f"mkdir {SHARED}/tmp {SHARED}/codex-home && env {environment} {SHARED}/codex --version",
-                                check=False).stdout.strip()
+    skipped, its child confined by a Seatbelt profile that keeps Altitude's home read-only, the roots case with the
+    roots each engine's worker launch names."""
+    environment = f"ALTITUDE_VALIDATION=1 TMPDIR={SHARED}/tmp"
+    guest.ssh(f"mkdir {SHARED}/tmp")
     command = f"env {environment} /opt/homebrew/bin/python3.12 -B -m unittest -v {' '.join(READ_ONLY_HOME)}"
     result = in_source(guest, inputs, command, 900)
     (results / "read-only-home.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")

@@ -119,9 +119,14 @@ class ReadOnlyHome(AltitudeCase):
         spec = {"engine": engine, "command": [sys.executable, str(FAKE), *(["app-server"] if engine == "codex" else [])],
                 "input": engines.common._engine_input(engine, "Start the work.", ()), "cwd": str(self.worktree),
                 "sends": str(self.sends), "worker_id": "worker", "task": {"project": self.project, "slug": self.slug}}
+        own = {}
+        if engine == "codex":  # the job's own Codex folder and the sign-in altd hands it
+            self.codex_signed_in()
+            spec.update(operator=str(self.codex_home()), copies=[], sign_in=engines.codex.worker_sign_in())
+            own = {"CODEX_HOME": str(self.tmp / "job-codex")}
         proc = subprocess.Popen(read_only_home(engines.common._driver_command(), (self.tmp,)), stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.worktree,
-                                env={**self.env, "FAKE_ENGINE_LOG": str(self.tmp / f"{engine}.log"),
+                                env={**self.env, **own, "FAKE_ENGINE_LOG": str(self.tmp / f"{engine}.log"),
                                      "FAKE_ENGINE_TOOL": str(tool), "FAKE_ENGINE_END": "completed"})
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
         proc.stdin.write(engines.common._driver_input(spec).encode())

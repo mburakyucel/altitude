@@ -76,7 +76,8 @@ stay open:
 
 - **Native macOS runtime and installation:** the common engine/authority contract runs on a per-user
   LaunchAgent, with each job its own launchd job (coalition Stop, a supervisor-held time limit),
-  Altitude's Seatbelt profile around Claude, Codex's own sandbox, and the installer's macOS branch.
+  Altitude's Seatbelt profile around every task worker, Codex's own sandbox around a Codex coordinator,
+  and the installer's macOS branch.
   It is on `main` (#570), Altitude runs from source on the operator's Mac, and `v0.1.0` installs there
   with one command (#551). macOS 15 and 26 are supported while the evidence below is recorded on
   Apple silicon.

@@ -1,14 +1,12 @@
-"""A task worker on either engine writes its worktree, the Git parts it needs and its own scratch folder, and a Claude
-worker its own Claude folder, never the rest of Altitude's home: a process confined to the roots each engine's launch
-names is refused every record there, its own task's included, and every other task's Claude folder, and on macOS
+"""A task worker on either engine writes its worktree, the Git parts it needs, its own scratch folder and its own engine
+folder, never the rest of Altitude's home: a process confined to the roots each engine's launch names is refused every
+record there, its own task's included, and every other task's engine folders, and on macOS
 the launcher's job folders, where a job's input waits with its tokens (docs/ARCHITECTURE.md#task-door)."""
 import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
-import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -39,11 +37,6 @@ print(json.dumps(out))
 '''
 
 
-def settings(cmd: list[str]) -> list[str]:
-    """The `-c` settings of a Codex launch."""
-    return [cmd[n + 1] for n, part in enumerate(cmd[:-1]) if part == "-c"]
-
-
 class WorkerRoots(AltitudeCase):
     def setUp(self):
         super().setUp()
@@ -61,9 +54,9 @@ class WorkerRoots(AltitudeCase):
         images = config.project_dir(self.project) / "images"
         images.mkdir()
         self.scratch = engines.common.task_scratch(dispatch.l2_env(self.project, self.slug, 1))
-        self.own_claude = dispatch.l2_job_root(self.project, self.slug) / "claude"
-        other_claude = dispatch.l2_job_root(self.project, other["slug"]) / "claude"
-        for folder_path in (self.own_claude, other_claude):
+        self.own = {engine: dispatch.l2_job_root(self.project, self.slug) / engine for engine in ("claude", "codex")}
+        others = {engine: dispatch.l2_job_root(self.project, other["slug"]) / engine for engine in ("claude", "codex")}
+        for folder_path in (*self.own.values(), *others.values()):
             folder_path.mkdir(parents=True)
         self.targets = {
             "task record": ("file", S.status_path(self.project, self.slug)),
@@ -73,7 +66,8 @@ class WorkerRoots(AltitudeCase):
             "task folder": ("folder", folder), "other task": ("folder", S.task_dir(self.project, other["slug"])),
             "reviews folder": ("folder", folder / "reviews"), "image staging": ("folder", images),
             "home": ("folder", config.ROOT), "scratch": ("folder", self.scratch),
-            "own Claude folder": ("folder", self.own_claude), "other task's Claude folder": ("folder", other_claude)}
+            "own Claude folder": ("folder", self.own["claude"]), "other task's Claude folder": ("folder", others["claude"]),
+            "own Codex folder": ("folder", self.own["codex"]), "other task's Codex folder": ("folder", others["codex"])}
         if NATIVE_PLATFORM == "darwin":  # the launcher's job folders, where a job's input waits until it is read
             saved = platform._jobs() / "dev.altitude.job.fixture" / "stdin"
             saved.parent.mkdir(parents=True)
@@ -86,13 +80,10 @@ class WorkerRoots(AltitudeCase):
     def roots(self, engine: str) -> tuple[list[Path], tuple]:
         """The writable roots and read-only paths a worker launch on `engine` names."""
         self.patch(engines.claude, "claude_agents", return_value=[])
-        cmd, _, writable, read_only, _ = engines.common.implementation(engine).prepare_worker(
+        _, _, writable, read_only, *_ = engines.common.implementation(engine).prepare_worker(
             "fixture", "brief", cwd=self.worktree, scratch=self.scratch,
             job_root=dispatch.l2_job_root(self.project, self.slug), persona=None, model=None,
             settings=self.tmp / "settings.json", effort=None, resume=None, images=())
-        if writable is None:  # Codex names its roots in its own sandbox settings
-            policy = tomllib.loads("\n".join(s for s in settings(cmd) if s.startswith("permissions.")))
-            writable = list(policy["permissions"]["altitude-task"]["workspace_roots"])
         return [Path(root) for root in writable], read_only
 
     def spec(self) -> str:
@@ -105,7 +96,7 @@ class WorkerRoots(AltitudeCase):
         return json.loads(run.stdout)
 
     def assert_only_own(self, written: dict, engine: str):
-        own = {"scratch", "own Claude folder"} if engine == "claude" else {"scratch"}
+        own = {"scratch", "own Claude folder" if engine == "claude" else "own Codex folder"}
         self.assertEqual({name for name, allowed in written.items() if allowed}, own, written)
 
     def test_no_engines_roots_reach_the_coordinator_folder_on_either_platform(self):
@@ -134,31 +125,7 @@ class WorkerRoots(AltitudeCase):
                 home = config.ROOT.resolve()
                 inside = [root for root in writable if home.is_relative_to(root.resolve())
                           or root.resolve().is_relative_to(home)]
-                self.assertEqual(inside, [self.own_claude] if engine == "claude" else [], writable)
+                self.assertEqual(inside, [self.own[engine]], writable)
                 # Landlock names folders that exist; Claude's account file family is a name pattern, not a folder.
                 folders = tuple(root for root in writable if not str(root).endswith("*") and root.is_dir())
                 self.assert_only_own(self.written(read_only_home([], folders)), engine)
-
-    @unittest.skipUnless(os.environ.get("ALTITUDE_TEST_CODEX_SANDBOX") == "1",
-                         "opt in on a host with the real Codex sandbox and Altitude's home outside temporary folders")
-    def test_codexs_own_sandbox_admits_the_scratch_folder_and_no_record_in_the_home(self):
-        """A Codex worker runs under Codex's own sandbox rather than Altitude's profile: given the task's permissions,
-        it too admits the scratch folder and no record in the home. No model is asked; Codex needs no sign-in."""
-        from tests.support import run_native_sandbox_probe
-        cmd, *_ = engines.common.implementation("codex").prepare_worker(
-            "fixture", "brief", cwd=self.worktree, scratch=self.scratch,
-            job_root=dispatch.l2_job_root(self.project, self.slug), persona=None, model=None,
-            settings=self.tmp / "settings.json", effort=None, resume=None, images=())
-        task = settings(cmd)
-        profile = next(s for s in task if s.startswith("default_permissions=")).split("=", 1)[1].strip('"')
-        # The environment a worker's job gets, with its own temporary folder; another in /tmp stands for the shared one.
-        own, shared = (Path(tempfile.mkdtemp(prefix=prefix, dir="/tmp")) for prefix in ("altitude-", "fictional-desk-"))
-        for folder in (own, shared):
-            self.addCleanup(shutil.rmtree, folder, True)
-        self.targets.update({"job's temporary folder": ("folder", own), "shared temporary folder": ("folder", shared)})
-        result = run_native_sandbox_probe(self.worktree, task, CHILD, [self.spec()], profile=profile,
-                                          env={**platform.job_env(engines.launch_env()), "TMPDIR": str(own)})
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        written = json.loads(result.stdout)
-        self.assertEqual({name for name, allowed in written.items() if allowed}, {"scratch", "job's temporary folder"},
-                         written)

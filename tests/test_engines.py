@@ -61,7 +61,8 @@ class TestForegroundUnits(AltitudeCase):
     def test_ci_coordinator_and_private_review_timeouts_survive_daemon_exit_on_both_engines(self):
         """A coordinator turn on either engine runs as the job it is given and stops with that job, not with altd."""
         claude = lambda *args, **kwargs: engines.claude_print(*args, home=self.tmp / "claude-home", **kwargs)
-        for engine, execute in (("claude", claude), ("codex", engines.codex_exec)):
+        codex = lambda *args, **kwargs: engines.codex_exec(*args, sandbox_settings=[], **kwargs)
+        for engine, execute in (("claude", claude), ("codex", codex)):
             with self.subTest(engine=engine), mock.patch.object(engines.common.subprocess, "Popen",
                     side_effect=RuntimeError("fixture: execution intercepted")) as popen:
                 with self.assertRaisesRegex(RuntimeError, "intercepted"):
@@ -380,8 +381,7 @@ class TestWorkerTokenInput(AltitudeCase):
             launches.append((cmd, _Process(io.BytesIO())))
             return launches[-1][1]
 
-        with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(engines.codex, "codex_sandbox", return_value=[]):
+        with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen):
             result = engines.start_l2(engine, "project/worker-1", "brief", cwd=self.worktree, persona=self.tmp / "persona.md",
                                       model=None, settings=self.tmp / "settings.json",
                                       extra_env=self.worker_env("worker", FAKE_ENGINE_LOG=str(self.log)),
@@ -391,6 +391,7 @@ class TestWorkerTokenInput(AltitudeCase):
 
     def assert_engine_read_only_the_prompt(self, output: bytes) -> None:
         self.assertNotIn(self.TOKEN.encode(), output)
+        self.assertNotIn(engines.codex._stored_sign_in()["access_token"].encode(), output)
         environment, *read = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.log.unlink()
         self.assertEqual(environment["environment"], {"GH_TOKEN": self.TOKEN}, "the driver exports the token")

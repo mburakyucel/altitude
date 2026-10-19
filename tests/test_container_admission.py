@@ -176,7 +176,7 @@ class ContainerAdmission(AltitudeCase):
         self.change("pause")
         invocations = [
             lambda: engines.claude_print("fixture", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home", cwd=self.tmp),
-            lambda: engines.codex_exec("fixture", unit="altitude-coordinator-fixture.service", cwd=self.tmp),
+            lambda: engines.codex_exec("fixture", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.tmp),
             lambda: engines.common._start_worker("claude", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
             lambda: engines.common._start_worker("codex", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
             lambda: engines.improvement_review("fixture", "fixture", {}, model="claude-sonnet-5-5", timeout=1),

@@ -321,7 +321,7 @@ class TestEffortCommand(AltitudeCase):
                 with self.subTest(resume=resume, effort=effort):
                     process = SimpleNamespace(pid=123, returncode=0, stdin=io.StringIO(), communicate=lambda *args, **kwargs: (output, ""))
                     with mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as launch:
-                        result = engines.codex_exec("request", unit="altitude-coordinator-fixture.service", cwd=self.repo, effort=effort, resume=resume)
+                        result = engines.codex_exec("request", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.repo, effort=effort, resume=resume)
                     self.assertIsNone(result["error"])
                     command = launch.call_args.args[0]
                     self.assertEqual("resume" in command, resume is not None)

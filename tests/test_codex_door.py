@@ -1,4 +1,5 @@
-"""One execution contract: Codex keeps its own sandbox, both engines use the `alt` door, a window switch is a fresh attempt."""
+"""One execution contract: a Codex worker runs in Altitude's sandbox as a Claude worker does, both engines use the `alt`
+door, a window switch is a fresh attempt."""
 import hashlib
 import io
 import json
@@ -61,39 +62,7 @@ class TestCodexAdapter(AltitudeCase):
         self.worktree = add_worktree(self.repo, "wt")
         self.job_root = self.runtime_tmp / "jobs"
 
-    def test_sandbox_roots_are_the_worktree_both_git_dirs_and_the_scratch_folder(self):
-        # Codex leaves a linked worktree's own metadata read-only unless it is a root of its own, which blocked
-        # `git fetch` for task give-the-chat-section-its-own-scrollbar on 2026-09-03.
-        git_roots, read_only = git_policy.worker_git_access(self.worktree)
-        scratch = config.task_scratch(self.project, "wt")
-        scratch.mkdir(parents=True)
-        settings = engines.codex_sandbox(self.worktree, extra_roots=(*git_roots, scratch), read_only=read_only)
-        parsed = tomllib.loads("\n".join(settings))
-        self.assertEqual(parsed["default_permissions"], "altitude-task")
-        profile = parsed["permissions"]["altitude-task"]
-        roots = list(profile["workspace_roots"])
-        common, record = (self.repo / ".git").resolve(), (self.repo / ".git" / "worktrees" / "wt").resolve()
-        self.assertEqual(roots, [str(self.worktree.resolve()), str(common), str(record), str(scratch.resolve())])
-        self.assertTrue(all(Path(r).is_dir() for r in roots), "Codex bind-mounts writable roots; they must exist")
-        self.assertTrue(all(profile["workspace_roots"].values()))
-        self.assertEqual(profile["extends"], ":workspace", "retain native protected paths and temporary roots")
-        self.assertEqual(profile["filesystem"], {
-            ":root": "read",
-            **{str(common / name): "read" for name in ("config", "config.worktree", "hooks", "info", "modules", "worktrees", "commondir", "gitdir")},
-            **{str(record / name): "read" for name in ("commondir", "gitdir", "config.worktree")},
-            **dict.fromkeys(engines.codex.denied(), "deny")})
-        self.assertTrue(profile["network"]["enabled"])
-        self.assertNotIn("sandbox_mode", parsed, "legacy selection must not override the named profile")
-        self.assertNotIn("sandbox_workspace_write", parsed)
-        self.assertIn('approval_policy="never"', settings)
-
-    def test_repeated_workspace_roots_produce_a_valid_profile(self):
-        settings = engines.codex_sandbox(config.ROOT, extra_roots=[config.ROOT])
-        parsed = tomllib.loads("\n".join(settings))
-        self.assertEqual(parsed["permissions"]["altitude-task"]["workspace_roots"],
-                         {str(config.ROOT.resolve()): True})
-
-    def test_control_socket_and_private_place_denials_cover_workers_and_the_coordinator(self):
+    def test_control_socket_and_private_place_denials_cover_the_coordinator(self):
         """The per-user runtime folder, where the service manager and desktop programs keep their sockets, the shared
         temporary folders, where others keep theirs, macOS's private places, whose reads macOS charges to the job's
         Python, and Altitude's own credentials: the CLI's key and pairing record, and the HTTPS keys."""
@@ -104,18 +73,16 @@ class TestCodexAdapter(AltitudeCase):
         private = ("/Users/fictional/Desktop", "/Volumes")
         with mock.patch.object(config, "project_path", return_value=self.repo), \
                 mock.patch.object(platform, "private_places", return_value=private):
-            profiles = [engines.codex_sandbox(self.worktree),
-                        engines.codex_l3_permissions(self.worktree, project=PROJECT)]
-        for settings in profiles:
-            parsed = tomllib.loads("\n".join(settings))
-            rules = parsed["permissions"][parsed["default_permissions"]]["filesystem"]
-            denied = {path for path, access in rules.items() if access == "deny"}
-            self.assertEqual(denied, {str(runtime), *private, os.path.realpath(access.DIR),
-                                      os.path.realpath(config.TLS_DIR), ":slash_tmp", os.path.realpath("/var/tmp")})
-            self.assertTrue(all(any(endpoint.is_relative_to(root) for root in denied) for endpoint in endpoints))
-            self.assertNotIn(":tmpdir", rules, "the job's own temporary folder stays the workspace's")
+            settings = engines.codex_l3_permissions(self.worktree, project=PROJECT)
+        parsed = tomllib.loads("\n".join(settings))
+        rules = parsed["permissions"][parsed["default_permissions"]]["filesystem"]
+        denied = {path for path, access in rules.items() if access == "deny"}
+        self.assertEqual(denied, {str(runtime), *private, os.path.realpath(access.DIR),
+                                  os.path.realpath(config.TLS_DIR), ":slash_tmp", os.path.realpath("/var/tmp")})
+        self.assertTrue(all(any(endpoint.is_relative_to(root) for root in denied) for endpoint in endpoints))
+        self.assertNotIn(":tmpdir", rules, "the job's own temporary folder stays the workspace's")
 
-    def _launch(self, *, thread="thr-1", actual_settings=False, **kw):
+    def _launch(self, *, thread="thr-1", **kw):
         procs, real_popen = [], subprocess.Popen
 
         def popen(cmd, **pkw):
@@ -125,32 +92,38 @@ class TestCodexAdapter(AltitudeCase):
             return procs[-1]
 
         def job_command(unit, command, env, **kw):
-            self.job_env = env
+            self.job_env, self.job_access = env, kw
             return ["svc", unit, *command]
 
-        git_roots, read_only = git_policy.worker_git_access(self.worktree)
-        settings = (engines.codex_sandbox(self.worktree, extra_roots=git_roots, read_only=read_only)
-                    if actual_settings else ["s1", "s2"])
         with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(engines.codex, "codex_sandbox", return_value=settings), \
              mock.patch.object(platform, "job_command", side_effect=job_command), \
              mock.patch.object(platform, "job_active", return_value=False):
             res = engines.codex_bg("door/t-1", "brief", cwd=self.worktree, job_root=self.job_root,
                                    extra_env=self.worker_env("t", ALTITUDE_ATTEMPT="1"), **kw)
         return res, procs
 
-    def test_fresh_and_resumed_tasks_select_the_generated_profile(self):
+    def test_a_codex_worker_runs_in_altitudes_sandbox_with_its_own_folder_and_a_handed_over_sign_in(self):
+        """Codex's own sandbox is off, so the job's sandbox is Altitude's, with a Claude worker's roots and the
+        worker's own Codex folder; the access token travels in the launch input only, never the refresh token."""
+        token = self.codex_signed_in()
+        scratch = engines.common.task_scratch(self.worker_env("t", ALTITUDE_ATTEMPT="1"))
+        git_writable, git_read_only = git_policy.worker_git_access(self.worktree)
         for resume in (None, "thr-1"):
             with self.subTest(resume=resume):
-                _, procs = self._launch(actual_settings=True, resume=resume)
-                command = launch_spec(procs[0])["command"]
-                self.assertEqual(command[:3], [config.CODEX_BIN, "app-server", "--strict-config"])
-                settings = [command[i + 1] for i, arg in enumerate(command) if arg == "-c"]
-                parsed = tomllib.loads("\n".join(settings))
-                self.assertEqual(parsed["default_permissions"], "altitude-task")
-                self.assertNotIn("sandbox_mode", parsed)
-                self.assertNotIn("--sandbox", command)
-                self.assertNotIn("--ignore-user-config", command, "retain native user customization")
+                _, procs = self._launch(resume=resume)
+                spec = launch_spec(procs[0])
+                self.assertEqual(spec["command"], [config.CODEX_BIN, "app-server", "--strict-config",
+                                                   "-c", 'default_permissions=":danger-full-access"',
+                                                   "-c", 'approval_policy="never"'])
+                self.assertEqual(self.job_access["writable"],
+                                 (self.worktree, *git_writable, scratch, self.job_root / "codex"))
+                self.assertEqual(self.job_access["read_only"][:len(git_read_only)], git_read_only)
+                self.assertEqual(spec["env"]["CODEX_HOME"], str(self.job_root / "codex"))
+                self.assertEqual((spec["operator"], spec["copies"]), (str(engines.codex.operator_home()), []))
+                self.assertEqual(spec["sign_in"], {"access_token": token, "account_id": "fixture-account"})
+                exposed = json.dumps([procs[0].cmd, self.job_env, spec["command"], spec["env"]])
+                self.assertNotIn(token, exposed)
+                self.assertNotIn("fixture-refresh", json.dumps(spec))
 
     def test_i_20261006_183126_a_worker_denied_the_session_bus_still_reaches_github_signed_in(self):
         # The GitHub CLI keeps its sign-in in the keyring on the session bus the worker profile denies, so the
@@ -165,18 +138,16 @@ class TestCodexAdapter(AltitudeCase):
                           f'exec {sys.executable} {Path(__file__).resolve().parent / "fake_engine.py"} "$@"\n')
         engine.chmod(0o755)
         self.patch(config, "CODEX_BIN", str(engine))
-        _, procs = self._launch(actual_settings=True)
+        self.codex_signed_in()
+        _, procs = self._launch()
         command, sent = procs[0].cmd, procs[0].stdin.getvalue()
         spec = json.loads(sent)
         self.assertEqual(self.gh_log(), [["auth", "token"]])
         self.assertFalse(any("fixture-token" in arg for arg in command), "job settings appear on its command line")
         self.assertFalse(any("fixture-token" in arg for arg in spec["command"]))
         self.assertFalse({"GH_TOKEN", "GITHUB_TOKEN", "DBUS_SESSION_BUS_ADDRESS"} & set(self.job_env))
-        self.assertEqual(spec["env"], {"GH_TOKEN": "fixture-token"})
-        settings = [spec["command"][i + 1] for i, arg in enumerate(spec["command"]) if arg == "-c"]
-        rules = tomllib.loads("\n".join(settings))["permissions"]["altitude-task"]["filesystem"]
-        self.assertEqual({path for path, access in rules.items() if access == "deny"}, set(engines.codex.denied()))
-        self.assertIn(str(platform.job_control_paths()[0]), rules, "the session bus is in the denied runtime folder")
+        own = {"CODEX_HOME": str(self.job_root / "codex")}
+        self.assertEqual(spec["env"], {"GH_TOKEN": "fixture-token", **own})
         # In the job's environment, without the bus, GitHub accepts the engine only after the driver exports the
         # token; an ambient token never reaches it, and the engine reads its turn, not the token.
         driver = command[2:]
@@ -193,17 +164,18 @@ class TestCodexAdapter(AltitudeCase):
         turn = next(row for row in read if row.get("method") == "turn/start")
         self.assertTrue(turn["params"]["input"][0]["text"].endswith("\n\nbrief"))
         log.unlink()
-        unsigned = subprocess.run(driver, input=json.dumps({**spec, "env": {}}).encode() + b"\n",
+        unsigned = subprocess.run(driver, input=json.dumps({**spec, "env": own}).encode() + b"\n",
                                   capture_output=True, env=env, timeout=60)
         self.assertEqual(unsigned.returncode, 0, unsigned.stderr)
         self.assertIn("HTTP 401: Requires authentication", signed.read_text())
         self.assertEqual(json.loads(log.read_text().splitlines()[0])["environment"], {"GH_TOKEN": None})
         # A launcher without a sign-in still starts the worker, without a token.
         (state / "token.txt").unlink()
-        _, procs = self._launch(actual_settings=True)
-        self.assertEqual(launch_spec(procs[0])["env"], {})
+        _, procs = self._launch()
+        self.assertEqual(launch_spec(procs[0])["env"], own)
 
     def test_fresh_turn_runs_codex_app_server_in_the_worktree_with_the_persona_in_front(self):
+        self.codex_signed_in()
         persona = self.tmp / "l2.md"
         persona.write_text("PERSONA")
         res, procs = self._launch(persona=persona, model="gpt-6.1-sol")
@@ -211,14 +183,12 @@ class TestCodexAdapter(AltitudeCase):
         row = res["agent"]
         self.assertEqual(procs[0].cmd, ["svc", engines.codex._codex_unit(row["id"]), *engines.common._driver_command()])
         spec = launch_spec(procs[0])
-        self.assertEqual(spec["command"], [config.CODEX_BIN, "app-server", "--strict-config", "-c", "s1", "-c", "s2"])
         self.assertEqual((spec["engine"], spec["cwd"], spec["model"], spec["resume"], spec["env"]),
-                         ("codex", str(self.worktree), "gpt-6.1-sol", None, {}))
+                         ("codex", str(self.worktree), "gpt-6.1-sol", None, {"CODEX_HOME": str(self.job_root / "codex")}))
         self.assertEqual(spec["sends"], str(engines.worker_sends(row["id"], job_root=self.job_root)))
         self.assertEqual([part["type"] for part in spec["input"]], ["text"])
         sent = spec["input"][0]["text"]
         self.assertTrue(sent.startswith("PERSONA\n\n"))
-        self.assertIn(engines.CODEX_PATCH_NOTE, sent)
         self.assertTrue(sent.endswith("\n\nbrief"))
         self.assertEqual((row["sessionId"], row["state"], row["status"], row["engine"], row["pid"], row["name"]),
                          ("thr-1", "working", "busy", "codex", 4242, "door/t-1"))
@@ -233,7 +203,6 @@ class TestCodexAdapter(AltitudeCase):
         self.assertEqual(spec["resume"], "thr-1")
         prompt = spec["input"][0]["text"]
         self.assertTrue(prompt.endswith("\n\nbrief"))
-        self.assertNotIn(engines.CODEX_PATCH_NOTE, prompt, "resume retains the initial thread instructions")
         self.assertIn(str(config.PERSONAS / "l1.md"), prompt)
         self.assertEqual((res["returncode"], res["agent"]["sessionId"]), (0, "thr-1"))
 
@@ -242,17 +211,6 @@ class TestCodexAdapter(AltitudeCase):
         self.assertEqual(res["returncode"], 1)
         self.assertIn("different Codex thread", res["stderr"])
         stop.assert_called_once()
-
-    def test_container_launch_and_resume_replace_host_patch_instruction(self):
-        for resume in (None, 'thr-1'):
-            with self.subTest(resume=resume), mock.patch.object(platform, 'containerized', return_value=True), \
-                 mock.patch.object(platform, '_lifecycle_state', return_value={'reason': None}):
-                _, procs = self._launch(resume=resume)
-            sent = launch_spec(procs[0])["input"][0]["text"]
-            self.assertIn(engines.CODEX_CONTAINER_PATCH_NOTE, sent)
-            self.assertNotIn(engines.CODEX_PATCH_NOTE, sent)
-            self.assertIn('python3', sent)
-            self.assertTrue(sent.endswith('\n\nbrief'))
 
     def test_worker_row_states_follow_the_unit_and_the_events(self):
         wid = "w-states"
@@ -296,7 +254,7 @@ class TestCodexAdapter(AltitudeCase):
         proc.communicate.side_effect = [subprocess.TimeoutExpired("codex", 0), ("", "")]
         with mock.patch.object(engines.common.subprocess, "Popen", return_value=proc), \
              mock.patch.object(platform, "job_stop") as stop, self.assertRaises(subprocess.TimeoutExpired):
-            engines.codex_exec("Prompt", unit="altitude-coordinator-fixture.service", cwd=self.worktree, timeout=0)
+            engines.codex_exec("Prompt", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.worktree, timeout=0)
         stop.assert_called_once()
         self.assertEqual(stop.call_args.kwargs, {})
         self.assertEqual(len(stop.call_args.args), 1)
@@ -335,7 +293,7 @@ class TestCodexAdapter(AltitudeCase):
         prompt = "Keep the public result stable. ✓\n" * 8192
         self.patch(config, "CODEX_BIN", str(engine))
         self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
-        out = engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", cwd=self.worktree, model="gpt-6.1-sol", effort="high", resume="thr-l3",
+        out = engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.worktree, model="gpt-6.1-sol", effort="high", resume="thr-l3",
                                  extra_env={"ALTITUDE_ACTOR": "l3"}, timeout=30)
         first, last = out["text"].split("\n\n")
         self.assertEqual(first, "first")
@@ -363,7 +321,7 @@ class TestCodexAdapter(AltitudeCase):
 
     def test_an_engine_that_exits_without_reading_its_prompt_reports_its_failure(self):
         prompt = self._engine_that_never_reads("import sys\nprint('codex: not signed in', file=sys.stderr)\nsys.exit(3)\n")
-        out = engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", cwd=self.worktree, timeout=30)
+        out = engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.worktree, timeout=30)
         self.assertEqual((out["returncode"], out["error"]), (3, "codex: not signed in"))
         self.assert_prompt_writer_ends()
 
@@ -371,7 +329,7 @@ class TestCodexAdapter(AltitudeCase):
         prompt = self._engine_that_never_reads("import time\ntime.sleep(60)\n")
         self.patch(platform, "job_stop")
         with self.assertRaises(subprocess.TimeoutExpired):
-            engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", cwd=self.worktree, timeout=1)
+            engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.worktree, timeout=1)
         self.assert_prompt_writer_ends()
 
     def test_window_hold_belongs_to_claude_only(self):

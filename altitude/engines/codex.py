@@ -1,5 +1,6 @@
 """Codex launch, permissions, wire protocol, account quota and native observations."""
 from __future__ import annotations
+import base64
 import json
 import math
 import selectors
@@ -14,29 +15,13 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from .. import config, git_policy, platform, state as S
+from .. import config, git_policy, platform, state as S, storage
 
 
 from . import common
 
 
 CODEX_UNIT_PREFIX = "altitude-codex-"
-
-
-CODEX_PATCH_NOTE = (
-    "[altitude] Host patch constraint: Do not call the custom `apply_patch` tool, because its filesystem verifier "
-    "cannot create its bwrap namespace under this host's AppArmor policy. For every edit, call the shell command "
-    "`apply_patch` through the exec tool and pass the patch on stdin; this stays inside the Codex workspace-write "
-    "sandbox and its configured writable roots."
-)
-
-
-CODEX_CONTAINER_PATCH_NOTE = (
-    "[altitude] Container editing contract (supersedes any earlier host patch constraint): "
-    "Edit files with bundled `python3` through the exec tool, inside the existing workspace sandbox "
-    "and its allowed writable roots. This image does not provide the shell `apply_patch` command. "
-    "Do not call the custom `apply_patch` tool or bypass confinement."
-)
 
 
 def _camel_keys(value):
@@ -79,11 +64,15 @@ class _Ended(RuntimeError):
 
 class _CodexDriver(common._Driver):
     """Codex runs as `codex app-server` for one turn: `turn/steer` adds a message to the running turn without
-    stopping its commands. Every request the server makes of its client is refused, as `codex exec` refuses them.
+    stopping its commands. The driver prepares the job's own Codex folder (`_own_folder`) and signs Codex in with the
+    access token in its launch input (`worker_sign_in`), over the app server's own protocol, never its environment.
+    Codex asks for a fresh token when the provider refuses one; the driver asks altd through the task door. Every
+    other request the server makes of its client is refused, as `codex exec` refuses them.
     Codex has no hook checkpoint, so an owner's driver steers its task's waiting messages into the turn as they
     arrive; once the server refuses one, the rest wait for the next turn with it."""
 
     def __init__(self, spec: dict, env: dict):
+        _own_folder(Path(env["CODEX_HOME"]), Path(spec["operator"]), spec.get("copies") or ())
         super().__init__(spec, env)
         self.replies: dict[int, dict] = {}
         self.arrived = threading.Condition(self.lock)
@@ -202,7 +191,9 @@ class _CodexDriver(common._Driver):
                 continue
             if not isinstance(message, dict):
                 continue
-            if "id" in message and "method" in message:
+            if "id" in message and message.get("method") == "account/chatgptAuthTokens/refresh":
+                threading.Thread(target=self.refresh, args=(message["id"],), daemon=True).start()
+            elif "id" in message and "method" in message:
                 with self.lock:
                     if not self.closed:
                         self.write({"id": message["id"], "error": {
@@ -225,13 +216,38 @@ class _CodexDriver(common._Driver):
         with self.lock:
             self.arrived.notify_all()
 
+    def refresh(self, identity) -> None:
+        """Answer Codex's request for a fresh access token with the one altd holds now (`worker_sign_in`)."""
+        try:
+            from .. import door
+            token = door.call("sign-in", {}, wait=60)
+            reply = {"result": {"accessToken": token["access_token"], "chatgptAccountId": token["account_id"],
+                                "chatgptPlanType": None}}
+        except Exception as exc:  # noqa: BLE001 — Codex ends the turn with the provider's refusal
+            reply = {"error": {"code": -32603, "message": f"{SIGNED_OUT}{exc}"}}
+        with self.lock:
+            if not self.closed:
+                self.write({"id": identity, **reply})
+
+    def sign_in(self) -> None:
+        token = self.spec.get("sign_in") or {}
+        if not token.get("access_token"):
+            raise RuntimeError(f"{SIGNED_OUT}{token.get('error') or 'Codex is signed out.'}")
+        try:
+            self.call("account/login/start", {"type": "chatgptAuthTokens", "accessToken": token["access_token"],
+                                              "chatgptAccountId": token["account_id"], "chatgptPlanType": None})
+        except _Refused as exc:
+            raise RuntimeError(f"{HAND_OVER_REFUSED}{exc}") from None
+
     def start(self, watcher: threading.Thread) -> None:
         reader = threading.Thread(target=self.read, daemon=True)
         reader.start()
         try:
-            self.call("initialize", {"clientInfo": {"name": "altitude", "version": "1"}})
+            self.call("initialize", {"clientInfo": {"name": "altitude", "version": "1"},
+                                     "capabilities": {"experimentalApi": True}})
             with self.lock:
                 self.write({"method": "initialized"})
+            self.sign_in()
             options = {"model": self.spec.get("model"), "approvalPolicy": "never"}
             options = {key: value for key, value in options.items() if value}
             if self.session_id:
@@ -336,16 +352,24 @@ def _codex_rows(record: dict, worktree: str) -> list[dict]:
 _TOKEN_ROLLOUT_INDEX: dict[str, dict] = {}
 
 
+def _rollouts(home: Path, session_id: str | None = None) -> list[Path]:
+    """The conversation records in a Codex folder (`sessions/YYYY/MM/DD/rollout-*.jsonl`), of one thread when named,
+    listed as `storage.names` lists, so never through a link a job planted in its own folder."""
+    sessions, suffix = home / "sessions", f"-{session_id}.jsonl" if session_id else ".jsonl"
+    return [folder / name for year in storage.names(sessions) for month in storage.names(sessions / year)
+            for day in storage.names(sessions / year / month) for folder in [sessions / year / month / day]
+            for name in storage.names(folder) if name.startswith("rollout-") and name.endswith(suffix)]
+
+
 def _token_rollouts(home: Path) -> tuple[dict, bool]:
     """Cache only rollout identity/parentage; at most 128 new headers per discovery pass."""
     cache = _TOKEN_ROLLOUT_INDEX.setdefault(str(home), {"at": 0, "paths": {}, "todo": []})
     if time.monotonic() - cache["at"] >= 30 or not cache["at"]:
         cache["at"] = time.monotonic()
-        cache["todo"] = [str(p) for p in home.glob("sessions/*/*/*/rollout-*.jsonl")
-                         if str(p) not in cache["paths"]]
+        cache["todo"] = [str(p) for p in _rollouts(home) if str(p) not in cache["paths"]]
     for name in cache["todo"][:128]:
         try:
-            with Path(name).open("rb") as stream:
+            with os.fdopen(storage.read_open(Path(name)), "rb") as stream:
                 raw = stream.readline(128 * 1024)
             event = json.loads(raw)
             meta = event.get("payload") or {}
@@ -373,8 +397,8 @@ def _codex_session_model(session_id: str | None, started_at: str, home: Path) ->
     if not session_id or not re.fullmatch(r"[A-Za-z0-9-]+", session_id):
         return {}
     try:
-        for path in home.glob(f"sessions/*/*/*/rollout-*-{session_id}.jsonl"):
-            with path.open() as rollout:
+        for path in _rollouts(home, session_id):
+            with os.fdopen(storage.read_open(path)) as rollout:
                 for line in rollout:
                     if '"turn_context"' not in line:
                         continue
@@ -400,8 +424,8 @@ def _codex_session_context(session_id: str | None, started_at: str, home: Path) 
         return None
     latest, window = None, None
     try:
-        for path in home.glob(f"sessions/*/*/*/rollout-*-{session_id}.jsonl"):
-            with path.open() as rollout:
+        for path in _rollouts(home, session_id):
+            with os.fdopen(storage.read_open(path)) as rollout:
                 for line in rollout:
                     if not line.endswith("\n") or not any(kind in line for kind in ('"token_usage_record"', '"token_count"')):
                         continue
@@ -444,27 +468,142 @@ def denied() -> tuple[str, ...]:
             ":slash_tmp", os.path.realpath("/var/tmp"))
 
 
-def codex_sandbox(cwd: Path, *, extra_roots: tuple[Path, ...] = (), read_only: tuple[Path, ...] = ()) -> list[str]:
-    """The task's native permissions, shared by launch and the provider-free sandbox diagnostic.
+#: What a job's own Codex folder links to in the operator's, read-only in the job: their settings, instructions,
+#: rules and prompts. Their skills are linked one by one (`SKILLS`), since Codex adds its bundled ones to that folder.
+LINKED = ("config.toml", "AGENTS.md", "AGENTS.override.md", "rules", "prompts")
+SKILLS = "skills"
+#: How a worker's turn says that Altitude holds no Codex sign-in to hand it, read as a sign-in lapse
+#: (`rejection_flags`), and how it says that Codex refused the sign-in Altitude hands it.
+SIGNED_OUT = "Codex sign-in unavailable to Altitude's workers: "
+HAND_OVER_REFUSED = "Codex refused the sign-in Altitude hands its workers: "
+KEYCHAIN = ("Codex keeps its sign-in in the system keychain, which Altitude cannot hand to its workers; set "
+            'cli_auth_credentials_store = "file" in Codex\'s config.toml and sign in again with `codex login`.')
+API_KEY = "Codex is signed in with an API key; Altitude's Codex workers need a ChatGPT sign-in (`codex login`)."
 
-    Writable roots must exist because Codex bind-mounts them: the working directory and any extra root (a worker's
-    Git directories so it can fetch, commit, and push, and its scratch folder). Altitude's home is not among them:
-    `alt` changes the task's records through altd. `read_only` paths inside them stay read-only, existing or not (a
-    worker's Git settings, hooks and worktree records). The workspace base retains protected configuration paths and
-    the job's own temporary folder.
-    Network stays on for `git push`, `gh`, and the repository's own tests; the places in `denied` stay out of reach.
-    The sandboxed shell inherits the launch environment, so the identity variables reach `alt` and a worker's
-    GitHub token (`github_token`) reaches `gh` unchanged.
-    """
-    roots = dict.fromkeys([Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots)])
-    profile = "altitude-task"
-    workspace_roots = "{" + ",".join(f"{json.dumps(str(root))}=true" for root in roots) + "}"
-    rules = ",".join([*(f'{json.dumps(str(Path(path).resolve()))}="read"' for path in read_only),
-                      *(f'{json.dumps(path)}="deny"' for path in denied())])
-    return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":workspace"',
-            f"permissions.{profile}.workspace_roots={workspace_roots}",
-            f'permissions.{profile}.filesystem={{":root"="read",{rules}}}',
-            f"permissions.{profile}.network.enabled=true", 'approval_policy="never"']
+
+def operator_home() -> Path:
+    """The operator's own Codex folder, resolved: their sign-in, settings and conversations."""
+    return Path(os.path.realpath(_codex_home(common.launch_env())))
+
+
+def operator_places() -> tuple[str, ...]:
+    """What no job in Altitude's sandbox sees (`platform.job_command`): the operator's Codex folder, with its sign-in,
+    conversations and the control socket Codex's background service opens there."""
+    return (str(operator_home()),)
+
+
+def _program(operator: Path) -> list[Path]:
+    """The entry of the operator's Codex folder holding the installed program, where the standalone installer puts
+    it, which a Codex job reads."""
+    found = os.path.realpath(shutil.which(config.CODEX_BIN) or config.CODEX_BIN)
+    try:
+        return [operator / Path(found).relative_to(operator).parts[0]]
+    except (ValueError, IndexError):
+        return []
+
+
+def _first_resume(home: Path, operator: Path, resume: str | None) -> list[Path]:
+    """The records of a conversation, and of its helper threads, that a job resumes for the first time in its own
+    folder: in the operator's folder, where Codex kept every conversation before jobs had folders of their own."""
+    if not resume or not re.fullmatch(r"[A-Za-z0-9-]+", resume) or _rollouts(home, resume):
+        return []
+    index, pending = _token_rollouts(operator)
+    while pending:
+        index, pending = _token_rollouts(operator)
+    wanted = {resume}
+    while True:
+        children = {meta["session_id"] for meta in index.values() if meta["parent"] in wanted}
+        if children <= wanted:
+            break
+        wanted |= children
+    return sorted(Path(name) for name, meta in index.items() if meta["session_id"] in wanted)
+
+
+def _own_folder(home: Path, operator: Path, copies) -> None:
+    """Prepare a job's own Codex folder from inside the job, as Claude's, so Altitude never writes where the job can.
+
+    It links the operator's settings, instructions, rules, prompts and skills, and copies in the records of a
+    conversation it resumes for the first time (`_first_resume`), which the job reads where the operator's folder
+    is otherwise hidden."""
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for name in LINKED:
+        if os.path.lexists(operator / name) and not os.path.lexists(home / name):
+            os.symlink(operator / name, home / name)
+    if (operator / SKILLS).is_dir():
+        (home / SKILLS).mkdir(exist_ok=True)
+        for entry in os.scandir(operator / SKILLS):
+            if not entry.name.startswith(".") and not os.path.lexists(home / SKILLS / entry.name):
+                os.symlink(entry.path, home / SKILLS / entry.name)
+    for name in copies:
+        target = home / Path(name).relative_to(operator)
+        if not os.path.lexists(target):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(name, target)
+
+
+_SIGN_IN = threading.Lock()
+
+
+def _claims(token: str) -> dict:
+    try:
+        part = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    except (IndexError, ValueError, TypeError):
+        return {}
+    return claims if isinstance(claims, dict) else {}
+
+
+def _stale(token: str) -> bool:
+    """Whether less than half of an access token's lifetime remains, or an hour when it does not say when it began."""
+    claims = _claims(token)
+    expires, issued = claims.get("exp"), claims.get("iat")
+    if not isinstance(expires, (int, float)):
+        return False
+    left = expires - time.time()
+    return left < ((expires - issued) / 2 if isinstance(issued, (int, float)) else 3600)
+
+
+def _stored_sign_in() -> dict:
+    """The access token and account of the operator's Codex sign-in, or why there is none to hand a worker."""
+    operator = operator_home()
+    try:
+        stored = json.loads((operator / "auth.json").read_text())
+    except FileNotFoundError:
+        try:
+            import tomllib
+            store = tomllib.loads((operator / "config.toml").read_text()).get("cli_auth_credentials_store")
+        except (OSError, ValueError):
+            store = None
+        return {"error": KEYCHAIN if store in ("keyring", "auto") else "Codex is signed out: sign in with `codex login`."}
+    except (OSError, ValueError) as exc:
+        return {"error": f"Codex's sign-in file is unreadable: {exc}"}
+    tokens = stored.get("tokens") if isinstance(stored, dict) else None
+    token = tokens.get("access_token") if isinstance(tokens, dict) else None
+    if not isinstance(token, str) or not token:
+        return {"error": API_KEY if isinstance(stored, dict) and stored.get("OPENAI_API_KEY") else
+                "Codex is signed out: sign in with `codex login`."}
+    account = tokens.get("account_id") or (_claims(token).get("https://api.openai.com/auth") or {}).get(
+        "chatgpt_account_id")
+    if not isinstance(account, str) or not account:
+        return {"error": "Codex's sign-in names no ChatGPT account: sign in again with `codex login`."}
+    return {"access_token": token, "account_id": account}
+
+
+def worker_sign_in() -> dict:
+    """What a Codex worker signs in with: the operator's current access token and account, never the refresh token,
+    which stays in their Codex folder. When less than half the token's lifetime remains, Codex, outside every
+    sandbox, refreshes the sign-in first (`account/read`); one lock covers this and the quota readings, which also
+    run Codex on that folder, and the sign-in is read again inside it, so workers asking together cause one refresh
+    and a worker cannot force one. `error` says why there is no token to hand over."""
+    with _SIGN_IN:
+        found = _stored_sign_in()
+        if found.get("access_token") and _stale(found["access_token"]):
+            try:
+                _talk(20.0, _REFRESH)
+            except Exception:  # noqa: BLE001 — a token still valid serves; an expired one lapses at the provider
+                pass
+            found = _stored_sign_in()
+    return found
 
 
 def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
@@ -572,11 +711,11 @@ def _codex_outcome(events: list[dict], returncode: int, stdout: str, stderr: str
 def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, timeout: int = 900,
                effort: str | None = None,
                extra_env: dict | None = None, resume: str | None = None, on_start=None,
-               sandbox_settings: list[str] | None = None, ignore_user_config: bool = True, on_session=None,
+               sandbox_settings: list[str], ignore_user_config: bool = True, on_session=None,
                images: list[dict] | tuple = ()) -> dict:
-    """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
-    codex 0.152). `codex exec resume <thread> -` continues the thread. The turn runs as the job `unit`, as workers
-    do, so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree.
+    """One synchronous Codex turn (L3) in Codex's own sandbox under `sandbox_settings`, prompt on stdin (verified
+    with codex 0.152). `codex exec resume <thread> -` continues the thread. The turn runs as the job `unit`, so altd's
+    `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree.
     Send now stays queued for the next coordinator turn; this invocation has no interrupt channel."""
     content = common._engine_input("codex", prompt, images)
     prompt = content[0]["text"]
@@ -587,7 +726,7 @@ def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, t
         cmd.append("--ignore-user-config")
     if model:
         cmd += ["-m", model]
-    for setting in sandbox_settings if sandbox_settings is not None else codex_sandbox(cwd):
+    for setting in sandbox_settings:
         cmd += ["-c", setting]
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
@@ -638,18 +777,23 @@ def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, t
 
 
 def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images):
-    cmd = [config.CODEX_BIN, "app-server", "--strict-config"]
+    """A Codex worker in Altitude's sandbox, as a Claude worker, with Codex's own sandbox off and approvals never: its
+    own Codex folder (`l2-engine/codex`) beside the same roots, and the operator's Codex folder hidden from it except
+    the installed program, the entries its folder links to and a conversation it resumes for the first time. Its
+    launch input carries the sign-in (`worker_sign_in`)."""
+    cmd = [config.CODEX_BIN, "app-server", "--strict-config", "-c", 'default_permissions=":danger-full-access"',
+           "-c", 'approval_policy="never"']
     if effort is not None:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
-    writable, read_only = git_policy.worker_git_access(cwd)
-    for setting in codex_sandbox(cwd, extra_roots=(*writable, scratch), read_only=read_only):
-        cmd += ["-c", setting]
-    in_container = platform.containerized()
-    patch_note = CODEX_CONTAINER_PATCH_NOTE if in_container else CODEX_PATCH_NOTE
-    text = ((patch_note + "\n\n" if in_container else "") + prompt) if resume else (
-        ((Path(persona).read_text() + "\n\n") if persona else "") + patch_note + "\n\n" + prompt)
+    git_writable, read_only = git_policy.worker_git_access(cwd)
+    home, operator = Path(job_root) / "codex", operator_home()
+    copies = _first_resume(home, operator, resume)
+    reopened = (*_program(operator), *(operator / name for name in (*LINKED, SKILLS) if os.path.lexists(operator / name)),
+                *copies)
+    text = (Path(persona).read_text() + "\n\n" if persona and not resume else "") + prompt
     content = common._engine_input("codex", text, images)
-    return cmd, content, None, (), {}
+    return (cmd, content, (Path(cwd), *git_writable, scratch, home), (*read_only, *reopened), {"CODEX_HOME": str(home)},
+            {"operator": str(operator), "copies": list(map(str, copies)), "sign_in": worker_sign_in()})
 
 
 worker_unit_name = _codex_unit
@@ -738,14 +882,18 @@ def _spawn():
     )
 
 
-def _talk(timeout: float) -> list[str]:
+#: Codex's own refresh of the operator's sign-in (`worker_sign_in`).
+_REFRESH = (_REQUESTS[0], {"jsonrpc": "2.0", "id": 2, "method": "account/read", "params": {"refreshToken": True}})
+
+
+def _talk(timeout: float, requests: tuple = _REQUESTS) -> list[str]:
     """Send the two requests and return stdout through response 2, ignoring notifications."""
     proc = _spawn()
     lines: list[str] = []
     try:
         if proc.stdin is None or proc.stdout is None:
             raise RuntimeError("app-server pipes unavailable")
-        wire = b"".join((json.dumps(request, separators=(",", ":")) + "\n").encode() for request in _REQUESTS)
+        wire = b"".join((json.dumps(request, separators=(",", ":")) + "\n").encode() for request in requests)
         proc.stdin.write(wire)
         proc.stdin.flush()
         deadline = time.monotonic() + timeout
@@ -824,7 +972,8 @@ def _epoch_iso(value) -> str | None:
 def read_quota(timeout: float = 20.0) -> dict:
     """Return the account-wide Codex quota, or an explicit unknown result on every probe failure."""
     try:
-        lines = _talk(timeout)
+        with _SIGN_IN:
+            lines = _talk(timeout)
     except FileNotFoundError:
         return _unknown("Codex binary not found")
     except (TimeoutError, subprocess.TimeoutExpired):
@@ -896,21 +1045,27 @@ def token_numbers(usage):
 
 
 def token_sources(home, owners, register, job_root):
-    sources, pending = [], False
-    root = home or _codex_home(common.launch_env())
-    index, pending = _token_rollouts(root)
-    wanted = set(owners)
-    while True:
-        children = {meta["session_id"] for meta in index.values() if meta["parent"] in wanted}
-        if children <= wanted:
-            break
-        wanted |= children
-    for name, meta in index.items():
-        if meta["session_id"] in wanted:
+    """A thread's records in the job's own Codex folder, and in the operator's only for a thread the job's folder does
+    not hold: one recorded before jobs had folders of their own. A copied record counts once."""
+    sources, pending, claimed = [], False, set()
+    for root in [home] if home else [*([Path(job_root) / "codex"] if job_root else []), operator_home()]:
+        index, more = _token_rollouts(Path(root))
+        pending = pending or more
+        wanted = set(owners)
+        while True:
+            children = {meta["session_id"] for meta in index.values() if meta["parent"] in wanted}
+            if children <= wanted:
+                break
+            wanted |= children
+        found = set()
+        for name, meta in index.items():
             sid = meta["session_id"]
-            register(sid, meta["parent"], parentage="thread",
-                     **{key: meta[key] for key in ("forked", "fork_time", "fork_ordinal")})
-            sources.append((Path(name), sid, "rollout"))
+            if sid in wanted and sid not in claimed:
+                found.add(sid)
+                register(sid, meta["parent"], parentage="thread",
+                         **{key: meta[key] for key in ("forked", "fork_time", "fork_ordinal")})
+                sources.append((Path(name), sid, "rollout"))
+        claimed |= found
     return sources, pending
 
 
@@ -965,7 +1120,8 @@ def context_window():
 
 
 def rejection_flags(text, said, model, auth, model_missing):
-    auth |= any(re.match(r"unexpected status 401\b|Not logged in$", message) for message in said) or bool(re.search(
+    auth |= any(re.match(rf"unexpected status 401\b|Not logged in$|{re.escape(SIGNED_OUT)}", message)
+                for message in said) or bool(re.search(
         r"Your access token could not be refreshed|You do not have access to Codex|"
         r"This account is not currently authorized to use Codex in this workspace", text))
     return auth, model_missing
@@ -1095,8 +1251,7 @@ def review_launch_env(runtime):
     return {}
 
 
-CONFINEMENT = 'Codex sandbox'
-JOB_PROFILE = False
+CONFINEMENT = 'no Codex sandbox inside it'
 
 
 def delivered_context(record):

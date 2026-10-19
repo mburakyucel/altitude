@@ -447,7 +447,7 @@ from preferences even when Auto selects the same model. [CLI examples](CLI.md#au
 include an Opus-only account, omitted Fable and different preference orders.
 
 Codex CLI 0.153.4's JSON stream identifies the thread but carries no model. altd reads the matching
-`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread-id>.jsonl` (default home `~/.codex`) and takes
+`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread-id>.jsonl` (a worker's own Codex folder, else `~/.codex`) and takes
 `model` and `effort` from the first `turn_context` timestamped at or after this worker's launch.
 This distinguishes a resumed turn from earlier turns in the same rollout. The worker record caches
 the observation; daemon polling copies it into the task and live monitor snapshot. L3 records it
@@ -1121,11 +1121,15 @@ no longer in context. Deterministic fixtures prove the persona text and its
 delivery, not provider adherence or live browser isolation. See
 [browser verification](DEVELOPMENT.md#browser-verification).
 
-A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common
-directory and the worktree's own metadata under `.git/worktrees/`), and the task's scratch folder beside the Altitude home
-are its writable roots; the home is read-only and `alt` changes the task's records [through altd](ARCHITECTURE.md#task-door),
+A Codex L2 runs `codex app-server` with Codex's own sandbox off (`default_permissions=":danger-full-access"`) and
+approvals never, inside Altitude's own sandbox like a Claude L2: the task worktree, its Git directories (the common
+directory and the worktree's own metadata under `.git/worktrees/`), the task's scratch folder beside the Altitude home
+and its own Codex folder (`l2-engine/codex`, its `CODEX_HOME`) are its writable roots; the home is read-only and `alt`
+changes the task's records [through altd](ARCHITECTURE.md#task-door),
 with the Git settings, hooks and worktree records inside them [read-only](ARCHITECTURE.md#isolation-and-landing), the network stays on for pushes, PRs, and tests, and the launch environment
-carries the task identity. A Codex L3 turn uses a dedicated permission profile: it writes only one fresh per-turn
+carries the task identity. The driver signs Codex in with the access token altd hands over in the launch input and
+asks altd for a fresh one when Codex requests it ([Codex sign-in](ARCHITECTURE.md#isolation-and-landing)); the
+operator's Codex folder stays hidden apart from what the worker's folder links to. A Codex L3 turn uses a dedicated permission profile: it writes only one fresh per-turn
 runtime directory; the deployment checkout and Altitude home are read-only, direct command networking and the
 user-service bus are denied. A required stdio MCP adapter exposes one coordinator tool for `alt` verbs and
 GitHub/service reads, forwarding argument arrays and stdin to the project's fixed altd socket. Every fresh
@@ -1196,8 +1200,8 @@ Missing supported capabilities lead to scoped recommendations and authorized rem
 Claude's native Bash
 sandbox is unavailable on Linux because it would start bubblewrap inside Altitude's own sandbox, which the host
 refuses, so enabling its hard-failure mode would prevent every headless L3 turn; Altitude's sandbox, the
-deny-by-default tool boundary and runtime cwd provide Claude's confinement, while Codex retains its native
-filesystem sandbox.
+deny-by-default tool boundary and runtime cwd provide Claude's confinement, while a Codex coordinator retains its
+native filesystem sandbox.
 
 Neither L2 launch carries the user service bus, so a worker cannot reload or restart a user service, and an
 L2 on either engine cannot write outside its writable roots. A task that needs such a change, or any other action the

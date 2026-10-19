@@ -159,7 +159,7 @@ class TestFailureEvidence(AltitudeCase):
         process.communicate.return_value = (stdout, "")
         with mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
              mock.patch.object(engines.codex, "_codex_session_model", return_value={}):
-            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, model="missing")
+            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.repo, model="missing")
         self.assertIn("model_not_found", result["error"])
         self.assertEqual(result["rejection"]["scope"], "model")
         self.assertTrue(result["safe_to_retry"])
@@ -172,7 +172,7 @@ class TestFailureEvidence(AltitudeCase):
             process.communicate.return_value = (stdout, "")
             with self.subTest(activity=activity), mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
                  mock.patch.object(engines.codex, "_codex_session_model", return_value={}):
-                result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo)
+                result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.repo)
             self.assertTrue(result["limited"])
             self.assertIsNone(result["rejection"])
             self.assertEqual(result["safe_to_retry"], not activity)
