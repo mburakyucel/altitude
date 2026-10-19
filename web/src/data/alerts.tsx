@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Link, useNavigate } from "react-router";
 import type { Attention, Overview } from "./api";
 import { attentionPath, isStep } from "./decisions";
 
@@ -528,36 +528,31 @@ export function useAlertNote(state: AlertState): string {
   return state === "on" && pushed ? refused ? refusedNote(refused) : PUSHED : NOTE[state];
 }
 
-/** The switch on Needs you (SPEC.md §3.8.1), set on each device that should alert. */
-export function DecisionAlertToggle({ pending }: { pending: Attention[] }) {
+/** This device's alerts in two or three words, for the link on Needs you; the line in Settings says the rest. */
+export function useAlertStatus(): { label: string; tone?: "off" | "danger" } {
   const state = useAlertState();
-  const note = useAlertNote(state);
-  const [asking, setAsking] = useState(false);
-  const [showReason, setShowReason] = useState(false);
-  const reasonId = useId();
-  const on = state === "on";
-  const settled = state === "unsupported" || state === "blocked";
+  const pushed = useSyncExternalStore(watch, readPushState, () => false);
+  const refused = useSyncExternalStore(watch, () => refusal, () => null);
+  if (state === "unsupported") return { label: "Alerts unavailable", tone: "off" };
+  if (state === "blocked") return { label: "Alerts blocked", tone: "off" };
+  if (state === "off") return { label: "Alerts off", tone: "off" };
+  if (!pushed) return { label: "Alerts while open" };
+  return refused ? { label: "Alerts refused", tone: "danger" } : { label: "Alerts on" };
+}
 
+const BELL = "M5 13.5V9a5 5 0 0 1 10 0v4.5l1.5 1.5h-13zM8.5 17.5a1.7 1.7 0 0 0 3 0";
+
+/** The link on Needs you (SPEC.md §3.8.1): this device's alerts at a glance, opening them in Settings. */
+export function AlertStatus() {
+  const { label, tone } = useAlertStatus();
   return (
-    <p className="needs-alerts text-meta text-muted">
-      <button
-        type="button"
-        className="link"
-        aria-pressed={settled ? undefined : on}
-        disabled={asking}
-        aria-disabled={settled || undefined}
-        aria-describedby={reasonId}
-        onClick={() => {
-          if (settled) { setShowReason(!showReason); return; }
-          if (on) return disableAlerts();
-          setAsking(true);
-          // A worker that fails to register leaves the switch off, ready to try again.
-          void enableAlerts(pending).catch(disableAlerts).finally(() => setAsking(false));
-        }}
-      >
-        {on ? "Alerts on" : "Alert me about new decisions"}
-      </button>{" "}
-      <span id={reasonId} className={settled && !showReason ? "sr-only" : undefined}>{note}</span>
-    </p>
+    <Link className="btn needs-alerts" to="/settings#notifications" state={{ settingsFrom: "/" }} data-tone={tone}>
+      <svg aria-hidden viewBox="0 0 20 20" width="16" height="16">
+        <path d={BELL} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
+        {tone === "off" ? <path d="M3.5 3.5l13 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /> : null}
+      </svg>
+      {label}
+      <span aria-hidden>›</span>
+    </Link>
   );
 }

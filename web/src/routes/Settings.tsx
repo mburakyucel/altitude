@@ -376,7 +376,9 @@ function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
   const note = useAlertNote(state);
   const chosen = usePreferences();
   const [asking, setAsking] = useState(false);
-  const [showReason, setShowReason] = useState(false);
+  // Needs you opens this group by its link (SPEC.md §3.8.1), which asks for the reason a switch cannot be on.
+  const { hash } = useLocation();
+  const [showReason, setShowReason] = useState(hash === "#notifications");
   const [save, setSave] = useState<{ status: "idle" | "saving"; change?: Partial<Preferences> } | { status: "failed"; error: Error }>({ status: "idle" });
   const settled = state === "unsupported" || state === "blocked";
   const project = managedProjects(overview).at(0)?.name ?? "atlas";
@@ -392,10 +394,12 @@ function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
       setSave({ status: "failed", error: error as Error });
     }
   };
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => { if (hash === "#notifications") section.current?.scrollIntoView({ block: "nearest" }); }, [hash]);
   const busy = save.status === "saving";
   const shows = !shown ? "" : shown.reveal === "task" ? `“${project} needs a decision” and the task name`
     : shown.reveal === "project" ? `“${project} needs a decision”` : "“A decision needs you”";
-  return <section className="settings-section" aria-label="Notifications">
+  return <section ref={section} id="notifications" className="settings-section" aria-label="Notifications">
     <h2>Notifications</h2>
     <div className="settings-group">
       <div className="settings-row settings-switch-row">

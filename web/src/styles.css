@@ -865,7 +865,6 @@
 /* Inline phone text controls keep their line and reach the 44px touch target (§6). */
 .shell[data-phone] .sys-line .link,
 .shell[data-phone] .coordination-line .link,
-.shell[data-phone] .needs-alerts .link,
 .shell[data-phone] .report-page > .text-meta > a { display: inline-block; padding: 13px 6px; margin: -13px -6px; }
 .shell[data-phone] .wp-fold-summary { min-height: 44px; padding-block: 12px; }
 .shell[data-phone] .wp-fold[open] .wp-fold-summary { margin-bottom: 0; }
@@ -1194,15 +1193,24 @@
   font-size: var(--text-meta);
   overflow-wrap: anywhere;
 }
-.needs-alerts {
-  margin: 0;
+.needs-title {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
+  max-width: 720px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
-.needs-alerts button[aria-pressed="true"] {
-  font-weight: 600;
+.needs-alerts {
+  flex: none;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--text-meta);
+}
+.needs-alerts[data-tone="danger"] {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 .needs-list {
   display: flex;
