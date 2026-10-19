@@ -765,8 +765,8 @@ messages, tool output and files keep hook delivery. A resume prompt carries ever
 its sender. Streamed launch input with images is marked as the human's, as a text prompt is.
 
 A skill or custom command typed by name in a chat (`/name arguments`) reaches the session as part of
-the message text, after the line naming its sender, so the engine's own expansion of a leading slash
-never runs, and the session's model decides whether to use it. A Claude owner loads the operator's
+the message text, after the line naming its sender in a task and after the coordinator's turn header in
+the project conversation, so the engine's own expansion of a leading slash never runs, and the session's model decides whether to use it. A Claude owner loads the operator's
 skills and commands through its linked folder and the project's skills from its worktree, and its model
 invokes the named one with the arguments that follow through Claude's Skill tool, on a new turn, in a
 running one (Send now) and on a resumed session alike. Claude offers its model no skill marked
