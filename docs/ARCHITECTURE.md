@@ -1903,9 +1903,9 @@ same form, with `alt project terminal`, which altd answers only on that project'
 verb, and the owner's HTTP reader names a task, so neither a task worker nor another project's coordinator reads
 it. There is no reader path to input, resize, close or stream. The last ended terminal's output stays readable
 in altd's memory until a new terminal opens there, its task finishes or its project is removed (the tick's sweep
-forgets it) or altd stops; nothing is written to disk. Each terminal names its reader above the screen: "This
-task's owner can read this terminal's output" or "The coordinator can read this terminal's output", "and what it
-reads reaches its AI provider". Anything the terminal prints can reach the reader, its session record and its
+forgets it) or altd stops; nothing is written to disk. Each terminal names its reader in one line above the screen:
+"This task's owner and its AI provider can read this output." or "The coordinator and its AI provider can read this
+output." Anything the terminal prints can reach the reader, its session record and its
 provider, where it stays after Altitude forgets it. A password typed at a prompt that does not echo, such as
 `sudo`'s, is not in the output. A desktop or SSH terminal has no reader.
 

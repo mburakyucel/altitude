@@ -229,7 +229,7 @@ test("a project chat command opens the project terminal; other blocks copy only"
   await page.locator(".terminal-screen").click();
   await page.keyboard.press("Enter");
   await walk.state("14-project-enter-runs", {
-    visible: [output.getByText("project-25", { exact: true }), page.getByText("The coordinator can read this terminal's output, and what it reads reaches its AI provider.")],
+    visible: [output.getByText("project-25", { exact: true }), page.getByText("The coordinator and its AI provider can read this output.")],
     hidden: [],
   });
   // Once the shell is back at its prompt, the coordinator is told the command it handed over has run.
