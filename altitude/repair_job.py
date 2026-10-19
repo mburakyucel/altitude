@@ -160,7 +160,7 @@ class Recorder:
         for sign, wait in ((signal.SIGTERM, GRACE), (signal.SIGKILL, GRACE)):
             try:
                 os.killpg(self.agent.pid, sign)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):  # macOS: EPERM once only the exited agent, unreaped, is left
                 break
             try:
                 self.agent.wait(timeout=wait)
