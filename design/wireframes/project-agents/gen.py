@@ -22,9 +22,9 @@ def board(name, w, h, body):
     (out / f"{name}.html").write_text(HEAD.format(title=name, w=w, h=h) + body + TAIL)
 
 
-def rail(monitor=False):
+def rail(monitor=False, on=P):
     def item(name, dot):
-        style = ' style="background:var(--bubble);font-weight:600"' if name == P and not monitor else ""
+        style = ' style="background:var(--bubble);font-weight:600"' if name == on and not monitor else ""
         return f'<div class="ri"{style}><span class="dot {dot}"></span>{name}</div>'
     mon = ' style="height:36px;background:var(--bubble);font-weight:600"' if monitor else ' style="height:36px"'
     return ('<aside class="rail"><div class="brand"><span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-10 4 6 2-3 4 7"/></svg></span>Altitude</div>'
@@ -35,8 +35,8 @@ def rail(monitor=False):
             f'<div class="ri"{mon}>Monitor</div><div class="who"><span class="avatar">O</span>Operator</div></aside>')
 
 
-def desk(inner, h=900, monitor=False):
-    return (f'<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:{h}px">' + rail(monitor)
+def desk(inner, h=900, monitor=False, on=P):
+    return (f'<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:{h}px">' + rail(monitor, on)
             + f'<main class="pane" style="overflow:hidden"><div class="route-content" style="max-width:760px;width:100%;overflow:visible">{inner}</div></main></div>')
 
 
@@ -55,7 +55,7 @@ def phone(inner, back=P, title="Agents", h=844, overlay=""):
 AGENTS = [
     ("Dependency check", "Weekdays at 07:00 · Found something 2 h ago"),
     ("Review each merge", PULSE + "When a pull request merges · Running, 2 of 20 min"),
-    ("Clean checkout", "Mondays at 08:00 · Waiting for Review each merge"),
+    ("Upload timing", "Mondays at 08:00 · Waiting for Review each merge"),
     ("What landed", PAUSE + "Fridays at 17:00 · Paused"),
 ]
 
@@ -78,10 +78,31 @@ def budget(state=None):
             f'<span class="field" style="min-width:9rem;flex:none;color:var(--text-primary)">{sel}&nbsp;{DOWN}</span></div>{extra}')
 
 
-def section(rows=None, state=None, bstate=None, retired=True, top=True):
+BUILTIN = [("Build health", "Mondays at 08:00 · Runs the project’s checks on a clean copy and says what broke")]
+BUILTIN_ALL = [("Dependency check", "Weekdays at 07:00 · Looks for security fixes and major releases of what the project uses"),
+               ("Build health", BUILTIN[0][1]),
+               ("What landed", "Fridays at 17:00 · Sums up what merged this week and anything left unfinished")]
+WEEKLY_ROW = ("Weekly improvement review", "Mondays at 08:00 · Suggests fixes for friction that keeps coming back in this project’s tasks")
+
+
+def brow(name, line, state=None):
+    btn = '<span class="btn">Turn on</span>'
+    if state == "saving":
+        btn = '<span class="btn" style="min-width:76px" aria-label="Turn on, saving"><span class="spin"></span></span>'
+    err = '<div class="err" style="margin-top:6px">Not turned on: the agents changed in another window.</div>' if state == "refused" else ""
+    return f'<div class="arow brow"><span class="tx"><b>{name}</b><small>{line}</small>{err}</span>{btn}</div>'
+
+
+def builtin(rows=BUILTIN, state=None):
+    items = "".join(brow(n, l, state if i == 0 else None) for i, (n, l) in enumerate(rows))
+    return ('<h2 style="margin-top:24px">Built in</h2><p class="muted" style="margin:-4px 0 10px;font-size:13.5px">Ready to turn on; each becomes yours to change.</p>'
+            f'<div class="card alist">{items}</div>')
+
+
+def section(rows=None, state=None, bstate=None, retired=True, top=True, built=BUILTIN, bistate=None):
     rows = AGENTS if rows is None else rows
     head = (f'<a class="btn setting-back" href="#">{CHEVL}{P}</a><h1 style="margin-bottom:4px">Agents</h1>'
-            '<p class="muted" style="margin:0 0 14px">Each one runs a brief you wrote when its trigger fires, and tells you what it found.</p>')
+            '<p class="muted" style="margin:0 0 14px">Each one runs a brief when its trigger fires, and tells you what it found.</p>')
     if not top:
         head = head.split("</h1>")[1]
     if state == "loading":
@@ -91,11 +112,11 @@ def section(rows=None, state=None, bstate=None, retired=True, top=True):
     items = "".join(arow(*a) for a in rows)
     card = f'<div class="card alist">{items}{budget(bstate)}<div class="afoot"><span class="btn">New agent</span></div></div>'
     tail = f'<p class="muted" style="margin:10px 2px 0"><a {U}>2 retired</a></p>' if retired and rows else ""
-    return head + card + tail
+    return head + card + tail + (builtin(built, bistate) if built else "")
 
 
 board("DesktopAgents", 1440, 900, desk(section()))
-board("PhoneAgents", 390, 844, phone(section(top=False)))
+board("PhoneAgents", 390, 1000, phone(section(top=False), h=1000))
 
 # ---- one agent ----
 BRIEF = ("Check every dependency in pyproject.toml and web/package.json for security fixes and major releases. "
@@ -206,6 +227,31 @@ board("DesktopRun", 1440, 900, desk(RUN_HEAD + run_page()))
 board("PhoneRun", 390, 844, phone(run_page("running"), back="Dependency check", title="Run · Today 07:00"))
 
 
+# ---- the Weekly improvement review as a built-in agent (Altitude's own project, step 2) ----
+WEEKLY_RUNS = [
+    ("found", "Oct 19, 08:00", "3 suggestions", "4 min", "Owners re-ask settled questions; a review box hides its reason; landing waits are unclear."),
+    ("", "Oct 12, 08:00", "Nothing to suggest", "3 min", "6 tasks read."),
+    ("skip", "Oct 5, 08:00", "Skipped", "", "3 tasks had finished; it needs 5."),
+]
+
+
+def weekly_page():
+    card = ('<div class="card"><div class="status"><span class="tx">Next: Monday, Oct 26, if 2 more tasks finish</span>'
+            '<span class="btns"><span class="btn" aria-disabled="true" style="opacity:.45">Run now</span><span class="btn">Pause</span></span></div>'
+            '<p class="muted" style="margin:8px 0 0;font-size:13px">Run now needs 5 finished tasks since Oct 19; 3 so far.</p></div>')
+    what = ('<h2 style="margin-top:24px">What it does</h2><div class="card">'
+            '<p style="margin:0">Finds friction that keeps coming back in this project’s tasks and suggests fixes, as cards in chat you can make into tasks.</p>'
+            '<p class="muted" style="margin:10px 0 0">Counts and short chat quotes · Claude Sonnet 5.5 on your plan · capped per run, plus one L3 check</p>'
+            f'<p class="muted" style="margin:6px 0 0">4 runs · 7 suggestions · 3 became tasks · 2 dismissed · <a {U}>Latest</a></p></div>')
+    return card + runs(rows=WEEKLY_RUNS, more=False) + what
+
+
+WEEKLY_HEAD = (f'<a class="btn setting-back" href="#">{CHEVL}altitude</a><h1 style="margin-bottom:2px">Weekly improvement review</h1>'
+               '<p class="muted" style="margin:0 0 16px">Built in</p>')
+board("DesktopWeekly", 1440, 900, desk(WEEKLY_HEAD + weekly_page(), on="altitude"))
+board("PhoneWeekly", 390, 1000, phone('<p class="muted" style="margin:0 0 12px">Built in</p>' + weekly_page(), back="altitude", title="Weekly improvement review", h=1000))
+
+
 # ---- the form: new and edit ----
 def days(on=(0, 1, 2, 3, 4), time="07:00"):
     letters = "MTWTFSS"
@@ -253,11 +299,9 @@ MERGE_BRIEF = ("Read the pull request that merged and check that every behaviour
 def form(new=False, nameless=False, saving=False, refused=False, trig="schedule", name="Dependency check", brief=BRIEF):
     nm = ('<div class="field fld" style="color:var(--text-muted)">For example: Dependency check</div>' if new
           else f'<div class="field fld">{name}</div>')
-    ex = ('<p class="muted ex" style="margin:10px 0 0">Start from an example: <a href="#">Nightly dependency check</a> · '
-          '<a href="#">Weekly build health</a> · <a href="#">Daily summary of what landed</a></p>') if new else ""
     br = ('<div class="field ta" style="color:var(--text-muted)">For example: check whether the build got slower this week, and say which step.</div>' if new
           else f'<div class="field ta">{brief}</div>')
-    body = (f'<label class="flab" style="margin-top:6px">Name</label>{nm}{ex}'
+    body = (f'<label class="flab" style="margin-top:6px">Name</label>{nm}'
             f'<label class="flab">What it does</label>{br}<span class="hint">Write it as you would brief a task. It can use anything in the repository.</span>'
             f'<label class="flab">Runs when</label>{triggers(trig, open_schedule=new)}{EVHINT if trig != "schedule" else ""}'
             f'<label class="flab">Tell me in chat</label>{seg()}'
@@ -339,7 +383,7 @@ board("DesktopChat", 1440, 900,
 def mon_agents():
     rows = [("harbor · Review each merge", "Running", "Found something on PR #809 · yesterday · 6 min · 3.9M tokens"),
             ("harbor · Dependency check", "Next tomorrow 07:00", "Found something · 2 h ago · 6 min · 4.1M tokens"),
-            ("harbor · Clean checkout", "Waiting", "Nothing found · Oct 12 · 9 min · 5.2M tokens"),
+            ("harbor · Upload timing", "Waiting", "Nothing found · Oct 12 · 9 min · 5.2M tokens"),
             ("harbor · What landed", "Paused", "Skipped Fri: the week’s budget was used")]
     items = "".join(f'<a class="agl" href="#"><div class="tx"><div class="monitor-row"><b>{a}</b><span class="muted">{b}</span></div>'
                     f'<p class="muted" style="margin:0">{c}</p></div>{CHEVR}</a>' for a, b, c in rows)
@@ -370,7 +414,7 @@ def work_rows():
     return ('<div><div class="sh">Current <span>3</span></div>'
             + trow("Review each merge", "Agent run · PR #812 · 2 of 20 min")
             + trow("Speed up the upload test", "Running · PR #811 green")
-            + trow("Clean checkout", "Agent run · waiting for Review each merge", "dot q")
+            + trow("Upload timing", "Agent run · waiting for Review each merge", "dot q")
             + '</div>' + fold + agents)
 
 
@@ -414,10 +458,10 @@ RETIRED_PAGE = ('<h1 style="margin:0 0 4px">Issue labels</h1><p class="muted" st
 CELLS = [
     ("1 · Section loading", "a spinner named Loading agents…", section(state="loading", top=False)),
     ("2 · Section read failed", "other settings stay usable", section(state="failed", top=False)),
-    ("3 · No agents yet", "the line, the budget and New agent", section(rows=[], top=False)),
-    ("4 · Budget saving", "the choice shows at once", section(rows=AGENTS[:1], bstate="saving", retired=False, top=False)),
-    ("5 · Budget refused", "back to the saved value", section(rows=AGENTS[:1], bstate="refused", retired=False, top=False)),
-    ("6 · Budget spent", "agents wait until Monday", section(rows=[AGENTS[3]], bstate="spent", retired=False, top=False)),
+    ("3 · No agents of your own yet", "the budget, New agent and every built-in agent", section(rows=[], top=False, built=BUILTIN_ALL)),
+    ("4 · Budget saving", "the choice shows at once", section(rows=AGENTS[:1], bstate="saving", retired=False, top=False, built=None)),
+    ("5 · Budget refused", "back to the saved value", section(rows=AGENTS[:1], bstate="refused", retired=False, top=False, built=None)),
+    ("6 · Budget spent", "agents wait until Monday", section(rows=[AGENTS[3]], bstate="spent", retired=False, top=False, built=None)),
     ("7 · Run now starting", "held until the run is read; same width", status("starting")),
     ("8 · Run now refused", "Run now again, with its reason", status("refused")),
     ("9 · Waiting", "for a task slot, or for the project’s other agent run", status("waiting") + '<div style="height:10px"></div>' + status("waiting-agent")),
@@ -471,11 +515,15 @@ CELLS = [
     ("36 · The project menu", "Agents… is always there, after Project settings…",
      '<div class="menu-mock" role="menu" style="position:static"><div class="hi">Project settings…</div><div>Agents…</div>'
      '<div>Setup… <span class="muted">Ready</span></div><div>Reset L3 conversation…</div><div>All settings…</div></div>'),
+    ("37 · Turning a built-in agent on", "it joins your agents, on, with its schedule", builtin(state="saving")),
+    ("38 · Turn on refused", "the button returns with the reason", builtin(state="refused")),
+    ("39 · Altitude’s own project", "the Weekly review is built in there (step 2); its Turn on opens its terms first",
+     builtin(rows=[WEEKLY_ROW] + BUILTIN_ALL[:2])),
 ]
-board("States", 1200, 8700, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
+board("States", 1200, 9860, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Every state of the agents page, the agent page, the form, the dialogs and chat, as PROPOSAL.md specifies them.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in CELLS) + '</div>')
-board("PhoneStates", 1720, 6040, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
+board("PhoneStates", 1720, 6960, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: stacked choices, 44px targets, full-width cards.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in CELLS) + '</div>')
 print("written")
