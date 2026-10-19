@@ -1368,7 +1368,7 @@ def phase_online(guest: Guest, repository: str, results: Path, record: dict, inp
         image, mount = f"{SHARED}/{name}.dmg", f"{SHARED}/{name}-image"
         got = step(f"{name}-download", f"curl -fsSL --max-time 600 -o {image} {quote(url)} && stat -f %z {image} && "
                                        f"hdiutil attach -quiet -nobrowse -readonly -mountpoint {mount} {image} && "
-                                       f"cp -R {quote(f'{mount}/{app}.app')} /Applications/ && "
+                                       f"ditto {quote(f'{mount}/{app}.app')} {quote(bundle)} && "
                                        f"hdiutil detach -quiet {mount} && rm {image}", timeout=900)
         check(got.returncode == 0, f"{app} did not download and install")
         signed = step(f"{name}-signature", f"codesign --verify --deep --strict {quote(bundle)} && "
