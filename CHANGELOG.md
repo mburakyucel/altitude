@@ -9,6 +9,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
   old subscription. The warning under the alert switch shows only on the device it concerns, and only
   when there is something left to do.
+- No job Altitude confines can read your own Claude folder or Claude state file any more, on Linux or macOS:
+  a Claude job sees only your settings, instructions, skills, agents, commands, plugins and output styles,
+  read-only, and a task worker also your project notes. Your Claude sign-in and conversations stay out of reach.
+  On Linux, a Codex coordinator can still read your Claude state file once your own Claude rewrites it during
+  the coordinator's turn.
 
 ## v0.10.0 — 2026-10-19
 

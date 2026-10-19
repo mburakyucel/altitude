@@ -354,7 +354,8 @@ class Jobs(DarwinCase):
                                               sockets=(Path("/home/.config/altitude/x/ab12"),)))
         self.assertEqual(spec["profile"], platform.seatbelt_profile(["/work/tree", "/home/.altitude"], temporary=temporary,
                                                                     sockets=["/home/.config/altitude/x/ab12"],
-                                                                    hidden=[str(codex), platform.DATA_VOLUME + str(codex)]))
+                                                                    hidden=platform._operator_places()))
+        self.assertLessEqual({str(codex), platform.DATA_VOLUME + str(codex)}, set(platform._operator_places()))
         log, status = self.tmp / "machine.log", self.tmp / "machine.exit"
         spec = self.spec(platform.logged_job_command("altitude-machine-p-1.service", "brew list", log=log, status=status,
                                                      env=env, timeout=300))

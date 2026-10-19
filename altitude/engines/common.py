@@ -1506,8 +1506,8 @@ def worker_confinement(engine: str) -> str:
 
 
 def operator_places() -> tuple[str, ...]:
-    """Every engine's folders of the operator's own that no job in Altitude's sandbox sees (`platform.job_command`),
-    whether or not the engine is in use."""
+    """Every engine's folders and files of the operator's own that no job in Altitude's sandbox sees
+    (`platform.job_command`), whether or not the engine is in use."""
     return tuple(place for engine in config.ENGINES for place in implementation(engine).operator_places())
 
 

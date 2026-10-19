@@ -1528,8 +1528,8 @@ may signal only processes in its own sandbox, never its supervisor,
 and write only under its own roots (a task worker's worktree, the worktree's Git directories except their
 [read-only parts](#isolation-and-landing) and its scratch folder; a coordinator turn's runtime folder and Altitude's
 home), the job's own engine folder and its own temporary folder, and never reads
-Altitude's credentials, the common browsers' profiles or the operator's own Codex folder (`engines.operator_places`),
-apart from the entries its launch reopens read-only; the operator's own Claude folder stays readable. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
+Altitude's credentials, the common browsers' profiles or the operator's own Codex folder, Claude folder and Claude
+state file (`engines.operator_places`), apart from the entries its launch reopens read-only. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
 or the launcher's job folders, which hold each job's piped input and relay its output;
 launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
@@ -1561,15 +1561,24 @@ shared temporary folders awaits confirmation on a Mac.
 
 Every Claude job Altitude starts has a Claude folder of its own (`CLAUDE_CONFIG_DIR`), so no job writes
 the operator's `~/.claude`, `~/.claude.json` or the GitHub CLI's configuration, which another run or
-Altitude's own `gh` calls load. A task worker's folder is `l2-engine/claude` in its task folder, the one
+Altitude's own `gh` calls load. Altitude's sandbox hides the operator's `~/.claude`, `~/.claude.json` and every
+copy of it Claude leaves beside it, each also where it leads when it is a link, from every job it confines, on
+either engine; on Linux the sandbox hides the copies present at launch, in a home that holds only the entries present
+then, and on macOS also any made later. A Codex coordinator, which runs in Codex's own sandbox, has its profile deny
+the ones present when its turn starts, apart from any inside a place the profile refuses whole; on Linux Codex
+hides a file by covering it where it lies, so once the operator's own Claude replaces its state file during the turn,
+the new file is readable there, while the folder, with the sign-in and conversations, stays hidden.
+A Claude job's launch reopens read-only only what that job reads, named below; hook scripts, a status line command,
+imports or a Claude program kept elsewhere in the operator's folder stay hidden, so a job runs without them. A task worker's folder is `l2-engine/claude` in its task folder, the one
 part of Altitude's home the worker writes, and keeps the task's sessions across turns and after the task is
 archived; a coordinator's is one per project in the persistent coordinator folder beside Altitude's private
 configuration; a review's lives and ends with its runtime. The engine driver, already inside the job, creates
 the folder's contents and links the operator's `settings.json`, `CLAUDE.md`, skills, agents, commands, plugins
-and output styles into it, read-only to the job; the folder's own state file starts empty.
-A session resumed for the first time in its folder is first copied there from the operator's folder,
-where Claude kept every session before jobs had folders of their own. Workers read the project's notes
-from the operator's folder (`autoMemoryDirectory`) without being able to change them. Every Claude job
+and output styles into it, which the launch of a worker or coordinator reopens read-only; the folder's own
+state file starts empty, and a review, whose Claude runs restricted, links nothing. A session resumed for the
+first time in its folder is first copied there from the operator's folder, where Claude kept every session
+before jobs had folders of their own; the launch reopens only that session's records for the copy. Workers read
+the project's notes from the operator's folder (`autoMemoryDirectory`), which their launch reopens read-only. Every Claude job
 signs in with Altitude's own subscription token (made by the sign-in below and kept in the private access
 store), handed over in its launch input like the GitHub token below and exported by the driver as
 `CLAUDE_CODE_OAUTH_TOKEN`, so a job never reads or refreshes the operator's sign-in; a review, which
