@@ -1169,9 +1169,10 @@ export async function terminalOpen(project: string, task?: string): Promise<Term
   return TerminalStatusSchema.parse(await post(`${terminalPath(project)}/open`, { task }));
 }
 
-/** Input, resize and close for terminal `id`, and `command`: the chat command about to be typed, which the terminal's
- * reader (the task's owner, or the coordinator) hears about once it has run. Each answers ok or the server's error (410 once it was replaced). */
-export function terminalSend(project: string, action: "input" | "command" | "resize" | "close", body: { task?: string; id: string; data?: string; text?: string; cols?: number; rows?: number }) {
+/** Input, resize and close for terminal `id`, and `command`: the chat command for altd to type at the prompt (as a paste
+ * when `bracketed`), which the terminal's reader (the task's owner, or the coordinator) hears about once it has run. Each
+ * answers ok or the server's error: why the command wasn't typed, or 410 once the terminal was replaced. */
+export function terminalSend(project: string, action: "input" | "command" | "resize" | "close", body: { task?: string; id: string; data?: string; text?: string; bracketed?: boolean; cols?: number; rows?: number }) {
   return post(`${terminalPath(project)}/${action}`, body);
 }
 
