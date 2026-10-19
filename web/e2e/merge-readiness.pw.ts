@@ -86,10 +86,13 @@ test("a stale approval writes nothing and the card gives way to the current task
   const accepted = page.waitForResponse(response => response.url().endsWith("/api/l2/message") && response.request().method() === "POST");
   await chat.getByRole("button", { name: "Approve merge", exact: true }).click();
   expect((await accepted).status()).toBe(200);
+  // The approval is the operator's pill in the chat, and the card has given way to it.
+  const approval = chat.locator(".choice-mine").filter({ hasText: "PR #45" });
   await walk.state("06-ready-approval-sent", {
-    visible: [chat.getByRole("button", { name: "Approve merge, waiting for the L2", exact: true })],
-    hidden: [chat.getByRole("alert")],
+    visible: [approval.getByText("Approve merge", { exact: true })],
+    hidden: [chat.getByRole("alert"), chat.getByRole("button", { name: /Approve merge/ })],
   });
+  await expect(approval).toHaveCount(1);
 });
 
 test("denied approval preserves the card and disables its action", async ({ page }, info) => {

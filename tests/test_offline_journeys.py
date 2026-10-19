@@ -278,14 +278,34 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual((stopped["state"], stopped["fault"]), ("blocked", "l2-died"))
         self.assertEqual(S.task_dir(self.project, task["slug"]).parent, S.tasks_dir(self.project))
 
+    def test_a_send_id_names_one_message_so_a_retry_after_a_lost_reply_saves_nothing_twice(self):
+        task = self.launch(self.queue("One send id"))
+        slug = task["slug"]
+        question = T.block(self.project, slug, "Use the existing index?", actor="l2",
+                           updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, recommendation="Use the existing index.")["questions"][-1]
+        send_id = "0d6f3c1e9b2a4e7f8c5d6a7b8c9d0e1f"
+        body = {"project": self.project, "slug": slug, "text": "Keep both indexes for now.", "request_id": send_id}
+        with mock.patch.object(server, "spawn", return_value=False):
+            first = self.request("/api/l2/message", body)["message"]
+            again = self.request("/api/l2/message", body)["message"]
+            self.request("/api/l2/message", {**body, "text": "Drop the old index."}, status=409)
+            self.request("/api/decide", {"project": self.project, "slug": slug, "question_id": question["id"],
+                                         "revision": question["revision"], "request_id": send_id}, status=409)
+        self.assertEqual((again["id"], again["text"]), (first["id"], first["text"]))
+        self.assertEqual([row["id"] for row in T.task_messages(self.project, slug)].count(send_id), 1)
+        self.assertEqual([row["id"] for row in T.pending(self.project, slug)].count(send_id), 1)
+
     def test_acceptance_recovers_a_lost_immediate_wake_and_coalesces_timer_and_http_retries(self):
         task = self.launch(self.queue("One acceptance wake"))
         slug = task["slug"]
         question = T.block(self.project, slug, "Use the existing index?", actor="l2",
                            updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, recommendation="Use the existing index.")["questions"][-1]
-        body = {"project": self.project, "slug": slug, "question_id": question["id"], "revision": 1}
+        send_id = "5f0c8a52-6a2f-4c6e-9d4e-0b1f7a3c2d11"
+        body = {"project": self.project, "slug": slug, "question_id": question["id"], "revision": 1, "request_id": send_id}
         with mock.patch.object(server, "spawn", return_value=False):
             accepted = self.request("/api/decide", body)
+        # The browser's send id names the saved message, so the answer it shows at the press is the saved one.
+        self.assertEqual(accepted["response"]["message_id"], send_id.replace("-", ""))
         self.assertIn(slug, dispatch.resume_due(self.project), "the durable request survives a lost immediate scheduler call")
         started, release = threading.Event(), threading.Event()
         self.addCleanup(release.set)

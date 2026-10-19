@@ -2824,13 +2824,17 @@ class Handler(BaseHTTPRequestHandler):
             if api == "decide":
                 project, slug = o["project"], o["slug"]
                 try:
+                    send = {"request_id": uuid.UUID(o["request_id"]).hex} if "request_id" in o else {}
+                except (ValueError, TypeError, AttributeError):
+                    return self._json({"error": "Answers require a valid submission identity."}, 400)
+                try:
                     if "answers" in o or "group_id" in o or "group_revision" in o:
-                        result = T.accept_questions(project, slug, o.get("group_id"), o.get("group_revision"), o.get("answers"))
+                        result = T.accept_questions(project, slug, o.get("group_id"), o.get("group_revision"), o.get("answers"), **send)
                     else:
                         if "text" in o and "option_key" in o:
                             raise T.TransitionError("send a quick option or custom text, not both")
                         result = T.accept_question_result(project, slug, o.get("question_id"), o.get("revision"),
-                                                          o.get("option_key"), **({"text": o["text"]} if "text" in o else {}))
+                                                          o.get("option_key"), **({"text": o["text"]} if "text" in o else {}), **send)
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 if S.load_task(project, slug).get("state") == "blocked":

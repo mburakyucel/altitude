@@ -932,18 +932,24 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         raise TransitionError(f"task message summary exceeds {SUMMARY_LIMIT} characters")
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if review_number is not None:
-            # #902: a generated approval card can become stale while the operator reads it.
-            if (role != OPERATOR_MESSAGE_ROLE or type(review_number) is not int or review_number <= 0
-                    or review_pr(project, task) != review_number
-                    or task.get("hold_merge_id") != review_hold_id):
-                raise TransitionError("This PR is not ready for automatic merge approval. Refresh the task.")
         if request_id:
             previous = next((row for row in task.get("image_messages", []) if row["id"] == request_id), None)
             if previous:
                 if previous.get("request_digest") != request_digest:
                     raise TransitionError("This submission identity already belongs to another message.")
                 return {key: value for key, value in previous.items() if key != "delivered"}
+            # A retry after a lost reply returns the saved message, whatever changed since, instead of saving it twice.
+            saved = _message_named(project, slug, request_id)
+            if saved:
+                if uploads or image_ids or saved.get("role") != role or saved.get("text") != text:
+                    raise TransitionError("This submission identity already belongs to another message.")
+                return saved
+        if review_number is not None:
+            # #902: a generated approval card can become stale while the operator reads it.
+            if (role != OPERATOR_MESSAGE_ROLE or type(review_number) is not int or review_number <= 0
+                    or review_pr(project, task) != review_number
+                    or task.get("hold_merge_id") != review_hold_id):
+                raise TransitionError("This PR is not ready for automatic merge approval. Refresh the task.")
         if stop_id is not None and stop_id != task.get("stop_id"):
             raise TransitionError("The stopped session changed. Refresh before sending this correction.")
         allowed = ("running", "blocked", "reported")
@@ -1106,6 +1112,11 @@ def notify(project: str, slug: str, text: str, *, by: str, attempt: int,
         if marked or wake:
             S.regen_state_md(project)
     return row
+
+
+def _message_named(project: str, slug: str, message_id: str) -> dict | None:
+    """The task's message saved under a send id, so one id never names two messages."""
+    return next((row for row in task_messages(project, slug) if row["id"] == message_id), None)
 
 
 def task_messages(project: str, slug: str, limit: int | None = None) -> list[dict]:
@@ -2892,19 +2903,21 @@ def accept_question(project: str, slug: str, identity: str, revision: int, optio
 
 
 def accept_question_result(project: str, slug: str, identity: str, revision: int, option_key: str | None = None,
-                           *, text: object = _UNSET) -> dict:
+                           *, text: object = _UNSET, request_id: str | None = None) -> dict:
     if text is not _UNSET and option_key is not None:
         raise TransitionError("send a quick option or custom text, not both")
     answer = {"option_key": option_key} if text is _UNSET else {"text": text}
-    return _accept_questions(project, slug, [{"question_id": identity, "revision": revision, **answer}])
+    return _accept_questions(project, slug, [{"question_id": identity, "revision": revision, **answer}], request_id=request_id)
 
 
-def accept_questions(project: str, slug: str, group_id: str, group_revision: int, answers: list[dict]) -> dict:
-    """Atomically record a selected subset of a group with one normal message and wake request."""
+def accept_questions(project: str, slug: str, group_id: str, group_revision: int, answers: list[dict],
+                     *, request_id: str | None = None) -> dict:
+    """Atomically record a selected subset of a group with one normal message and wake request. The browser's send id
+    (`request_id`) becomes the message's id, so the answer it shows at the press is the saved one (SPEC.md §3.8.2)."""
     if (not isinstance(group_id, str) or not group_id or isinstance(group_revision, bool)
             or not isinstance(group_revision, int)):
         raise TransitionError("batch response must name the question group and its integer revision")
-    return _accept_questions(project, slug, answers, group_id=group_id, group_revision=group_revision)
+    return _accept_questions(project, slug, answers, group_id=group_id, group_revision=group_revision, request_id=request_id)
 
 
 def _submission_response(project: str, task: dict, saved: dict) -> dict:
@@ -2915,7 +2928,7 @@ def _submission_response(project: str, task: dict, saved: dict) -> dict:
 
 
 def _accept_questions(project: str, slug: str, answers: list[dict], *,
-                      group_id: str | None = None, group_revision: int | None = None) -> dict:
+                      group_id: str | None = None, group_revision: int | None = None, request_id: str | None = None) -> dict:
     if not isinstance(answers, list) or not 1 <= len(answers) <= 3:
         raise TransitionError("submit one to three explicit answers")
     if any(not isinstance(answer, dict) or set(answer) not in (
@@ -2965,7 +2978,9 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
             raise TransitionError("question is no longer open for responses; refresh the conversation")
         for question, _ in chosen:
             require_shown(project, slug, question)
-        at, message_id = _conversation_time(), uuid.uuid4().hex
+        if request_id and _message_named(project, slug, request_id):
+            raise TransitionError("This submission identity already belongs to another message.")
+        at, message_id = _conversation_time(), request_id or uuid.uuid4().hex
         text = "\n\n".join(f"{q['question']}\n{o['text']}" for q, o in chosen)
         row = {"id": message_id, "at": at, "role": OPERATOR_MESSAGE_ROLE, "by": OPERATOR_MESSAGE_ROLE,
                "text": text, "group_id": group["id"], "group_revision": group["revision"],

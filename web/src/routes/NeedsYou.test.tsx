@@ -102,7 +102,12 @@ function mockFetch(initialQueue: unknown[], decideStatus = 200) {
         ],
       });
     }
-    if (url.includes("/api/task/")) return jsonResponse({ slug: "x", state: "blocked", messages: [] });
+    if (url.includes("/api/task/")) {
+      // A task's own read lists the questions it still asks, as the queue does.
+      const slug = url.split("/").at(-1);
+      return jsonResponse({ slug, state: "blocked", messages: [],
+        questions: (queue as { slug?: string; id?: string }[]).filter((row) => row.slug === slug && row.id) });
+    }
     if (url.includes("/api/decide")) {
       if (decideStatus !== 200) return jsonResponse({ error: "Could not save" }, decideStatus);
       queue = [];
@@ -186,28 +191,34 @@ describe("Needs you", () => {
     expect(screen.getByText("2 questions · 1 stopped task across 2 projects")).toBeInTheDocument();
   });
 
-  it("removes an old group's saved receipt while retaining the new group even if the follow-up read fails", async () => {
+  it("keeps an answered card gone while the follow-up read fails, and shows a newer question once a read succeeds", async () => {
     const old = { ...asks, group_id: "old-group", group_revision: 1 };
     const next = { ...asks, id: "q-label", group_id: "new-group", group_revision: 1, question: "What should the badge say?" };
     let recorded = false;
+    let readable = true;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const route = String(input);
       if (route === "/api/decide") {
         recorded = true;
-        return jsonResponse({ question: { ...old, status: "resolved", resolution: { disposition: "answered", text: "Use accent.", by: OPERATOR, at: ago(0) } }, question_group: { id: "new-group", revision: 1, anchor_id: "new-anchor", questions: [next] } });
+        readable = false;
+        return jsonResponse({ question: { ...old, status: "resolved", resolution: { disposition: "answered", text: "Use accent.", by: OPERATOR, at: ago(0) } } });
       }
-      if (route === "/api/overview") return recorded ? jsonResponse({ error: "read unavailable" }, 503) : jsonResponse(overview([old]));
+      if (route === "/api/overview") return !readable ? jsonResponse({ error: "read unavailable" }, 503) : jsonResponse(overview(recorded ? [next] : [old]));
       if (route === "/api/project/altitude") return jsonResponse({ name: "altitude", tasks: [] });
       return jsonResponse({}, 404);
     }));
     const { user, queryClient } = renderApp({ route: "/" });
     await user.click(await screen.findByRole("button", { name: "Accent" }));
     await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
-    await screen.findByText("What should the badge say?");
-    await waitFor(() => expect(queryClient.getQueryState(["overview"])?.status).toBe("error"));
     expect(screen.queryByText(asks.question)).toBeNull();
-    expect(queryClient.getQueryData<{ queue: { id: string }[] }>(["overview"])?.queue.map((q) => q.id)).toEqual(["q-label"]);
-    expect(screen.getByRole("button", { name: "Accent" })).toBeDisabled();
+    await waitFor(() => expect(queryClient.getQueryState(["overview"])?.status).toBe("error"));
+    // The cache keeps what Altitude last said; the answer stays laid over it until a read after the save succeeds.
+    expect(queryClient.getQueryData<{ queue: { id: string }[] }>(["overview"])?.queue.map((q) => q.id)).toEqual(["q-badge"]);
+    expect(screen.queryByText(asks.question)).toBeNull();
+    readable = true;
+    await act(() => queryClient.invalidateQueries({ queryKey: ["overview"] }));
+    await screen.findByText("What should the badge say?");
+    expect(screen.queryByText(asks.question)).toBeNull();
   });
 
   it("resolves the same reference against each decision card's own project", async () => {
@@ -291,9 +302,11 @@ describe("Needs you", () => {
         question_id: "q-badge",
         revision: 1,
         option_key: "A",
+        request_id: expect.stringMatching(/^[0-9a-f]{32}$/),
       });
     });
-    await waitFor(() => expect(screen.queryByRole("article", { name: "Add the badge" })).toBeNull());
+    expect(screen.queryByRole("article", { name: "Add the badge" })).toBeNull();
+    expect(await screen.findByText("Answer saved")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Open L2 chat" }));
     expect(router.state.location.pathname + router.state.location.search).toBe("/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
     expect(router.state.location.state).toEqual({ from: "needs", tab: "needs" });
@@ -313,16 +326,19 @@ describe("Needs you", () => {
     await act(async () => { finish(jsonResponse(overview([asks]))); await refresh; });
   });
 
-  it("keeps the card with one line and a Retry when the decision fails", async () => {
+  it("returns the card with its pick, Not sent and Retry when the answer was not saved", async () => {
     const fetchMock = mockFetch([asks], 503);
     const { user } = renderApp({ route: "/" });
 
-    const card = await screen.findByRole("article", { name: "Add the badge" });
-    await user.click(within(card).getByRole("button", { name: "Accent" }));
-    await user.click(within(card).getByRole("button", { name: "Send 1 answer" }));
+    const pressed = await screen.findByRole("article", { name: "Add the badge" });
+    await user.click(within(pressed).getByRole("button", { name: "Accent" }));
+    await user.click(within(pressed).getByRole("button", { name: "Send 1 answer" }));
 
-    await within(card).findByText(/Could not send answers\./);
-    expect(within(card).getByRole("button", { name: "Accent" })).toBeEnabled();
+    // No answer came, so the task's next read decides; it lists no such answer, so the card comes back.
+    const card = await screen.findByRole("article", { name: "Add the badge" });
+    expect(await within(card).findByRole("alert")).toHaveTextContent(/^Not sent\. Retry$/);
+    expect(within(card).getByRole("button", { name: "Accent" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Answer not sent")).toBeNull();
     const decides = () => fetchMock.mock.calls.filter(([u]) => String(u).includes("/api/decide")).length;
     expect(decides()).toBe(1);
     await user.click(within(card).getByRole("button", { name: "Retry" }));

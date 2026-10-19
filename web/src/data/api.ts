@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { z } from "zod";
 import { readAlertState } from "./alerts";
+import { finishPending, forgetPending, handBack, overlayOverview, overlayProject, overlayTask, startPending, usePending } from "./pending";
+import type { PendingAnswer, PendingWrite } from "./pending";
 import { forgetRecovery } from "./recovery";
 import { useOptimisticMutation } from "./useOptimisticMutation";
 
@@ -11,8 +13,8 @@ import { useOptimisticMutation } from "./useOptimisticMutation";
  * (lenient at the edges: unknown keys pass through, optional fields are nullish, enum-like
  * strings stay plain strings so a new server value never breaks the page), one query hook
  * per GET endpoint (20s polling, faster for active conversations), one change stream that refreshes
- * task, decision and project queries as their records move, and mutation hooks over
- * useOptimisticMutation for every POST.
+ * task, decision and project queries as their records move, and a mutation for every POST. Answers and
+ * approvals show at the press through the pending writes in ./pending, overlaid on the reads.
  *
  * Paths are interpolated raw (no encodeURIComponent): the server matches path parts without
  * percent-decoding, and project/task names are slugs.
@@ -1353,25 +1355,46 @@ export const overviewQuery = {
   queryFn: async () => OverviewSchema.parse(await api("/api/overview")),
 };
 
+/** Needs you, the badge and every page read the overview with the operator's writes on their way laid over it. */
 export function useOverview() {
+  const client = useQueryClient();
+  const pending = usePending();
+  const select = useCallback((data: Overview) => overlayOverview(client, data, pending), [client, pending]);
+  return useQuery({ ...overviewQuery, refetchInterval: pollInterval, select });
+}
+
+/** The overview as Altitude saved it: alerts count what the record asks, never what a send on its way hides. */
+export function useOverviewRecord() {
   return useQuery({ ...overviewQuery, refetchInterval: pollInterval });
 }
 
 export function useProject(name: string, enabled = true) {
+  const client = useQueryClient();
+  const pending = usePending();
+  const select = useCallback((data: ProjectView) => overlayProject(client, data, pending), [client, pending]);
   return useQuery({
     queryKey: ["project", name],
     queryFn: async () => ProjectViewSchema.parse(await api(`/api/project/${name}`)),
     refetchInterval: pollInterval,
     enabled: Boolean(name) && enabled,
+    select,
   });
 }
 
+export const taskQuery = (project: string, slug: string) => ({
+  queryKey: ["task", project, slug],
+  queryFn: async () => TaskViewSchema.parse(await api(`/api/task/${project}/${slug}`)),
+});
+
 export function useTask(project: string, slug: string) {
+  const client = useQueryClient();
+  const pending = usePending();
+  const select = useCallback((data: TaskView) => overlayTask(client, project, data, pending), [client, project, pending]);
   return useQuery({
-    queryKey: ["task", project, slug],
-    queryFn: async () => TaskViewSchema.parse(await api(`/api/task/${project}/${slug}`)),
+    ...taskQuery(project, slug),
     refetchInterval: (query) => query.state.data?.state === "running" || ["stopping", "stop_unconfirmed", "resuming"].includes(query.state.data?.steering?.state ?? "") ? 2_000 : pollInterval(),
     enabled: Boolean(project && slug),
+    select,
   });
 }
 
@@ -1650,42 +1673,60 @@ export type DecideInput = {
 
 export type QuestionGroup = z.infer<typeof QuestionGroupSchema>;
 
-export function useDecide() {
-  const queryClient = useQueryClient();
-  return useMutation<{ question: Decision; question_group?: QuestionGroup | null }, Error, DecideInput>({
-    mutationFn: async (input) => {
-      const out = await post<{ question: unknown; question_group?: unknown }>("/api/decide", input);
-      return { question: DecisionSchema.parse(out.question), question_group: out.question_group ? QuestionGroupSchema.parse(out.question_group) : null };
-    },
-    // Publish submitted responses to every view before polling again.
-    onSuccess: async ({ question, question_group: group }, input) => {
-      for (const queryKey of [["overview"], ["project", input.project], ["task", input.project, input.slug]]) {
-        await queryClient.cancelQueries({ queryKey });
-      }
-      const updated = group ? [...group.questions.filter((q) => q.id !== question.id || q.revision !== question.revision), question] : [question];
-      const same = (row: { id?: string | null; revision?: number | null }) => updated.some((q) => row.id === q.id && row.revision === q.revision);
-      const belongs = (row: { id?: string | null; group_id?: string | null }) => group
-        ? row.group_id === group.id || (question.group_id && row.group_id === question.group_id) || updated.some((q) => row.id === q.id)
-        : row.id === question.id;
-      const open = updated.filter((q) => q.status === "open" && q.audience === "operator" && !q.response);
-      queryClient.setQueryData<Overview>(["overview"], (cached) => cached && {
-        ...cached, queue: [...cached.queue.filter((row) => !(row.project === input.project && row.slug === input.slug && belongs(row))), ...open],
-      });
-      queryClient.setQueryData<ProjectView>(["project", input.project], (cached) => cached && {
-        ...cached, decisions: [...(cached.decisions?.filter((row) => !(row.slug === input.slug && belongs(row))) ?? []), ...open],
-      });
-      queryClient.setQueryData<TaskView>(["task", input.project, input.slug], (cached) => cached && {
-        ...cached, question: group ? group.questions.find((q) => q.status === "open") ?? group.questions.at(-1) : cached.question && same(cached.question) ? question : cached.question,
-        ...(group ? { question_group: group } : {}),
-        questions: [...(cached.questions?.filter((row) => !same(row)) ?? []), ...updated],
-      });
-    },
-    onSettled: (_out, _error, input) => {
-      void queryClient.invalidateQueries({ queryKey: ["overview"] });
-      void queryClient.invalidateQueries({ queryKey: ["project", input.project] });
-      void queryClient.invalidateQueries({ queryKey: ["task", input.project, input.slug] });
-    },
-  });
+/**
+ * One write of the operator's own choice (SPEC.md §1.1 Actions answer at once): its entry shows the result in every
+ * view from the press. Altitude's answer settles it in place; a refusal rolls it back; with no answer, the next read
+ * of the task decides. The caller starts the entry (`startPending`); this resolves with the request's result, or
+ * rejects with its error once the entry records it.
+ */
+export async function writePending<T>(client: QueryClient, entry: PendingWrite, request: () => Promise<T>): Promise<T> {
+  const { project, slug } = entry;
+  const views = [["overview"], ["project", project], ["task", project, slug]];
+  try {
+    const out = await request();
+    await finishPending(client, entry.id, "saved");
+    return out;
+  } catch (error) {
+    const refused = error instanceof ApiError && error.status < 500;
+    await finishPending(client, entry.id, refused ? "refused" : "unconfirmed", error instanceof Error ? error : undefined,
+      () => client.fetchQuery({ ...taskQuery(project, slug), staleTime: 0 }));
+    throw error;
+  } finally {
+    for (const queryKey of views) void client.invalidateQueries({ queryKey });
+  }
+}
+
+const sendId = () => crypto.randomUUID().replaceAll("-", "");
+
+/**
+ * A question card's answers (SPEC.md §3.8): the saved message keeps the send id, so the pills shown at the press are
+ * the saved ones. Retry of unchanged picks sends under the same id, which Altitude answers with the saved answer if
+ * the earlier send was saved after all.
+ */
+export function sendAnswers(client: QueryClient, input: DecideInput, answers: PendingAnswer[], picks: PendingWrite["picks"], id = sendId()): Promise<PendingWrite> {
+  const entry: PendingWrite = { id, project: input.project, slug: input.slug, kind: "answers", state: "sending",
+    ...handBack(client, input.project, input.slug), at: new Date().toISOString(),
+    text: answers.map((answer) => answer.text).join("\n\n"), answers, picks };
+  const outcome = startPending(client, entry);
+  void writePending(client, entry, () => post("/api/decide", { ...input, request_id: id })).catch(() => undefined);
+  return outcome;
+}
+
+/** #419: the review card's approval, the operator's own message the L2 merges with (SPEC.md §3.8.2). */
+/** Approve merge; Retry passes the refused send's id, so a send saved after all is never saved twice. */
+export function sendApproval(client: QueryClient, decision: Decision, id = sendId()): Promise<PendingWrite> {
+  const { project, slug } = decision;
+  const text = `Approved: merge PR #${decision.pr}.`;
+  const entry: PendingWrite = { id, project, slug, kind: "approval", state: "sending", ...handBack(client, project, slug),
+    at: new Date().toISOString(), text, answers: [], pr: decision.pr ?? undefined, hold: decision.review_hold_id ?? null };
+  const outcome = startPending(client, entry);
+  void writePending(client, entry, async () => {
+    const row = await sendL2Message({ project, slug, text, review_pr: decision.pr ?? undefined, review_hold_id: decision.review_hold_id ?? null, request_id: id });
+    await client.cancelQueries({ queryKey: ["task", project, slug], exact: true });
+    client.setQueryData<TaskView>(["task", project, slug], (cached) =>
+      cached && !cached.messages?.some((message) => message.id === row.id) ? { ...cached, messages: [...cached.messages ?? [], row] } : cached);
+  }).catch(() => undefined);
+  return outcome;
 }
 
 export interface TaskActionInput {
@@ -1800,6 +1841,7 @@ export async function forgetProject(queryClient: QueryClient, name: string) {
     projects: cached.projects.map((row) => row.name === name ? { ...row, managed: false } : row),
     queue: cached.queue.filter((row) => row.project !== name),
   });
+  forgetPending(queryClient, name);
   for (const kind of ["project", "chat", "chat-outbox", "task", "task-outbox", "transcript"]) {
     await queryClient.cancelQueries({ queryKey: [kind, name] });
     queryClient.removeQueries({ queryKey: [kind, name] });

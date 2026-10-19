@@ -27,6 +27,17 @@ async function fixture(request: APIRequestContext, path: string) {
   expect(response.ok(), `${path} must succeed`).toBe(true);
 }
 
+/** Whether an element matching `selector` appeared since the watch began: a card that leaves at the press never comes back. */
+async function watch(page: Page, selector: string) {
+  await page.evaluate((selector) => {
+    const flags = window as unknown as { returned?: boolean };
+    flags.returned = false;
+    new MutationObserver(() => { if (document.querySelector(selector)) flags.returned = true; })
+      .observe(document.body, { childList: true, subtree: true });
+  }, selector);
+  return () => page.evaluate(() => (window as unknown as { returned?: boolean }).returned);
+}
+
 async function post(request: APIRequestContext, path: string, data: object) {
   const response = await request.post(path, { data });
   expect(response.ok(), `${path} must succeed`).toBe(true);
@@ -53,9 +64,34 @@ test("quick answers show as the options pressed and follow their delivery to the
     visible: [card.getByRole("button", { name: "Send 2 answers", exact: true })],
     hidden: [seven, north],
   });
+  // Altitude holds the answers until the walk lets them through; the chat shows them at the press (SPEC.md §1.1).
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/decide", async (route) => { await held; await route.continue(); });
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await card.getByRole("button", { name: "Send 2 answers", exact: true }).click();
-  // The owner's resume delivers the answers at once, so the pill reaches its delivered check.
+  await walk.state("02b-answers-wait-at-the-press", {
+    visible: [seven, seven.getByText(retention, { exact: true }), north, north.getByText(region, { exact: true })],
+    hidden: [card, v.bubble("Keep the old index for seven days."), seven.getByRole("button", { name: "Remove" })],
+  });
+  await expect(seven).toHaveAttribute("data-state", "wait");
+  expect(await seven.evaluate((node) => getComputedStyle(node.closest(".msg-row")!).animationName)).toBe("none");
+  const pill = await seven.elementHandle();
+  const rows = v.conversation.locator(".msg-row");
+  await rows.evaluateAll((nodes) => { (window as unknown as { rows: Element[] }).rows = nodes; });
+  const saved = page.waitForResponse((row) => new URL(row.url()).pathname === "/api/decide");
+  release();
+  expect((await saved).ok()).toBe(true);
+  // The owner's resume delivers the answers at once, so the pill reaches its delivered check in place.
   await expect(seven).toHaveAttribute("data-state", "sent");
+  expect(await seven.evaluate((node, earlier) => node === earlier, pill), "the saved answer settles the same pill").toBe(true);
+  // The same rows, in the same order, are the same elements: nothing was replaced, moved or added twice.
+  expect(await rows.evaluateAll((nodes) => {
+    const earlier = (window as unknown as { rows: Element[] }).rows;
+    return earlier.length === nodes.length && earlier.every((node, index) => node === nodes[index]);
+  })).toBe(true);
+  await page.unroute("**/api/decide");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(v.conversation.getByText("Sent · the L2 has your reply.")).toHaveClass("sr-only");
   await expect(card).toHaveCount(0);
   await walk.state("03-answers-sent-as-a-pill-and-a-bubble", {
@@ -82,45 +118,51 @@ test("quick answers show as the options pressed and follow their delivery to the
   await expect(seven.getByText("decision recorded")).toHaveClass(/visually-hidden/);
 });
 
-test("Approve merge works in place in Needs you: sending, not sent, retry, then an approval in the chat", async ({ page }, info) => {
+test("Approve merge leaves Needs you at the press: not sent returns it with retry, a lost reply settles from the record", async ({ page }, info) => {
   const walk = walkthrough(page, info);
   const v = view(page, info);
   const release = v.article("Release notes");
   await walk.open("/");
-  let fail: () => void = () => {};
-  const failing = new Promise<void>((resolve) => { fail = resolve; });
+  // Each send waits until the walk says how the connection ends: before Altitude saves it, or after.
+  let end!: (how: "before" | "after") => void;
   await page.route("**/api/l2/message", async (route) => {
-    await failing;
-    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "The fixture refuses one send." }) });
+    const how = await new Promise<"before" | "after">((resolve) => { end = resolve; });
+    if (how === "after") await route.fetch();
+    await route.abort("connectionreset");
   });
   const approve = release.getByRole("button", { name: "Approve merge", exact: true });
   await walk.state("05-review-offers-approve-merge", {
     visible: [approve, release.getByRole("link", { name: "View PR #42", exact: true })], hidden: [release.getByRole("alert")],
   });
+  let sent = page.waitForRequest((row) => new URL(row.url()).pathname === "/api/l2/message");
   await approve.click();
-  const sending = release.getByRole("button", { name: "Approve merge, sending", exact: true });
-  await walk.state("06-approve-merge-sending", {
-    visible: [sending, sending.locator(".spinner")],
-    hidden: [approve, release.getByRole("alert")],
+  await sent;
+  await walk.state("06-approval-leaves-at-the-press", {
+    visible: [page.getByRole("heading", { name: "Needs you", exact: true }), v.article("Index rollout")],
+    hidden: [release, page.getByText("Approval saved", { exact: true })],
   });
-  await expect(sending).toBeFocused();
-  await expect(sending).toHaveAttribute("aria-disabled", "true");
-  fail();
-  const retry = release.getByRole("button", { name: "Retry, Approve merge", exact: true });
+  // Dropped before the save: the task's next read does not list it, so the card returns with Not sent.
+  end("before");
+  const retry = release.getByRole("button", { name: "Approve merge, retry", exact: true });
   await walk.state("07-not-sent-offers-retry", {
-    visible: [retry, release.getByRole("alert").filter({ hasText: /^Not sent$/ }), release.getByRole("link", { name: "View PR #42", exact: true })],
-    hidden: [sending],
+    visible: [retry, release.getByRole("alert").filter({ hasText: /^Not sent\.$/ }), release.getByRole("link", { name: "View PR #42", exact: true })],
+    hidden: [page.getByText("Approval not sent", { exact: true })],
   });
-  await page.unroute("**/api/l2/message");
-  const sent = page.waitForResponse((row) => new URL(row.url()).pathname === "/api/l2/message" && row.request().method() === "POST");
+  await expect(retry).toBeInViewport();
+  const returned = await watch(page, 'article[aria-label="Release notes"]');
+  sent = page.waitForRequest((row) => new URL(row.url()).pathname === "/api/l2/message");
   await retry.click();
-  const saved = await sent;
-  expect(saved.ok()).toBe(true);
-  expect(saved.request().postDataJSON().text).toBe("Approved: merge PR #42.");
-  await walk.state("07b-approval-leaves-needs-you", {
-    visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [release],
+  const body = (await sent).postDataJSON();
+  expect(body.text).toBe("Approved: merge PR #42.");
+  // Saved, then the reply was lost: the read lists the send id, so the approval settles without coming back.
+  end("after");
+  await walk.state("07b-approval-saved-without-its-reply", {
+    visible: [page.getByText("Approval saved", { exact: true }), page.getByRole("button", { name: "Open L2 chat", exact: true })],
+    hidden: [release],
   });
+  expect(await returned(), "the card never returned").toBe(false);
 
+  await page.unroute("**/api/l2/message");
   await walk.open("/projects/atlas/tasks/release-notes");
   const approval = v.pill("Approve merge", "PR #42");
   await expect(approval).toHaveAttribute("data-state", "sent");
@@ -128,6 +170,7 @@ test("Approve merge works in place in Needs you: sending, not sent, retry, then 
     visible: [approval, approval.getByText("PR #42", { exact: true })],
     hidden: [v.bubble("Approved: merge PR #42."), v.conversation.getByRole("button", { name: "Approve merge", exact: true })],
   });
+  expect(await page.locator(".choice-mine").filter({ hasText: "PR #42" }).count(), "one approval, no duplicate").toBe(1);
 });
 
 test("a typed approval waits with Remove, then shows unconfirmed and sent delivery", async ({ page, request }, info) => {

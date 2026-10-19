@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 import { ALERTS_KEY, ALERTS_LAST_KEY, ALERTS_PUSH_KEY, ALERTS_SEEN_KEY } from "./alerts";
+import { finishPending, handBack, startPending } from "./pending";
 
 /** Decision alerts (issue #221) through the whole app: the shell watches, Settings switches, Needs you names the state. */
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -467,6 +468,30 @@ describe("decision alerts", () => {
 
     browser.click("/projects/altitude/tasks/run-restore-drill?question=q-drill&revision=1");
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/altitude/tasks/run-restore-drill"));
+  });
+
+  it("keeps a question the operator is answering as announced, so a refused answer brings it back without an alert", async () => {
+    const browser = alreadyOn([KEY]);
+    browser.registration.show(KEY);
+    const setQueue = mockFetch([question]);
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
+    await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-retention"));
+
+    // The answer leaves Needs you at the press; the record lists the question until Altitude saves it.
+    const id = "0123456789abcdef0123456789abcdef";
+    const outcome = startPending(queryClient, { id, project: "altitude", slug: "choose-retention", kind: "answers", state: "sending",
+      ...handBack(queryClient, "altitude", "choose-retention"), at: ago(0), text: "Thirty days.",
+      answers: [{ question_id: "q-retention", revision: 1, text: "Thirty days." }] });
+    setQueue([question, second]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([KEY, "altitude:run-restore-drill:q-drill"]);
+    expect(browser.registration.banners.map((banner) => banner.tag)).toEqual([KEY]);
+
+    await act(async () => { await finishPending(queryClient, id, "refused", new Error("These questions have changed.")); });
+    await outcome;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    expect(browser.shown).toHaveBeenCalledTimes(1);
   });
 
   it("waits to alert while the decision's task is still moving, and alerts once it rests", async () => {

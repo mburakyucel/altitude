@@ -2539,7 +2539,16 @@ repair publishes the change stream's repairs key, which refreshes the shell's re
 
 The web app presents routine progress with accessible visual status marks: loading and pending
 actions use spinners, and saved/copied receipts use checks. Action labels retain their footprint
-while pending. Screen-reader names retain the status words. Unavailable terminal, voice and alert
+while pending. The operator's own saves (answers, merge approvals, messages) render their result at
+the press: `web/src/data/pending.ts` keeps each write on its way beside the query cache and overlays
+the overview, project and task reads with it, until the first read begun after Altitude's save shows
+the record; a saved entry goes once every cached view has read past it or expired. A write with no
+reply stays until a read of its task shows whether it was saved, read again after each later read that
+works. A refused write stops overlaying and stays with its card until Retry or an edit, or a read of
+its task that lists it as saved; a refused answer also goes once a read shows none of its questions
+still waiting. Entries live only in memory, belong to their project, and go with it, with pairing and
+with a reload. Alerts read the record without the overlay.
+Screen-reader names retain the status words. Unavailable terminal, voice and alert
 controls disclose their reason on press without invoking the action. Authored blockers, errors,
 setup instructions and resource/privacy consequences remain visible; task-page descriptions do
 not repeat the state chip or question card. These presentation rules do not change delivery,
@@ -3332,18 +3341,22 @@ before a resume can clear their operational block fields.
 `POST /api/decide` takes `{project, slug, question_id, revision, option_key}` or an exclusive `text`
 response. Omitting the key explicitly selects the recorded recommendation. A group sends
 `{project, slug, group_id, group_revision, answers: [{question_id, revision, option_key|text}]}`;
-each member supplies exactly one response kind. The existing project lock validates the entire batch
-before saving one attributed operator message and durable delivery receipt. It records no decision.
+each member supplies exactly one response kind. An optional `request_id`, a UUID the page makes per
+send, becomes the saved message's id, so the page shows the answer under its final id from the press.
+The existing project lock validates the entire batch before saving one attributed operator message and
+durable delivery receipt. It records no decision.
 Each submitted question projects `response: {text, at, message_id}` and stays semantically open until
 the owner resolves it. Sent members leave Needs you; the owning chat shows a picked option as that
 choice and typed words as the operator's bubble, each with its delivery state, alongside members still
-awaiting input. An identical retry reuses its receipt and repairs
+awaiting input. An identical retry, with or without the same id, reuses its receipt and repairs
 interrupted delivery. Stale or conflicting submissions fail together. The response names the original
 question revisions, so the owner cannot cite it to approve replacement wording. A saved answer means
 saved for delivery; **Work resumed** requires observed running state. A queued owner stays explicit.
 
 Typed replies use `POST /api/l2/message`, optionally naming the viewed question/revision or
-`group_id`/`group_revision` as context. The saved message retains the viewed member references so
+`group_id`/`group_revision` as context. A `request_id` names one message across both endpoints: a
+repeated id returns the saved message, and the same id with different words is refused. The saved
+message retains the viewed member references so
 one conversational answer can settle several questions independently.
 The message endpoint returns the stored row even when its immediate resume wake fails; the saved
 resume request remains due for the existing timer. L3 queue wake failures likewise retain the queue

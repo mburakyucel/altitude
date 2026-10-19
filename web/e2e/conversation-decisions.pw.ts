@@ -791,7 +791,7 @@ test("grouped choices start unselected, submit only picked answers, and the reco
   await recorded(questionCard(page, retention));
   await expect(turnLabel(page)).toHaveText("Your turn · 2 questions · asked again");
   expect(submissions).toEqual([{ project: "atlas", slug, group_id: group.id, group_revision: group.revision,
-    answers: [{ question_id: retention.id, revision: retention.revision, option_key: "fourteen" }] }]);
+    answers: [{ question_id: retention.id, revision: retention.revision, option_key: "fourteen" }], request_id: expect.stringMatching(/^[0-9a-f]{32}$/) }]);
   let after = await readTask(request, slug);
   expect(after.question_group.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([region.id, owner.id]);
   expect(after.question_group.questions[0]!.response?.text).toBe("Keep the old index for fourteen days.");
