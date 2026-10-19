@@ -26,9 +26,9 @@ journey's press creates through the coordinator's real verbs with a scripted eng
 design question with its document and a proposal review by the other engine (two fixed findings and one
 alternative); the typo tolerance owner's open question beside its live session; the per-tenant limits pull request
 held for the operator after an independent review with two fixed findings; a deploy command the billing owner hands
-to the task's terminal (a real shell with no profile and a fixed prompt); the sign-on task paused by a machine
-problem until the coordinator repairs and resumes it; and improvement suggestions in an Altitude project. The
-journey also runs at both widths in every `make check`.
+to the task's terminal after its signing work (a real shell with no profile and a fixed prompt); the sign-on task
+paused by a machine problem until the coordinator repairs and resumes it; and improvement suggestions in an
+Altitude project. The journey also runs at both widths in every `make check`.
 
 ## Reproduce
 
@@ -41,8 +41,8 @@ alt task validate -- sh -c 'ALTITUDE_README_IMAGES="$VALIDATION_RESULTS/images" 
 The run's `images/` folder in the task's validation evidence receives `project`, `task` and `decision`
 captures for each viewport, plus phone `work` and `session` captures, at 1440×900 and 390×844 with 2× pixel
 density, the opening loop's `opening-*` frames, the feature states (`create`, `proposal`, `task-view`, `review`,
-`terminal`, `heal` and `improve` captures), and `phone-walkthrough.webm`, a silent recording of the phone journey that pauses briefly at
-each capture. No speech recognition or coding agent runs.
+`terminal`, `heal` and `improve` captures), and `phone-walkthrough.webm`, a silent recording of the phone journey
+that pauses briefly at each capture. No speech recognition or coding agent runs.
 
 ## Opening loop
 
@@ -60,8 +60,8 @@ sandbox, which the validation run provides, and encodes them with ffmpeg.
 ## Feature pictures
 
 The walkthrough's [See the features](../../docs/WALKTHROUGH.md#see-the-features) shows eight features as
-`docs/images/feature-*.webp`. The task view, `feature-task.webp`, is its desktop and phone captures in the
-opening loop's layout; each other picture is two phone captures side by side, each cropped to its top or
+`docs/images/feature-*.webp`. The task view and the terminal, `feature-task.webp` and `feature-terminal.webp`,
+are desktop and phone captures in the opening loop's layout on a 2060×1240 canvas; each other picture is two phone captures side by side, each cropped to its top or
 bottom, on `design/readme/pair.html`'s 1720×1200 canvas. At phone widths each shows the one capture that
 proves it, `feature-*-phone.webp` (the live session uses `session-phone.png`). The same `compose.py` run
 writes them after the opening loop.

@@ -123,9 +123,9 @@ To try a project, follow [setup](SETUP.md).
 
 ## See the features
 
-The README's features in the same Atlas project. On a computer the task view shows the desktop with the
-phone in front, and each other picture shows two phone screens side by side; on a phone each shows the one
-screen that proves it.
+The README's features in the same Atlas project. On a computer the task view and the terminal show the
+desktop with the phone in front, and each other picture shows two phone screens side by side; on a phone
+each shows the one screen that proves it.
 
 **Start a task from the conversation.** The coordinator's reply offers a task; one press creates it.
 
@@ -162,7 +162,7 @@ task's terminal until you press Enter.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-terminal-phone.webp">
-  <img src="images/feature-terminal.webp" alt="The task's terminal with make deploy ENV=staging typed at the prompt, waiting for Enter." width="860">
+  <img src="images/feature-terminal.webp" alt="The billing task on a computer: the owner's message handing you make deploy ENV=staging with Copy and Open in terminal, beside the task's terminal with the command typed at the prompt, waiting for Enter; on a phone in front, the same terminal." width="860">
 </picture>
 
 **Nothing ships unchecked.** The independent review's two findings, both fixed, beside the pull

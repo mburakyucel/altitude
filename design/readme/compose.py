@@ -2,9 +2,9 @@
 
 Usage, from the repository root: python3 design/readme/compose.py <captures folder> <output folder>
 The opening loop's frames place a desktop and a phone capture with hero.html's layout and become an animated WebP
-that loops; the task view is one such still. Each other feature picture places two phone captures side by side with
-pair.html's layout, each cropped to its top or bottom, and becomes a still WebP; its phone-width version is the one
-capture that proves it, whole. Needs ffmpeg with libwebp and Playwright's Chromium headless shell under
+that loops; the task view and the terminal are such stills. Each other feature picture places two phone captures side
+by side with pair.html's layout, each cropped to its top or bottom, and becomes a still WebP; its phone-width version
+is the one capture that proves it, whole. Needs ffmpeg with libwebp and Playwright's Chromium headless shell under
 PLAYWRIGHT_BROWSERS_PATH, which runs with its own sandbox, as in a validation run.
 """
 import os
@@ -20,8 +20,10 @@ PAIR = ROOT / "design/readme/pair.html"
 OPENING = [("opening-1-question-desktop", "opening-1-question-phone", 2.6),
            ("opening-2-chosen-desktop", "opening-2-chosen-phone", 1.2),
            ("opening-3-resumed-desktop", "opening-3-resumed-phone", 3.2)]
-# The task view: its desktop and phone captures in the opening loop's layout, the phone covering the whole sidebar.
-TASK = ("task-view-desktop", "task-view-phone")
+# The task view and the terminal: desktop and phone captures in the opening loop's layout, the phone covering the
+# whole sidebar.
+SCENES = {"feature-task": ("task-view-desktop", "task-view-phone"),
+          "feature-terminal": ("terminal-2-typed-desktop", "terminal-2-typed-phone")}
 # Each feature picture: its left and right phone captures and the end of each that stays in view.
 FEATURES = {
     "feature-create": [("create-1-offer-phone", "bottom"), ("create-2-created-phone", "bottom")],
@@ -30,7 +32,6 @@ FEATURES = {
     "feature-review": [("review-findings-phone", "top"), ("review-phone", "top")],
     "feature-heal": [("heal-1-fault-phone", "top"), ("heal-2-repaired-phone", "bottom")],
     "feature-improve": [("improve-phone", "top"), ("improve-accepted-phone", "top")],
-    "feature-terminal": [("terminal-1-command-phone", "bottom"), ("terminal-2-typed-phone", "top")],
 }
 # The capture each feature shows at phone width; the live session's is docs/images/session-phone.png.
 PROOF = {"feature-create": "create-2-created-phone", "feature-proposal": "proposal-review-phone",
@@ -90,9 +91,10 @@ def main(images: pathlib.Path, out: pathlib.Path):
         script.write_text("".join(frames) + frames[-1].split("\n")[0] + "\n")  # the demuxer applies the last duration only before another entry
         encode(out / "opening.webp", ["-f", "concat", "-safe", "0", "-i", str(script), "-vf",
                "fps=10,scale=1600:-1:flags=lanczos,format=yuva420p", "-c:v", "libwebp_anim", "-loop", "0"])
-        scene(*TASK, tmp / "feature-task.png", hero.replace("<body>", '<body class="task">'), (2060, 1240))
-        encode(out / "feature-task.webp", ["-i", str(tmp / "feature-task.png"), "-vf", "scale=1720:-1:flags=lanczos",
-                                           "-c:v", "libwebp", "-frames:v", "1"])
+        for name, (desktop, phone) in SCENES.items():
+            scene(desktop, phone, tmp / f"{name}.png", hero.replace("<body>", '<body class="task">'), (2060, 1240))
+            encode(out / f"{name}.webp", ["-i", str(tmp / f"{name}.png"), "-vf", "scale=1720:-1:flags=lanczos",
+                                          "-c:v", "libwebp", "-frames:v", "1"])
         for name, ((left, left_end), (right, right_end)) in FEATURES.items():
             png = tmp / f"{name}.png"
             layout = pair.replace("left top", f"left {left_end}").replace("right top", f"right {right_end}")

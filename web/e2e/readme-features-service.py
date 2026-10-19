@@ -180,7 +180,11 @@ def main():
     os.environ.update({"PS1": "atlas $ ", "PROMPT_COMMAND": ""})
     terminal.shell_command = lambda: ["bash", "--noprofile", "--norc"]
     terminal.launch, terminal.stop = local_terminal_launch, local_terminal_stop
-    say(slugs["Sign billing webhook payloads"], "l2", "Signing works end to end in tests. Deploying to staging uses "
+    billing = slugs["Sign billing webhook payloads"]
+    say(billing, "l2", "Each payload carries an HMAC-SHA256 signature and a timestamp; receivers reject anything older "
+        "than five minutes.", 20)
+    say(billing, "l2", "Key rotation keeps both keys signing, so receivers accept either until the old one retires.", 12)
+    say(billing, "l2", "Signing works end to end in tests. Deploying to staging uses "
         "your SSH key, so this step is yours. Nothing runs until you press Enter:\n\n```run\nmake deploy ENV=staging\n```", 6)
 
     # A fault: a machine problem pauses the sign-on task until the coordinator repairs it.

@@ -93,8 +93,6 @@ test("a created task, a proposal review, the task view, review before merge, a r
     .getByRole("link", { name: /Sign billing webhook payloads/ }).first().click();
   const command = conversation.getByRole("group", { name: "Command" });
   await expect(command.locator("pre")).toHaveText("make deploy ENV=staging");
-  await command.scrollIntoViewIfNeeded();
-  await capture("terminal-1-command");
   await command.getByRole("button", { name: "Open in terminal" }).click();
   await expect(page).toHaveURL(/\/terminal$/);
   const screen = page.locator(".terminal-screen .xterm-rows");
