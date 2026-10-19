@@ -801,7 +801,7 @@ unless `STEPS` (its `--steps`) names some, separated by spaces or commas:
   survives the walks closing Safari. The walkthrough then inspects the Home Screen app the task's walk
   left open, which must be standalone (`navigator.standalone`), runs the voice journey below there as well
   (`home-voice-…` snapshots, `home-dictation.json`, `home-voice-report.json`, the app's console in
-  `home-console.log`) and leaves the app; a console error in the app fails the step.
+  `home-console.log`) and leaves the app, also after a failure; a console error in the app fails the step.
 
 The profile and Home Screen steps record a row per walk step and per check of what it showed:
 completed, not reachable with the reason, or failed with what differed, and a failed `runner` row when

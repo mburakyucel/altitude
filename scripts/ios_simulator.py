@@ -628,52 +628,62 @@ def home_screen(run: Run) -> None:
     paired: iOS copies Safari's cookies to the app it adds, so no device pairs anew. Then the dictation journey runs
     again in the Home Screen app the last walk left open."""
     approved = (REPO / "web" / "public" / "apple-touch-icon.png").read_bytes()
-    for label, path in (("root", "/"), ("task", run.task)):
-        prefix = f"home-{label}"
-        devices = len(api(run, "/api/devices")["devices"])
-        record, rows, files = walked(run, "home-screen", run.url + path, prefix, HOME_WALK)
-        seen, clip, icon = record.get("seen", {}), record.get("clip", {}), files.get("web-clip-icon.png")
-        reached = {row["step"] for row in rows if row.get("status") == "completed"}
-        if "home-screen" in reached:
-            failures = [f"{what} is {value!r}" for what, value, wanted in (
-                ("the sheet's title", seen.get("sheet title"), "Altitude"),
-                ("Open as Web App", seen.get("open as web app"), "1"), ("the clip's title", clip.get("Title"), "Altitude"),
-                ("the clip's address", clip.get("URL"), run.url + "/"),
-                ("the clip's full screen", clip.get("FullScreen"), True)) if value != wanted]
-            try:
-                if not icon or pixels(icon) != pixels(approved):
-                    failures.append("the Home Screen icon's pixels differ from the approved icon" if icon else
-                                    "iOS stored no Home Screen icon")
-            except ValueError as exc:
-                failures.append(f"the Home Screen icon cannot be read: {exc}")
-            rows.append(check("web-clip", failures, "the title Altitude as a web app, the approved icon pixel for "
-                                                    "pixel, and the manifest's start address"))
-        else:
-            rows.append(unreached("web-clip"))
-        if "paired" in reached:
-            added = len(api(run, "/api/devices")["devices"]) - devices
-            rows.append(check("standalone-app", [] if seen.get("safari") == "not in front" and added == 0 else
-                              [f"Safari {seen.get('safari')}; {added} new device(s)"],
-                              "the app opened paired with Safari's device, with Safari not in front"))
-        else:
-            rows.append(unreached("standalone-app"))
-        finish(run, prefix, rows, f"Add to Home Screen at {path}: the icon, title and standalone app",
-               clip=clip, icon={"approved sha256": hashlib.sha256(approved).hexdigest(),
-                                "stored sha256": icon and hashlib.sha256(icon).hexdigest()})
-    app = Safari(run.inspector, WEB_APP)
+    app, stuck, errors = Safari(run.inspector, WEB_APP), None, []
     try:
+        for label, path in (("root", "/"), ("task", run.task)):
+            prefix = f"home-{label}"
+            devices = len(api(run, "/api/devices")["devices"])
+            record, rows, files = walked(run, "home-screen", run.url + path, prefix, HOME_WALK)
+            seen, clip, icon = record.get("seen", {}), record.get("clip", {}), files.get("web-clip-icon.png")
+            reached = {row["step"] for row in rows if row.get("status") == "completed"}
+            if "home-screen" in reached:
+                failures = [f"{what} is {value!r}" for what, value, wanted in (
+                    ("the sheet's title", seen.get("sheet title"), "Altitude"),
+                    ("Open as Web App", seen.get("open as web app"), "1"),
+                    ("the clip's title", clip.get("Title"), "Altitude"),
+                    ("the clip's address", clip.get("URL"), run.url + "/"),
+                    ("the clip's full screen", clip.get("FullScreen"), True)) if value != wanted]
+                try:
+                    if not icon or pixels(icon) != pixels(approved):
+                        failures.append("the Home Screen icon's pixels differ from the approved icon" if icon else
+                                        "iOS stored no Home Screen icon")
+                except ValueError as exc:
+                    failures.append(f"the Home Screen icon cannot be read: {exc}")
+                rows.append(check("web-clip", failures, "the title Altitude as a web app, the approved icon pixel for "
+                                                        "pixel, and the manifest's start address"))
+            else:
+                rows.append(unreached("web-clip"))
+            if "paired" in reached:
+                added = len(api(run, "/api/devices")["devices"]) - devices
+                rows.append(check("standalone-app", [] if seen.get("safari") == "not in front" and added == 0 else
+                                  [f"Safari {seen.get('safari')}; {added} new device(s)"],
+                                  "the app opened paired with Safari's device, with Safari not in front"))
+            else:
+                rows.append(unreached("standalone-app"))
+            finish(run, prefix, rows, f"Add to Home Screen at {path}: the icon, title and standalone app",
+                   clip=clip, icon={"approved sha256": hashlib.sha256(approved).hexdigest(),
+                                    "stored sha256": icon and hashlib.sha256(icon).hexdigest()})
         app.attach(run.url)
         app.wait("document.readyState === 'complete'", "the Home Screen app's page")
         if app.evaluate("navigator.standalone") is not True:
             raise RuntimeError("the Home Screen app's page is not standalone")
         run.steps.extend(dictation(app, run.url, run.work, run.task, run.results, prefix="home-"))
-        leave(app, "about:blank")  # so its change stream ends before the service stops
-        app.wait("location.href === 'about:blank'", "a blank page in the Home Screen app")
     finally:
+        # The app a walk opened keeps the service's change stream open: it is left, also after a failure, so the
+        # service can stop. A failure's own error stands; leaving the app fails only an otherwise passing step.
+        try:
+            if app.page is None:
+                app.attach(run.url, seconds=15)
+            leave(app, "about:blank")
+            app.wait("location.href === 'about:blank'", "a blank page in the Home Screen app")
+        except FAILURES as exc:
+            stuck = exc
         app.sock.close()
         errors = [m for m in app.console if m.get("level") == "error"]
         (run.results / "home-console.log").write_text("".join(
             f"{m.get('level')}: {m.get('text')} ({m.get('url', '')}:{m.get('line', '')})\n" for m in app.console))
+    if stuck:
+        raise RuntimeError(f"the Home Screen app was not left: {stuck}")
     if errors:
         raise RuntimeError(f"the Home Screen app logged {len(errors)} console error(s); see home-console.log")
 

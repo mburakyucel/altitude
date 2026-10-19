@@ -897,6 +897,37 @@ class TestRunScript(TestCase):
                 else:
                     ios.finish(run, "profile", walked, "the profile")
 
+    def test_the_home_screen_app_is_left_when_its_step_fails(self):
+        """The app a walk opened keeps the fixture service's change stream open, so the service could not stop."""
+        ios = script()
+
+        class App:
+            made = []
+
+            def __init__(self, path, bundle):
+                self.bundle, self.page, self.console, self.done, self.sock = bundle, None, [], [], mock.Mock()
+                App.made.append(self)
+
+            def attach(self, prefix, seconds=60):
+                self.page = prefix
+
+            def evaluate(self, expression, **_):
+                self.done.append(expression)
+
+            def wait(self, expression, what, seconds=20):
+                self.done.append(expression)
+                return True
+
+        safari = mock.Mock(walk=mock.Mock(return_value=({"steps": [], "seen": {}, "error": "fixture runner crash"}, {})))
+        run = ios.Run("relay", safari, "http://127.0.0.1:5555", "device", Path(SUITE), task="/projects/atlas/tasks/a")
+        with mock.patch.object(ios, "Safari", App), mock.patch.object(ios, "api", return_value={"devices": []}), \
+                self.assertRaisesRegex(RuntimeError, "home-root: safari not reachable: .*fixture runner crash"):
+            ios.home_screen(run)
+        [app] = App.made
+        self.assertEqual((app.bundle, app.page), (ios.WEB_APP, "http://127.0.0.1:5555"))
+        self.assertEqual(app.done[-2:], ['location.href = "about:blank"; 0', "location.href === 'about:blank'"])
+        app.sock.close.assert_called_once_with()
+
     def test_icons_compare_by_the_pixels_they_show_whatever_their_encoding(self):
         pixels = script().pixels
         rgba = [bytes([10, 200, 30, 255, 40, 50, 60, 255, 250, 5, 128, 255]),
