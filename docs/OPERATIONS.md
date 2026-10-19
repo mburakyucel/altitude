@@ -352,8 +352,9 @@ follows, not limits Altitude enforces: act on this installation only; never sign
 sign-in state or Altitude's keys, or change certificate trust; never approve, merge, grant or answer
 anything for you; ask before deleting, installing or changing anything outside Altitude; restart the
 service only with a health check afterwards and leave managed projects' services alone; leave
-nothing running; report honestly. A repair from the app also refuses reading or changing Altitude's
-keys, certificate keys and engine sign-ins where its engine supports deny rules.
+nothing running; report honestly. Where its engine supports deny rules, a repair from the app also
+refuses its file tools on Altitude's keys, certificate keys and engine sign-ins; a shell command can
+still reach them, so these too are instructions rather than limits.
 
 Inside the session `alt` offers only inspection and the installation's own commands (`doctor`,
 `service`, `update`, `recover`, `install`, `monitor`, `queue`, `repair ask` and `repair report`);

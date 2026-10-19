@@ -30,6 +30,7 @@ ALREADY = "A repair is already running. Stop it there first."
 APP_ALREADY = "A repair is already running."
 IN_TERMINAL = "A repair is running in a terminal on this computer."
 FROM_BROWSER = "Repairs start only from your own browser or terminal."
+PAGE_FROM_BROWSER = "A repair's page opens only in your own browser."
 #: The outcomes Altitude's check sets once a repair has ended.
 OUTCOMES = ("repaired", "changed_by_hand", "confirm", "not_repaired", "no_report")
 REPORT_LIMIT = 4000
@@ -639,6 +640,7 @@ def start_app(problem: str, request: str, continues: str | None = None) -> dict:
         unit = f"altitude-repair-{uuid.uuid4().hex[:12]}.service"
         if continues is not None:
             with _changing(continues) as row:
+                before = json.loads(json.dumps(row))
                 _seen(row, request)
                 row.setdefault("rounds", []).append({key: row.get(key) for key in ("report", "check", "outcome",
                                                                                    "reported", "ended", "end")})
@@ -665,17 +667,12 @@ def start_app(problem: str, request: str, continues: str | None = None) -> dict:
         except Refused:
             if continues is None:
                 shutil.rmtree(_folder(ident), ignore_errors=True)
-            else:
-                _unstarted(ident)
+            else:  # the ended repair stays as it was, its report on top, and the same request can try again
+                with _changing(ident) as row:
+                    row.clear()
+                    row.update(before)
             raise
     return view(ident)
-
-
-def _unstarted(ident: str) -> None:
-    """A session that did not start again stays ended, as it was."""
-    with _changing(ident) as row:
-        if row.get("state") in ("starting", "refused"):
-            row.update(state="ended", ended=row.get("ended") or S.now(), end=row.get("end") or "failed")
 
 
 def _running_row(ident: str, row: dict) -> None:

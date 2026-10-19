@@ -18,7 +18,7 @@ from pathlib import Path
 
 from tests.support import ALT, AltitudeCase
 
-from altitude import config, installation, platform, repair, server
+from altitude import access, config, installation, platform, repair, server, terminal
 
 PASSING = [{"name": "git", "state": "configured", "detail": "/usr/bin/git"},
            {"name": "user service", "state": "tested", "detail": {}}]
@@ -295,9 +295,13 @@ class RepairPages(RepairCase):
         self.addCleanup(httpd.server_close)
         self.addCleanup(httpd.shutdown)
 
+        self.patch(access, "device", side_effect=lambda key: {"id": "phone", "name": "Phone"} if key == "paired" else None)
+        self.patch(access, "renew", return_value=False)
+        self.patch(terminal, "agent_connection", return_value=False)
+
         def get(path):
             connection = http.client.HTTPConnection(*httpd.server_address, timeout=5)
-            connection.request("GET", path)
+            connection.request("GET", path, headers={"Cookie": f"{access.COOKIE}=paired"})
             response = connection.getresponse()
             return response.status, json.loads(response.read())
         status, listing = get("/api/repairs")

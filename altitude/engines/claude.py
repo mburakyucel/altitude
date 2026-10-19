@@ -951,8 +951,9 @@ session_context_source = _claude_path
 
 
 def repair_session(folder: Path, model: str | None) -> dict:
-    """`claude -p` without its permission prompts, in a Claude folder of the repair's own; its deny rules refuse reading
-    or changing Altitude's keys, certificate keys and engine sign-ins, the clearest cases of the repair's rules."""
+    """`claude -p` without its permission prompts, in a Claude folder of the repair's own; its deny rules refuse the
+    file tools on Altitude's keys, certificate keys and engine sign-ins, the clearest cases of the repair's rules. A
+    shell command, with the session's own token in its environment, still reaches them: the rules stay instructions."""
     secrets = [(access.DIR, True), (config.TLS_DIR, True), (OPERATOR_HOME / ".credentials.json", False),
                (config.HOME / ".codex/auth.json", False)]
     rules = [f"{tool}(/{Path(path).resolve()}{'/**' if tree else ''})"

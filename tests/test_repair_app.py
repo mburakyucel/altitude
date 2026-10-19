@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import unittest
 from datetime import timedelta
 from pathlib import Path
 from unittest import mock
@@ -398,6 +399,17 @@ class TheEnd(AppRepairCase):
         with self.assertRaisesRegex(repair.Refused, "time ran out"):
             repair.keep_going(ident, "request-0005")
 
+    def test_a_report_made_before_the_deadline_ends_the_session_as_reported(self):
+        """The time running out during the turn that reported leaves no Keep going that would resume onto the report."""
+        self.planned([{"alt": [REPORT], "sleep": 300}])
+        ident = self.begin()["id"]
+        self.wait(ident, lambda row: row.get("report"))
+        with repair._changing(ident) as row:
+            row["deadline"] = (repair._now() - timedelta(seconds=1)).isoformat()
+        row = self.ended(ident)
+        self.assertEqual(row["end"], "report")
+        self.assertFalse(repair.view(ident)["keep_going"])
+
     def test_an_agent_that_fails_ends_the_session_with_its_reason_and_never_reads_repaired(self):
         self.patch(repair, "_failed_update", return_value={"version": "v0.9.0", "error": "x."})
         self.planned([{"error": f"API error in {Path.home()}/x", "exit": 1}])
@@ -504,6 +516,20 @@ class ContinueRepair(AppRepairCase):
         kinds = [item["kind"] for item in repair.view(ident)["timeline"]]
         self.assertEqual(kinds.count("report"), 1, "the first round's report stays on the page")
 
+    def test_a_continue_that_cannot_start_leaves_the_repair_as_it_was_and_can_be_tried_again(self):
+        self.planned([{"alt": [REPORT]}])
+        ident = self.begin()["id"]
+        self.ended(ident)
+        repair.check_ended()
+        before = repair.record(ident)
+        with mock.patch.object(platform, "detach", side_effect=OSError("no user manager")):
+            with self.assertRaisesRegex(repair.Refused, "could not start: no user manager"):
+                repair.start_app("It broke again", "request-0002", continues=ident)
+        self.assertEqual(repair.record(ident), before)
+        self.assertEqual(repair.start_app("It broke again", "request-0002", continues=ident)["status"], "working")
+        self.ended(ident)
+        self.assertEqual(len(repair.record(ident)["rounds"]), 1)
+
     def terminal_repair(self) -> str:
         self.start()
         return next(row["id"] for row in repair.records() if row["route"] == "terminal")
@@ -537,6 +563,17 @@ class WhoSteers(AppRepairCase):
         finally:
             connection.close()
 
+    def get(self, path: str, *, status: int, headers: dict | None = None) -> dict:
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=60)
+        try:
+            connection.request("GET", path, headers={"Cookie": f"{access.COOKIE}=paired", **(headers or {})})
+            response = connection.getresponse()
+            payload = json.loads(response.read())
+            self.assertEqual(response.status, status, payload)
+            return payload
+        finally:
+            connection.close()
+
     def test_agents_l3_the_machine_key_and_other_sites_are_refused_on_every_route(self):
         self.planned([{"sleep": 0}, {"alt": [REPORT]}])
         ident = self.post("/api/repairs", {"problem": "It is slow", "request": "request-0001"}, status=200)["id"]
@@ -558,6 +595,15 @@ class WhoSteers(AppRepairCase):
             with self.subTest(path=path, agent=True):
                 self.assertEqual(self.post(path, body, status=403)["error"], repair.FROM_BROWSER)
             self.agent.return_value = False
+        # The page itself, with what the agent ran and read, opens only in the paired browser too.
+        page = f"/api/repairs/{ident}"
+        for headers in ({"Cookie": ""}, {access.KEY_HEADER: "anything"}, {"Sec-Fetch-Site": "cross-site"}):
+            with self.subTest(page=page, headers=headers):
+                self.assertEqual(self.get(page, status=403, headers=headers)["error"], repair.PAGE_FROM_BROWSER)
+        self.agent.return_value = True
+        self.assertEqual(self.get(page, status=403)["error"], repair.PAGE_FROM_BROWSER)
+        self.agent.return_value = False
+        self.assertEqual(self.get(page, status=200)["id"], ident)
         self.assertEqual(len(repair.records()), 1)
         self.assertEqual(len(self.turns_seen()), 1)
         self.assertIsNone(repair.record(ident).get("stop"))
@@ -615,3 +661,24 @@ class Confinement(AppRepairCase):
                              (URLError(ssl.SSLCertVerificationError("bad")), False), (ValueError("bad hash"), False)):
             with self.subTest(exc=exc):
                 self.assertEqual(installation._passing(exc), passing)
+
+
+class LeftRunning(unittest.TestCase):
+    def test_left_running_skips_transient_jobs_of_altitude_and_the_desktop_but_not_units_with_files(self):
+        listings = {
+            "list-units": "altitude-claude-1a2b.service loaded active running x\napp-firefox@1.service loaded active running x\n"
+                          "run-u7.service loaded active running x\naltitude-helper.service loaded active running x\n",
+            "list-unit-files": "altitude-helper.service enabled enabled\napp-sync.timer enabled enabled\n"
+                               "altitude-claude-1a2b.service transient -\n",
+        }
+
+        def run(command, **_):
+            out = "0 3 * * * backup\n# a comment\n" if command[0] == "crontab" else listings[command[2]]
+            return subprocess.CompletedProcess(command, 0, out, "")
+        with mock.patch.object(platform, "_darwin", return_value=False), \
+                mock.patch.object(platform.subprocess, "run", side_effect=run):
+            self.assertEqual(platform.user_jobs(), [
+                {"kind": "scheduled job", "name": "0 3 * * * backup"},
+                {"kind": "user service", "name": "altitude-helper.service"},
+                {"kind": "user service", "name": "run-u7.service"},
+                {"kind": "user timer", "name": "app-sync.timer"}])

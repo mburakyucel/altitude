@@ -2457,7 +2457,8 @@ variable is set, inside a repair, and when its process sits in any of Altitude's
 (`platform.process_table`, with the same unit names on both platforms): reviewers and coordinator
 turns, which carry no actor, commands under an operator grant, and browser terminals, where a `run`
 block runs on the operator's Enter whatever its quoting. The app's routes (`POST /api/repairs`,
-`/api/repairs/<id>/message`, `answer`, `keep-going` and `stop`) need a paired device's cookie and pass
+`/api/repairs/<id>/message`, `answer`, `keep-going` and `stop`, and `GET /api/repairs/<id>`, which
+carries what the agent ran and read) need a paired device's cookie and pass
 the page's own-origin and [own agents](#altitudes-own-agents) checks; they refuse the machine key
 outright, since the CLI, L3 and anything that read the key hold it. Each request carries an identity
 the record keeps, so a double tap, a retry after a lost reply or a replay acts once.
@@ -2474,11 +2475,12 @@ A terminal repair's session is `engines.interactive(engine, prompt)`, the engine
 normal mode with the operator's sign-in and settings, run with `ALTITUDE_REPAIR=<id>` in the repair's
 folder. A repair from the app runs `engines.repair_session(engine, folder, model)`: the engine's
 headless mode with its permission prompts and sandbox off, outside Altitude's sandbox, with deny rules
-for Altitude's keys, certificate keys and engine sign-ins where the engine has them, and the sign-in
-Altitude's own runs use (for Claude, its own configuration folder inside the repair's and the token
-read from its file at each turn). Only the repair module builds this session, and every task worker
-and reviewer still launches inside Altitude's sandbox (`tests/test_repair_app.py` keeps both so). The engine and model are chosen as for a small task (`route.pick_engine("l2")`),
-and a repair counts toward no running-task limit.
+on its file tools for Altitude's keys, certificate keys and engine sign-ins where the engine has them
+(a shell command still reaches them), and the sign-in Altitude's own runs use (for Claude, its own
+configuration folder inside the repair's and the token read from its file at each turn). Only the
+repair module builds this session, and every task worker and reviewer still launches inside
+Altitude's sandbox (`tests/test_repair_app.py` keeps both so). The engine and model are chosen as for
+a small task (`route.pick_engine("l2")`), and a repair counts toward no running-task limit.
 
 `repair.start_app` writes the brief and the record, then copies `altitude/repair_job.py`, which uses
 only Python's standard library, into the folder as `recorder.py` and starts it with

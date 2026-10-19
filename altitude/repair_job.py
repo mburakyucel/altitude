@@ -235,8 +235,8 @@ class Recorder:
                 return self._stop_agent()
             if self.signalled or row.get("stop"):
                 return self.end("stop" if row.get("stop") else "interrupted")
-            if _passed(row.get("deadline")):
-                return self.end("time")
+            if _passed(row.get("deadline")):  # a report made in time still ends the session as reported
+                return self.end("report" if row.get("report") else "time")
             if self.agent is not None:
                 if self.agent.poll() is None:
                     time.sleep(POLL)

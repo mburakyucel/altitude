@@ -2099,13 +2099,20 @@ class Handler(BaseHTTPRequestHandler):
             return f"{subject} requests from Altitude's own agents are refused."
         return None
 
-    def _repair_post(self, parts: list[str], o: dict) -> None:
-        """Start, message, answer, keep going and stop: only a paired browser's own page does these. A request with the
-        machine key, which the CLI, L3 and anything that read it hold, is refused like one from Altitude's agents; each
-        request names itself, so a repeated tap or a replayed request acts once."""
+    def _repair_denied(self, *, json_body: bool) -> bool:
+        """Whether this request is not from a paired browser's own page. A request with the machine key, which the CLI,
+        L3 and anything that read it hold, is refused like one from Altitude's agents: a repair's page carries what an
+        agent with the operator's full access ran and read, and only that page steers it."""
         if self.headers.get(access.KEY_HEADER) is not None or not self._device or self._page_denied(
-                json_body=True, subject="Repair"):
+                json_body=json_body, subject="Repair"):
             self.close_connection = True
+            return True
+        return False
+
+    def _repair_post(self, parts: list[str], o: dict) -> None:
+        """Start, message, answer, keep going and stop (`_repair_denied`); each request names itself, so a repeated tap
+        or a replayed request acts once."""
+        if self._repair_denied(json_body=True):
             return self._json({"error": repair.FROM_BROWSER}, 403)
         try:
             if len(parts) == 2:
@@ -2472,6 +2479,8 @@ class Handler(BaseHTTPRequestHandler):
             if api == "repairs" and len(parts) == 2:
                 return self._json(repair.listing())
             if api == "repairs" and len(parts) == 3:
+                if self._repair_denied(json_body=False):
+                    return self._json({"error": repair.PAGE_FROM_BROWSER}, 403)
                 try:
                     return self._json(repair.view(parts[2]))
                 except KeyError:
