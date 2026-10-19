@@ -32,7 +32,9 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
   const shown = route.includes("/view/");
   const file = route.endsWith("/file");
   const captures = route.includes("/captures/");
-  test.use({ serviceScript: shown ? "shown-files-service.py" : captures ? "captures-service.py" : file ? "file-references-service.py" : "" });
+  const repair = route === "/settings/repairs/:id";
+  test.use({ serviceScript: shown ? "shown-files-service.py" : captures ? "captures-service.py" : file ? "file-references-service.py"
+    : repair ? "repairs-service.py" : "" });
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request, browserName }, info) => {
     const project = await fixtureProject(request, route === "/projects" || route === "/chat");
     // The reader opens the fixture's own reply and question; other task routes take the project's first task.
@@ -46,6 +48,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       .replace(":questionId", encodeURIComponent(task?.question?.id ?? ""))
       .replace(":revision", String(task?.question?.revision ?? ""))
       .replace(":messageId", encodeURIComponent(reply))
+      .replace(":id", repair ? (await (await request.get("/api/repairs")).json()).repairs[0].id : "")
       .replace("*", "__ui_unknown_route__");
     if (file) {
       const { paths } = await (await request.get("/fixture/files")).json();
@@ -133,9 +136,8 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       for (const group of ["Projects", "Voice", "Devices and access", "Coding agents"]) {
         await expect(main.getByRole("region", { name: group, exact: true })).toBeVisible();
       }
-      // About holds the version rows, shown once the overview reports an update state.
-      const { update } = await (await request.get("/api/overview")).json();
-      await expect(main.getByRole("region", { name: "About", exact: true })).toHaveCount(update ? 1 : 0);
+      // About tells how to start a repair, and holds the version rows once the overview reports an update state.
+      await expect(main.getByRole("region", { name: "About", exact: true }).getByText("alt repair", { exact: true })).toBeVisible();
       await expect(main.getByRole("region", { name: "This project", exact: true })).toHaveCount(0);
       // Models are picked where they apply (beside quota, under a chat, in a task), never in Settings.
       await expect(main.getByRole("combobox")).toHaveCount(0);
@@ -143,6 +145,14 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("link", { name: /Network.*This computer only/ })).toHaveAttribute("href", "/settings/network");
       await expect(main.getByRole("button", { name: /^Use / })).toHaveCount(0);
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
+    } else if (route === "/settings/repairs") {
+      await expect(main.getByRole("heading", { name: "Repairs", exact: true })).toBeVisible();
+      await expect(main.getByText(/^No repairs yet\./)).toBeVisible();
+      await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
+    } else if (route === "/settings/repairs/:id") {
+      await expect(main.getByRole("heading", { name: "Voice input stopped working.", exact: true })).toBeVisible();
+      await expect(main.getByRole("region", { name: "Report", exact: true }).getByText("Set voice input up again.", { exact: true })).toBeVisible();
+      await expect(main.getByRole("link", { name: "‹ Repairs", exact: true })).toHaveAttribute("href", "/settings/repairs");
     } else if (route === "/settings/voice") {
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
       await expect(main.getByRole("heading", { level: 3 })).toHaveText(["This computer", "Browser recognition", "Your speech service"]);

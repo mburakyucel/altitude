@@ -102,6 +102,13 @@ def installation(engine: str) -> dict:
     return {"available": None, "why": "installed; account and model access are unknown until the provider responds"}
 
 
+def interactive(engine: str, prompt: str) -> list[str]:
+    """The engine's own interactive session in the operator's terminal, opening with `prompt`: a repair started from
+    there. Each CLI takes the opening prompt as its argument and runs in its normal mode, with the operator's own
+    sign-in and settings, asking before each step unless those settings allow it."""
+    return [implementation(engine).binary(), prompt]
+
+
 def install_command(engine: str) -> str:
     command = implementation(engine).INSTALL_COMMAND
     return command.replace("npm install -g", "npm install --prefix ~/.local -g") if platform.containerized() else command

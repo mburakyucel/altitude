@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Repair: Terminal</title>
+<link rel="stylesheet" href="../wireframes.css"><link rel="stylesheet" href="repair.css"></head>
+<body><div class="root" data-theme="light" style="width:900px;height:740px">
+<div class="term"><pre><span class="p">$</span> alt repair
+Altitude 0.8.0 · service running · the update to 0.9.0 failed 2 hours ago
+Starting a repair with Claude in this terminal. It acts as you and asks before each step, as your settings allow.
+Its record appears in Settings → About once Altitude runs.
+
+<span class="dim">╭──────────────────────────────────────────────────────────╮
+│ Claude Code                                              │
+╰──────────────────────────────────────────────────────────╯</span>
+<span class="pr">&gt;</span> Repair Altitude on this computer. The brief is in ./BRIEF.md.
+
+● Reading the brief, the update record and the service log.
+
+<span class="p">$</span> alt repair          <span class="dim"># with the service stopped</span>
+Altitude's service is not answering. Its last log line: address already in use.
+Starting a repair with Claude in this terminal. It acts as you and asks before each step, as your settings allow.
+
+<span class="p">$</span> alt repair          <span class="dim"># with no usable coding agent</span>
+Sign in to Claude first: run claude in this terminal.
+
+<span class="p">$</span> alt repair          <span class="dim"># while a repair runs</span>
+A repair is already running. Stop it there first.
+
+<span class="p">$</span> alt repair          <span class="dim"># under an operator grant</span>
+Only you can start a repair, from your own terminal.
+
+<span class="p">$</span> python3.12 install.py --repair      <span class="dim"># when alt itself cannot start</span></pre></div></div><script>if(location.search.indexOf('dark')>=0)document.querySelector('.root').dataset.theme='dark'</script></body></html>

@@ -20,6 +20,13 @@ task metadata and Reject remain in the compact phone details sheet.
 `improvement-review/gen.py` writes the boards beside it; review captures stay in its ignored
 `captures/`. Each rollout step folds what it builds into the system docs and walks its own states.
 
+## Repairs
+
+[The full-access repair design](repair/PROPOSAL.md) the operator approved on 2026-10-19.
+`repair/gen.py` writes the boards beside it; review captures stay in its ignored `captures/`. The
+terminal route is built and folded into [SPEC §3.15](SPEC.md#315-settings-and-voice-input) and the
+system docs; each later rollout step does the same and walks its own states.
+
 ## Approved image-input interaction
 
 [Images in project and task chats](IMAGE_INPUT.md) describes the interaction approved on 2026-09-10.

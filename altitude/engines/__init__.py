@@ -13,6 +13,7 @@ from .common import (
     repository_rule_prompt,
     RAW_CAPTURE_CAP,
     installation,
+    interactive,
     install_command,
     sign_in,
     session_timeout,

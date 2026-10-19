@@ -25,6 +25,10 @@ READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search")
 L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done"),
                                ("task", "grant"), ("task", "run"), ("task", "validate"), ("task", "review"),
                                ("task", "terminal"), ("task", "save")}
+#: What `alt` does inside a repair (docs/OPERATIONS.md#repairs): the installation's own operations, read-only
+#: inspection and the repair's report. Approving, merging, granting, answering and chatting stay the operator's.
+REPAIR_COMMANDS = READ_COMMANDS | {(name, None) for name in ("doctor", "service", "update", "recover", "install",
+                                                             "monitor", "queue", "repair")}
 L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"), ("project", "setup"),
     ("pr", "close"),
@@ -608,6 +612,16 @@ def main(argv=None) -> None:
     sub.add_parser("pair", help="print a one-time code that pairs one browser with Altitude")
     sub.add_parser("sign-in", help="create the sign-in Altitude's runs of an engine use, from your own account").add_argument(
         "engine", choices=engines.TOKEN_SETUP)
+    repairing = sub.add_parser("repair", help="start a repair in this terminal: an agent with your full access finds out "
+                                              "what is wrong with Altitude and fixes it")
+    repairing.add_argument("--problem", help="what is wrong, in your words")
+    repairing.add_argument("--engine", choices=config.ENGINES, help="the coding agent to use; the first installed one otherwise")
+    repairing_actions = repairing.add_subparsers(dest="repair_action")
+    reported = repairing_actions.add_parser("report", help="inside a repair: record its report, which ends its work")
+    reported.add_argument("--wrong", required=True, help="what was wrong")
+    reported.add_argument("--changed", required=True, help="what the repair changed")
+    reported.add_argument("--remains", required=True, help="what remains")
+    reported.add_argument("--try", dest="tried", help="what the operator should try to confirm it")
 
     args = ap.parse_args(argv)
     if DOOR:
@@ -651,6 +665,8 @@ def main(argv=None) -> None:
             return _forward(args, list(sys.argv[1:] if argv is None else argv), " ".join(filter(None, actor_command)))
     if ACTOR == "l3" and actor_command not in L3_COMMANDS:
         sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
+    if os.environ.get("ALTITUDE_REPAIR") and actor_command not in REPAIR_COMMANDS:
+        sys.exit(f"alt {c}: not available in a repair, which acts on this installation; decisions stay with the operator")
     if closing_pr and (args.number is None or args.number < 1 or args.as_json):
         ap.error("alt pr close requires one positive PR number and no options")
     machine_run = c == "task" and args.tcmd == "run"
@@ -817,6 +833,16 @@ def main(argv=None) -> None:
                 sys.exit(f"alt {c}: altd unavailable: {exc}")
             break
         return
+    if c == "repair":
+        from altitude import repair
+        try:
+            if args.repair_action == "report":
+                repair.report(args.wrong, args.changed, args.remains, args.tried)
+                print("Report recorded. Altitude checks the result once the repair ends.")
+                return
+            sys.exit(repair.start(args.problem, args.engine))
+        except repair.Refused as exc:
+            sys.exit(str(exc))
     if c in ("install", "update", "recover", "uninstall", "doctor", "service"):
         from altitude import installation
         try:

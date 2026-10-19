@@ -28,6 +28,7 @@ function fixture(initial: Update | null = available) {
     }
     if (path === "/api/machine") return json(machine);
     if (path === "/api/project-model-settings") return json({ rows: [] });
+    if (path === "/api/repairs") return json({ running: null, repairs: [] });
     if (path === "/api/voice") return json({ backend: "host", selection: "fixture", host: { state: "ready", download_bytes: 698435338 } });
     if (path === "/api/overview") return json({ projects: [], queue: [], engines: [], update,
       wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });
@@ -49,7 +50,7 @@ describe("Installed release updates", () => {
   });
   it("offers manual installation when a previously attempted version is offered again", async () => {
     fixture({ ...available, automatic_pending: false,
-      attempt: { version: "v0.3.0", state: "failed", error: "Run alt update in a terminal to see why." } });
+      attempt: { version: "v0.3.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } });
     renderApp({ route: "/" });
     expect(await screen.findByRole("button", { name: "Update" })).toBeVisible();
     expect(screen.queryByText(/installs automatically/)).toBeNull();
@@ -116,7 +117,7 @@ describe("Installed release updates", () => {
   });
 
   it("offers explicit retry for automatic failures and shows a later success even after dismissal", async () => {
-    const state = fixture({ ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt update in a terminal to see why." } });
+    const state = fixture({ ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } });
     const { user, queryClient } = renderApp({ route: "/" });
     expect(await screen.findByText(/The update to v0.2.0 did not finish/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -147,7 +148,7 @@ describe("Installed release updates", () => {
   );
 
   it("keeps Settings failure and retry available after the notice is dismissed", async () => {
-    fixture({ ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt update in a terminal to see why." } });
+    fixture({ ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } });
     localStorage.setItem("altitude.update.dismissed", "v0.2.0:failed");
     const { user } = renderApp({ route: "/settings" });
     expect(await screen.findByText(/The update to v0.2.0 did not finish/)).toBeVisible();

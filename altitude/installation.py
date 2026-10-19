@@ -184,7 +184,7 @@ UPDATE_STALE_SECONDS = 1800
 # margin (#1003). `alt update` in a terminal waits a minute.
 UPDATE_DRAIN_SECONDS = 1500
 # An attempt that ended without a known cause, such as an updater that stopped; its log or terminal has the rest.
-UPDATE_FAILED = "Run alt update in a terminal to see why."
+UPDATE_FAILED = "Run alt repair in a terminal to find out why and fix it."
 
 
 def _cause(exc: BaseException) -> str:
@@ -855,6 +855,24 @@ def doctor() -> dict:
             "optional": "Voice, GPU and telemetry do not gate typing or task delivery."}
 
 
+def installed_release() -> dict:
+    """The active version and whether its files match that release's manifest, the check every activation runs; a
+    repair's outcome reads it. Both are None for a source deployment."""
+    from . import config
+    if config.RELEASE is None:
+        return {"version": None, "matches": None}
+    try:
+        root = _version_path(_prefix(), os.readlink(_prefix() / "current"))
+    except (OSError, ValueError, RuntimeError):
+        return {"version": None, "matches": False}
+    try:
+        return {"version": metadata(root)["version"], "matches": True}
+    except (OSError, ValueError, RuntimeError):
+        with contextlib.suppress(OSError, ValueError):
+            return {"version": json.loads((root / "release.json").read_text()).get("version"), "matches": False}
+        return {"version": None, "matches": False}
+
+
 def recover(prefix: Path | None = None, *, generated_bytecode: bool = False) -> dict:
     from . import config, platform
     platform.require_native_application()
@@ -1332,6 +1350,8 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--archive", type=Path)
     mode.add_argument("--recover", action="store_true")
+    mode.add_argument("--repair", action="store_true",
+                      help="when alt cannot start: start a repair of the installed release in this terminal")
     parser.add_argument("--sha256")
     parser.add_argument("--prefix", type=Path)
     parser.add_argument("--prepare-source-tls", type=Path, metavar="DIRECTORY",
@@ -1345,9 +1365,27 @@ def main() -> None:
         parser.error("Application installation is an operator operation")
     if (args.prepare_source_tls and (args.recover or args.prefix)) or (args.apply and not args.prepare_source_tls):
         parser.error("--prepare-source-tls uses --archive/--sha256 without --prefix; --apply requires it")
+    if args.repair and (args.sha256 or args.prepare_source_tls or args.apply or args.repair_generated_bytecode):
+        parser.error("--repair takes only --prefix")
     if args.repair_generated_bytecode and (args.recover or args.prepare_source_tls or args.apply):
         parser.error("--repair-generated-bytecode requires --archive/--sha256 and performs no installation")
     try:
+        if args.repair:
+            # The installed release's own repair, from its verified files: what fails is the launcher or the shell,
+            # not the release (docs/OPERATIONS.md#repairs).
+            prefix = (args.prefix or Path.home() / ".local/share/altitude").expanduser().resolve()
+            root = _version_path(prefix, os.readlink(prefix / "current"))
+            metadata(root)
+            if not (root / "altitude/repair.py").is_file():
+                raise RuntimeError("This installed release has no repair; reinstall it with --archive and --sha256")
+            sys.dont_write_bytecode = True
+            sys.path.insert(0, str(root))
+            __package__ = "altitude"
+            from . import repair
+            try:
+                sys.exit(repair.start(None))
+            except repair.Refused as exc:
+                parser.exit(1, f"{exc}\n")
         if args.recover:
             prefix = (args.prefix or Path.home() / ".local/share/altitude").expanduser().resolve()
             pending = json.loads((prefix / "pending.json").read_text())

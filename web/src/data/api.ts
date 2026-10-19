@@ -1053,6 +1053,49 @@ export function useMachine() {
   return useQuery({ queryKey: ["machine"], queryFn: async () => MachineSchema.parse(await api("/api/machine")), refetchOnWindowFocus: false });
 }
 
+/**
+ * Repairs (docs/OPERATIONS.md#repairs): agent sessions you start with `alt repair` to find out what is wrong with this
+ * installation and fix it. `outcome` is Altitude's own check, set once a repair has ended.
+ */
+const RepairOutcomeSchema = z.enum(["repaired", "changed_by_hand", "confirm", "not_repaired", "no_report"]);
+export const RepairRowSchema = z.object({
+  id: z.string(), title: z.string(), route: z.string(), engine: z.string(), started: z.string(),
+  ended: z.string().nullable(), outcome: RepairOutcomeSchema.nullable(),
+});
+export type RepairRow = z.infer<typeof RepairRowSchema>;
+export const RepairsSchema = z.object({
+  running: z.object({ id: z.string().nullable(), route: z.string() }).nullable(),
+  repairs: z.array(RepairRowSchema),
+});
+export const RepairSchema = RepairRowSchema.extend({
+  problem: z.string().nullable(),
+  update: z.object({ version: z.string(), error: z.string().nullish() }).nullable(),
+  report: z.object({ wrong: z.string(), changed: z.string(), remains: z.string(), try: z.string().optional() }).nullable(),
+  check: z.object({
+    at: z.string(), version: z.string().nullable(), running: z.string().nullish(), matches: z.boolean().nullable(),
+    failing: z.array(z.object({ name: z.string() }).passthrough()),
+  }).nullable(),
+  brief: z.string().nullable(),
+}).passthrough();
+export type Repair = z.infer<typeof RepairSchema>;
+
+/** Every repair on this computer, newest first, and the one running now; followed while one runs or awaits its check. */
+export function useRepairs() {
+  return useQuery({
+    queryKey: ["repairs"], queryFn: async () => RepairsSchema.parse(await api("/api/repairs")),
+    refetchInterval: (query) => query.state.data && (query.state.data.running || query.state.data.repairs.some((row) => !row.outcome)) ? 5000 : false,
+  });
+}
+
+export function useRepair(id: string | undefined) {
+  return useQuery({
+    queryKey: ["repair", id], enabled: Boolean(id),
+    queryFn: async () => RepairSchema.parse(await api(`/api/repairs/${encodeURIComponent(id ?? "")}`)),
+    retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 3,
+    refetchInterval: (query) => query.state.data && !query.state.data.outcome ? 5000 : false,
+  });
+}
+
 /** Save the name the screens and agents use; an empty name returns to the installation's default. */
 export async function saveOperatorName(name: string): Promise<Machine> {
   return MachineSchema.parse(await post("/api/operator-name", { name }));

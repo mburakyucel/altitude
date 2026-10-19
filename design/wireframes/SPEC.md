@@ -1992,7 +1992,7 @@ it there." **Away from home** keeps an optional private VPN (such as WireGuard) 
 Altitude's binding, HTTPS and pairing, and **Use another device…** discloses the address change. Packaged installs show terminal preview, explicit apply and
 recovery; source/container installs link their own configuration. No browser service-control action
 is added. **Coding agents** holds Prerequisites, the Validation
-runs switch and Incident reports. **About** holds the Version rows on an installed copy. Every row
+runs switch and Incident reports. **About** holds the Version rows on an installed copy and the Repair rows. Every row
 that opens a page has a chevron; switches save in place.
 
 **Notifications** is set on each device. Its first row, **Decision alerts**, is a switch with the same
@@ -2085,6 +2085,28 @@ Turning checks off hides the newer release and notice and disables Automatic upd
 its saved preference for when checks resume. A failed update retains **Try again** in About even
 after dismissing its banner. Source deployments omit these rows; containers show their image-managed
 version without update switches.
+The **Repair** rows follow in About on every deployment ([repairs](../../docs/OPERATIONS.md#repairs)).
+The first says "Something not working? Run this in a terminal on this computer: an agent finds out
+why and fixes it, with your full access while it works." with the copyable `alt repair` command, or
+"Running in a terminal" with a spinner while one runs. Up to three recent repairs follow, newest first,
+each one row opening its page: "Oct 19 · <title>" (truncated to one line) over "From a terminal", its
+outcome chip and a chevron. The title is "Failed update to 0.9.0", the first line of what the operator
+wrote, or "Repair". Chips: **Running** or **Checking** with a spinner, **✓ Repaired** (green), **Confirm
+yourself** (filled grey) and **✕ Not repaired** (red, also for a repair that ended without a report).
+With more than three, **All repairs** (with the count) opens `/settings/repairs`, the full list in the
+same rows, whose empty state reads "No repairs yet. Run alt repair in a terminal on this computer to
+start one." Loading shows "Loading repairs…" and a failure "Could not load repairs. Retry". A
+repair's page (`/settings/repairs/<id>`, titled with its title and a **‹ Repairs** back link) shows
+the chip and "From a terminal · started <date, time> · ended <date, time>"; for a hand-changed
+installation "Confirm yourself · the installation was changed by hand."; the report's **What was
+wrong**, **What changed** and **What remains** with an optional "Try:" line, or "The repair ended
+without a report."; Altitude's check ("Altitude checks the result once the repair ends.", "Altitude is
+checking the result…", or "Altitude checked: version 0.9.0 · matches its release · all checks pass",
+with failing checks, a target version that is not installed and "Altitude’s service still runs 0.8.0."
+in red); "Its steps are in that
+terminal’s history."; and a collapsed **Brief**. A repair that is not there reads "That repair is not on
+this computer." `web/e2e/repairs.pw.ts` walks these states at both
+widths.
 Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
