@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shlex
 import shutil
 import socket
@@ -240,6 +241,50 @@ def awake_clock():
     return (f"the limit's clock ({clock}) is awake time; this Mac has slept {slept / 3600:.1f} h since it started, "
             "which that clock left out" if slept >= 1 else
             f"the limit's clock ({clock}) is awake time; this Mac has not slept since it started")
+
+
+@row
+def real_sleep():
+    """A job's time limit across an actual sleep of this Mac, which no guest allows. Runs only when named, after a wake
+    is scheduled as root (`sudo pmset relative wake 150`): a job with a 60-second limit starts, `pmset sleepnow`
+    sleeps the Mac and the scheduled wake ends the sleep. The Mac must have slept, and the job must still stop at its
+    limit counted in awake time, its whole tree with it."""
+    if not DARWIN or "real-sleep" not in sys.argv:
+        return None
+    scheduled = subprocess.run(["pmset", "-g", "sched"], capture_output=True, text=True, check=True).stdout
+    # A wake within five minutes: macOS schedules wakes of its own, often hours away.
+    wakes = [time.mktime(time.strptime(found, "%m/%d/%Y %H:%M:%S")) - time.time()
+             for found in re.findall(r"wake at (\S+ \S+)", scheduled)]
+    check(any(30 < wake < 300 for wake in wakes),
+          f"no wake is scheduled within five minutes, so the Mac would not wake soon: {scheduled.strip()!r}")
+    marker, job, limit = f"probe-real-sleep-{NONCE}", name("real-sleep"), 60
+    # A tree that never ends by itself, so only the limit can stop it, however long the sleep.
+    endless = TREE.replace("time.sleep(120)", "time.sleep(86400)")
+    proc = subprocess.Popen(platform.job_command(job, [sys.executable, "-c", endless, marker], env(), runtime_max=limit),
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        check(until(lambda: marked(marker), 10), "job did not start")
+        awake, wall = time.clock_gettime(time.CLOCK_UPTIME_RAW), time.clock_gettime(time.CLOCK_MONOTONIC)
+        subprocess.run(["pmset", "sleepnow"], capture_output=True, text=True, check=True)
+        status = proc.wait(timeout=900)
+        awake = time.clock_gettime(time.CLOCK_UPTIME_RAW) - awake
+        slept = time.clock_gettime(time.CLOCK_MONOTONIC) - wall - awake
+        active = platform.job_active(job, env())
+        survivors = [] if until(lambda: not marked(marker), 5) else marked(marker)
+    finally:
+        # Whatever happened, the endless tree goes: the job outlives its launcher by design.
+        platform.job_stop(job, env())
+        proc.kill()
+        proc.wait()
+        left = [] if until(lambda: not marked(marker), 15) else marked(marker)
+    check(slept >= 30, f"the Mac did not sleep: {slept:.0f}s between the clocks")
+    check(status != 0 and limit - 5 <= awake < limit + 20,
+          f"status {status} after {awake:.0f}s awake, {slept:.0f}s asleep; the limit is {limit}s of awake time")
+    check(not active, "job active after its limit")
+    check(not survivors, f"survivors after the limit: {survivors}")
+    check(not left, f"the job's tree outlived Stop: {left}")
+    return (f"the Mac slept {slept:.0f}s; the job stopped at its {limit}s limit after {awake:.0f}s awake, "
+            f"{awake + slept:.0f}s on the wall clock, with its whole tree (status {status})")
 
 
 @row
@@ -593,6 +638,91 @@ def validation_confinement():
             "are refused with no consent request in the privacy log; the reserved port, other "
             "sockets, keychain, launchd, LaunchServices, Apple Events, the Simulator service and the supervisor are out of "
             f"reach; system files, name resolution, other loopback ports, own sockets in every root and git work ({xcode}{evidence})")
+
+
+# What a process tries against a Simulator iPhone booted outside its profile, as the operator boots one: the phone's
+# Web Inspector socket, a program spawned in the phone writing a marker in the home folder, and Xcode's device
+# services listing devices and launching Settings on that phone. Prints which succeeded, and each refusal's error.
+DEVICE_ATTEMPTS = r"""
+import json, socket, subprocess, sys
+inspector, devices, marker, udid = sys.argv[1:5]
+seen, errors = {}, {}
+def attempt(name, action):
+    try:
+        action()
+        seen[name] = True
+    except Exception as error:
+        seen[name] = False
+        errors[name] = (getattr(error, "stderr", None) or str(error)).strip()[-200:]
+def inspect():
+    with socket.socket(socket.AF_UNIX) as probe:
+        probe.settimeout(5)
+        probe.connect(inspector)
+def run(*argv):
+    subprocess.run(argv, check=True, capture_output=True, text=True, timeout=60)
+attempt("inspector", inspect)
+attempt("spawn", lambda: run("xcrun", "simctl", "--set", devices, "spawn", "booted", "/bin/sh", "-c", f"echo x > {marker}"))
+attempt("device-services", lambda: run("xcrun", "devicectl", "list", "devices", "--timeout", "10"))
+attempt("device-launch", lambda: run("xcrun", "devicectl", "device", "process", "launch", "--device", udid,
+                                     "--timeout", "30", "com.apple.Preferences"))
+print(json.dumps({**seen, "errors": errors}))
+"""
+
+
+@row
+def simulator_escapes():
+    """#705's residual paths: an iPhone booted outside any profile, in a private device set removed afterwards. Outside,
+    its Web Inspector socket answers and a program spawned in it writes in the home folder; from the worker profile and
+    the validation profile both must be out of reach. Xcode's device services are recorded as listing devices or not;
+    where they launch an app on that phone outside, that launch must be out of reach from both profiles."""
+    if not DARWIN or "simulator-escapes" not in sys.argv:
+        return None  # Simulator runs on macOS only, and boots only when named
+    from altitude import simulator
+    try:
+        chosen = simulator.plan()
+    except ValueError:
+        return None  # no Xcode or iOS runtime: nothing to escape through
+    marker = Path.home() / f".altitude-probe-{NONCE}-spawned"
+    with tempfile.TemporaryDirectory() as folder, socket.socket() as reserved:
+        root = Path(folder).resolve()
+        devices = root / "devices"
+        reserved.bind(("127.0.0.1", 0))  # a stand-in for Altitude's port, which the validation profile names
+        seen = {}
+        try:
+            phone = simulator.Phone(devices, chosen, root / "walks")
+            inspector = phone.boot()
+            argv = [sys.executable, "-I", "-c", DEVICE_ATTEMPTS, inspector, str(devices), str(marker), phone.udid]
+            for where, command in (
+                    ("outside", argv),
+                    ("worker", platform.job_command(name("simulator"), argv, env(), writable=(root,), runtime_max=150)),
+                    ("validation", platform.validation_command(
+                        (root,), root / "validation.log", reserved.getsockname()[1], argv,
+                        {"HOME": str(root), "PATH": "/usr/bin:/bin", "LANG": "C"}))):
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=200)
+                lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
+                seen[where] = {**(json.loads(lines[-1]) if lines else {"error": result.stderr.strip()[-300:]}),
+                               "written": marker.exists()}
+                marker.unlink(missing_ok=True)
+        finally:
+            left = simulator.remove(devices)
+            marker.unlink(missing_ok=True)
+        check(left is None, f"the probe's Simulator device set stays: {left}")
+        outside = seen.get("outside", {})
+        check(outside.get("inspector") and outside.get("spawn") and outside.get("written"),
+              f"outside any profile {outside}, so the attempts inside show nothing")
+        launched = outside.get("device-launch")
+        for where in ("worker", "validation"):
+            found = seen.get(where, {})
+            check(found.get("inspector") is False and found.get("spawn") is False and found.get("written") is False
+                  and (not launched or found.get("device-launch") is False), f"{where} profile: {found}")
+    services = ", ".join(f"{where} {'listed' if seen[where].get('device-services') else 'refused'}"
+                         for where in ("outside", "worker", "validation"))
+    launch = ("launching Settings through them works outside and is out of reach from both profiles" if launched else
+              f"launching through them fails outside too, so it is uncovered here "
+              f"({seen['outside']['errors'].get('device-launch', '')[:120]!r})")
+    return (f"an iPhone booted outside any profile ({chosen['device']}, {chosen['runtime']}): its Web Inspector socket and "
+            f"a program spawned in it are out of reach from the worker and validation profiles; Xcode's device services "
+            f"list devices: {services}; {launch} ({chosen['xcode']})")
 
 
 @row

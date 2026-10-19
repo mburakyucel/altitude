@@ -23,7 +23,9 @@ platform_probe.py confinement rows as the logged-in account in a guest whose Pyt
 private place; `jobs` runs its launchd job rows, Stop of every descendant and the time limits among them, which no
 worker sandbox can; `read-only-home` runs the revision's suite cases that confine a child with Seatbelt or, with
 this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or worker can start; `mutation`
-interrupts two mutation runs, whose cleanup lists processes with `ps`, from packages downloaded on this Mac.
+interrupts two mutation runs, whose cleanup lists processes with `ps`, from packages downloaded on this Mac;
+`mutation-complete`, run only when named, makes one whole run of the task door, which must end with its report and
+leave no scratch folder.
 `source` installs from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
 repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
 `incident`, `update` and `session` install the release into the account's own home with a scripted fictional engine
@@ -1528,25 +1530,46 @@ def phase_mutation(guest: Guest, repository: str, results: Path, record: dict, i
     hash-pinned packages are downloaded on this Mac and installed in the offline guest from those files. Each of two
     runs of the task door is interrupted once mutmut runs; its scratch folder, mutmut and a planted process naming
     that folder must be gone afterwards, and the second run starts afresh. A whole run takes hours on four CPUs."""
+    result, found = mutation(guest, inputs, results, "", 900)
+    for n in (1, 2):
+        try:
+            guest.fetch(f"{SHARED}/mutation-{n}.log", results / f"mutation-{n}.log")
+        except subprocess.CalledProcessError:  # the run never started
+            pass
+    record["cases"] = {"mutation": {"exit": result.returncode, **found}}
+
+
+def phase_mutation_complete(guest: Guest, repository: str, results: Path, record: dict, inputs: Path,
+                            commit: str) -> None:
+    """One whole mutation run of the task door on macOS (#993), from the same packages: it must end with its report,
+    which has the door's row, and leave no scratch folder. About five hours on the guest's four CPUs."""
+    result, found = mutation(guest, inputs, results, " complete altitude/door.py", 10 * 3600)
+    for name in ("mutation-complete.log", "mutation-complete"):
+        try:
+            guest.fetch(f"{SHARED}/{name}", results / name)
+        except subprocess.CalledProcessError:  # the run never started
+            pass
+    record["cases"] = {"mutation-complete": {"exit": result.returncode, **found}}
+
+
+def mutation(guest: Guest, inputs: Path, results: Path, arguments: str,
+             timeout: int) -> tuple[subprocess.CompletedProcess, dict]:
+    """tests/macos_guest_mutation.py with `arguments` in the revision's files made a Git checkout, with mutmut's
+    hash-pinned packages downloaded on this Mac; its result and the JSON object it printed."""
     wheels = inputs / "mutation-wheels"
     run(sys.executable, "-m", "pip", "download", "--quiet", "--disable-pip-version-check", "--no-cache-dir",
         "--require-hashes", "--only-binary=:all:", "-d", wheels, "-r", SCRIPTS / "mutation-requirements.txt",
         timeout=300)
     guest.copy(wheels, f"{SHARED}/wheels")
     command = (f"git init -q && git add -A && git -c user.name=Lane -c user.email=lane@example.invalid commit -qm "
-               f"source && PIP_NO_INDEX=1 PIP_FIND_LINKS={SHARED}/wheels {GUEST_PYTHON} -B tests/macos_guest_mutation.py")
-    result = in_source(guest, inputs, command, 900)
+               f"source && PIP_NO_INDEX=1 PIP_FIND_LINKS={SHARED}/wheels {GUEST_PYTHON} -B tests/macos_guest_mutation.py"
+               f"{arguments}")
+    result = in_source(guest, inputs, command, timeout)
     (results / "mutation.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
-    for n in (1, 2):
-        try:
-            guest.fetch(f"{SHARED}/mutation-{n}.log", results / f"mutation-{n}.log")
-        except subprocess.CalledProcessError:  # the run never started
-            pass
     try:
-        found = json.loads(result.stdout.strip().splitlines()[-1])
+        return result, json.loads(result.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
-        found = {"passed": False}
-    record["cases"] = {"mutation": {"exit": result.returncode, **found}}
+        return result, {"passed": False}
 
 
 HOMEBREW = Path("/opt/homebrew")
@@ -1841,12 +1864,13 @@ PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle
           "mutation": phase_mutation, "source": phase_source,
           "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "update": phase_update,
           "session": phase_session,
-          "published": phase_published, "online": phase_online}
-# The phases a run includes only when named: `published` with --published, `online` with --phase online.
-NAMED = ("published", "online")
+          "published": phase_published, "online": phase_online, "mutation-complete": phase_mutation_complete}
+# The phases a run includes only when named: `published` with --published, `online` and `mutation-complete` with
+# --phase.
+NAMED = ("published", "online", "mutation-complete")
 # The phases that install the release built from the source, and those that also read the revision's files.
 BUILT = ("fresh", "prerequisites", "lifecycle", "login", *RUNTIME_ROWS)
-SOURCED = ("privacy", "jobs", "read-only-home", "mutation", *RUNTIME_ROWS)
+SOURCED = ("privacy", "jobs", "read-only-home", "mutation", "mutation-complete", *RUNTIME_ROWS)
 
 
 def build(commit: str, work: Path, log: Path, version: str = "v0.0.1", output: str = "release") -> None:
@@ -1995,7 +2019,7 @@ def main() -> int:
     run_parser.add_argument("results", type=Path)
     run_parser.add_argument("--source", default="HEAD", help="committed revision to build and test (default: HEAD)")
     run_parser.add_argument("--phase", choices=[name for name in PHASES if name != "published"], action="append",
-                            help="run only this phase (repeatable); `online` runs only when named")
+                            help="run only this phase (repeatable); `online` and `mutation-complete` run only when named")
     run_parser.add_argument("--published", metavar="BASELINE[..CANDIDATE]",
                             help="run only the published phase, updating the published BASELINE to the published "
                                  "CANDIDATE or, without one, to the source revision built under BASELINE's next minor")

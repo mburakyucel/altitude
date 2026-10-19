@@ -655,7 +655,15 @@ temporary folders, a stand-in for Altitude's port, other sockets, the keychain, 
 supervisor, a fixture app opened through LaunchServices, Apple Events, the Simulator service, the Desktop and
 mounted volumes, while system
 files, name resolution and its socket, other loopback ports, Git and its own sockets work, including
-one nested in a later folder, as a run's temporary folder is.
+one nested in a later folder, as a run's temporary folder is. `--only simulator-escapes`, which runs only when named, as the
+operator outside any sandbox (in a task, with `alt task run` under an operator grant), boots an
+iPhone in a private Simulator device set, as the operator boots one, and removes the set afterwards.
+Outside any profile, its Web Inspector socket must answer and a program spawned in it must write in
+the home folder; from the worker profile and the validation profile, both must be out of reach. It
+records whether Xcode's device services list devices from each and, where launching Settings on that
+iPhone through them works outside, requires that launch to be out of reach from both profiles. They
+see only the default device set, not the probe's private one, so on Xcode 27 that launch stays
+uncovered and the row says so.
 
 A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),
@@ -1677,7 +1685,12 @@ shell trusts, with `github.com` resolving to the loopback.
   while the Mac sleeps, as systemd's limit does. The guest itself cannot sleep (macOS under the Virtualization framework
   refuses `pmset sleepnow`), so `awake-clock`, which starts no job, also runs on this Mac through
   `alt task validate -- python3 scripts/platform_probe.py --only awake-clock`: on a Mac that has slept
-  since it started, the limit's clock has left out the hours slept, which the row reports. The
+  since it started, the limit's clock has left out the hours slept, which the row reports. A job across
+  an actual sleep is `real-sleep`, which runs only when named, on this Mac itself, after the operator
+  schedules a wake as root: `sudo pmset relative wake 150 && python3 scripts/platform_probe.py --only
+  real-sleep`. It refuses to start unless a wake is scheduled within five minutes. A job with a
+  60-second limit starts, `pmset sleepnow` sleeps the Mac until the wake, and the Mac must have slept
+  and the job's whole tree must stop at its limit counted in awake time. The
   `launch-input` job, confined and launched as a review is, takes its own folder and a fictional
   sign-in from its input's first line, reads but cannot write a home settings file linked into that
   folder, and cannot list the launcher's job folders or read another job's saved launch input there.
@@ -1696,7 +1709,11 @@ shell trusts, with `github.com` resolving to the loopback.
   Before each interruption it plants a process outside mutmut whose command names the run's scratch
   folder, as a test's leftover does. After each run, its scratch folder, mutmut and the planted process
   must be gone, with nothing in `ps`'s listing naming that folder, and the second run must use a new
-  folder. A whole run is not made: the task door alone takes hours on the guest's four CPUs.
+  folder.
+- `mutation-complete`, only when named with `--phase mutation-complete`: one whole run of
+  `altitude/door.py` from the same packages, about five hours on the guest's four CPUs, so it runs
+  overnight. It must end with its report, which has the door's row, and leave no scratch folder; the
+  runner keeps the report and its log.
 - `source`: the account sets up a [source checkout](OPERATIONS.md#run-from-a-source-checkout) as
   documented, with this Mac's Node and pnpm in place: it clones the revision from an origin in the
   guest, made from a bundle of its history, runs `make web` and `alt tls-init`, and `make
