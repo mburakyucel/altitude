@@ -1855,18 +1855,23 @@ describe.each([390, 1440])("Create task under a reply at %ipx (SPEC.md §3.3)", 
     expect(within(region).queryByText(/L3 could not answer this turn/)).toBeNull();
   });
 
-  it("keeps a sent press working until the conversation reads it, and returns a refused one at once", async () => {
+  it("keeps a sent press working until the conversation reads it, and returns a refused or lost one at once", async () => {
     const queue: unknown[] = [];
     let read: Promise<void> | null = null;
     let readChat!: () => void;
     let refuse = false;
+    let lost = false;
+    let lostReads = 0;
+    let lostHold!: Promise<void>;
     setViewport(width);
     mockFetch({
       chatFn: async () => {
         if (read) await read;
+        if (lost && ++lostReads > 1) await lostHold;
         return jsonResponse({ ...chatView, history: [...history, asked, offered], queued: [...queue] });
       },
       post: () => {
+        if (lost) return jsonResponse({ error: "Altitude is busy." }, 503);
         if (refuse) return jsonResponse({ error: "the reply is gone" }, 400);
         queue.push(pressRow);
         return jsonResponse({ queued: pressRow });
@@ -1894,6 +1899,18 @@ describe.each([390, 1440])("Create task under a reply at %ipx (SPEC.md §3.3)", 
     expect(button).toHaveAccessibleName("Create task");
     expect(button).not.toHaveAttribute("aria-disabled");
     await act(async () => readChat());
+
+    // A lost reply reads the chat once to say whether it was saved; the pill is pressable again with that line.
+    refuse = false;
+    read = null;
+    let releaseLost!: () => void;
+    lostHold = new Promise((resolve) => { releaseLost = resolve; });
+    lost = true;
+    await user.click(button);
+    await waitFor(() => expect(within(region).getByRole("alert")).toHaveTextContent(/^Not sent$/));
+    expect(button).toHaveAccessibleName("Create task");
+    expect(button).not.toHaveAttribute("aria-disabled");
+    await act(async () => releaseLost());
   });
 
   it("spins the × in place while its removal is held, and the pill returns to Create task once the conversation reads it", async () => {

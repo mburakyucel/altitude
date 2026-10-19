@@ -317,13 +317,13 @@ export default function Conversation({
     const pressed = (data?: ChatView) => [...(data?.queued ?? []), ...(data?.history ?? [])].filter((row) => row.offer_turn === turnId).length;
     const before = pressed(queryClient.getQueryData<ChatView>(["chat", name]));
     const sent = () => setAnnouncement("Create task sent");
-    let refused = false;
+    let saved = false;
     try {
       await sendCreateTask(name, turnId);
       sent();
+      saved = true;
     } catch (error) {
       if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
-        refused = true;
         setPressError({ turnId, message: error.status === 409 ? error.message : `Not sent: ${error.message}` });
       } else {
         // The response was lost: the conversation itself says whether the message was saved.
@@ -338,8 +338,9 @@ export default function Conversation({
       queryClient.invalidateQueries({ queryKey: ["chat", name], refetchType: "all" }),
       queryClient.invalidateQueries({ queryKey: ["project", name] }),
     ]);
-    // A sent press stays working until the chat reads it, so the pill never shows Create task meanwhile; a refused one returns at once.
-    if (!refused) await reads;
+    // A saved press stays working until the chat reads it, so the pill never shows Create task meanwhile; a refused or
+    // lost one returns at once with its line, pressable again (a lost one has already read the chat).
+    if (saved) await reads;
     setPress(null);
   }, [name, queryClient]);
 

@@ -197,6 +197,26 @@ describe("Project page", () => {
     expect(screen.queryByText("L3 has not started")).toBeNull();
   });
 
+  it("returns a refused Start L3 at once with why, without waiting for the chat to read", async () => {
+    const fetchMock = mockFetch({ project: { ...project, l3: {} }, chat: { ...chatView, history: [], l3: {} } });
+    const base = fetchMock.getMockImplementation()!;
+    let chatRead: Promise<void> | null = null;
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.includes("/api/l3/start")) {
+        chatRead = new Promise(() => {});
+        return Promise.resolve(jsonResponse({ error: "No coding tool is signed in." }, 409));
+      }
+      if (url.includes("/api/chat/") && chatRead) return chatRead.then(() => base(input, init));
+      return base(input, init);
+    });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await screen.findByText("L3 has not started");
+    await user.click(screen.getByRole("button", { name: "Start L3" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No coding tool is signed in.");
+    expect(screen.getByRole("button", { name: "Start L3" })).toBeEnabled();
+  });
+
   it("offers no Start L3 while setup waits for a coding tool", async () => {
     mockFetch({
       project: { ...project, l3: {} },

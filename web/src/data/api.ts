@@ -1946,11 +1946,15 @@ export function useL3Start(project: string) {
   const queryClient = useQueryClient();
   return useMutation<unknown, Error, void>({
     mutationFn: () => post("/api/l3/start", { project }),
-    // Starting… holds until the chat and project read the started session, so Start L3 never returns meanwhile.
-    onSettled: () => Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["chat", project] }),
-      queryClient.invalidateQueries({ queryKey: ["project", project] }),
-    ]),
+    // A started session holds Starting… until the chat and project read it, so Start L3 never returns meanwhile;
+    // a refusal shows at once.
+    onSettled: (_out, error) => {
+      const reads = Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["chat", project] }),
+        queryClient.invalidateQueries({ queryKey: ["project", project] }),
+      ]);
+      return error ? undefined : reads;
+    },
   });
 }
 
