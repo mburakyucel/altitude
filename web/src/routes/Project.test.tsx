@@ -168,6 +168,35 @@ describe("Project page", () => {
     await waitFor(() => expect(posted(fetchMock, "/api/l3/start")).toEqual({ project: "altitude" }));
   });
 
+  it("keeps Starting… after the start is accepted until the chat reads the started session", async () => {
+    const fetchMock = mockFetch({ project: { ...project, l3: {} }, chat: { ...chatView, history: [], l3: {} } });
+    const base = fetchMock.getMockImplementation()!;
+    let started!: (value: Response) => void;
+    let readChat!: () => void;
+    let chatRead: Promise<void> | null = null;
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.includes("/api/l3/start")) return new Promise<Response>((resolve) => { started = resolve; });
+      if (url.includes("/api/chat/") && chatRead) {
+        return chatRead.then(() => jsonResponse({ ...chatView, history: [], l3: {}, active: { id: "s1", started_at: ago(0), trigger: "start" } }));
+      }
+      return base(input, init);
+    });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await screen.findByText("L3 has not started");
+    await user.click(screen.getByRole("button", { name: "Start L3" }));
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    chatRead = new Promise((resolve) => { readChat = resolve; });
+    await act(async () => started(jsonResponse({ ok: true })));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chat/")).length).toBeGreaterThan(1));
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Start L3" })).toBeNull();
+    await act(async () => readChat());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Starting…" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Start L3" })).toBeNull();
+    expect(screen.queryByText("L3 has not started")).toBeNull();
+  });
+
   it("offers no Start L3 while setup waits for a coding tool", async () => {
     mockFetch({
       project: { ...project, l3: {} },

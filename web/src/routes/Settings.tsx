@@ -418,11 +418,11 @@ function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
     <div className="settings-group">
       <div className="settings-row settings-switch-row">
         <label htmlFor="alerts-switch"><strong>Decision alerts</strong>{" "}
-          <small id="alerts-switch-note" className={settled && !showReason ? "sr-only" : undefined}>{note}</small></label>
+          <small id="alerts-switch-note" className={settled && !showReason ? "sr-only" : undefined}>{asking ? <StatusMark label="Turning on…" /> : note}</small></label>
         {settled ? <button id="alerts-switch" type="button" role="switch" className="settings-switch" aria-checked="false"
           aria-label="Decision alerts" aria-disabled="true" aria-describedby="alerts-switch-note" onClick={() => setShowReason(!showReason)} />
           : <input id="alerts-switch" type="checkbox" role="switch" className="settings-switch" aria-label="Decision alerts"
-            checked={state === "on"} disabled={asking || !overview} aria-describedby="alerts-switch-note" onChange={(event) => {
+            checked={state === "on" || asking} disabled={asking || !overview} aria-describedby="alerts-switch-note" onChange={(event) => {
               if (!event.target.checked) return disableAlerts();
               setAsking(true);
               // The switch waits for the queue (disabled until read): turning on records what is waiting, not a backlog to announce.

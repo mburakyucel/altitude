@@ -74,8 +74,15 @@ test("a newer release is offered, confirmed, installed or failed, and dismissed 
   });
 
   refuse = false;
+  // From the press Install reads Starting… until Altitude accepts the update.
+  let releaseInstall!: () => void;
+  const installHeld = new Promise<void>((resolve) => { releaseInstall = resolve; });
+  await page.route("**/api/update", async (route) => { await installHeld; await route.fallback(); }, { times: 1 });
+  await install.click();
+  await walk.state("04b-install-starting-at-the-press", { visible: [notice.getByRole("button", { name: "Starting…", exact: true })], hidden: [install] });
+  await expect(cancel).toBeDisabled();
+  releaseInstall();
   await walk.state("05-installing", {
-    action: () => install.click(),
     visible: [notice.getByText("Installing Altitude v0.2.0… Altitude restarts when it is ready.")],
     hidden: [install, cancel, update, dismiss, notice.getByRole("alert")],
   });
@@ -112,6 +119,16 @@ test("a newer release is offered, confirmed, installed or failed, and dismissed 
   await walk.state("06b-failed-passing", { visible: [notice.getByText(/did not finish: the connection was reset\./), retry, repair], hidden: [update] });
   await expect(retry).toHaveClass(/btn-primary/);
   await expect(repair).not.toHaveClass(/btn-primary/);
+  // From the press Try again reads Starting… until Altitude accepts the update; the failure is then restored for what follows.
+  const passing = state.update;
+  let releaseRetry!: () => void;
+  const retryHeld = new Promise<void>((resolve) => { releaseRetry = resolve; });
+  await page.route("**/api/update", async (route) => { await retryHeld; await route.fallback(); }, { times: 1 });
+  await retry.click();
+  await walk.state("06b2-try-again-starting-at-the-press", { visible: [notice.getByRole("button", { name: "Starting…", exact: true })], hidden: [retry] });
+  releaseRetry();
+  await expect(notice.getByText("Installing Altitude v0.2.0…")).toBeVisible();
+  state.update = passing;
 
   state.repair = { running: { id: "f".repeat(32), route: "app", title: "Failed update to 0.2.0" }, questions: [] };
   await page.reload();

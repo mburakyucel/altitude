@@ -25,10 +25,10 @@ export function Icon({ name }: { name: keyof typeof PATHS }) {
  * One pressed choice (SPEC.md §3.3 Create task, §3.8.2 Decision selections). The pill changes in place: its
  * icon and colour say what happened, so a press adds no message. With `onPress` it is a button that stays
  * focusable in every state and presses only when `ready` or `fail`; without it, it records a choice already
- * made. `wait` with `onRemove` adds × to take the choice back. `about` names what the choice answers: shown
+ * made. `wait` with `onRemove` adds × to take the choice back, which spins in place while `removing`. `about` names what the choice answers: shown
  * beside a ready offer or under a recorded choice, and otherwise only its accessible description.
  */
-export function Choice({ label, state, spoken, icon, about, aboutShown = false, note, error, primary, mine, disabled, onPress, onRemove, removing }: {
+export function Choice({ label, state, spoken, icon, about, aboutShown = false, note, error, primary, mine, disabled, onPress, onRemove, removing, removeDisabled }: {
   label: string;
   state: ChoiceState;
   spoken?: string;
@@ -43,6 +43,7 @@ export function Choice({ label, state, spoken, icon, about, aboutShown = false, 
   onPress?: () => void;
   onRemove?: () => void;
   removing?: boolean;
+  removeDisabled?: boolean;
 }) {
   const aboutId = useId();
   const pressable = !disabled && (state === "ready" || state === "fail");
@@ -62,8 +63,9 @@ export function Choice({ label, state, spoken, icon, about, aboutShown = false, 
           </span>
         )}
         {state === "wait" && onRemove ? (
-          <button type="button" className="choice-remove" aria-label="Remove" disabled={removing} onClick={onRemove}>
-            <Icon name="x" />
+          <button type="button" className="choice-remove" aria-label={removing ? "Removing" : "Remove"} aria-busy={removing || undefined}
+            disabled={removing || removeDisabled} onClick={onRemove}>
+            {removing ? <span className="spinner" aria-hidden /> : <Icon name="x" />}
           </button>
         ) : null}
       </span>
@@ -97,10 +99,10 @@ const CREATE_TASK: Record<ChoiceState, { label: string; spoken?: string }> = {
   fail: { label: "Retry", spoken: "Create task" },
 };
 
-export function CreateTask({ title, state, error, onPress, onRemove, removing }: {
+export function CreateTask({ title, state, error, onPress, onRemove, removing, removeDisabled }: {
   title: string; state: ChoiceState; error?: string | null;
-  onPress: () => void; onRemove?: () => void; removing?: boolean;
+  onPress: () => void; onRemove?: () => void; removing?: boolean; removeDisabled?: boolean;
 }) {
   return <Choice {...CREATE_TASK[state]} state={state} icon="plus" about={title} aboutShown={state === "ready"}
-    error={error} onPress={onPress} onRemove={onRemove} removing={removing} />;
+    error={error} onPress={onPress} onRemove={onRemove} removing={removing} removeDisabled={removeDisabled} />;
 }

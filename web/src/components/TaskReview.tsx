@@ -153,6 +153,7 @@ export function useTaskReview(project: string, task: TaskView, refresh: () => Pr
     else mutation.mutate({ action, review, subject });
   };
   return { disabled: disabled || mutation.isPending || skip.isPending || checking || uncertain, pending: mutation.isPending,
+    stopping: mutation.isPending && mutation.variables.action === "cancel",
     error, uncertain, checking, check, run, refused: refused && { ...refused, retry: () => run("withdraw", refused.review) },
   };
 }
@@ -164,7 +165,7 @@ export function ReviewFeedback({ controls }: { controls: ReviewControls }) {
   </p>;
   if (!controls.error && !controls.pending) return null;
   return <p className="text-meta task-review-feedback" role={controls.error ? "alert" : "status"}>
-    {controls.error || "Saving review request…"}{" "}
+    {controls.error || (controls.stopping ? "Stopping the reviewer…" : "Saving review request…")}{" "}
     {controls.uncertain ? <button type="button" className="link" disabled={controls.checking} onClick={() => void controls.check()}>{controls.checking ? "Checking…" : "Refresh review status"}</button> : null}
   </p>;
 }

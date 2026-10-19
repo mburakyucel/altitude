@@ -362,8 +362,8 @@ export function TaskModelButton({ transfer: t }: { transfer: Transfer }) {
       <p className="model-menu-note">{info.preparation ? "The current session writes a handoff note, then a fresh session continues from the task’s saved work."
         : "A fresh session continues from the task’s saved work."} Some context may be lost, and catching up uses extra tokens. Work, questions and merge holds stay.</p>
       <div className="model-menu-actions">
-        <button type="button" className="btn btn-primary" disabled={t.pending} onClick={() => void confirm()}><BusyLabel busy={t.pending} label="Switch" working="Switching…" /></button>
-        <button type="button" className="btn" disabled={t.pending} onClick={() => close(true)}>Cancel</button>
+        <button type="button" className="btn btn-primary" disabled={Boolean(t.pending)} onClick={() => void confirm()}><BusyLabel busy={t.pending === "handoff"} label="Switch" working="Switching…" /></button>
+        <button type="button" className="btn" disabled={Boolean(t.pending)} onClick={() => close(true)}>Cancel</button>
       </div>
     </div> : null}>
     <Rows name="Model" groups={groups} checked={rowKey(chosen.engine, chosen.value)} current={currentKey} pending="" onPick={pickModel} />

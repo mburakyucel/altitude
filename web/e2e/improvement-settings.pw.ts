@@ -88,7 +88,11 @@ test("the sheet comes first, Turn on completes the press, and each Weekly and ru
   await expect(weekly).toBeChecked();
 
   // Agreed now: Get suggestions now starts a review without the sheet, and its line with Stop replaces the button.
+  // From the press Get suggestions now reads Starting… until the run is recorded.
+  const started = await hold(page);
   await press(now);
+  await walk.state("05b-starting-at-the-press", { visible: [area.getByRole("button", { name: "Starting…", exact: true })], hidden: [now] });
+  await started();
   await walk.state("06-running-replaces-the-button", { visible: [running, stop, next], hidden: [now, reads, sheet] });
   await press(stop);
   await walk.state("07-stopped-button-returns", { visible: [now, reads], hidden: [running, stop] });

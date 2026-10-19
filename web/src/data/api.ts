@@ -1946,10 +1946,11 @@ export function useL3Start(project: string) {
   const queryClient = useQueryClient();
   return useMutation<unknown, Error, void>({
     mutationFn: () => post("/api/l3/start", { project }),
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["chat", project] });
-      void queryClient.invalidateQueries({ queryKey: ["project", project] });
-    },
+    // Starting… holds until the chat and project read the started session, so Start L3 never returns meanwhile.
+    onSettled: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["chat", project] }),
+      queryClient.invalidateQueries({ queryKey: ["project", project] }),
+    ]),
   });
 }
 
@@ -2093,7 +2094,7 @@ export function useL3Reset(project: string) {
     // %, turns) — invalidating only ["chat", project] leaves the card showing the dead session.
     mutationFn: async () => {
       const out = await post("/api/l3/reset", { project });
-      void queryClient.invalidateQueries({ queryKey: ["project", project] });
+      await queryClient.invalidateQueries({ queryKey: ["project", project] });
       return out;
     },
     queryKey: ["chat", project],

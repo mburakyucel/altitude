@@ -15,7 +15,7 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   const queued = request?.status === "done" && task.state === "queued";
   const [dialog, setDialog] = useState<"" | "now">("");
   const [menuRequest, setMenuRequest] = useState(false);
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<"" | "handoff" | "handoff-now" | "handoff-cancel" | "check">("");
   const submitting = useRef(false);
   const [uncertain, setUncertain] = useState(false);
   const [error, setError] = useState("");
@@ -35,7 +35,7 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
     if (value) { opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShown(info); beforeDialog(); }
     setDialog(value);
   };
-  const blocked = disabled || pending || uncertain;
+  const blocked = disabled || Boolean(pending) || uncertain;
   /** The engine-stop card's Change model… opens the composer's model menu. */
   const start = () => {
     if (blocked || stopping || queued || !info) return;
@@ -43,7 +43,7 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   };
   const submit = async (action: "handoff" | "handoff-now" | "handoff-cancel", body: Record<string, unknown>) => {
     if (submitting.current || blocked || !info) return false;
-    submitting.current = true; setPending(true); setError("");
+    submitting.current = true; setPending(action); setError("");
     try {
       await taskAction({ project, slug: task.slug, action, ...body });
       setDialog("");
@@ -59,7 +59,7 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
         setError(cause instanceof ApiError && cause.status === 409 ? "The task changed. Check status before switching." : "Could not confirm the switch. Check status before trying again.");
       }
       return false;
-    } finally { restoreFocus.current = true; submitting.current = false; setPending(false); }
+    } finally { restoreFocus.current = true; submitting.current = false; setPending(""); }
   };
   /** One confirmed pick from the model menu, fenced to the session the panel showed when it opened. */
   const switchTo = (pick: { engine: string; value: string; model: string; effort: string }, observed: unknown) => submit("handoff", {
@@ -70,10 +70,10 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   const perform = (action: "handoff-now" | "handoff-cancel") => submit(action, { request_id: action === "handoff-now" ? shown?.request?.id : request?.id });
   const recheck = async () => {
     if (submitting.current) return;
-    submitting.current = true; setPending(true);
+    submitting.current = true; setPending("check");
     try { await refresh(); setUncertain(false); setError(""); }
     catch { setError("Could not check status. Try again."); }
-    finally { submitting.current = false; setPending(false); }
+    finally { submitting.current = false; setPending(""); }
   };
   const label = uncertain ? "Switch unconfirmed" : active ? "Switching model"
     : request?.status === "done" && task.state === "queued" ? `Waiting for ${request.target_label}` : "";
@@ -112,7 +112,7 @@ function TransferEntry({ transfer: t }: { transfer: Transfer }) {
 export function TransferCard({ transfer: t }: { transfer: Transfer }) {
   const quota = t.engineOffer && !t.disabled;
   if (!t.active && !t.label && !t.error && !quota) return null;
-  const busy = !t.uncertain && (t.active || t.pending || Boolean(t.label));
+  const busy = !t.uncertain && (t.active || Boolean(t.pending) || Boolean(t.label));
   const warning = quota || t.uncertain || Boolean(t.error) || ["failed", "refused"].includes(t.request?.status ?? "");
   const tone = warning ? "warn" : busy ? "run" : t.request?.status === "done" ? "ok" : "wait";
   // One word for a switch everywhere: the header reads "Switching model", the card and composer "Switching to <model · effort>".
@@ -135,9 +135,12 @@ export function TransferCard({ transfer: t }: { transfer: Transfer }) {
       ? `Started by the coordinator${t.request.reason ? ` · ${t.request.reason}` : ""}` : "Started by you"}</p> : null}
     {t.error ? <p role="alert">{t.error}</p> : null}
     {t.controls && (t.uncertain || !t.disabled) ? <div className="transfer-actions">
-      {t.uncertain ? <button type="button" className="btn" disabled={t.pending} onClick={() => void t.recheck()}>Check status</button> : <>
+      {t.uncertain ? <button type="button" className="btn" disabled={Boolean(t.pending)} onClick={() => void t.recheck()}>
+        <BusyLabel busy={t.pending === "check"} label="Check status" working="Checking…" /></button> : <>
         <button type="button" className="btn" disabled={t.blocked} onClick={() => t.setDialog("now")}>Switch now</button>
-        <button type="button" className="btn" disabled={t.blocked} onClick={() => void t.perform("handoff-cancel")}>Cancel switch</button>
+        <button type="button" className="btn" disabled={t.blocked} onClick={() => void t.perform("handoff-cancel")}>
+          <BusyLabel busy={t.pending === "handoff-cancel"} label="Cancel switch" working="Cancelling…" />
+        </button>
       </>}
     </div> : null}
     {quota ? <TransferEntry transfer={t} /> : null}
@@ -155,9 +158,9 @@ export function TransferDialog({ transfer: t }: { transfer: Transfer }) {
       <h2>{title}</h2>
       <p>The current worker and its pending commands will stop. {name} continues from saved context.</p>
       <div className="transfer-actions">
-        <button type="button" className="btn" data-autofocus disabled={t.pending} onClick={t.close}>Keep waiting</button>
+        <button type="button" className="btn" data-autofocus disabled={Boolean(t.pending)} onClick={t.close}>Keep waiting</button>
         <button type="button" className="btn btn-primary" disabled={t.blocked} onClick={() => void t.perform("handoff-now")}>
-          <BusyLabel busy={t.pending} label="Switch now" working="Submitting…" />
+          <BusyLabel busy={t.pending === "handoff-now"} label="Switch now" working="Submitting…" />
         </button>
       </div>
     </div>

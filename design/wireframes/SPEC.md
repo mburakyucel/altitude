@@ -110,8 +110,9 @@ because it comes from the saved record. A refused save puts the screen back as i
 Retry: a message keeps its choice with **Not sent**, a setting returns to its saved value with **Not
 saved**; a message whose outcome is unknown stays Waiting until Altitude's next read settles it. A
 press that asks Altitude to do something it must carry out or decide (stop, switch, review, update, create a
-task, remove a queued message) shows that work's in-progress state at once and its result when Altitude
-observes it. No action shows a provisional rendering first and the designed one later.
+task, remove a queued message) shows that work's in-progress state at once, in words naming that press
+(Cancelling…, Rejecting…), and holds it until a read shows the result, so the control never returns to rest
+in between. No action shows a provisional rendering first and the designed one later.
 
 ## 2. Information architecture
 
@@ -431,7 +432,7 @@ form, dialog or second copy of the reply.
 | Reply without an offer | Absent: ordinary answers, reports, system lines and replies that created a task show nothing. |
 | Offered | Plus, Create task, and the title, under the latest reply only. |
 | Working | Accent fill and a spinner, from the press until L3 answers; it ignores presses and keeps focus. "Create task sent" is announced once Altitude saves the press. L3's typing indicator follows. |
-| Waiting for L3 | A clock while the press waits behind L3's current work, with × (Remove, 44px target) inside the pill. Remove brings the offer back. A press kept while no engine can run (§4.2) shows the clock without ×, as a kept message cannot be removed. The press is not listed among queued messages. |
+| Waiting for L3 | A clock while the press waits behind L3's current work, with × (Remove, 44px target) inside the pill. A pressed × spins in place until the conversation no longer lists the press, which brings the offer back. A press kept while no engine can run (§4.2) shows the clock without ×, as a kept message cannot be removed. The press is not listed among queued messages. |
 | Task created | Green fill, check, "Task created"; L3's answer below carries the task card. It stays in the history. |
 | Answered without a task | Muted check: L3 answered the press without creating a task. |
 | Not sent | Altitude refused the press or did not save it: the offer stays with a short danger note (`role=alert`): Altitude's reason, "Not sent" or, when the conversation cannot be read, "Not confirmed". Pressing again is safe. |
@@ -595,7 +596,8 @@ a lost reply stays skipped. **View**
 in task details, and a question's review box (§3.8.3), open and focus the card. Open findings block merge; no findings never means
 permission to merge.
 
-Loading and saving disable the buttons. Unavailable explains why in the box; denied and uncertain
+Loading and saving disable the buttons; from the press a line under the boxes reads "Saving review request…",
+or "Stopping the reviewer…" for **Stop**, until Altitude answers. Unavailable explains why in the box; denied and uncertain
 delivery use inline feedback with a saved-status refresh. `adversarial-review.pw.ts` walks these states
 at phone and desktop widths; `adversarial-review-integration.pw.ts` walks real persisted requests,
 same-engine and alternate-engine fixtures, L2 requests, failure and try again, unavailable,
@@ -1017,7 +1019,7 @@ claims no more than Altitude observed:
 
 | State | The pill |
 | --- | --- |
-| Waiting for the L2 | Clock. While Altitude can still remove the message (an approval queued for a checkpoint), × (Remove, 44px target) sits inside the pill and **Send now** below it; a quick answer is never removable. |
+| Waiting for the L2 | Clock. While Altitude can still remove the message (an approval queued for a checkpoint), × (Remove, 44px target) sits inside the pill, spinning in place once pressed until the message is removed, and **Send now** below it; a quick answer is never removable. |
 | Sending to session | Spinner while the L2's session takes the message. |
 | Sent | Grey check once the session has the message. |
 | Delivery unconfirmed | Clock with **Delivery unconfirmed** beneath; no check and no ×. |
@@ -1351,7 +1353,7 @@ remove mutation controls.
 After **Switch** is admitted the panel closes and one review-style card in the conversation shows the
 switch: title `Switching to <model> · <effort>`, then "Waiting for the current session’s handoff note."
 (after **Switch now**: "Starting the fresh session."), then **Started by you** or **Started by the
-coordinator · <its reason>**, with **Switch now** and **Cancel switch**. The header state reads
+coordinator · <its reason>**, with **Switch now** and **Cancel switch** (**Cancelling…** from the press). The header state reads
 "Switching model"; its model chip keeps describing the running session until the new one starts. The
 card follows unanswered questions and merge actions, before activity evidence. Preparation has no
 timeout. Switch now confirms stopping pending work without a note; now/cancel vanish once stopping
@@ -1435,9 +1437,9 @@ restoration remain covered alongside the task state and composer walkthroughs.
 One click requests termination immediately. **Reject** is in phone task details and the desktop header,
 with inline confirmation:
 "Reject this task? Its worker ends and the task is archived." with "Reason (optional)", then
-**Cancel**, focused, and a red **Reject task**; Escape cancels. Stop appears while running; Reject appears while queued, running, blocked or reported.
+**Cancel**, focused, and a red **Reject task**, which reads **Rejecting…** from the press until the task reads archived; Escape cancels. Stop appears while running; Reject appears while queued, running, blocked or reported.
 An operationally blocked task without an open question also offers **Resume**, using the existing
-daemon operation. The button becomes **Resuming…** during the request, then disappears when running.
+daemon operation. The button becomes **Resuming…** from the press until the task reads its outcome, then disappears when running.
 A failed request leaves Resume available and places its error on a separate line under the actions,
 including on the phone. Resuming an operational pause records no decision. A confirmed Stop instead
 offers **Continue** in the same place as Stop. It resumes without sending the unsent draft.
@@ -1807,8 +1809,8 @@ wherever none is known.
   service runs the agent's setup: "Opening Claude sign-in…", then the numbered steps "Approve Altitude on
   Claude's page." with **Open Claude sign-in ↗** (new tab) and the field "Paste the code Claude shows"
   (placeholder "Code from Claude"), the note "The code works once, for this sign-in only.", a ghost
-  **Cancel** and a primary **Finish sign-in** (disabled while empty; Enter finishes; "Signing in…" while
-  the agent answers; returning to the tab focuses the empty field). Success reads "Signed in. Altitude's
+  **Cancel** ("Cancelling…" while the sign-in stops) and a primary **Finish sign-in** (disabled while empty;
+  Enter finishes; "Signing in…" while the agent answers; returning to the tab focuses the empty field). Success reads "Signed in. Altitude's
   Claude runs use this sign-in for a year." A failure is one sentence ("Claude didn't accept that code.",
   "The sign-in expired after ten minutes.", "The sign-in was interrupted." or "Altitude couldn't follow
   Claude's sign-in. If this repeats, Altitude needs an update for this Claude version."), followed by
@@ -2069,7 +2071,8 @@ that opens a page has a chevron; switches save in place.
 
 **Notifications** is set on each device. Its first row, **Decision alerts**, is the switch with its reach
 or refusal line (§3.8.1); where alerts cannot be on, the switch looks disabled and pressing it reveals that
-line. Opened from the Needs you pill (`/settings#notifications`), Settings scrolls the group into view
+line. Pressed on, the switch moves on at once with "Turning on…" as its line while the browser asks for
+permission; a denial puts it back off with the blocked line. Opened from the Needs you pill (`/settings#notifications`), Settings scrolls the group into view
 when it is off screen and shows that reason at once, and the phone tab bar keeps Needs you lit. The
 switch is unavailable until Altitude has read what is already waiting, so turning it on never announces
 that. While alerts are on, three rows follow, saving in place:

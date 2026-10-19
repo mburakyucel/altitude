@@ -154,8 +154,17 @@ test("a code pairs the browser, and removing it in Settings returns it to the pa
   const mine = list.getByRole("listitem").filter({ hasText: "This device" });
   await walk.state("02-devices", { visible: [list, mine, list.getByText("Playwright browser")], hidden: [heading] });
   const pairAnother = page.getByRole("region", { name: "Pair another device" });
+  // From the press Make a pairing code reads Making a code… until Altitude returns the code.
+  let releaseCode!: () => void;
+  const codeHeld = new Promise<void>((resolve) => { releaseCode = resolve; });
+  await page.route("**/api/devices/code", async (route) => { await codeHeld; await route.continue(); }, { times: 1 });
+  await pairAnother.getByRole("button", { name: "Make a pairing code" }).click();
+  await walk.state("02b-making-a-code-at-the-press", {
+    visible: [pairAnother.getByRole("button", { name: "Making a code…", exact: true })],
+    hidden: [pairAnother.getByRole("button", { name: "Make a pairing code", exact: true })],
+  });
+  releaseCode();
   await walk.state("03-code-for-another-device", {
-    action: () => page.getByRole("button", { name: "Make a pairing code" }).click(),
     visible: [pairAnother.getByLabel("Pairing code"), pairAnother.getByText(/^Works once, for the next 10 minutes\./), pairAnother.getByRole("button", { name: "Make a new code" })],
     hidden: [pairAnother.getByText(/pair\?code=/)],
   });

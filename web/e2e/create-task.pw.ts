@@ -63,7 +63,14 @@ test("an offering reply creates one task from one press", async ({ page, request
   await c.button.click();
   const working = c.state("Create task, working");
   await walk.state("create-task-03-pressed-working", { visible: [working], hidden: [c.press] });
+  // Saved, the press stays working until the conversation reads it: Create task never shows again meanwhile.
+  let releaseRead!: () => void;
+  const read = new Promise<void>((resolve) => { releaseRead = resolve; });
+  await page.route("**/api/chat/atlas", async (route) => { await read; await route.fallback(); });
   releasePost();
+  await walk.state("create-task-03b-saved-until-read", { visible: [working], hidden: [c.press, c.button] });
+  releaseRead();
+  await page.unroute("**/api/chat/atlas");
   await expect(working).toBeFocused();
   await walk.state("create-task-04-l3-working", { visible: [working, c.typing], hidden: [c.press, c.convo.locator(".choice-about")] });
   await expect(working).toBeFocused();
@@ -100,7 +107,12 @@ test("a press waits while L3 is busy, and Remove brings the action back", async 
     const hit = await remove.evaluate((node) => Number.parseFloat(getComputedStyle(node, "::after").height));
     expect(hit).toBeGreaterThanOrEqual(44);
   }
+  let releaseRemove!: () => void;
+  const removal = new Promise<void>((resolve) => { releaseRemove = resolve; });
+  await page.route("**/api/chat/remove", async (route) => { await removal; await route.fallback(); }, { times: 1 });
   await remove.click();
+  await walk.state("create-task-06b-removing", { visible: [waiting, c.convo.getByRole("button", { name: "Removing", exact: true })], hidden: [remove] });
+  releaseRemove();
   await walk.state("create-task-07-removed-action-back", { visible: [c.button, c.title], hidden: [waiting, remove] });
   expect((await request.post("/fixture/release")).ok()).toBe(true);
   await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();

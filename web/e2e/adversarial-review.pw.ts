@@ -95,9 +95,13 @@ test("adversarial review walks every state in task details and the conversation"
 
   Object.assign(review, { state: "running", waiting: null, can_cancel: true, can_withdraw: false });
   await walk.state("08-in-progress", { visible: [card.getByText("· in progress"), card.getByText("Reviewing the implementation…"), card.getByRole("button", { name: "Stop" })], hidden: [card.getByText("· requested by L2")] });
+  saving = true;
   await card.getByRole("button", { name: "Stop" }).click();
   await expect.poll(() => posts.length).toBe(2);
   expect(posts[1]).toMatchObject({ action: "cancel", review_id: review.id });
+  await walk.state("08b-stopping-at-the-press", { visible: [page.getByText("Stopping the reviewer…", { exact: true })], hidden: [page.getByText("Saving review request…")] });
+  await expect(card.getByRole("button", { name: "Stop" })).toBeDisabled();
+  finishPost!(); saving = false;
   await walk.state("09-stopped", { visible: [card.getByText("· didn’t finish"), card.getByText("Stopped before it finished."), card.getByRole("button", { name: "Try again" })], hidden: [card.getByRole("button", { name: "Stop" })] });
   Object.assign(review, { state: "failed", error: "The review engine exited before returning findings." });
   await walk.state("10-failed", { visible: [card.getByText("The review engine exited before returning findings."), card.getByRole("button", { name: "Try again" })], hidden: [card.getByText("Stopped before it finished.")] });

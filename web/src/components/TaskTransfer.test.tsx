@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ApiError, taskAction } from "../data/api";
@@ -69,6 +69,20 @@ it("requires explicit switch-now confirmation and uses the request identity", as
   expect(within(modal).getByText(/pending commands will stop/)).toBeVisible();
   await u.click(within(modal).getByRole("button", { name: "Switch now" }));
   expect(taskAction).toHaveBeenCalledWith({ project: "sample", slug: "sample", action: "handoff-now", request_id: "switch-1" });
+});
+it("names Cancelling… on Cancel switch alone while the cancel is held, and the card leaves once the task reads it", async () => {
+  let release!: (value: unknown) => void;
+  vi.mocked(taskAction).mockReturnValue(new Promise((resolve) => { release = resolve; }));
+  const u = userEvent.setup(); render(<Harness task={preparing} next={initial} />);
+  await u.click(screen.getByRole("button", { name: "Cancel switch" }));
+  expect(taskAction).toHaveBeenCalledWith({ project: "sample", slug: "sample", action: "handoff-cancel", request_id: "switch-1" });
+  expect(screen.getByRole("button", { name: "Cancelling…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Switch now" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Cancel switch" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Submitting…" })).not.toBeInTheDocument();
+  await act(async () => release({}));
+  expect(screen.queryByRole("region", { name: "Model switch" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Cancelling…" })).not.toBeInTheDocument();
 });
 it("uses saved-context confirmation for a quota-stopped owner", async () => {
   const u = userEvent.setup(); render(<Harness task={{ ...initial, state: "blocked", transfer: { ...initial.transfer!, preparation: false, quota_limited: true } }} />);
