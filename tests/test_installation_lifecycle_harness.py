@@ -686,10 +686,12 @@ class TestMacLifecycle(AltitudeCase):
                                              "extra files look like generated Python caches: run alt recover")
         other = subprocess.CompletedProcess([], 1, "", "ValueError: Release v0.0.1 does not match its manifest: "
                                             "unexpected altitude/__pycache__/config.cpython-312.pyc")
+        plain = subprocess.CompletedProcess([], 1, "", "ValueError: Release files do not match its manifest")
         self.assertFalse(harness.legacy_cache_refusal(tree, None))  # the candidate's own check accepts
         for result, release, expected in ((legacy, "v0.8.0", True), (legacy, "v0.1.0-rc.2", True), (legacy, None, None),
                                           (legacy, "v0.9.0", None), (legacy, "v0.10.0-rc.1", None), (legacy, "v1.0.0", None),
-                                          (other, "v0.8.0", None)):
+                                          (other, "v0.8.0", None), (plain, "v0.6.0", True), (plain, "v0.7.0", None),
+                                          (plain, "v0.9.0", None)):
             with self.subTest(stderr=result.stderr, release=release), \
                     mock.patch("scripts.installation_lifecycle.subprocess.run", return_value=result):
                 if expected:

@@ -333,8 +333,11 @@ class Lifecycle:
         (self.results / "foreign-caches-baseline-check.log").write_text(f"exit: {probe.returncode}\n{probe.stderr}")
         if probe.returncode == 0:
             return False
-        legacy = release and tuple(map(int, re.match(r"v(\d+)\.(\d+)\.(\d+)", release).groups())) < (0, 9, 0)
-        if legacy and "the only extra files look like generated Python caches" in probe.stderr:
+        number = release and tuple(map(int, re.match(r"v(\d+)\.(\d+)\.(\d+)", release).groups()))
+        # v0.7.0 and v0.8.0 name the caches; v0.6.0 and older say only that the files differ from the manifest.
+        words = "the only extra files look like generated Python caches" if number and number >= (0, 7, 0) \
+            else "Release files do not match its manifest"
+        if number and number < (0, 9, 0) and words in probe.stderr:
             return True
         raise AssertionError(f"The installed release refused its generated caches: {probe.stderr.strip()[-500:]}")
 
