@@ -101,7 +101,8 @@ sentences repeating their state chip, question card or composer. Live session fo
 its existing control and a quiet dot; recorded historical boundaries stay readable.
 
 **Actions answer at once.** A press that saves the operator's own choice (an answer, an approval, a message,
-a setting's switch, select or model pick, removing a device) shows its designed result immediately, in the
+a setting's switch, select or model pick, a voice choice, removing a device, dismissing a suggestion or
+undoing that, skipping a review) shows its designed result immediately, in the
 component the design specifies for it and everywhere else it appears, marked only by the pending state that
 component already has (a message's Waiting clock; a setting holding still with Saving…); it settles in place
 when Altitude confirms, with no flash, reorder or duplicate, and a reload or another device shows the same
@@ -585,7 +586,9 @@ each, which opens to that review's own findings, footer and Skip review, since a
 review left in the merge gate still blocks merge; and a footer naming the reviewer ("<engine> · same engine as the task" or "alternate engine"),
 **Technical details** and **Skip review**. Technical details shows the model, any fallback reason,
 focus, the captured proposal and the reviewed and assessed checkpoints. Skip review asks for
-confirmation without a reason; the review stops blocking merge and its findings stay visible. **View**
+confirmation without a reason; from the press the review reads skipped by you, here and on every question line
+that names it, stops blocking merge and keeps its findings visible. A refused skip returns the review with
+"Not saved: <reason>" and **Retry** under the boxes. **View**
 in task details, and a question's review box (§3.8.3), open and focus the card. Open findings block merge; no findings never means
 permission to merge.
 
@@ -2231,14 +2234,14 @@ The card in use shows a check and **In use** at the right of its title instead o
 other card offers one outlined button: **Use this computer** (only while this computer's voice is
 ready, including while it updates), **Use browser recognition**, or **Use your speech service**,
 which opens that card's fields. Pressing **Use
-this computer** or **Use browser recognition** saves at once. While a save runs, the pressed button
-shows a spinner in place of its label without changing width (named Saving…) and the page's other
+this computer** or **Use browser recognition** saves at once: **In use** moves to that card from the press,
+with a spinner beside it (named Saving…), and focus moves to that card's title; saving the speech service
+shows the spinner in its **Save** button instead. While a save runs the page's other
 buttons stay focusable with `aria-disabled`, ignoring presses; this computer's setup, update and
-removal buttons are disabled, and a running one locks the Use buttons the same way. Success moves
-**In use**, moves focus to that card's title and announces "Saved." to screen readers without
-visible text. A failure shows, under the pressed button in red,
-the server's explanation or "Could not save voice settings." followed by **Retry**; **In use** stays
-on the saved choice. A choice changed elsewhere shows "Voice settings changed." with **Reload
+removal buttons are disabled, and a running one locks the Use buttons the same way. Success
+announces "Saved." to screen readers without
+visible text. A failure puts **In use** back on the saved choice and shows, in the pressed card in red,
+the server's explanation or "Could not save voice settings." followed by **Retry**. A choice changed elsewhere shows "Voice settings changed." with **Reload
 settings** instead of Retry.
 
 While a speech service is in use, pressing another card's Use button replaces that button in place
@@ -2275,8 +2278,8 @@ stops when it changes.
 | Read failed | Could not load settings and Retry; typing elsewhere is unaffected. |
 | Saved browser | **In use** on Browser recognition; Use buttons on the other cards. |
 | Saved host | **In use** on This computer and its setup panel in its current state; while setting up, progress refreshes every second. The overview reads This computer, with " · not set up" until ready. |
-| Saving | The pressed button's spinner named Saving…; other Use buttons aria-disabled until the request answers. |
-| Failed/denied save | Explanation and Retry in the pressed card; **In use** stays on the saved choice. A choice changed elsewhere offers Reload settings. |
+| Saving | **In use** on the pressed card with a spinner named Saving…; other Use buttons aria-disabled until the request answers. |
+| Failed/denied save | **In use** back on the saved choice; explanation and Retry in the pressed card. A choice changed elsewhere offers Reload settings. |
 
 A project's own model or effort applies to its coordinator's next turns and its fresh task starts
 (including queued tasks) wherever the button's choice is Default or Auto; explicit task requests and

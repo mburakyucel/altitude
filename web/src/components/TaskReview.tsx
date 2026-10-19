@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, taskReview } from "../data/api";
+import { ApiError, taskReview, useReviewSkipRefusals, useSkipReview } from "../data/api";
 import type { Decision, Review, ReviewAction, ReviewSubject, TaskView } from "../data/api";
 import { InlineProse, ProseAt } from "./Prose";
 import { Stamp } from "./Stamp";
@@ -137,14 +137,25 @@ export function useTaskReview(project: string, task: TaskView, refresh: () => Pr
       }
     },
   });
-  return { disabled: disabled || mutation.isPending || checking || uncertain, pending: mutation.isPending,
-    error, uncertain, checking, check,
-    run: (action: ReviewAction, review?: Review, subject?: ReviewSubject) => { setError(""); mutation.mutate({ action, review, subject }); },
+  // Skip review shows as skipped from the press (useSkipReview); a refusal says why here, with Retry.
+  const skip = useSkipReview();
+  const refusals = useReviewSkipRefusals();
+  const refused = [...refusals.values()].reverse().find(({ change }) => change.project === project && change.slug === task.slug);
+  const run = (action: ReviewAction, review?: Review, subject?: ReviewSubject) => {
+    setError("");
+    if (action === "withdraw" && review) skip.mutate({ project, slug: task.slug, id: review.id, subject: review.subject, unresolved: review.unresolved.length, at: new Date().toISOString() });
+    else mutation.mutate({ action, review, subject });
+  };
+  return { disabled: disabled || mutation.isPending || skip.isPending || checking || uncertain, pending: mutation.isPending,
+    error, uncertain, checking, check, run, refused: refused && { error: refused.error, retry: () => skip.mutate(refused.change) },
   };
 }
 export type ReviewControls = ReturnType<typeof useTaskReview>;
 
 export function ReviewFeedback({ controls }: { controls: ReviewControls }) {
+  if (controls.refused && !controls.error && !controls.pending) return <p className="text-meta text-danger task-review-feedback" role="alert">
+    Not saved: {controls.refused.error.message}{" "}<button type="button" className="link" onClick={controls.refused.retry}>Retry</button>
+  </p>;
   if (!controls.error && !controls.pending) return null;
   return <p className="text-meta task-review-feedback" role={controls.error ? "alert" : "status"}>
     {controls.error || "Saving review request…"}{" "}

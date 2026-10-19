@@ -406,10 +406,10 @@ describe("Voice settings", () => {
     const { user } = renderApp({ route: "/settings/voice" });
     await user.click(await screen.findByRole("button", { name: "Use browser recognition" }));
     await user.click(screen.getByRole("button", { name: "Remove service and switch" }));
-    const keep = screen.getByRole("button", { name: "Keep service" });
-    expect(keep).toHaveAttribute("aria-disabled", "true");
-    await user.click(keep);
-    expect(screen.getByRole("button", { name: "Saving…" })).toBeVisible();
+    // The switch shows from the press, so the question leaves with it.
+    expect(screen.queryByRole("button", { name: "Keep service" })).toBeNull();
+    expect(within(card("Browser recognition")).getByRole("status", { name: "Saving…" })).toBeVisible();
+    expect(inUse("Browser recognition")).toBe(true);
     release();
     expect(await within(card("Browser recognition")).findByRole("alert")).toHaveTextContent("Settings unavailable Retry");
     await user.click(screen.getByRole("button", { name: "Keep service" }));
@@ -507,7 +507,9 @@ describe("Voice settings", () => {
     notifyManager.setScheduler((callback) => pending.push(callback));
     try {
       await user.click(screen.getByRole("button", { name: "Use browser recognition" }));
-      expect(within(card("Browser recognition")).getByRole("button", { name: "Saving…" })).toBeVisible();
+      // The choice is In use from the press, its card saying Saving… beside the mark.
+      expect(within(card("Browser recognition")).getByRole("status", { name: "Saving…" })).toBeVisible();
+      expect(inUse("Browser recognition")).toBe(true);
       const service = screen.getByRole("button", { name: "Use your speech service" });
       expect(service).toHaveAttribute("aria-disabled", "true");
       // Locked buttons stay focusable and ignore presses.

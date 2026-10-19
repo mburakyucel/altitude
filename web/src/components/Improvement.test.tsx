@@ -158,14 +158,14 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     expect(within(shown).getByRole("button", { name: "Dismiss" })).toBeVisible();
   });
 
-  it("a press that cannot be saved brings the buttons back with Not saved, gone on the next press", async () => {
+  it("a refused Dismiss brings the buttons back with Not saved and Retry, gone on the next press", async () => {
     setViewport(width);
     let fail = true;
     serve([posted([suggestion(1)])], () => (fail ? json({ error: "down" }, 500) : json({ ok: true })));
     const { user } = renderApp({ route: "/projects/altitude" });
     const shown = await card();
     await user.click(within(shown).getByRole("button", { name: "Dismiss" }));
-    expect(await within(shown).findByRole("alert")).toHaveTextContent("Not saved. Try again.");
+    expect(await within(shown).findByRole("alert")).toHaveTextContent(/^Not saved: down Retry$/);
     expect(within(shown).getByRole("button", { name: "Make a task" })).toBeEnabled();
     fail = false;
     await user.click(within(shown).getByRole("button", { name: "Dismiss" }));
@@ -224,6 +224,20 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/altitude"));
     expect(router.state.location.hash).toBe("#improvement-0123456789ab");
     expect(await card()).toHaveAttribute("id", "improvement-0123456789ab");
+  });
+
+  it("dismissing the last waiting suggestion in Needs you takes the card away at the press; a refusal brings it back saying why", async () => {
+    setViewport(width);
+    let answer!: (response: Response) => void;
+    serve([posted([suggestion(1)])], () => new Promise<Response>((resolve) => { answer = resolve; }) as unknown as Response);
+    const { user } = renderApp({ route: "/" });
+    const section = await screen.findByRole("region", { name: "Suggestions" });
+    await user.click(within(within(section).getByRole("article")).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Suggestions" })).toBeNull());
+    await act(async () => answer(json({ error: "Altitude is busy." }, 503)));
+    const back = within(await screen.findByRole("region", { name: "Suggestions" })).getByRole("article");
+    expect(await within(back).findByRole("alert")).toHaveTextContent(/^Not saved: Altitude is busy\. Retry$/);
+    expect(within(back).getByRole("button", { name: "Dismiss" })).toBeEnabled();
   });
 
   it("a card with nothing waiting leaves Needs you", async () => {

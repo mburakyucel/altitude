@@ -369,9 +369,9 @@ task; the last card leaving leaves **Nothing needs you.** alone, or the empty pa
 | Accepted | Buttons leave; a check and **Accepted · L3 is opening a task**. The card stays in Needs you until the task exists. |
 | Task not opened | If L3's turn fails, is interrupted or ends without a task: **Accepted · no task yet** and an underlined **Try again**, which queues the same single turn; one task per suggestion still holds, so no retry can make a second. |
 | Task opened | That line becomes the ordinary compact task card (SPEC §3.5); if L3 attached it to an existing task or issue instead, the line names and links that. |
-| Dismiss pressed, then dismissed | Spinner in place; then the suggestion folds to its chip, muted title, **Dismissed** and an underlined **Undo**. |
-| Undo pressed | The suggestion opens again with both buttons. Undo is offered until the suggestion lapses. |
-| Save failed | Buttons return; under them in danger text **Not saved. Try again.**, gone on the next press. |
+| Dismiss pressed, then dismissed | The suggestion folds at the press to its chip, muted title and **Dismissed**, a spinner where **Undo** goes until the save lands; then the underlined **Undo**. In Needs you a card with nothing else waiting leaves at the press. |
+| Undo pressed | The suggestion opens again at the press, both buttons disabled beside a spinner until the save lands. Undo is offered until the suggestion lapses. |
+| Save failed | Make a task: buttons return with **Not saved. Try again.** under them, gone on the next press. Dismiss or Undo: the suggestion returns as it was with **Not saved: <reason>** and **Retry**, in chat and Needs you, until it is saved. |
 | Typed answer | You reply in chat; L3 records it citing your message and the card changes the same way. |
 | Lapsed | The suggestion folds to its chip, muted title and **Not decided**; the card leaves Needs you once nothing on it is undecided. |
 | Pattern found again after a task for it | A muted **Seen again after <task>** line under the explanation. |

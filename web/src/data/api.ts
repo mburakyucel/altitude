@@ -6,7 +6,7 @@ import { readAlertState } from "./alerts";
 import { finishPending, forgetPending, handBack, overlayOverview, overlayProject, overlayTask, startPending, usePending } from "./pending";
 import type { PendingAnswer, PendingWrite } from "./pending";
 import { forgetRecovery } from "./recovery";
-import { useSave, useSaving } from "./saves";
+import { useRefused, useSave, useSaving } from "./saves";
 import { useRequest } from "./useRequest";
 
 /**
@@ -631,6 +631,40 @@ export async function sendCreateTask(project: string, offerTurn: string) {
 /** A press on an improvement review: Stop on its running line; Make a task, Dismiss, Undo or Try again on a suggestion. */
 export async function sendImprovement(project: string, action: "stop" | "accept" | "dismiss" | "undo" | "retry", requestId: string, ref?: string) {
   return api<{ ok: boolean }>("/api/improve", { method: "POST", body: JSON.stringify({ project, action, ref, request_id: requestId }) });
+}
+
+/** Dismiss or Undo on a suggestion: the operator's own choice, folded or unfolded in chat and Needs you at the press. */
+export type SuggestionChange = { project: string; ref: string; action: "dismiss" | "undo" };
+const SUGGESTION_SAVES = ["suggestion"];
+const suggestionReads = ({ project }: SuggestionChange) => [["overview"], ["project", project]];
+
+/** A run as Altitude will save it: a dismissed suggestion folds with Undo, an undone one waits for a decision again. */
+const withSuggestions = (run: ImprovementRun, project: string, changes: SuggestionChange[]): ImprovementRun => {
+  const mine = changes.filter((change) => change.project === project && change.ref.startsWith(`${run.id}/`));
+  return mine.length ? { ...run, suggestions: run.suggestions.map((suggestion) => mine.reduce((shown, change) => change.ref !== shown.ref ? shown
+    : change.action === "dismiss" ? { ...shown, state: "dismissed" as const, undo: true } : { ...shown, state: "undecided" as const, undo: false }, suggestion)) } : run;
+};
+/** Needs you lists a run while a suggestion waits for a decision or its task (improve.waiting). */
+const waitsInNeedsYou = (run: ImprovementRun) => run.suggestions.some((suggestion) => suggestion.state === "undecided" || suggestion.state === "accepted" && !suggestion.task);
+
+export function useSuggestionChanges() {
+  return useSaving<SuggestionChange>(SUGGESTION_SAVES);
+}
+
+const suggestionId = (change: SuggestionChange) => `${change.project}/${change.ref}`;
+/** Refused Dismiss and Undo presses, by project and ref. A press the record no longer allows (409) needs no reason: the card shows where it stands. */
+export function useSuggestionRefusals() {
+  const refused = useRefused<SuggestionChange>(SUGGESTION_SAVES, suggestionId);
+  return useMemo(() => new Map([...refused].filter(([, { error }]) => !(error instanceof ApiError && error.status === 409))), [refused]);
+}
+
+export function useSaveSuggestion() {
+  return useSave<SuggestionChange, unknown>(SUGGESTION_SAVES, ({ project, ref, action }) => sendImprovement(project, action, crypto.randomUUID().replaceAll("-", ""), ref),
+    (client, _result, { project }) => Promise.all([
+      client.refetchQueries({ queryKey: ["project", project], exact: true }),
+      client.refetchQueries({ queryKey: ["overview"], exact: true }),
+      client.invalidateQueries({ queryKey: ["chat", project] }),
+    ]), suggestionReads);
 }
 
 /**
@@ -1421,7 +1455,13 @@ export function useOverview(refetchOnMount = true) {
   const client = useQueryClient();
   const pending = usePending();
   const saving = useSaving<OverviewChange>(["overview"]);
-  const select = useCallback((data: Overview) => saving.reduce(applyOverview, overlayOverview(client, data, pending)), [client, pending, saving]);
+  const suggestions = useSuggestionChanges();
+  const skips = useReviewSkips();
+  const select = useCallback((data: Overview) => {
+    const view = skipsOverview(saving.reduce(applyOverview, overlayOverview(client, data, pending)), skips);
+    return suggestions.length ? { ...view, suggestions: view.suggestions
+      .map((run) => ({ ...withSuggestions(run, run.project, suggestions), project: run.project })).filter(waitsInNeedsYou) } : view;
+  }, [client, pending, saving, suggestions, skips]);
   return useQuery({ ...overviewQuery, refetchInterval: pollInterval, refetchOnMount, select });
 }
 
@@ -1443,7 +1483,12 @@ export function useOverviewRecord() {
 export function useProject(name: string, enabled = true) {
   const client = useQueryClient();
   const pending = usePending();
-  const select = useCallback((data: ProjectView) => overlayProject(client, data, pending), [client, pending]);
+  const suggestions = useSuggestionChanges();
+  const skips = useReviewSkips();
+  const select = useCallback((data: ProjectView) => {
+    const view = skipsProject(overlayProject(client, data, pending), skips);
+    return suggestions.length ? { ...view, improvements: view.improvements.map((run) => withSuggestions(run, data.name, suggestions)) } : view;
+  }, [client, pending, suggestions, skips]);
   return useQuery({
     queryKey: ["project", name],
     queryFn: async () => ProjectViewSchema.parse(await api(`/api/project/${name}`)),
@@ -1461,7 +1506,8 @@ export const taskQuery = (project: string, slug: string) => ({
 export function useTask(project: string, slug: string) {
   const client = useQueryClient();
   const pending = usePending();
-  const select = useCallback((data: TaskView) => overlayTask(client, project, data, pending), [client, project, pending]);
+  const skips = useReviewSkips();
+  const select = useCallback((data: TaskView) => skipsTask(overlayTask(client, project, data, pending), project, skips), [client, project, pending, skips]);
   return useQuery({
     ...taskQuery(project, slug),
     refetchInterval: (query) => query.state.data?.state === "running" || ["stopping", "stop_unconfirmed", "resuming"].includes(query.state.data?.steering?.state ?? "") ? 2_000 : pollInterval(),
@@ -1952,6 +1998,60 @@ export async function taskReview(input: { project: string; slug: string; action:
   const result = await post<{ review: unknown }>("/api/task/review", input);
   return ReviewSchema.parse(result.review);
 }
+
+/**
+ * Skip review: the operator's own choice, so the review reads skipped by you at the press in its box and on every
+ * question line that names it, and its findings stop counting as open. Whether a new review can be requested is
+ * Altitude's to say, read once the skip is saved.
+ */
+export type ReviewSkip = { project: string; slug: string; id: string; subject: ReviewSubject; unresolved: number; at: string };
+const SKIPS = ["review-skip"];
+const skipReads = ({ project, slug }: ReviewSkip) => [["task", project, slug], ["overview"], ["project", project]];
+const skipFor = (skips: ReviewSkip[], project: string, slug: string | null | undefined, id: string | null | undefined) =>
+  id ? skips.find((skip) => skip.project === project && skip.slug === slug && skip.id === id) : undefined;
+function skippedLine<Row extends { slug?: string | null; review?: Decision["review"] }>(row: Row, project: string, skips: ReviewSkip[]): Row {
+  const skip = skipFor(skips, project, row.slug, row.review?.id);
+  return skip && row.review ? { ...row, review: { ...row.review, state: "withdrawn", skipped_by: "operator", reason: "", open: Math.max(0, row.review.open - skip.unresolved) } } : row;
+}
+const skippedReview = (review: Review, skip: ReviewSkip): Review => ({ ...review, state: "withdrawn", withdrawn_by: "operator",
+  withdrawal_reason: "Skipped by the operator.", finished_at: skip.at, can_withdraw: false, can_cancel: false, can_again: false });
+
+export function useReviewSkips() {
+  return useSaving<ReviewSkip>(SKIPS);
+}
+const skipsOverview = (data: Overview, skips: ReviewSkip[]): Overview => skips.length
+  ? { ...data, queue: data.queue.map((row) => row.kind === "step" ? row : skippedLine(row, row.project, skips)) } : data;
+const skipsProject = (data: ProjectView, skips: ReviewSkip[]): ProjectView => skips.length && data.decisions
+  ? { ...data, decisions: data.decisions.map((row) => skippedLine(row, data.name, skips)) } : data;
+function skipsTask(data: TaskView, project: string, skips: ReviewSkip[]): TaskView {
+  const mine = skips.filter((skip) => skip.project === project && skip.slug === data.slug);
+  if (!mine.length) return data;
+  const line = (question: Decision) => skippedLine(question, project, mine);
+  const review = (entry: Review) => { const skip = skipFor(mine, project, data.slug, entry.id); return skip ? skippedReview(entry, skip) : entry; };
+  const subjects = data.review && Object.fromEntries(Object.entries(data.review.subjects).map(([subject, entry]) => [subject, entry && {
+    ...entry, latest: entry.latest && review(entry.latest),
+    open: Math.max(0, entry.open - mine.filter((skip) => skip.subject === subject).reduce((sum, skip) => sum + skip.unresolved, 0)),
+  }]));
+  return {
+    ...data,
+    review: data.review && { ...data.review, history: data.review.history.map(review), subjects: subjects as typeof data.review.subjects },
+    question: data.question && line(data.question),
+    questions: data.questions?.map(line),
+    question_group: data.question_group && { ...data.question_group, questions: data.question_group.questions.map(line) },
+  };
+}
+
+/** Skip a review; the save ends once the task, the overview and the project read show it. */
+export function useSkipReview() {
+  return useSave<ReviewSkip, Review>(SKIPS, ({ project, slug, id }) => taskReview({ project, slug, action: "withdraw", review_id: id }),
+    (client, _review, { project, slug }) => Promise.all([
+      client.refetchQueries({ queryKey: ["task", project, slug], exact: true }),
+      client.refetchQueries({ queryKey: ["overview"], exact: true }),
+      client.refetchQueries({ queryKey: ["project", project], exact: true }),
+    ]), skipReads);
+}
+export const useReviewSkipRefusals = () => useRefused<ReviewSkip>(SKIPS, reviewSkipId);
+const reviewSkipId = (skip: ReviewSkip) => `${skip.project}/${skip.slug}/${skip.id}`;
 
 export function useL3Reset(project: string) {
   const queryClient = useQueryClient();
