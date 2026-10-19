@@ -312,6 +312,7 @@ class TestVerifyDelivery(AltitudeCase):
         self.assertEqual(S.load_task(self.project, "continue")["state"], "running")
 
     def test_a_malformed_report_returns_to_its_owner_naming_the_field(self):
+        self.private_ledgers()
         self.publish(41)
         well_formed = self.report()
         for field, change in (

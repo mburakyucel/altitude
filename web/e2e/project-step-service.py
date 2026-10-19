@@ -40,7 +40,8 @@ def main():
             # The project terminal's notice once the handed command looks finished, through the real notice path.
             notice = SimpleNamespace(cond=threading.Condition(), command={"text": COMMAND, "attempt": None},
                                      place="project", project="atlas", slug=None)
-            terminal._notice(notice, "the command you handed the operator looks finished in the project terminal", finished=True)
+            terminal._notice(notice, notice.command, "the command you handed the operator looks finished in the project terminal",
+                             finished=True)
             deadline = time.monotonic() + 5
             while T.operator_steps("atlas") and time.monotonic() < deadline:
                 time.sleep(.05)
