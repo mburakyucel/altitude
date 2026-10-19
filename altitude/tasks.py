@@ -58,6 +58,8 @@ SHOWN_TOTAL_LIMIT = 32 << 20
 SHOWN_IMAGE_COUNT = 24
 SHOWN_FOLDER = "shown"
 _SHOWN_TYPES = {".md": "md", ".txt": "txt", ".png": "png", ".jpg": "jpg", ".jpeg": "jpg", ".gif": "gif", ".webp": "webp"}
+# A PR's pictures: the shown raster types, and others its card lists as not shown.
+_PICTURE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".avif", ".tif", ".tiff", ".heic"}
 CAPTURE_TASK_LIMIT = 64 << 20   # attached validation captures one task keeps
 
 
@@ -455,11 +457,15 @@ def _shown_available(project: str, slug: str, shown: dict) -> bool:
 
 
 def shown_target(project: str, slug: str, identity: str, revision: int | None = None) -> tuple[dict, dict]:
-    """The task and the shown set of reply `identity`, or of question `identity` at `revision`; nothing else."""
+    """The task and the shown set of reply `identity`, of question `identity` at `revision`, or (identity `pr`) the
+    pictures of the task's current PR numbered `revision`; nothing else."""
     config.project(project)
     S.require_task_slug(slug)
     task = S.load_task(project, slug)
-    if revision is None:
+    if identity == "pr":
+        shown = pr_images(project, slug, task)
+        shown = shown if shown and shown["pr"] == revision else None
+    elif revision is None:
         owner = next((row for row in task_messages(project, slug) if row.get("id") == identity), None)
         shown = owner.get("shown") if owner and owner.get("role") == "l2" else None
     else:
@@ -515,6 +521,130 @@ def shown_view(project: str, slug: str, shown: dict, identity: str, revision: in
             "images": [{"name": item["path"].rsplit("/", 1)[-1], "path": item["path"], "url": f"{api}/files/{item['name']}",
                         **{key: item[key] for key in ("width", "height", "embedded")}} for item in shown["images"]],
             "newer_url": newer if newer and newer != url else None}
+
+
+def _pr_tip(task: dict) -> tuple[int, str, str] | None:
+    """The task's current PR with the head and base commit its delivery recorded; landing an adopted PR records one."""
+    number = (task.get("prs") or [None])[-1]
+    record = task.get("delivery") or {}
+    head, base = record.get("head"), record.get("base")
+    if (number and record.get("number") == number and isinstance(head, str) and isinstance(base, str)
+            and re.fullmatch(r"[0-9a-f]{40}", head) and re.fullmatch(r"[0-9a-f]{40}", base)):
+        return number, head, base
+    return None
+
+
+def _capture_pr_images(project: str, number: int, head: str, base: str) -> tuple[dict, dict[str, bytes]]:
+    """The pictures PR `number` adds, replaces or removes between `head` and its merge base with the recorded `base`
+    commit, read as Git objects from
+    the project's repository, so nothing a worktree holds decides what is shown. Each copy passes the shown-image
+    checks; a picture of another type, a link, or one past the shown limits is listed as `not_shown`."""
+    root = config.project_path(project)
+    env = git_policy.git_env(root)
+
+    def git(*args: str, data: bytes | None = None) -> bytes:
+        return subprocess.run(["git", *args], cwd=root, env=env, input=data, capture_output=True, timeout=60,
+                              check=True).stdout
+
+    merge_base = git("merge-base", base, head).decode().strip()
+    fields = git("diff", "--raw", "-z", "--no-abbrev", "-M", "--no-ext-diff", "--no-textconv", merge_base, head).split(b"\0")
+    pictures, not_shown, index = [], [], 0
+    while index < len(fields) and fields[index].startswith(b":"):
+        old_mode, new_mode, old_sha, new_sha, status = fields[index][1:].decode().split(" ")
+        paths = [os.fsdecode(path) for path in fields[index + 1:index + (3 if status[0] in "RC" else 2)]]
+        index += 1 + len(paths)
+        sides = [(side, mode, sha, path) for side, mode, sha, path, present in (
+            ("before", old_mode, old_sha, paths[0], status[0] != "A"), ("after", new_mode, new_sha, paths[-1], status[0] != "D"))
+            if present]
+        if not any(Path(path).suffix.lower() in _PICTURE_SUFFIXES for *_, path in sides):
+            continue
+        if (sum(len(kept) for *_, kept in pictures) + len(sides) > SHOWN_IMAGE_COUNT or any(mode not in ("100644", "100755") or _SHOWN_TYPES.get(
+                Path(path).suffix.lower()) in (None, "md", "txt") for _, mode, _, path in sides)):
+            not_shown.append(paths[-1])
+            continue
+        pictures.append((paths[-1], {"A": "added", "D": "removed"}.get(status[0], "changed"), sides))
+    shas = list(dict.fromkeys(sha for *_, sides in pictures for _, _, sha, _ in sides))
+    sizes = {}
+    for line in git("cat-file", "--batch-check", data="".join(f"{sha}\n" for sha in shas).encode()).decode().splitlines():
+        sha, kind, *size = line.split(" ")
+        sizes[sha] = int(size[0]) if kind == "blob" and size else None
+    total, wanted = 0, []
+    for path, change, sides in pictures:
+        size = sum(sizes.get(sha) or 0 for _, _, sha, _ in sides)
+        if (any(not sizes.get(sha) or sizes[sha] > SHOWN_IMAGE_LIMIT for _, _, sha, _ in sides)
+                or total + size > SHOWN_TOTAL_LIMIT):
+            not_shown.append(path)
+            continue
+        total += size
+        wanted.append((path, change, sides))
+    contents, stream = {}, git("cat-file", "--batch", data="".join(
+        f"{sha}\n" for sha in dict.fromkeys(sha for *_, sides in wanted for _, _, sha, _ in sides)).encode())
+    while stream:
+        header, stream = stream.split(b"\n", 1)
+        sha, _, size = header.decode().split(" ")
+        contents[sha], stream = stream[:int(size)], stream[int(size) + 1:]
+    images, files = [], {}
+    for path, change, sides in wanted:
+        try:
+            found = []
+            for side, _, sha, source in sides:
+                data = contents[sha]
+                width, height = _raster(data, _SHOWN_TYPES[Path(source).suffix.lower()])
+                name = f"{hashlib.sha256(data).hexdigest()}.{_SHOWN_TYPES[Path(source).suffix.lower()]}"
+                found.append(({"path": path, "change": change, "side": side, "name": name, "size": len(data),
+                               "width": width, "height": height}, name, data))
+        except (KeyError, ValueError):
+            not_shown.append(path)
+            continue
+        for item, name, data in found:
+            images.append(item)
+            files[name] = data
+    record = {"pr": number, "head": head, "images": images, **({"not_shown": not_shown} if not_shown else {})}
+    return {**record, "id": _record_hash(record)}, files
+
+
+def pr_images(project: str, slug: str, task: dict) -> dict | None:
+    """The pictures record of the task's current PR head, captured once into the task's shown copies and kept beside
+    them. A head whose diff cannot be read now is marked unreadable and saves nothing, so a later view reads it again."""
+    tip = _pr_tip(task)
+    if not tip:
+        return None
+    number, head, base = tip
+    name = f"pr-{number}-{head}.json"
+    try:
+        try:
+            record = json.loads(_runtime_bytes(str((S.task_dir(project, slug) / SHOWN_FOLDER / name)
+                                                   .relative_to(config.ROOT)), SHOWN_DOCUMENT_LIMIT))
+        except FileNotFoundError:
+            try:
+                record, files = _capture_pr_images(project, number, head, base)
+            except (OSError, ValueError, UnicodeError, subprocess.SubprocessError, git_policy.GitPolicyError):
+                return {"pr": number, "head": head, "images": [], "unreadable": True}
+            _save_files(project, slug, {**files, name: json.dumps(record, sort_keys=True).encode()})
+    except (OSError, ValueError):
+        return None
+    return record if _shown_intact(record) and (record.get("pr"), record.get("head")) == (number, head) else None
+
+
+def pr_images_view(project: str, task: dict) -> dict | None:
+    """The current PR's pictures as a merge card shows them: one entry per path with its before and after copies,
+    replaced pictures first, then new and removed ones, and the paths it cannot show; None for a PR that changes no
+    pictures."""
+    record = pr_images(project, task["slug"], task)
+    if record and record.get("unreadable"):
+        return {"available": False, "pictures": [], "not_shown": []}
+    if not record or not (record["images"] or record.get("not_shown")):
+        return None
+    api = shown_api(project, task["slug"], "pr", record["pr"])
+    pictures = {}
+    for item in record["images"]:
+        entry = pictures.setdefault(item["path"], {"path": item["path"], "name": item["path"].rsplit("/", 1)[-1],
+                                                   "change": item["change"], "before": None, "after": None})
+        entry[item["side"]] = {"url": f"{api}/files/{item['name']}", "width": item["width"], "height": item["height"]}
+    order = ("changed", "added", "removed")
+    return {"available": _shown_available(project, task["slug"], record),
+            "pictures": sorted(pictures.values(), key=lambda picture: order.index(picture["change"])),
+            "not_shown": record.get("not_shown", [])}
 
 
 def _earlier_preview(question: dict) -> dict:
@@ -2327,13 +2457,18 @@ def _validate_questions(payload: dict) -> list[dict]:
 
 
 def shown_question(payload: dict) -> dict:
-    """The member a block's shown files go to: a proposal, marked as one, or a lone unmarked question."""
+    """The member a block's shown files go to: the one marked as a proposal, else the one marked as the held PR's
+    merge question, else a lone unmarked question."""
     items = _validate_questions(payload)
-    marked = [item for item in items if item["review"] == "proposal"]
     if len(items) == 1 and items[0]["review"] is None:
         return items[0]
+    for mark in ("proposal", "changes"):
+        marked = [item for item in items if item["review"] == mark]
+        if marked:
+            break
     if len(marked) != 1:
-        raise TransitionError('--show goes to one proposal: mark exactly one question "review": "proposal"')
+        raise TransitionError('--show goes to one approval: mark exactly one question "review": "proposal", '
+                              'or with no proposal one "changes"')
     return marked[0]
 
 
@@ -2573,14 +2708,15 @@ def _question_review(project: str, task: dict, question: dict) -> dict | None:
 def question_view(project: str, task: dict, question: dict) -> dict:
     group = _group_for(task, question)
     shown = question.get("shown")
+    held = question["status"] == "open" and _references_held_pr(task, question)
     return {**{k: v for k, v in question.items() if k not in ("message", "acceptance_message", "acceptance_delivered",
                                                                "design", "shown")},
             **({"shown": shown_view(project, task["slug"], shown, question["id"], question["revision"],
                                      shown_versions(project, task["slug"], task))}
                if shown else {"shown": _earlier_preview(question)} if question.get("design") else {}),
             "review": _question_review(project, task, question),
-            # The held PR's open question links the PR it asks to merge.
-            "pr": task["prs"][-1] if question["status"] == "open" and _references_held_pr(task, question) else None,
+            # The held PR's open question links the PR it asks to merge and shows the pictures it changes.
+            "pr": task["prs"][-1] if held else None, "pr_images": pr_images_view(project, task) if held else None,
             "options": question_choices(question), "recommended_key": _recommended_key(question),
             "response": question.get("response"),
             "group_id": group["id"], "group_revision": group["revision"], "group_anchor_id": group["anchor_id"],
@@ -3077,7 +3213,8 @@ def review_row(project: str, task: dict) -> dict | None:
     return {"project": project, "slug": task["slug"], "title": task.get("title"), "kind": "review", "pr": number,
             "review_hold_id": task.get("hold_merge_id"),
             "question": f"Review PR #{number} before merge", "detail": task["hold_merge"],
-            "review": reviews.status(project, task, "changes"), "recommendation": None, "asked": at, "since": at}
+            "review": reviews.status(project, task, "changes"), "pr_images": pr_images_view(project, task),
+            "recommendation": None, "asked": at, "since": at}
 
 
 def decisions(project: str) -> list[dict]:
