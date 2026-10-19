@@ -162,6 +162,7 @@ test("Settings shows the version, the command that installs a newer one and the 
   let automatic = true;
   let refuseAutomatic = false;
   let saveGate: Promise<void> | null = null;
+  let checkGate: Promise<void> | null = null;
   await page.route("**/api/update-automatic", async (route) => {
     const { enabled } = route.request().postDataJSON() as { enabled: boolean };
     automaticSwitches.push(enabled);
@@ -175,6 +176,7 @@ test("Settings shows the version, the command that installs a newer one and the 
   await page.route("**/api/update-check", async (route) => {
     const { enabled } = route.request().postDataJSON() as { enabled: boolean };
     switches.push(enabled);
+    if (checkGate) await checkGate;
     const machine = (await (await page.request.get("/api/machine")).json()) as Json;
     state.update = enabled ? { ...available, automatic, automatic_pending: automatic } : { ...installed, check: false, automatic: false };
     return route.fulfill({ json: { ...machine, update_check: enabled, update: state.update } });
@@ -257,11 +259,24 @@ test("Settings shows the version, the command that installs a newer one and the 
   await expect(autoToggle).toBeChecked();
   await expect(autoToggle).toBeEnabled();
 
-  await walk.state("14-settings-check-off", {
-    action: () => toggle.click(),
-    visible: [version.getByText("v0.1.0", { exact: true }), page.getByText(/Twice a day Altitude asks GitHub for the latest release/)],
-    hidden: [version.getByRole("button", { name: "Copy" }), page.getByRole("status", { name: "New version" })],
-  });
+  // Checks off hide the newer release and its notice at the press, while the save is still on its way.
+  let releaseCheck!: () => void;
+  checkGate = new Promise<void>((resolve) => { releaseCheck = resolve; });
+  try {
+    await walk.state("14-settings-check-off", {
+      action: () => toggle.click(),
+      visible: [version.getByText("v0.1.0", { exact: true }), page.getByText(/Twice a day Altitude asks GitHub for the latest release/),
+        page.getByRole("status", { name: "Saving…", exact: true })],
+      hidden: [version.getByRole("button", { name: "Copy" }), page.getByRole("status", { name: "New version" })],
+    });
+    await expect(toggle).not.toBeChecked();
+    await expect(autoToggle).not.toBeChecked();
+  } finally {
+    releaseCheck();
+    checkGate = null;
+  }
+  await expect(page.getByRole("status", { name: "Saving…", exact: true })).toBeHidden();
+  await expect(page.getByRole("status", { name: "New version" })).toBeHidden();
   await expect(toggle).not.toBeChecked();
   await expect(autoToggle).not.toBeChecked();
   await expect(autoToggle).toBeDisabled();

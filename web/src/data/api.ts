@@ -132,10 +132,14 @@ export async function checkTrust(): Promise<TrustCheck> {
   return "unknown";
 }
 
-/** Paired devices; one being removed has already left the list. */
+/**
+ * Paired devices; another one being removed has already left the list. This browser's own row stays, saying
+ * Removing…, until the pairing screen replaces the page.
+ */
 export function useDevices() {
   const removing = useSaving<string>(["devices"]);
-  const select = useCallback((data: Devices) => removing.length ? { ...data, devices: data.devices.filter((device) => !removing.includes(device.id)) } : data, [removing]);
+  const select = useCallback((data: Devices) => removing.length
+    ? { ...data, devices: data.devices.filter((device) => device.id === data.current || !removing.includes(device.id)) } : data, [removing]);
   return useQuery({ queryKey: ["devices"], queryFn: async () => DevicesSchema.parse(await api("/api/devices")), select });
 }
 
@@ -648,10 +652,13 @@ export const ImprovementSettingsSchema = z
   .passthrough();
 export type ImprovementSettings = z.infer<typeof ImprovementSettingsSchema>;
 
-/** Kept under the project's key, so the press refetch and the change stream refresh it with the project. */
+/**
+ * Kept under the project's key, so the press refetch and the change stream refresh it with the project. While Weekly
+ * saves, its line is empty: Altitude writes it from the saved schedule.
+ */
 export function useImprovementSettings(project: string) {
   const saving = useSaving<WeeklyChange>(["project", project, "improvement"]);
-  const select = useCallback((data: ImprovementSettings) => saving.reduce((view, change) => ({ ...view, weekly: change.on }), data), [saving]);
+  const select = useCallback((data: ImprovementSettings) => saving.reduce((view, change) => ({ ...view, weekly: change.on, line: "" }), data), [saving]);
   return useQuery({
     queryKey: ["project", project, "improvement"],
     queryFn: async () => ImprovementSettingsSchema.parse(await api(`/api/improve/${encodeURIComponent(project)}`)),
@@ -1095,7 +1102,10 @@ type MachineChange = { terminal: boolean } | { validation: boolean };
 export function useMachineSwitch(setting: "terminal" | "validation") {
   return useSave<MachineChange, Machine>(["machine"], (change) => "terminal" in change ? saveTerminalAccess(change.terminal) : saveValidationAccess(change.validation),
     async (client, machine) => {
-      client.setQueryData(["machine"], machine);
+      // Only this switch's answer is taken: the other switch's save may have landed after this reply was made.
+      client.setQueryData<Machine>(["machine"], (old) => old && (setting === "terminal"
+        ? { ...old, terminal: machine.terminal, terminal_unavailable: machine.terminal_unavailable }
+        : { ...old, validation: machine.validation, validation_unavailable: machine.validation_unavailable }));
       if (setting === "terminal") await client.invalidateQueries({ queryKey: ["terminal"] });
     });
 }
@@ -1393,8 +1403,14 @@ export const overviewQuery = {
 type UpdateChange = { update: { check: boolean } | { automatic: boolean } };
 type NewTasksChange = { new_tasks: Choice; expected: Choice };
 type OverviewChange = UpdateChange | NewTasksChange;
+/** Checks off hide the newer release and stop automatic updates; automatic updates off stop the one pending. */
+const applyUpdate = (update: Update, change: UpdateChange["update"]): Update => {
+  const check = "check" in change ? change.check : update.check;
+  const automatic = check && ("automatic" in change ? change.automatic : update.automatic);
+  return { ...update, check, automatic, ...check ? {} : { available: null }, ...automatic ? {} : { automatic_pending: false, waiting_for: [] } };
+};
 const applyOverview = (data: Overview, change: OverviewChange): Overview => "update" in change
-  ? data.update ? { ...data, update: { ...data.update, ...change.update } } : data
+  ? data.update ? { ...data, update: applyUpdate(data.update, change.update) } : data
   : data.new_tasks ? { ...data, new_tasks: { ...data.new_tasks, value: change.new_tasks, unavailable: null } } : data;
 
 /**
@@ -1413,8 +1429,8 @@ export function useOverview(refetchOnMount = true) {
 export function useSaveUpdates() {
   return useSave<UpdateChange, Machine & { update: Update | null }>(["overview"],
     ({ update }) => "automatic" in update ? saveUpdateAutomatic(update.automatic) : saveUpdateCheck(update.check),
-    (client, { update, ...machine }) => {
-      client.setQueryData(["machine"], machine);
+    (client, { update, update_check, update_automatic }) => {
+      client.setQueryData<Machine>(["machine"], (old) => old && { ...old, update_check, update_automatic });
       client.setQueryData<Overview>(["overview"], (overview) => overview && { ...overview, update });
     });
 }

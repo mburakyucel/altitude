@@ -2096,7 +2096,7 @@ browsers, each with its name ("Safari on iPhone", "Home Screen app on iPhone", "
 once in the row ("It will need a new code to open Altitude again.", or "This browser will need…" for
 the current one) with **Cancel**, focused, and a red **Remove device**; Escape cancels. **Remove device**
 takes the row away at once; a refused removal brings it back with "Not removed: <reason>" and **Retry**.
-Removing the current device shows §3.16. Below,
+Removing the current device keeps its row, its button disabled with **Removing…**, until §3.16 shows. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes. On the other device, open <HTTPS address> and type it." (without HTTPS: "type it on the Pair this
 device screen."), the address's QR code with "Scan with a phone to open Altitude.", "Before trusting the
@@ -2151,7 +2151,7 @@ release. Nothing else is sent. Turning this off also stops automatic updates." A
 updates** switch (on after install) says "Install new versions at the next quiet moment. Turn this
 off to be asked before installing." Both move at the press and
 stay disabled with **Saving…** until the save lands; a refused change moves back with "Not saved: <reason>" and **Retry**.
-Turning checks off hides the newer release and notice and disables Automatic updates, retaining
+Turning checks off hides the newer release and notice at the press and disables Automatic updates, retaining
 its saved preference for when checks resume. A failed update retains **Try again** in About even
 after dismissing its banner. Source deployments omit these rows; containers show their image-managed
 version without update switches.
@@ -2341,7 +2341,8 @@ The project page `/settings/projects/<name>` has a labelled **Settings** back bu
   Turn on above Cancel; centered at 1440px): **Turn on improvement suggestions for <name>?**, what the
   model reads and how much of the plan it uses, then **Cancel** (focused) and the primary **Turn on**,
   which agrees and completes the press. Cancel, Escape and the scrim change nothing. A switch change
-  moves the switch at once and shows Saving… under the card with the controls disabled; a refusal shows
+  moves the switch at once and shows Saving… under the card with the controls disabled, the Weekly line
+  empty until the saved schedule is read; a refusal shows
   "Not saved: <reason>" in red with **Retry**, and the switch returns to its saved value. When the terms change, chat says "Improvement suggestions are off
   until you agree to the new terms in settings.", linking here.
 - **Project**: **Setup** with its status, opening §3.12, and **Remove project** ("Detach L3. Files

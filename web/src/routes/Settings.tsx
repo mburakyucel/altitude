@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
+import { useSaving } from "../data/saves";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
 import { HostingCard, networkSummary } from "../components/Network";
@@ -471,7 +472,7 @@ function ValidationSwitch({ machine }: { machine: Machine }) {
  * One paired device; Remove asks once before it signs the device out. The row leaves at the press; a refused
  * removal brings it back saying why, with Retry.
  */
-function DeviceRow({ device, current, failure, remove }: { device: Device; current: boolean; failure: Error | null; remove: () => void }) {
+function DeviceRow({ device, current, removing, failure, remove }: { device: Device; current: boolean; removing: boolean; failure: Error | undefined; remove: () => void }) {
   const [confirm, setConfirm] = useState(false);
   return <li className="device-row">
     <span className="device-name"><span className="device-title"><strong>{device.name}</strong>{current ? <span className="device-current">This device</span> : null}</span>
@@ -484,7 +485,8 @@ function DeviceRow({ device, current, failure, remove }: { device: Device; curre
       onKeyDown={(event) => { if (event.key === "Escape") setConfirm(false); }}>
       <button type="button" className="btn" autoFocus onClick={() => setConfirm(false)}>Cancel</button>
       <button type="button" className="btn btn-danger" onClick={() => { setConfirm(false); remove(); }}>Remove device</button>
-    </span> : <button type="button" className="btn" onClick={() => setConfirm(true)}>Remove</button>}
+    </span> : <button type="button" className="btn" disabled={removing} onClick={() => setConfirm(true)}>
+      <BusyLabel busy={removing} label="Remove" working="Removing…" /></button>}
   </li>;
 }
 
@@ -492,6 +494,13 @@ function DeviceRow({ device, current, failure, remove }: { device: Device; curre
 function DevicesPage() {
   const devices = useDevices();
   const removal = useRemoveDevice();
+  const removing = useSaving<string>(["devices"]);
+  // Each removal's own answer, so a refused one still says why while another is on its way.
+  const [failures, setFailures] = useState<Record<string, Error>>({});
+  const remove = (id: string) => {
+    setFailures(({ [id]: _, ...rest }) => rest);
+    removal.mutateAsync(id).catch((error: Error) => setFailures((all) => ({ ...all, [id]: error })));
+  };
   const network = useMachine().data?.network;
   const local = network && !("error" in network) && network.scope === "local";
   const [code, setCode] = useState<{ status: "idle" | "making" } | { status: "made"; code: PairingCode } | { status: "failed"; error: Error }>({ status: "idle" });
@@ -509,7 +518,7 @@ function DevicesPage() {
       : devices.isError ? <p role="alert" className="text-danger">Could not load devices. <button className="link" onClick={() => void devices.refetch()}>Retry</button></p>
         : <ul className="settings-card device-list" aria-label="Paired devices">
           {devices.data.devices.map((device) => <DeviceRow key={device.id} device={device} current={device.id === devices.data.current}
-            failure={removal.variables === device.id ? removal.error : null} remove={() => removal.mutate(device.id)} />)}
+            removing={removing.includes(device.id)} failure={failures[device.id]} remove={() => remove(device.id)} />)}
           {devices.data.devices.length === 0 ? <li className="text-muted">No browser is paired. This page is open through this computer’s own key.</li> : null}
         </ul>}
     <section className="settings-card device-pair" aria-label="Pair another device">

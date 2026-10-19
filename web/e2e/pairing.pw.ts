@@ -178,10 +178,16 @@ test("a code pairs the browser, and removing it in Settings returns it to the pa
     visible: [remove], hidden: [mine.getByText("This browser will need a new code"), confirm],
   });
   await remove.click();
-  await walk.state("06-removed", {
+  // This browser's row stays while its removal is on its way: the pairing screen is what it ends in.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/devices/revoke", async (route) => { await held; await route.continue(); }, { times: 1 });
+  await walk.state("05c-removing-this-device", {
     action: () => confirm.getByRole("button", { name: "Remove device", exact: true }).click(),
-    visible: [heading, removed], hidden: [list],
+    visible: [mine.getByText("Removing…")], hidden: [confirm, list.getByText(/^No browser is paired/)],
   });
+  await expect(mine.getByRole("button")).toBeDisabled();
+  await walk.state("06-removed", { action: () => release(), visible: [heading, removed], hidden: [list] });
   const devices = await (await request.get("/api/devices")).json();
   expect(devices.devices.map((device: { name: string }) => device.name)).toEqual(["Playwright browser"]);
 });

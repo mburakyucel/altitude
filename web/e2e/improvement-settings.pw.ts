@@ -79,7 +79,8 @@ test("the sheet comes first, Turn on completes the press, and each Weekly and ru
   await press(weekly);
   const saved = await hold(page);
   await press(turnOn);
-  await walk.state("04-turn-on-saving", { visible: [area.getByText("Saving…", { exact: true })], hidden: [sheet] });
+  // The line describes the saved schedule, so it waits for the save rather than describing Weekly off.
+  await walk.state("04-turn-on-saving", { visible: [area.getByText("Saving…", { exact: true })], hidden: [sheet, offLine, next] });
   await expect(weekly).toBeChecked();
   await expect(weekly).toBeDisabled();
   await saved();
@@ -97,6 +98,7 @@ test("the sheet comes first, Turn on completes the press, and each Weekly and ru
     body: JSON.stringify({ error: "Another window changed this setting." }) }));
   await press(weekly);
   await expect(weekly).not.toBeChecked();
+  await expect(next).toBeHidden();
   await refused();
   const retry = area.getByRole("button", { name: "Retry", exact: true });
   await walk.state("08-refused-in-red", { visible: [area.getByRole("alert").filter({ hasText: "Not saved: Another window changed this setting." }), retry, next], hidden: [offLine] });
