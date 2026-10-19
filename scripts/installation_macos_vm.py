@@ -28,9 +28,10 @@ interrupts two mutation runs, whose cleanup lists processes with `ps`, from pack
 leave no scratch folder.
 `source` installs from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
 repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
-`incident`, `update` and `session` install the release into the account's own home with a scripted fictional engine
-and the tests' fake GitHub CLI, then drive the guest's own service through the revision's tests/macos_guest_runtime.py
-rows. `online`, run only when named, is the one phase whose guest keeps its network: the guest downloads
+`incident`, `update`, `terminal` and `session` install the release into the account's own home with a scripted fictional
+engine and the tests' fake GitHub CLI, then drive the guest's own service through the revision's
+tests/macos_guest_runtime.py rows; `update` and `terminal` first trust Altitude's authority on the desktop for Safari,
+whose page those rows read. `online`, run only when named, is the one phase whose guest keeps its network: the guest downloads
 Homebrew's python@3.13 and Google Chrome and Firefox from their publishers, installs the latest published release
 through the public command from GitHub itself, whose service must run on Python 3.13, and Chrome and Firefox must
 refuse Altitude's address before `alt trust` on the desktop and open it after.
@@ -978,6 +979,23 @@ class Desktop:
                 path.write_text(text.replace(self.password, "[the account's password]"))
         return answered.stdout.replace("\r", "") if ended and self.password not in answered.stdout else ""
 
+    def trust(self, alt: str) -> tuple[dict | None, str]:
+        """`alt trust` run in Terminal and answered y on the keyboard once it asks, then macOS's password window
+        given the account's password: the window, if it showed, and the command's transcript."""
+        log, done = self.terminal("trust-desktop", f"{alt} trust")
+        window = None
+        if self.within(120, f"grep -q 'Trust it?' {log}"):
+            self.guest.command("type y")
+            self.guest.expect("typed", 30)
+            window = self.authorize("trust-window")
+        return window, self.transcript("trust-desktop", log, done)
+
+    def safari(self) -> bool:
+        """Safari's own WebDriver listening on the guest's port 4444 in the desktop session, remote automation on."""
+        self.guest.ssh("sudo -n safaridriver --enable")
+        self.agent("safaridriver", ["/usr/bin/safaridriver", "-p", "4444"])
+        return self.within(60, "curl -sf http://127.0.0.1:4444/status")
+
 
 def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unchanged: str, printed: str) -> dict:
     """#1006 checks 1 and 2 for Safari: on the account's desktop, `alt trust` run in Terminal, as the installer runs it
@@ -990,8 +1008,7 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
     evidence."""
     address, used = printed.split("#pair=")[0].removesuffix("/projects"), printed.split("#pair=")[1]
     desktop = Desktop(guest, results, step)
-    within, agent, terminal, authorize, transcript = (desktop.within, desktop.agent, desktop.terminal,
-                                                      desktop.authorize, desktop.transcript)
+    agent, terminal, authorize, transcript = desktop.agent, desktop.terminal, desktop.authorize, desktop.transcript
 
     def driver(method: str, path: str, body: dict | None = None):
         """One request to Safari's own WebDriver in the desktop session: its answer's value."""
@@ -1034,18 +1051,10 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
         """The installer's printed link with only its code replaced by a fresh one, as `alt pair` issues it."""
         return printed.replace(used, re.search(r"Pairing code: (\S+) ", guest.ssh(f"{alt} pair").stdout).group(1))
 
-    guest.ssh("sudo -n safaridriver --enable")
-    agent("safaridriver", ["/usr/bin/safaridriver", "-p", "4444"])
-    within(60, "curl -sf http://127.0.0.1:4444/status")
+    desktop.safari()
     untrusted = (browse([f"{address}/"]) or [{}])[0]
     guest.ssh(f"cp ~/.config/altitude/tls/ca.crt {SHARED}/trusted-ca.crt")
-    log, done = terminal("trust-desktop", f"{alt} trust")
-    window = None
-    if within(120, f"grep -q 'Trust it?' {log}"):
-        guest.command("type y")
-        guest.expect("typed", 30)
-        window = authorize("trust-window")
-    trusted = transcript("trust-desktop", log, done)
+    window, trusted = desktop.trust(alt)
     settings = step("trust-desktop-settings", listed).stdout
     # #926: the pair screen's own trust check, then a printed link pairing Safari into the app and leaving no code in
     # its address or history; a used and a malformed link recover in another window; the OS opens a link in Safari.
@@ -1436,13 +1445,7 @@ def phase_online(guest: Guest, repository: str, results: Path, record: dict, inp
             return {"error": f"no answer: {seen.stderr.strip()[-300:]}"}
 
     before = {"chrome": chrome("before"), "firefox": firefox("before")}
-    log, done = desktop.terminal("trust-desktop", f"{alt} trust")
-    window = None
-    if desktop.within(120, f"grep -q 'Trust it?' {log}"):
-        guest.command("type y")
-        guest.expect("typed", 30)
-        window = desktop.authorize("trust-window")
-    trusted = desktop.transcript("trust-desktop", log, done)
+    window, trusted = desktop.trust(alt)
     after = {"chrome": chrome("after"), "firefox": firefox("after")}
     record["trust"] = {"window": window, "before": before, "after": after}
     accepted = bool(window) and trusted.endswith("exit 0\n")
@@ -1767,10 +1770,30 @@ git push -q origin main && git rev-parse HEAD""")
 # finishes within `alt task run`'s ten minutes.
 RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
                 "grants": ("grants", "contention", "sign-in"), "incident": ("incident", "schedule"),
-                "update": ("operator-step", "quiet-point"), "session": ("scratch", "coordinator-channel", "logout-login")}
+                "update": ("quiet-point",), "terminal": ("operator-step", "terminal-hold"),
+                "session": ("scratch", "coordinator-channel", "logout-login")}
+# The phases whose rows read Altitude's page in Safari.
+BROWSED = ("update", "terminal")
 GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
 # Rows may end the account's session, so they run in the background while the host polls.
 ROWS_BUDGET = 420
+
+
+def browser(guest: Guest, results: Path) -> None:
+    """Safari ready for the rows on the account's desktop: Altitude's authority trusted through `alt trust` and macOS's
+    password window, as the installer offers it, since Safari's WebDriver cannot accept a certificate Safari does not
+    trust, and its WebDriver listening for the rows' own windows."""
+    def step(name: str, command: str) -> subprocess.CompletedProcess:
+        result = guest.ssh(f"zsh -lc {quote(command)}", timeout=120, check=False)
+        (results / f"{name}.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
+        return result
+
+    desktop = Desktop(guest, results, step)
+    window, trusted = desktop.trust(f"/Users/{ACCOUNT}/.local/bin/alt")
+    if not window or "Trusted in macOS login keychain" not in trusted:
+        raise Stop("Safari's trust of Altitude's authority failed; see trust-desktop.log")
+    if not desktop.safari():
+        raise Stop("Safari's WebDriver did not start")
 
 
 def runtime(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, phase: str) -> None:
@@ -1794,6 +1817,8 @@ def runtime(guest: Guest, repository: str, results: Path, record: dict, inputs: 
         (results / f"{name}.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
         if result.returncode or expected not in result.stdout:
             raise Stop(f"{name} failed; see {name}.log")
+    if phase in BROWSED:
+        browser(guest, results)
     # The operator's shell, as it installed: the fake GitHub CLI first on PATH for `alt` commands run from it.
     rows = (f"PATH={SHARED}/fixture/bin:$PATH LANE_VERSION={version} LANE_LATEST={SHARED}/root/repos/{repository}/releases/latest "
             f"{script} rows {' '.join(RUNTIME_ROWS[phase])} >{SHARED}/rows.jsonl 2>{SHARED}/rows.err; "
@@ -1844,10 +1869,17 @@ def phase_incident(guest: Guest, repository: str, results: Path, record: dict, i
 
 
 def phase_update(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
-    """A command the coordinator hands the operator waits in Needs you until the project terminal runs it to its end
-    (#1017); an automatic update offered during a validation run waits for it, holding new runs, and installs itself
-    once the run ends, while the validating task's worker stays in its turn (#1003)."""
+    """An automatic update offered during a validation run waits for it, holding new runs, and installs itself once the
+    run ends, while the validating task's worker stays in its turn; Safari shows what it waits for, its installation
+    and its result (#1003)."""
     runtime(guest, repository, results, record, inputs, "update")
+
+
+def phase_terminal(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """A command the coordinator hands the operator waits in Needs you until the project terminal runs it to its end
+    (#1017); an automatic update waits for the open project terminal, as Safari shows, and installs itself once it
+    closes (#1003)."""
+    runtime(guest, repository, results, record, inputs, "terminal")
 
 
 def phase_session(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
@@ -1863,7 +1895,7 @@ PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle
           "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home,
           "mutation": phase_mutation, "source": phase_source,
           "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "update": phase_update,
-          "session": phase_session,
+          "terminal": phase_terminal, "session": phase_session,
           "published": phase_published, "online": phase_online, "mutation-complete": phase_mutation_complete}
 # The phases a run includes only when named: `published` with --published, `online` and `mutation-complete` with
 # --phase.
