@@ -59,10 +59,23 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   expect((await read()).daemon_request).toBeFalsy();
   await expect(draft(page)).toHaveValue("Keep this unsent instruction.");
   await start(page);
+  // From the press the confirmation's Switch reads Switching… until Altitude accepts the request.
+  let releaseSwitch!: () => void;
+  const switchHeld = new Promise<void>((resolve) => { releaseSwitch = resolve; });
+  await page.route("**/api/task/action", async (route) => { await switchHeld; await route.continue(); }, { times: 1 });
   await switchButton(page).click();
+  await walk.state("01b-switching-at-the-press", { visible: [confirm.getByRole("button", { name: "Switching…", exact: true })], hidden: [switchButton(page)] });
+  releaseSwitch();
   await walk.state("02-preparing-card-stop-and-draft", { visible: [card(page), card(page).getByRole("button", { name: "Switch now", exact: true }), card(page).getByRole("button", { name: "Cancel switch", exact: true }), page.getByRole("button", { name: "Stop", exact: true }).first()], hidden: [confirm] });
   expect((await read()).attempt).toBe(before.attempt);
+  // From the press Cancel switch reads Cancelling… while Altitude carries it out, and Switch now waits.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/task/action", async (route) => { await held; await route.continue(); }, { times: 1 });
   await card(page).getByRole("button", { name: "Cancel switch", exact: true }).click();
+  await walk.state("02b-cancelling-at-the-press", { visible: [card(page).getByRole("button", { name: "Cancelling…", exact: true })], hidden: [card(page).getByRole("button", { name: "Cancel switch", exact: true })] });
+  await expect(card(page).getByRole("button", { name: "Switch now", exact: true })).toBeDisabled();
+  release();
   await expect.poll(async () => (await read()).transfer.request.status).toBe("cancelled");
   await walk.state("03-cancelled-restores-owner", { visible: [draft(page)], hidden: [card(page).getByRole("button", { name: "Switch now", exact: true })] });
   await expect(draft(page)).toHaveValue("Keep this unsent instruction.");
@@ -121,7 +134,13 @@ test("explicit switch now replaces a running owner and preserves the merge hold"
   await walk.state("01-switch-now-confirmation", { visible: [confirm, confirm.getByRole("button", { name: "Keep waiting", exact: true })], hidden: [] });
   await confirm.getByRole("button", { name: "Keep waiting", exact: true }).click();
   await card(page).getByRole("button", { name: "Switch now", exact: true }).click();
+  // From the press the dialog's Switch now reads Submitting… until Altitude accepts the request.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/task/action", async (route) => { await held; await route.continue(); }, { times: 1 });
   await confirm.getByRole("button", { name: "Switch now", exact: true }).click();
+  await walk.state("01b-submitting-at-the-press", { visible: [confirm.getByRole("button", { name: "Submitting…", exact: true })], hidden: [confirm.getByRole("button", { name: "Switch now", exact: true })] });
+  release();
   await expect.poll(async () => (await read()).state).toBe("queued");
   await walk.state("02-queued-has-no-conflicting-controls", { visible: [page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm, card(page).getByRole("button", { name: "Cancel switch", exact: true })] });
   expect((await request.post("/fixture/transfer", { data: { slug, launch: true } })).ok()).toBe(true);

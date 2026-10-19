@@ -299,9 +299,22 @@ test("Settings chooses what this device's alerts show, how often they come and w
   await walk.state("16-settings-alerts-off", { action: () => group.scrollIntoViewIfNeeded(), visible: [alertsSwitch, group.getByText("Altitude can alert you when a new decision arrives.")], hidden: [show, often, sound] });
   await expect(alertsSwitch).not.toBeChecked();
 
+  // The switch reads on from the press, "Turning on…" as its line, while this device subscribes.
+  await page.evaluate(() => {
+    const subscribe = PushManager.prototype.subscribe;
+    const gate = new Promise<void>((resolve) => { (window as unknown as { releaseSubscribe: () => void }).releaseSubscribe = resolve; });
+    PushManager.prototype.subscribe = function (this: PushManager, options?: PushSubscriptionOptionsInit) { return gate.then(() => subscribe.call(this, options)); };
+  });
+  await walk.state("16b-settings-alerts-turning-on", {
+    action: () => alertsSwitch.click(),
+    visible: [group.getByText("Turning on…", { exact: true })],
+    hidden: [group.getByText("Altitude can alert you when a new decision arrives.")],
+  });
+  await expect(alertsSwitch).toBeChecked();
+  await expect(alertsSwitch).toBeDisabled();
   await walk.state("17-settings-alerts-on", {
     action: async () => {
-      await alertsSwitch.click();
+      await page.evaluate(() => (window as unknown as { releaseSubscribe: () => void }).releaseSubscribe());
       await sound.scrollIntoViewIfNeeded();
     },
     visible: [group.getByText(/even when Altitude is closed/), show, often, sound,

@@ -2043,7 +2043,10 @@ button.choice-button::after { content: ""; position: absolute; left: -1px; right
 .choice[data-primary][data-state="ready"] .choice-button { padding: 0 14px; background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .choice-pill { position: relative; display: inline-flex; max-width: 100%; }
 .choice-remove { position: absolute; right: 4px; top: 50%; translate: 0 -50%; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); cursor: pointer; }
-.choice-remove:hover { background: var(--accent-tint); color: var(--text-primary); }
+.choice-remove:hover:not(:disabled) { background: var(--accent-tint); color: var(--text-primary); }
+.choice-remove:disabled { cursor: default; }
+.choice-remove:disabled:not([aria-busy]) { opacity: .55; }
+.choice-remove .spinner { width: 12px; height: 12px; border-width: 1.5px; }
 .choice-remove::after { content: ""; position: absolute; inset: 50% auto auto 50%; width: var(--target-min); height: var(--target-min); translate: -50% -50%; }
 .choice-about { min-width: 0; color: var(--text-muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
 .choice-note { font-size: var(--text-meta); }

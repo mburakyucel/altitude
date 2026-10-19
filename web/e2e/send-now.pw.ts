@@ -37,7 +37,13 @@ test.describe("L2 Send now", () => {
     const button = selected.getByRole("button", { name: "Send now", exact: true });
     await walk.state("l2-02-queued-actions", { visible: [button, selected.getByRole("button", { name: "Remove", exact: true })], hidden: [] });
     if (info.project.name === "phone") expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    // From the press Send now shows its spinner until Altitude accepts the request.
+    let releaseSend!: () => void;
+    const sendHeld = new Promise<void>((resolve) => { releaseSend = resolve; });
+    await page.route("**/api/l2/send-now", async (route) => { await sendHeld; await route.continue(); }, { times: 1 });
     await button.click();
+    await walk.state("l2-02b-sending-at-the-press", { visible: [selected.getByRole("button", { name: "Sending now", exact: true })], hidden: [button] });
+    releaseSend();
     await walk.state("l2-03-sending-now", { visible: [selected.getByRole("status", { name: "Sending", exact: true })], hidden: [selected.getByText("Delivered to session"), selected.getByRole("button", { name: /^Send(ing)? now/ }), selected.getByRole("button", { name: "Remove", exact: true })] });
     expect((await status()).tasks[0].state).toBe("running");
     expect((await status()).tasks[0].send_now.ids).toEqual(queuedIds);

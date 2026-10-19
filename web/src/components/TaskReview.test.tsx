@@ -120,6 +120,29 @@ describe("Adversarial review", () => {
       expect.objectContaining({ action: "request", review_id: failed.id, subject: "changes" })]);
   });
 
+  it("says Stopping the reviewer… while a held Stop saves, and Saving review request… while a held request saves", async () => {
+    const running = ReviewSchema.parse({ ...requested, state: "running", can_cancel: true });
+    let release!: (response: Response) => void;
+    const app = setup(withReviews(running), () => new Promise((resolve) => { release = resolve; }));
+    await screen.findByText("· in progress");
+    const feedback = () => document.querySelector(".task-review-feedback");
+    expect(feedback()).toBeNull();
+    await app.user.click(card(running.id).getByRole("button", { name: "Stop" }));
+    expect(feedback()).toHaveTextContent(/^Stopping the reviewer…$/);
+    expect(screen.queryByText(/Saving review request…/)).toBeNull();
+    await act(async () => release(json({ ok: true, review: { ...running, cancel_requested: true } })));
+    await app.settled();
+    expect(feedback()).toBeNull();
+    const failed = ReviewSchema.parse({ ...requested, state: "cancelled", can_again: true });
+    await app.update(withReviews(failed));
+    await app.user.click(await card(failed.id).findByRole("button", { name: "Try again" }));
+    expect(feedback()).toHaveTextContent(/^Saving review request…$/);
+    expect(screen.queryByText(/Stopping the reviewer…/)).toBeNull();
+    await act(async () => release(json({ ok: true, review: requested })));
+    await app.settled();
+    expect(feedback()).toBeNull();
+  });
+
   it.each([390, 1440])("a done review shows the verdict and counts, and View opens its findings at %i", async (width) => {
     setViewport(width);
     const app = setup(withReviews(completed));

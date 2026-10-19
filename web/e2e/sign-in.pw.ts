@@ -134,8 +134,14 @@ test("the operator signs Altitude in to Claude from the page without seeing a to
   await noToken();
 
   await v.tryAgain.click();
-  await walk.state("10-cancelled", {
+  const releaseCancel = await hold(page, "cancel");
+  await walk.state("09b-cancelling", {
     action: () => v.cancel.click(),
+    visible: [row.getByRole("button", { name: "Cancelling…" }), v.finish],
+    hidden: [v.signingIn],
+  });
+  await walk.state("10-cancelled", {
+    action: () => releaseCancel(),
     visible: [v.again],
     hidden: [v.field, v.link, row.getByRole("alert")],
   });

@@ -125,8 +125,9 @@ interface StubOptions {
   /** The server's answer to a message; none (or a promise of none) saves it as the server does. */
   message?: () => Response | Promise<Response | undefined> | undefined;
   action?: () => Response | Promise<Response>;
-  task?: () => Response;
+  task?: () => Response | Promise<Response>;
   sendNow?: () => Response | Promise<Response>;
+  remove?: () => Response | Promise<Response>;
   shown?: (url: string) => Response;
 }
 
@@ -228,7 +229,7 @@ function stub(task: unknown, options: StubOptions = {}) {
     if (url.includes("/api/task/action")) return options.action ? options.action() : jsonResponse({ ok: true });
     if (url.includes("/api/transcript/")) return jsonResponse(transcript);
     if (url.includes("/api/l2/send-now")) return options.sendNow ? options.sendNow() : jsonResponse({ ok: true });
-    if (url.includes("/api/l2/remove")) return jsonResponse({ ok: true });
+    if (url.includes("/api/l2/remove")) return options.remove ? options.remove() : jsonResponse({ ok: true });
     if (url.startsWith("/api/terminal/")) return jsonResponse(terminalRunning);
     if (url.startsWith("/api/shown/") && options.shown) return options.shown(url);
     if (url.includes("/api/task/")) {
@@ -375,6 +376,26 @@ describe("decision selections in the task conversation", () => {
     await user.click(within(row).getByRole("button", { name: "Remove" }));
     const removed = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/remove"));
     expect(JSON.parse(String(removed[0]?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", id: "approve" });
+  });
+
+  it("spins only the pressed × while its removal is held, and the pill leaves once the task reads it removed", async () => {
+    const approval = (id: string, pr: number) => ({ id, at: "2026-08-30T10:00:00Z", role: "operator", text: `Approved: merge PR #${pr}.`, delivery: { state: "queued", at: null, removable: true, send_now: false } });
+    let record = { ...running, messages: [...running.messages, approval("approve-1", 204), approval("approve-2", 205)] };
+    let release!: (response: Response) => void;
+    stub(record, { task: () => jsonResponse(record), remove: () => new Promise((resolve) => { release = resolve; }) });
+    const { user } = renderApp({ route });
+    await screen.findByText("PR #205");
+    const pill = (pr: number) => screen.getByText(`PR #${pr}`).closest<HTMLElement>(".choice-mine")!;
+    await user.click(within(pill(204)).getByRole("button", { name: "Remove" }));
+    const removing = within(pill(204)).getByRole("button", { name: "Removing" });
+    expect(removing).toHaveAttribute("aria-busy", "true");
+    expect(removing).toBeDisabled();
+    expect(within(pill(205)).getByRole("button", { name: "Remove" })).toBeDisabled();
+    record = { ...record, messages: record.messages.map((row) => row.id === "approve-1" ? { ...row, delivery: { state: "removed", at: null, removable: false, send_now: false } } : row) };
+    await act(async () => release(jsonResponse({ ok: true })));
+    await waitFor(() => expect(screen.queryByText("PR #204")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Removing" })).toBeNull();
+    expect(within(pill(205)).getByRole("button", { name: "Remove" })).toBeEnabled();
   });
 
   it("keeps a typed reply about a question in its bubble", async () => {
@@ -667,6 +688,46 @@ describe("Task on desktop", () => {
       action: "reject",
       reason: "waiting on the API",
     });
+  });
+
+  it("names Rejecting… on Reject task alone while its request is held, leaving Resume as Resume", async () => {
+    let release!: (response: Response) => void;
+    stub(held, { action: () => new Promise((resolve) => { release = resolve; }) });
+    const { user } = renderApp({ route });
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    const group = screen.getByRole("group", { name: "Reject this task?" });
+    await user.click(within(group).getByRole("button", { name: "Reject task" }));
+    expect(within(group).getByRole("button", { name: "Rejecting…" })).toBeDisabled();
+    expect(within(group).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Resume" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Resuming…" })).toBeNull();
+    await act(async () => release(jsonResponse({ ok: true })));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Reject this task?" })).toBeNull());
+  });
+
+  it("keeps Resuming… after the resume is accepted until the task read lands", async () => {
+    let record: unknown = held;
+    let releaseAction!: (response: Response) => void;
+    let releaseRead!: () => void;
+    let read: Promise<void> | null = null;
+    const fetchMock = stub(held, {
+      action: () => new Promise((resolve) => { releaseAction = resolve; }),
+      task: () => read ? read.then(() => jsonResponse(record)) : jsonResponse(record),
+    });
+    const { user } = renderApp({ route });
+    await user.click(await screen.findByRole("button", { name: "Resume" }));
+    expect(screen.getByRole("button", { name: "Resuming…" })).toBeDisabled();
+    read = new Promise((resolve) => { releaseRead = resolve; });
+    record = running;
+    await act(async () => releaseAction(jsonResponse({ ok: true })));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/task/altitude/fix-timer")).length).toBeGreaterThan(1));
+    expect(screen.getByRole("button", { name: "Resuming…" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+    await act(async () => releaseRead());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Resuming…" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
   });
 
   it("shows an unconfirmed Stop with status recheck when its request fails", async () => {

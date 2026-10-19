@@ -112,8 +112,8 @@ export function SignIn({ engine, label, signedIn }: { engine: string; label: str
       </ol>
       <p className="text-meta text-muted">The code works once, for this sign-in only.</p>
       <div className="sign-in-actions">
-        <button type="button" className="btn btn-ghost" disabled={finishing} onClick={() => void act("cancel")}>Cancel</button>
-        <button type="submit" className="btn btn-primary" disabled={finishing || !code.trim()}>{finishing ? <Busy text="Signing in…" /> : "Finish sign-in"}</button>
+        <button type="button" className="btn btn-ghost" disabled={finishing} onClick={() => void act("cancel")}>{busy === "cancel" ? <Busy text="Cancelling…" /> : "Cancel"}</button>
+        <button type="submit" className="btn btn-primary" disabled={finishing || !code.trim()}>{finishing && busy !== "cancel" ? <Busy text="Signing in…" /> : "Finish sign-in"}</button>
       </div>
     </form>;
   }

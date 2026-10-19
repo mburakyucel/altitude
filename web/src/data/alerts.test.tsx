@@ -764,6 +764,27 @@ describe("Notifications in Settings", () => {
     expect(notifications.queryByRole("combobox", { name: "Show" })).toBeNull();
   });
 
+  it("holds the switch on and says Turning on… while permission is asked, and puts it back off when refused", async () => {
+    const browser = alertingBrowser("default", "denied");
+    let answer!: (permission: NotificationPermission) => void;
+    browser.request.mockImplementation(() => new Promise<NotificationPermission>((resolve) => { answer = resolve; }));
+    mockFetch([question], null);
+    const { user } = renderApp({ route: "/settings" });
+    const notifications = await group();
+    const alerts = await alertSwitch();
+    await user.click(alerts);
+    expect(browser.request).toHaveBeenCalledTimes(1);
+    expect(alerts).toBeChecked();
+    expect(alerts).toBeDisabled();
+    expect(notifications.getByRole("status", { name: "Turning on…" })).toBeInTheDocument();
+    expect(notifications.queryByText("Altitude can alert you when a new decision arrives.")).toBeNull();
+    await act(async () => { (Notification as { permission: NotificationPermission }).permission = "denied"; answer("denied"); });
+    const refused = await notifications.findByRole("switch", { name: "Decision alerts" });
+    await waitFor(() => expect(refused).toHaveAttribute("aria-checked", "false"));
+    expect(notifications.queryByRole("status", { name: "Turning on…" })).toBeNull();
+    expect(notifications.queryByRole("combobox", { name: "Show" })).toBeNull();
+  });
+
   it("tells Altitude how often it may wake this device, and keeps the earlier pace when refused", async () => {
     const browser = alreadyOn([KEY], true);
     const stored = deviceStore();

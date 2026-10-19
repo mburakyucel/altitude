@@ -100,7 +100,14 @@ test("L2 messaging resumes its saved session, queues later input, stops and arch
   const confirm = page.getByRole("group", { name: "Reject this task?", exact: true });
   await expect(confirm.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
   await confirm.getByRole("textbox", { name: "Reason (optional)", exact: true }).fill("The fixture exercise is complete.");
+  // From the press Reject task reads Rejecting… until Altitude answers; the confirm stays until then.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/task/action", async (route) => { await held; await route.continue(); }, { times: 1 });
   await confirm.getByRole("button", { name: "Reject task", exact: true }).click();
+  await walk.state("04b-rejecting-at-the-press", { visible: [confirm.getByRole("button", { name: "Rejecting…", exact: true })], hidden: [confirm.getByRole("button", { name: "Reject task", exact: true })] });
+  await expect(confirm.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+  release();
   await expect.poll(async () => (await task()).state).toBe("rejected");
   await page.reload();
   await walk.state("05-rejected-read-only", {

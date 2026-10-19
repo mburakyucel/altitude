@@ -317,9 +317,11 @@ export default function Conversation({
     const pressed = (data?: ChatView) => [...(data?.queued ?? []), ...(data?.history ?? [])].filter((row) => row.offer_turn === turnId).length;
     const before = pressed(queryClient.getQueryData<ChatView>(["chat", name]));
     const sent = () => setAnnouncement("Create task sent");
+    let saved = false;
     try {
       await sendCreateTask(name, turnId);
       sent();
+      saved = true;
     } catch (error) {
       if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
         setPressError({ turnId, message: error.status === 409 ? error.message : `Not sent: ${error.message}` });
@@ -331,11 +333,15 @@ export default function Conversation({
         if (state && state.dataUpdatedAt > read && pressed(state.data) > before) sent();
         else setPressError({ turnId, message: state && state.dataUpdatedAt > read ? "Not sent" : "Not confirmed" });
       }
-    } finally {
-      setPress(null);
-      void queryClient.invalidateQueries({ queryKey: ["chat", name], refetchType: "all" });
-      void queryClient.invalidateQueries({ queryKey: ["project", name] });
     }
+    const reads = Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["chat", name], refetchType: "all" }),
+      queryClient.invalidateQueries({ queryKey: ["project", name] }),
+    ]);
+    // A saved press stays working until the chat reads it, so the pill never shows Create task meanwhile; a refused or
+    // lost one returns at once with its line, pressable again (a lost one has already read the chat).
+    if (saved) await reads;
+    setPress(null);
   }, [name, queryClient]);
 
   // A card opened from Needs you (#improvement-<run>) comes into view once, when it has rendered.
@@ -441,7 +447,8 @@ export default function Conversation({
               {turn.assistant.tasks?.length ? <TaskCards project={name} slugs={turn.assistant.tasks} tasks={tasks} enter={enter(`cards:${turn.id}`)} /> : null}
               {offer ? (
                 <CreateTask title={turn.assistant.offer!} state={offer} error={refused} onPress={() => void pressCreateTask(turn.id)}
-                  onRemove={pressRow && !pressRow.turn_id ? () => dequeue.mutate(pressRow.id) : undefined} removing={dequeue.isPending} />
+                  onRemove={pressRow && !pressRow.turn_id ? () => dequeue.mutate(pressRow.id) : undefined}
+                  removing={dequeue.isPending && dequeue.variables === pressRow?.id} removeDisabled={dequeue.isPending} />
               ) : refused ? <ChoiceError message={refused} /> : null}
             </Reply>
           ) : turn.error && !pressed ? (

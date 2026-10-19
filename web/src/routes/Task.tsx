@@ -536,7 +536,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           rows.push(choice.label ? <MessageRow key={`${key}-${index}`} at={state === "queued" ? null : message.at} mine enter={enter(`choice:${key}:${index}`, index ? null : `msg:${key}`)}>
             <Choice mine label={choice.label} about={choice.about} aboutShown
               {...deliveryChoice(state, choice.question?.resolution?.disposition === "answered" && choice.question.resolution.message_id === message.id)}
-              onRemove={message.delivery?.removable ? () => removal.mutate(message.id) : undefined} removing={removeBlocked} />
+              onRemove={message.delivery?.removable ? () => removal.mutate(message.id) : undefined}
+              removing={removal.isPending && removal.variables === message.id} removeDisabled={removeBlocked} />
             {last ? queueActions : null}
           </MessageRow> : <Bubble key={`${key}-${index}`} text={choice.text} at={message.at} state={state} enter={enter(`choice:${key}:${index}`, index ? null : `msg:${key}`)}>
             <span className="choice-about">{choice.about}</span>{last ? queueActions : null}
@@ -657,11 +658,14 @@ function useTaskActions(project: string, slug: string) {
   const [reason, setReason] = useState("");
   const act = useMutation({
     mutationFn: taskAction,
-    onSuccess: () => {
+    // The press stays busy until the task reads its outcome, so the button never returns to rest before the task moves.
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["task", project, slug] }),
+        queryClient.invalidateQueries({ queryKey: ["project", project] }),
+      ]);
       setConfirm("");
       setReason("");
-      void queryClient.invalidateQueries({ queryKey: ["task", project, slug] });
-      void queryClient.invalidateQueries({ queryKey: ["project", project] });
     },
   });
   const open = useCallback(
@@ -676,14 +680,14 @@ function useTaskActions(project: string, slug: string) {
     act.mutate({ project, slug, action: confirm, ...(confirm === "reject" && text ? { reason: text } : {}) });
   };
   const resume = () => act.mutate({ project, slug, action: "resume", reason: "Resume requested from the task conversation" });
-  return { confirm, open, reason, setReason, run, resume, pending: act.isPending, error: act.isError };
+  return { confirm, open, reason, setReason, run, resume, pending: act.isPending, doing: act.isPending ? act.variables.action : "", error: act.isError };
 }
 
 function ActionButtons({ facts, actions }: { facts: Facts; actions: ReturnType<typeof useTaskActions> }) {
   if (!facts.canStop && !facts.canReject) return null;
   return (
     <>
-      {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending || facts.resumeHeld} title={facts.resumeHeld ? "Waiting for engine availability" : undefined} onClick={actions.resume}><BusyLabel busy={actions.pending} label="Resume" working="Resuming…" /></button> : null}
+      {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending || facts.resumeHeld} title={facts.resumeHeld ? "Waiting for engine availability" : undefined} onClick={actions.resume}><BusyLabel busy={actions.doing === "resume"} label="Resume" working="Resuming…" /></button> : null}
       {facts.canReject ? (
         <button type="button" className="btn btn-ghost task-action" onClick={() => actions.open("reject")}>
           Reject
@@ -716,8 +720,7 @@ function ConfirmRow({ actions }: { actions: ReturnType<typeof useTaskActions> })
           Cancel
         </button>
         <button type="button" className="btn btn-danger" disabled={actions.pending} onClick={actions.run}>
-          {actions.pending ? <span className="spinner" aria-hidden /> : null}
-          Reject task
+          <BusyLabel busy={actions.doing === "reject"} label="Reject task" working="Rejecting…" />
         </button>
       </div>
       {actions.error ? (

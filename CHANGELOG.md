@@ -39,6 +39,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Choosing how voice is transcribed, dismissing an improvement suggestion or undoing that, and skipping a
   review show their result the moment you press, in chat and Needs you alike. If Altitude refuses, it goes
   back and says why, with Retry.
+- Presses that Altitude carries out say so in their own words from the press until the result shows:
+  Cancelling… on Cancel switch and on a sign-in's Cancel, Rejecting… on Reject task, Stopping the reviewer…
+  on a review's Stop, a spinning × on a queued choice, and Turning on… as Decision alerts switch on. Resume,
+  Start L3 and Create task no longer flick back to their button before the task or conversation shows
+  what happened.
 - A device whose alert subscription stopped working, such as one made before Altitude's alert key
   changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
   old subscription. The warning about it shows only on the device it concerns, and only
