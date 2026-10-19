@@ -213,8 +213,10 @@ def main() -> int:
         # process the tests leave behind names the scratch folder in its command, which is how strays are told
         # apart.
         env = {k: v for k, v in os.environ.items() if k != "ALTITUDE_ACTOR"}
+        # mutmut runs the tests in a forked process. There urllib's macOS proxy lookup starts Objective-C, which
+        # macOS aborts after a fork (#993); the tests reach only loopback, so no proxy is looked up.
         env.update(PATH=f"{venv / 'bin'}{os.pathsep}{env.get('PATH', '')}", ALTITUDE_VALIDATION="1",
-                   TMPDIR=str(scratch))
+                   TMPDIR=str(scratch), no_proxy="*")
         patterns = [pattern for module in modules.values() for pattern in module]
         with open(args.results / "mutmut.log", "wb") as log:
             returncode = run_mutmut([mutmut, "run", *patterns], source, env, scratch, log)
