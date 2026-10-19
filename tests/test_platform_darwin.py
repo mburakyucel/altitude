@@ -749,6 +749,19 @@ class Confinement(DarwinCase):
             self.assertIsNone(platform.find_library("absent"))
 
 
+    def test_an_exited_child_not_yet_reaped_is_no_member(self):
+        """A supervisor stops its job before it reaps the command (at its time limit, at launchd's SIGTERM), so the
+        stop must not wait for that child."""
+        if os.uname().sysname != "Darwin":
+            self.skipTest("coalitions are macOS's")
+        child = subprocess.Popen(["/usr/bin/true"])
+        self.addCleanup(child.wait)
+        deadline = time.monotonic() + 10
+        while child.pid in [pid for pid, _ in platform._members(platform._coalition_of(os.getpid()))]:
+            self.assertLess(time.monotonic(), deadline, "an exited child stayed a member")
+            time.sleep(0.02)
+        self.assertIn(child.pid, platform._pids(), "exited, not reaped")
+
 class Supervisor(DarwinCase):
     """The launchd end of a job, run in-process with launchd's parts replaced."""
 
