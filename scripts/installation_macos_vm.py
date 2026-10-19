@@ -1465,11 +1465,15 @@ PRIVACY_ROWS, REFUSED = ("confinement", "validation-confinement"), \
 # The rows that run fixture commands as launchd jobs: output, Stop of every descendant, cleanup, time limits and a
 # confined job's launch input.
 JOB_ROWS = ("job-pipe", "job-file-output", "exit-cleanup", "stop-descendants", "time-limit", "limit-after-owner-exit",
-            "sleep-hold", "awake-clock", "logged-job", "detached-job", "launch-input")
+            "sleep-hold", "awake-clock", "logged-job", "detached-job", "launch-input", "job-temporary")
 # The suite's read-only-home cases, which confine a child with a second Seatbelt profile or Codex's own sandbox and so
 # skip in a validation run or a confined worker (docs/DEVELOPMENT.md#macos-validation-runs).
 READ_ONLY_HOME = ("tests.test_worker_writes", "tests.test_worker_roots",
-                  "tests.test_land.TestLand.test_the_owner_lands_with_altitudes_home_read_only")
+                  "tests.test_land.TestLand.test_the_owner_lands_with_altitudes_home_read_only",
+                  "tests.test_session_sockets.TestOperatorsClaudeFolder",
+                  "tests.test_l3_privilege.TestL3CheckoutConfinement."
+                  "test_real_codex_sandbox_refuses_the_operators_claude_folder_and_state_file",
+                  "tests.test_l3_privilege.TestCodexCoordinatorSeatbelt")
 
 
 def in_source(guest: Guest, inputs: Path, command: str, timeout: int) -> subprocess.CompletedProcess:
@@ -1513,9 +1517,17 @@ def phase_jobs(guest: Guest, repository: str, results: Path, record: dict, input
 def phase_read_only_home(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """The suite's read-only-home cases, which no validation run or worker can start: each must run and pass, none
     skipped, its child confined by a Seatbelt profile that keeps Altitude's home read-only, the roots case with the
-    roots each engine's worker launch names."""
-    environment = f"ALTITUDE_VALIDATION=1 TMPDIR={SHARED}/tmp"
-    guest.ssh(f"mkdir {SHARED}/tmp")
+    roots each engine's worker launch names, or by a Codex coordinator's own sandbox. This Mac's Codex CLI is copied
+    in, with an empty settings folder and no sign-in; it asks no model. The suite's home lies outside the temporary
+    folders Codex's sandbox admits, as in a validation run."""
+    codex = shutil.which(os.environ.get("CODEX_BIN", "codex"))
+    if not codex:
+        raise Stop("the read-only-home phase needs the Codex CLI on this Mac, whose own sandbox it runs in the guest")
+    guest.copy(Path(codex).resolve(), f"{SHARED}/codex", timeout=900)
+    environment = (f"ALTITUDE_VALIDATION=1 TMPDIR={SHARED}/tmp CODEX_HOME={SHARED}/codex-home CODEX_BIN={SHARED}/codex "
+                   "ALTITUDE_TEST_CODEX_SANDBOX=1")
+    record["codex"] = guest.ssh(f"mkdir {SHARED}/tmp {SHARED}/codex-home && env {environment} {SHARED}/codex --version",
+                                check=False).stdout.strip()
     command = f"env {environment} /opt/homebrew/bin/python3.12 -B -m unittest -v {' '.join(READ_ONLY_HOME)}"
     result = in_source(guest, inputs, command, 900)
     (results / "read-only-home.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")

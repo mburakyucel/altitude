@@ -1,7 +1,8 @@
 """A task worker on either engine writes its worktree, the Git parts it needs, its own scratch folder and its own engine
 folder, never the rest of Altitude's home: a process confined to the roots each engine's launch names is refused every
 record there, its own task's included, and every other task's engine folders, and on macOS
-the launcher's job folders, where a job's input waits with its tokens (docs/ARCHITECTURE.md#task-door)."""
+the launcher's job folders, where a job's input waits with its tokens (docs/ARCHITECTURE.md#task-door), and lists no
+browser's profile."""
 import json
 import os
 import shutil
@@ -25,6 +26,8 @@ for name, (kind, path) in json.loads(sys.argv[1]).items():
         elif kind == "read":  # an existing file, read
             with open(path) as f:
                 f.read()
+        elif kind == "list":  # an existing folder, listed
+            os.listdir(path)
         else:  # a folder: a new file in it
             target = os.path.join(path, "probe")
             with open(target, "x") as f:
@@ -129,3 +132,22 @@ class WorkerRoots(AltitudeCase):
                 # Landlock names folders that exist; Claude's account file family is a name pattern, not a folder.
                 folders = tuple(root for root in writable if not str(root).endswith("*") and root.is_dir())
                 self.assert_only_own(self.written(read_only_home([], folders)), engine)
+
+    @unittest.skipUnless(NATIVE_PLATFORM == "darwin", "Seatbelt's masks; Linux's are bubblewrap's (TestSandboxedJob)")
+    def test_each_engines_worker_cannot_list_a_browser_profile_by_either_spelling(self):
+        """A browser's profile holds every site's sign-in, a paired device's among them (#1053)."""
+        require_read_only_home(self)
+        home = Path(os.path.realpath(self.tmp)) / "home"
+        profile = home / "Library/Application Support/Firefox"
+        (profile / "Profiles").mkdir(parents=True)
+        self.targets = {"browser profile": ("list", profile),
+                        "browser profile, by the data volume": ("list", platform.DATA_VOLUME + str(profile))}
+        self.assertTrue(os.listdir(platform.DATA_VOLUME + str(profile)), "the host lists it by both spellings")
+        for engine in ("claude", "codex"):
+            with self.subTest(engine=engine):
+                writable, _ = self.roots(engine)
+                folders = tuple(root for root in writable if not str(root).endswith("*") and root.is_dir())
+                with mock.patch.object(platform.Path, "home", return_value=home):
+                    command = read_only_home([], folders)
+                self.assertEqual(self.written(command), {"browser profile": False,
+                                                         "browser profile, by the data volume": False})

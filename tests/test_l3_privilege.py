@@ -1163,5 +1163,52 @@ class TestL3DaemonOperations(AltitudeCase):
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
 
 
+@unittest.skipUnless(sys.platform == "darwin", "Codex's own Seatbelt; Linux's sandbox is in TestL3CheckoutConfinement")
+class TestCodexCoordinatorSeatbelt(AltitudeCase):
+    """A Codex coordinator's turn runs in Codex's own Seatbelt profile with the places `codex.denied` names, on a real
+    Mac: the opt-in `ALTITUDE_TEST_CODEX_SANDBOX=1` case, which the macOS VM lane's read-only-home phase runs."""
+
+    @unittest.skipUnless(os.environ.get("ALTITUDE_TEST_CODEX_SANDBOX") == "1", "opt in on a Mac with the Codex CLI")
+    def test_real_codex_sandbox_refuses_shared_temporary_sockets_and_browser_profiles(self):
+        from tests.support import run_native_sandbox_probe
+        runtime = l3._l3_runtime(self.project, "codex")
+        self.addCleanup(l3._remove_runtime, runtime)
+        home = Path(tempfile.mkdtemp(prefix=".sandbox-home-", dir=REPO))
+        self.addCleanup(shutil.rmtree, home)
+        profile = Path(os.path.realpath(home)) / "Library/Application Support/Google/Chrome"
+        (profile / "Default").mkdir(parents=True)
+        shared = Path(tempfile.mkdtemp(prefix="fictional-desk-", dir="/private/tmp"))
+        self.addCleanup(shutil.rmtree, shared, True)
+        desk = socket.socket(socket.AF_UNIX)
+        self.addCleanup(desk.close)
+        desk.bind(str(shared / "s.sock"))
+        desk.listen()
+        with mock.patch.object(platform.Path, "home", return_value=home):
+            settings = engines.codex_l3_permissions(runtime, project=self.project)
+        probe = r'''
+import json, os, socket, sys
+def attempt(action):
+    try:
+        action()
+        return "allowed"
+    except OSError as exc:
+        return exc.errno
+def reach(path):
+    with socket.socket(socket.AF_UNIX) as peer:
+        peer.connect(path)
+seen = {"shared socket": attempt(lambda: reach(sys.argv[1])),
+        "browser profile": attempt(lambda: os.listdir(sys.argv[2])),
+        "browser profile, by the data volume": attempt(lambda: os.listdir(sys.argv[3])),
+        "working folder": attempt(lambda: open("written", "w").close())}
+print(json.dumps(seen))
+'''
+        result = run_native_sandbox_probe(runtime, settings, probe, [str(shared / "s.sock"), str(profile),
+                                                                     platform.DATA_VOLUME + str(profile)])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        seen = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertEqual(seen.pop("working folder"), "allowed", seen)
+        self.assertTrue(all(isinstance(value, int) for value in seen.values()), seen)
+
+
 if __name__ == "__main__":
     unittest.main()
