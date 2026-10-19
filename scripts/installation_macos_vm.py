@@ -1002,10 +1002,16 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
         driver("DELETE", f"/{session}")
         return seen
 
-    def devices(origin: str = address) -> int:
-        listed = guest.ssh(f"curl -sS --cacert ~/.config/altitude/tls/ca.crt -H \"X-Altitude-Key: $(cat "
+    def devices(origin: str = address) -> list[str] | None:
+        """The paired devices' ids, read at ORIGIN through the authority Safari was told to trust, so a service
+        serving under any other authority answers None."""
+        listed = guest.ssh(f"curl -sS --cacert {SHARED}/trusted-ca.crt -H \"X-Altitude-Key: $(cat "
                            f"~/.config/altitude/access/machine.key)\" {origin}/api/devices", check=False).stdout
-        return len(json.loads(listed).get("devices", [])) if listed.startswith("{") else -1
+        return sorted(device["id"] for device in json.loads(listed)["devices"]) if listed.startswith("{") else None
+
+    def added(before: list[str] | None, after: list[str] | None) -> bool:
+        """AFTER keeps every device of BEFORE and adds exactly one."""
+        return before is not None and after is not None and set(before) <= set(after) and len(after) == len(before) + 1
 
     def link() -> str:
         """The installer's printed link with only its code replaced by a fresh one, as `alt pair` issues it."""
@@ -1015,6 +1021,7 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
     agent("safaridriver", ["/usr/bin/safaridriver", "-p", "4444"])
     within(60, "curl -sf http://127.0.0.1:4444/status")
     untrusted = (browse([f"{address}/"]) or [{}])[0]
+    guest.ssh(f"cp ~/.config/altitude/tls/ca.crt {SHARED}/trusted-ca.crt")
     log, done = terminal("trust-desktop", f"{alt} trust")
     window = None
     if within(120, f"grep -q 'Trust it?' {log}"):
@@ -1032,12 +1039,12 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
     reopened = browse([printed]) + browse([printed.replace(used, "not-a-code")])
     opened = link()
     agent("open-link", ["/usr/bin/open", opened])
-    os_opened = any(devices() > paired or time.sleep(2) for _ in range(30))
+    os_opened = any(added(paired, devices()) or time.sleep(2) for _ in range(30))
     safari = {"before": untrusted, "walked": walked, "devices": [start, paired, devices()], "reopened": reopened,
               "os_opened": os_opened}
     record_pairing = (len(walked) == 3 and all(seen["ok"] for seen in walked + reopened) and "Pair this device" in walked[0]["text"] and "Trusted" in walked[0]["text"]
                       and "Pair this device" not in walked[1]["text"] and "#pair=" not in walked[1]["url"]
-                      and walked[2]["url"] == walked[0]["url"] and paired == start + 1 and len(reopened) == 2
+                      and walked[2]["url"] == walked[0]["url"] and added(start, paired) and len(reopened) == 2
                       and "expired or was already used" in reopened[0]["text"] and "#pair=" not in reopened[0]["url"]
                       and "This pairing link is not valid" in reopened[1]["text"] and os_opened)
     # #926 item 7: the address moved to a VPN-range one and back. The guest has no VPN; an address in the shared VPN
@@ -1060,7 +1067,7 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
     record_vpn = (configured(moved, vpn) and len(there) == 2 and all(seen["ok"] for seen in there)
                   and there[0]["url"].startswith(vpn) and "Pair this device" not in there[0]["text"]
                   and "#pair=" not in there[0]["url"] and vpn in there[1]["text"]
-                  and "Selected private address" in there[1]["text"] and paired_there == before_vpn + 1
+                  and "Selected private address" in there[1]["text"] and added(before_vpn, paired_there)
                   and configured(returned, address) and devices() == paired_there)
     undo = re.search(r"^  (security delete-certificate -Z [0-9A-F]{64} -t \"\$HOME/Library/Keychains/login\.keychain-db\")$",
                      trusted, re.M)
