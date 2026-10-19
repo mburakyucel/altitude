@@ -1378,10 +1378,11 @@ class TestInstallationMacosVm(AltitudeCase):
             self.assertIn(error, stderr.getvalue())
             lock.assert_not_called()
 
-    def test_online_runs_only_when_named(self):
+    def test_online_and_the_complete_mutation_run_only_when_named(self):
         from scripts import installation_macos_vm as vm
-        for argv, phases in (([], [name for name in vm.PHASES if name not in ("published", "online")]),
-                             (["--phase", "online"], ["online"])):
+        named = ("published", "online", "mutation-complete")
+        for argv, phases in (([], [name for name in vm.PHASES if name not in named]), (["--phase", "online"], ["online"]),
+                             (["--phase", "mutation-complete"], ["mutation-complete"])):
             with mock.patch.object(vm.sys, "argv", ["installation_macos_vm.py", "run", str(self.tmp / "r"), *argv]), \
                     mock.patch.object(vm.sys, "platform", "darwin"), mock.patch.object(vm.platform, "machine", return_value="arm64"), \
                     mock.patch.object(vm, "watch_disk"), mock.patch.object(vm.signal, "signal"), \

@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shlex
 import shutil
 import socket
@@ -240,6 +241,44 @@ def awake_clock():
     return (f"the limit's clock ({clock}) is awake time; this Mac has slept {slept / 3600:.1f} h since it started, "
             "which that clock left out" if slept >= 1 else
             f"the limit's clock ({clock}) is awake time; this Mac has not slept since it started")
+
+
+@row
+def real_sleep():
+    """A job's time limit across an actual sleep of this Mac, which no guest allows. Runs only when named, after a wake
+    is scheduled as root (`sudo pmset relative wake 150`): a job with a 60-second limit starts, `pmset sleepnow`
+    sleeps the Mac and the scheduled wake ends the sleep. The Mac must have slept, and the job must still stop at its
+    limit counted in awake time, its whole tree with it."""
+    if not DARWIN or "real-sleep" not in sys.argv:
+        return None
+    scheduled = subprocess.run(["pmset", "-g", "sched"], capture_output=True, text=True, check=True).stdout
+    # A wake within five minutes: macOS schedules wakes of its own, often hours away.
+    wakes = [time.mktime(time.strptime(found, "%m/%d/%Y %H:%M:%S")) - time.time()
+             for found in re.findall(r"wake at (\S+ \S+)", scheduled)]
+    check(any(30 < wake < 300 for wake in wakes),
+          f"no wake is scheduled within five minutes, so the Mac would not wake soon: {scheduled.strip()!r}")
+    marker, job, limit = f"probe-real-sleep-{NONCE}", name("real-sleep"), 60
+    # A tree that never ends by itself, so only the limit can stop it, however long the sleep.
+    endless = TREE.replace("time.sleep(120)", "time.sleep(86400)")
+    proc = subprocess.Popen(platform.job_command(job, [sys.executable, "-c", endless, marker], env(), runtime_max=limit),
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        check(until(lambda: marked(marker), 10), "job did not start")
+        awake, wall = time.clock_gettime(time.CLOCK_UPTIME_RAW), time.clock_gettime(time.CLOCK_MONOTONIC)
+        subprocess.run(["pmset", "sleepnow"], capture_output=True, text=True, check=True)
+        status = proc.wait(timeout=900)
+        awake = time.clock_gettime(time.CLOCK_UPTIME_RAW) - awake
+        slept = time.clock_gettime(time.CLOCK_MONOTONIC) - wall - awake
+    finally:
+        proc.kill()
+        proc.wait()
+    check(slept >= 30, f"the Mac did not sleep: {slept:.0f}s between the clocks")
+    check(status != 0 and limit - 5 <= awake < limit + 20,
+          f"status {status} after {awake:.0f}s awake, {slept:.0f}s asleep; the limit is {limit}s of awake time")
+    check(not platform.job_active(job, env()), "job active after its limit")
+    check(until(lambda: not marked(marker), 5), f"survivors after the limit: {marked(marker)}")
+    return (f"the Mac slept {slept:.0f}s; the job stopped at its {limit}s limit after {awake:.0f}s awake, "
+            f"{awake + slept:.0f}s on the wall clock, with its whole tree (status {status})")
 
 
 @row
