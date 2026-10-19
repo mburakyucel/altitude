@@ -273,6 +273,9 @@ container, with at most half of this Mac's CPUs, 6 GiB of memory and 24 GiB of d
 folder, a download of at most 1 GB, and the guest deleted after each run. Every run stops whenever
 less than 10 GiB of disk would stay free, also cleaning up after a failure or a stop. Runs serve a
 task's stated purpose and may be retried after a failure, never repeated back to back without end.
-Nothing is installed on the Mac itself. It excludes the operator's Altitude installation and service,
+Nothing is installed on the Mac itself. By the operator's decision of 2026-10-19, only the macOS VM lane's
+`online` phase keeps its guest's network, to download from public sources: the published release from GitHub,
+Homebrew's Python, Chrome and Firefox from their publishers and, when a release changes the Mac speech runtime's
+pins, that runtime; every other run stays offline. It excludes the operator's Altitude installation and service,
 LaunchAgents, keychains, trust stores, network settings, credential directories and every other host
 resource the lanes did not create. It grants nothing for other projects.
