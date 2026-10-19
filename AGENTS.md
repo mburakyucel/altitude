@@ -48,7 +48,11 @@ of 2026-10-15, verification owners prove device and browser behavior in emulator
 disposable VM and container lanes, adding harness rows where needed within their authorized outcome;
 a single command the operator runs is acceptable when nothing else can produce the evidence. Owners
 do not ask the operator for hands-on checks such as clicking through a browser, phone or app or
-inspecting a screen by eye; what cannot be automated stays owed on the issue with its reason. Linux
+inspecting a screen by eye. By the operator's direction of 2026-10-19, a check that seems to need
+manual validation is first worked out for automation (a harness row, lane phase, fault injection,
+synthetic input, simulator, VM or container), which the owner builds within its authorized scope or
+proposes; only a check that absolutely cannot be automated stays owed on the issue, with its specific
+reason. Linux
 merge checks and holds are unchanged. A task completes when its own installation's authorized work
 and required checks are satisfied. Verification owed only by the other installation stays on the
 change's issue for that installation; it does not hold local task completion or require the operator
