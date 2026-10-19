@@ -20,26 +20,29 @@ answers the decision with seven days from Needs you and checks that it leaves th
 on the desktop run only, answers the same decision on a phone page while a desktop page shows the task
 resume. Page errors and horizontal overflow fail the journey.
 
-The feature pictures come from `web/e2e/readme-features.pw.ts` against `web/e2e/readme-features-service.py`,
-which seeds the same Atlas example and adds four states: the per-tenant limits pull request held for the
-operator after an independent review with two fixed findings, a deploy command the billing owner hands to the
-task's terminal (a real shell with no profile and a fixed prompt), the sign-on task paused by a machine problem
-until the coordinator repairs and resumes it, and improvement suggestions in an Altitude project. The journey
-also runs at both widths in every `make check`.
+The feature pictures come from `web/e2e/readme-features.pw.ts` against `web/e2e/readme-features-service.py`, which
+seeds the same Atlas example and adds seven states: the coordinator's latest reply offering a task, which the
+journey's press creates through the coordinator's real verbs with a scripted engine; the synonyms editor owner's
+design question with its document and a proposal review by the other engine (two fixed findings and one
+alternative); the typo tolerance owner's open question beside its live session; the per-tenant limits pull request
+held for the operator after an independent review with two fixed findings; a deploy command the billing owner hands
+to the task's terminal after its signing work (a real shell with no profile and a fixed prompt); the sign-on task
+paused by a machine problem until the coordinator repairs and resumes it; and improvement suggestions in an
+Altitude project. The journey also runs at both widths in every `make check`.
 
 ## Reproduce
 
-Render the captures from the committed candidate in a validation run:
+Render the captures from the committed candidate and compose them in a validation run:
 
 ```sh
-alt task validate -- sh -c 'ALTITUDE_README_IMAGES="$VALIDATION_RESULTS/images" make ui-validate UI_ARGS="readme.pw.ts readme-features.pw.ts"'
+alt task validate -- sh -c 'ALTITUDE_README_IMAGES="$VALIDATION_RESULTS/images" make ui-validate UI_ARGS="readme.pw.ts readme-features.pw.ts" && python3 design/readme/compose.py "$VALIDATION_RESULTS/images" "$VALIDATION_RESULTS/composed"'
 ```
 
 The run's `images/` folder in the task's validation evidence receives `project`, `task` and `decision`
 captures for each viewport, plus phone `work` and `session` captures, at 1440×900 and 390×844 with 2× pixel
-density, the opening loop's `opening-*` frames, the feature states (`review`, `terminal`, `heal` and `improve`
-captures), and `phone-walkthrough.webm`, a silent recording of the phone journey that pauses briefly at
-each capture. No speech recognition or coding agent runs.
+density, the opening loop's `opening-*` frames, the feature states (`create`, `proposal`, `task-view`, `review`,
+`terminal`, `heal` and `improve` captures), and `phone-walkthrough.webm`, a silent recording of the phone journey
+that pauses briefly at each capture. No speech recognition or coding agent runs.
 
 ## Opening loop
 
@@ -50,20 +53,18 @@ task back at work.
 That test drives a desktop page and a phone page against the same service and checks each moment.
 
 `design/readme/hero.html` holds the layout: the desktop view on a 2240×1360 canvas with the phone in
-front of its sidebar. After a validation run, compose the loop from its `images/` folder with Google
-Chrome and ffmpeg:
-
-```sh
-python3 design/readme/compose.py <validation results>/images
-```
+front of its sidebar. `design/readme/compose.py` fills it and writes the loop with the feature pictures into
+the run's `composed/` folder. It renders the layouts with Playwright's Chromium headless shell under its own
+sandbox, which the validation run provides, and encodes them with ffmpeg.
 
 ## Feature pictures
 
-The walkthrough's [See the features](../../docs/WALKTHROUGH.md#see-the-features) shows five features as
-`docs/images/feature-*.webp`: two phone captures side by side, each cropped to its top or bottom, on
-`design/readme/pair.html`'s 1720×1200 canvas. At phone widths each shows the one capture that proves it,
-`feature-*-phone.webp` (the live session uses `session-phone.png`). The same `compose.py` run writes them
-after the opening loop.
+The walkthrough's [See the features](../../docs/WALKTHROUGH.md#see-the-features) shows eight features as
+`docs/images/feature-*.webp`. The task view and the terminal, `feature-task.webp` and `feature-terminal.webp`,
+are desktop and phone captures in the opening loop's layout on a 2060×1240 canvas; each other picture is two phone captures side by side, each cropped to its top or
+bottom, on `design/readme/pair.html`'s 1720×1200 canvas. At phone widths each shows the one capture that
+proves it, `feature-*-phone.webp` (the live session uses `session-phone.png`). The same `compose.py` run
+writes them after the opening loop.
 
 ## Balanced quotas
 
@@ -76,7 +77,8 @@ task names are illustrative, not a capture. `python3 design/readme/balance.py` w
 
 - Edit the service or the journey, render again and inspect every changed image. Reconcile the
   journey with the current interface and the approved [specification](../wireframes/SPEC.md).
-- Copy only reviewed illustrations needed by README or the walkthrough into `docs/images/`,
+- Copy only reviewed illustrations needed by README or the walkthrough from the run's `images/` and
+  `composed/` folders into `docs/images/`,
   replacing the matching files. Keep routine renders and before/after review evidence outside Git
   under the [project UI rule](../../AGENTS.md#ui); do not add a gallery for each PR.
 - Change the quota animation in `design/readme/balance.py` and write it again; never edit `balance.svg` by hand.
