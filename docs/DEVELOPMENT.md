@@ -1867,18 +1867,21 @@ alert as new in a PR when a step of its data flow lies in the changed code, so a
 on main can fail a PR that never touches its line: a browser-walkthrough fixture server subclassing
 `server.Handler` adds a request source. Fix real defects at their sinks and
 document genuine false positives for operator dismissal without changing accepted behavior.
-Each dismissal on GitHub records its reason. CodeQL's Python path check accepts only a
-normalize-then-prefix test or a comparison with a constant as validation, so it cannot see
-Altitude's own: project and task names pass `config.require_project_name` and
-`state.require_task_slug`, the `storage` layer opens one checked component at a time without
-following links, and other names match a fixed pattern or a stored record. A path alert whose data
-passes one of these is a false positive whose dismissal names that check; a path that reaches the
-filesystem without one is a defect fixed through these helpers.
 Every other workflow run must come from a push or pull request event of this PR's branch.
 Review and task/UX holds remain enforced by Altitude. This repository's strict GitHub up-to-date
 required-check rule rejects a merge if a merge made outside the line moves main between final
 validation and merge; the head then integrates again within its turn. No repository move, plan upgrade or settings change
 is needed. GitHub web/API merges do not enforce Altitude's task holds or review protocol.
+
+Each CodeQL alert dismissed on GitHub records its reason. CodeQL's Python path check recognizes a
+normalize-then-prefix test, a comparison with a constant and known library sanitizers as validation,
+not checks inside Altitude's own functions: project and task names pass `config.require_project_name`
+and `state.require_task_slug`, the `storage` layer opens one checked component at a time without
+following links, and other names match a fixed pattern or a stored record. A path alert whose data
+passes one of these is a false positive whose dismissal names that check; a path that reaches the
+filesystem without one is a defect fixed through these helpers. No workflow restores an Actions cache:
+the [installation lifecycle](#installation-lifecycle-acceptance) workflow runs candidate code in main's
+cache scope.
 
 Other projects retain their configured hosted/no-CI gates. Shared hosted-check handling ignores
 completed nonrequired skips without parsing workflow conditions; failed or pending checks still
