@@ -1850,7 +1850,7 @@ stop. One guest runs at a time, and the runner stops whenever less than 10 GiB o
 free. Building the images takes about fifteen minutes after the restore image's download. On an
 unloaded Mac `fresh` and `prerequisites` take under half a minute each, `lifecycle` about five
 minutes, `login` just over three, `privacy` under one, `mutation` about one and a half, `workers` about five and a half, `grants` about four,
-`incident`, `update`, `session` and `source` about two, `published` about one and a half and `online` about four; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
+`update` and `terminal` about five and a half, `incident`, `session` and `source` about two, `published` about one and a half and `online` about four; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
 run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with
