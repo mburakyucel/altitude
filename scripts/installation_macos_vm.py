@@ -371,6 +371,8 @@ class Mounted:
         self.write(relative, plistlib.dumps(value, fmt=plistlib.FMT_XML if xml else plistlib.FMT_BINARY), mode)
 
 
+# An address in the shared VPN range (RFC 6598) that the login phase gives the guest's loopback.
+VPN_ADDRESS = "100.64.0.10"
 KCPASSWORD_KEY = bytes([0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F])
 
 
@@ -925,7 +927,8 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
     there too, and answered y on the guest's keyboard raises macOS's own password window; clicked and given the
     account's password on the keyboard, it must leave the authority trusted to identify websites only, as the one
     trust setting. Safari, driven through its own WebDriver, must refuse the address of PRINTED, the installer's
-    private link, before and open Altitude's page after, and #926's pairing walk runs in it (`pairing`). The undo command `alt trust` prints, run there too, raises the window again and must remove the trust. The
+    private link, before and open Altitude's page after, and #926's pairing walk (`pairing`) and VPN-range address
+    (`vpn`) run in it. The undo command `alt trust` prints, run there too, raises the window again and must remove the trust. The
     password is the automatic login's, which the lane wrote when it made the account; it is removed from the
     evidence."""
     address, used = printed.split("#pair=")[0].removesuffix("/projects"), printed.split("#pair=")[1]
@@ -999,10 +1002,16 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
         driver("DELETE", f"/{session}")
         return seen
 
-    def devices() -> int:
-        listed = guest.ssh(f"curl -sS --cacert ~/.config/altitude/tls/ca.crt -H \"X-Altitude-Key: $(cat "
-                           f"~/.config/altitude/access/machine.key)\" {address}/api/devices", check=False).stdout
-        return len(json.loads(listed).get("devices", [])) if listed.startswith("{") else -1
+    def devices(origin: str = address) -> list[str] | None:
+        """The paired devices' ids, read at ORIGIN through the authority Safari was told to trust, so a service
+        serving under any other authority answers None."""
+        listed = guest.ssh(f"curl -sS --cacert {SHARED}/trusted-ca.crt -H \"X-Altitude-Key: $(cat "
+                           f"~/.config/altitude/access/machine.key)\" {origin}/api/devices", check=False).stdout
+        return sorted(device["id"] for device in json.loads(listed)["devices"]) if listed.startswith("{") else None
+
+    def added(before: list[str] | None, after: list[str] | None) -> bool:
+        """AFTER keeps every device of BEFORE and adds exactly one."""
+        return before is not None and after is not None and set(before) <= set(after) and len(after) == len(before) + 1
 
     def link() -> str:
         """The installer's printed link with only its code replaced by a fresh one, as `alt pair` issues it."""
@@ -1012,6 +1021,7 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
     agent("safaridriver", ["/usr/bin/safaridriver", "-p", "4444"])
     within(60, "curl -sf http://127.0.0.1:4444/status")
     untrusted = (browse([f"{address}/"]) or [{}])[0]
+    guest.ssh(f"cp ~/.config/altitude/tls/ca.crt {SHARED}/trusted-ca.crt")
     log, done = terminal("trust-desktop", f"{alt} trust")
     window = None
     if within(120, f"grep -q 'Trust it?' {log}"):
@@ -1029,14 +1039,36 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
     reopened = browse([printed]) + browse([printed.replace(used, "not-a-code")])
     opened = link()
     agent("open-link", ["/usr/bin/open", opened])
-    os_opened = any(devices() > paired or time.sleep(2) for _ in range(30))
+    os_opened = any(added(paired, devices()) or time.sleep(2) for _ in range(30))
     safari = {"before": untrusted, "walked": walked, "devices": [start, paired, devices()], "reopened": reopened,
               "os_opened": os_opened}
     record_pairing = (len(walked) == 3 and all(seen["ok"] for seen in walked + reopened) and "Pair this device" in walked[0]["text"] and "Trusted" in walked[0]["text"]
                       and "Pair this device" not in walked[1]["text"] and "#pair=" not in walked[1]["url"]
-                      and walked[2]["url"] == walked[0]["url"] and paired == start + 1 and len(reopened) == 2
+                      and walked[2]["url"] == walked[0]["url"] and added(start, paired) and len(reopened) == 2
                       and "expired or was already used" in reopened[0]["text"] and "#pair=" not in reopened[0]["url"]
                       and "This pairing link is not valid" in reopened[1]["text"] and os_opened)
+    # #926 item 7: the address moved to a VPN-range one and back. The guest has no VPN; an address in the shared VPN
+    # range on its loopback stands in for the one a VPN interface assigns, since Altitude asks only that the address
+    # be private and assigned to this computer. Safari must trust the reissued certificate there, within the
+    # authority's name constraints, pair with a fresh code and show the address in Settings › Network.
+    vpn, before_vpn = address.replace("127.0.0.1", VPN_ADDRESS), devices()
+    guest.ssh(f"sudo -n ifconfig lo0 alias {VPN_ADDRESS}/32")
+    moved = step("address-vpn", f"{alt} service configure --host {VPN_ADDRESS} --apply")
+    there = browse([link().replace(address, vpn), f"{vpn}/settings/network"])
+    paired_there = devices(vpn)
+    returned = step("address-local", f"{alt} service configure --host 127.0.0.1 --apply")
+    guest.ssh(f"sudo -n ifconfig lo0 -alias {VPN_ADDRESS}")
+    safari["vpn"] = {"there": there, "devices": [before_vpn, paired_there, devices()]}
+
+    def configured(answer: subprocess.CompletedProcess, url: str) -> bool:
+        result = json.loads(answer.stdout) if answer.returncode == 0 and answer.stdout.startswith("{") else {}
+        return result.get("applied") is True and result.get("verified") is True and result.get("url") == url
+
+    record_vpn = (configured(moved, vpn) and len(there) == 2 and all(seen["ok"] for seen in there)
+                  and there[0]["url"].startswith(vpn) and "Pair this device" not in there[0]["text"]
+                  and "#pair=" not in there[0]["url"] and vpn in there[1]["text"]
+                  and "Selected private address" in there[1]["text"] and added(before_vpn, paired_there)
+                  and configured(returned, address) and devices() == paired_there)
     undo = re.search(r"^  (security delete-certificate -Z [0-9A-F]{64} -t \"\$HOME/Library/Keychains/login\.keychain-db\")$",
                      trusted, re.M)
     undone = ""
@@ -1046,6 +1078,7 @@ def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unch
         undone = transcript("trust-desktop-undo", log, done)
     after = step("trust-desktop-after", listed).stdout
     return {"window": window, "settings": settings, "after": after, "safari": safari, "pairing": record_pairing,
+            "vpn": record_vpn,
             "passed": bool(window) and untrusted.get("title") == "This Connection Is Not Private"
             and walked and walked[0]["title"] == "Altitude" and "Trusted in macOS login keychain" in trusted and trusted.endswith("exit 0\n")
             and settings.count("Cert ") == 1 and re.findall(r"Policy OID\s*:\s*(\S+)", settings) == ["SSL"]
@@ -1232,7 +1265,8 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     record["cases"] = {"login": {"passed": True, "version": version, "service_label": SERVICE_LABEL,
                                  "pids": [before["pid"], after["pid"]]},
                        "trust-ssh": trust_ssh, "undo-sha256": {"passed": undone.returncode == 0},
-                       "trust-desktop": trust_desktop, "pair-safari": {"passed": trust_desktop["pairing"]}}
+                       "trust-desktop": trust_desktop, "pair-safari": {"passed": trust_desktop["pairing"]},
+                       "address-vpn": {"passed": trust_desktop["vpn"]}}
 
 
 # The confinement rows that must refuse private places without macOS asking, and how their details say so.
