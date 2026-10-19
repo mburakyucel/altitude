@@ -44,6 +44,7 @@ the images, the helper and any leftover clone.
 from __future__ import annotations
 
 import argparse
+import base64
 import fcntl
 import hashlib
 import json
@@ -370,6 +371,9 @@ class Mounted:
         self.write(relative, plistlib.dumps(value, fmt=plistlib.FMT_XML if xml else plistlib.FMT_BINARY), mode)
 
 
+KCPASSWORD_KEY = bytes([0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F])
+
+
 def shadow_hash(password: str) -> bytes:
     salt = secrets.token_bytes(32)
     entropy = hashlib.pbkdf2_hmac("sha512", password.encode(), salt, 50_000, dklen=128)
@@ -379,10 +383,14 @@ def shadow_hash(password: str) -> bytes:
 
 def kcpassword(password: str) -> bytes:
     """loginwindow's auto-login password: NUL-padded to a multiple of 12, at least one NUL, XORed with its key."""
-    key = bytes([0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F])
     plain = password.encode()
     plain += b"\0" * (12 - len(plain) % 12)
-    return bytes(byte ^ key[index % len(key)] for index, byte in enumerate(plain))
+    return bytes(byte ^ KCPASSWORD_KEY[index % len(KCPASSWORD_KEY)] for index, byte in enumerate(plain))
+
+
+def from_kcpassword(data: bytes) -> str:
+    plain = bytes(byte ^ KCPASSWORD_KEY[index % len(KCPASSWORD_KEY)] for index, byte in enumerate(data))
+    return plain.split(b"\0", 1)[0].decode()
 
 
 def write_account(volume: Mounted, password: str, restore: dict) -> None:
@@ -894,6 +902,156 @@ def lifecycle(guest: Guest, results: Path, record: dict, baseline: Path, candida
                                      **({"error": outcome["error"]} if "error" in outcome else {})}}
 
 
+# Where macOS's password window sits on the guest's display once it shows, read in the desktop session: window
+# owners and bounds need no screen recording permission.
+WINDOWS = """import CoreGraphics
+import Foundation
+for _ in 0..<60 {
+    let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+    let bounds = windows.filter { $0[kCGWindowOwnerName as String] as? String == "SecurityAgent" }
+        .compactMap { $0[kCGWindowBounds as String] as? [String: Double] }
+    if !bounds.isEmpty {
+        FileManager.default.createFile(atPath: CommandLine.arguments[1],
+                                       contents: try! JSONSerialization.data(withJSONObject: bounds))
+        break
+    }
+    Thread.sleep(forTimeInterval: 1)
+}
+"""
+
+
+def desktop_trust(guest: Guest, results: Path, step, alt: str, listed: str, unchanged: str, printed: str) -> dict:
+    """#1006 checks 1 and 2 for Safari: on the account's desktop, `alt trust` run in Terminal, as the installer runs it
+    there too, and answered y on the guest's keyboard raises macOS's own password window; clicked and given the
+    account's password on the keyboard, it must leave the authority trusted to identify websites only, as the one
+    trust setting. Safari, driven through its own WebDriver, must refuse the address of PRINTED, the installer's
+    private link, before and open Altitude's page after, and #926's pairing walk runs in it (`pairing`). The undo command `alt trust` prints, run there too, raises the window again and must remove the trust. The
+    password is the automatic login's, which the lane wrote when it made the account; it is removed from the
+    evidence."""
+    address, used = printed.split("#pair=")[0].removesuffix("/projects"), printed.split("#pair=")[1]
+    password = from_kcpassword(base64.b64decode(guest.ssh("sudo -n base64 -i /etc/kcpassword").stdout))
+    guest.ssh(f"cat > {SHARED}/windows.swift", stdin=WINDOWS)
+
+    def within(seconds: int, check: str) -> bool:
+        return any(guest.ssh(check, check=False).returncode == 0 or time.sleep(2) for _ in range(seconds // 2))
+
+    def agent(name: str, arguments: list[str]) -> None:
+        """ARGUMENTS run once in the account's desktop session, as a program the person logged in there starts."""
+        definition = results / f"lane.{name}.plist"
+        definition.write_bytes(plistlib.dumps({"Label": f"lane.{name}", "RunAtLoad": True, "ProgramArguments": arguments}))
+        guest.copy(definition, f"{SHARED}/lane.{name}.plist")
+        guest.ssh(f"launchctl bootstrap gui/{ACCOUNT_UID} {SHARED}/lane.{name}.plist")
+
+    def terminal(name: str, command: str) -> tuple[str, str]:
+        """COMMAND opened as a person opens it: Terminal comes to the front running it in a window. Its transcript
+        and, once it ends, its exit status."""
+        log, script = f"{SHARED}/{name}.log", f"{SHARED}/{name}.command"
+        guest.ssh(f"cat > {script} && chmod 755 {script}",
+                  stdin=f"#!/bin/zsh\n/usr/bin/script -q {log} /bin/zsh -c {quote(command)}\necho $? > {log}.exit\n")
+        agent(name, ["/usr/bin/open", "-a", "Terminal", script])
+        return log, f"{log}.exit"
+
+    def authorize(name: str) -> dict | None:
+        """macOS's password window, once it shows: clicked, as a person brings it to the front, then the password."""
+        agent(name, ["/usr/bin/swift", f"{SHARED}/windows.swift", f"{SHARED}/{name}.json"])
+        if not within(150, f"grep -q Width {SHARED}/{name}.json"):
+            return None
+        window = max(json.loads(guest.ssh(f"cat {SHARED}/{name}.json").stdout),
+                     key=lambda bounds: bounds["Width"] * bounds["Height"])
+        guest.command(f"click {window['X'] + window['Width'] / 2:.0f} {window['Y'] + window['Height'] / 2:.0f}")
+        guest.expect("clicked", 30)
+        time.sleep(1)
+        guest.command(f"type {password}")
+        guest.expect("typed", 30)
+        return window
+
+    def transcript(name: str, log: str, done: str) -> str:
+        ended = within(120, f"test -s {done}")
+        answered = step(name, f"cat {log}; echo; echo exit $(cat {done})")
+        for path in results.glob("*.log"):
+            if password in (text := path.read_text(errors="replace")):
+                path.write_text(text.replace(password, "[the account's password]"))
+        return answered.stdout.replace("\r", "") if ended and password not in answered.stdout else ""
+
+    def driver(method: str, path: str, body: dict | None = None):
+        """One request to Safari's own WebDriver in the desktop session: its answer's value."""
+        command = f"curl -sS --max-time 60 -X {method} -H 'Content-Type: application/json' http://127.0.0.1:4444/session{path}"
+        answer = guest.ssh(command + (f" --data {quote(json.dumps(body))}" if body is not None else ""), check=False).stdout
+        try:
+            return json.loads(answer).get("value")
+        except (ValueError, AttributeError):
+            return {"error": answer[-300:]}
+
+    def browse(steps: list[str]) -> list[dict]:
+        """A new Safari automation window, with storage of its own, opening each address in turn or going Back: what
+        each shows, with `ok` false when WebDriver refused the navigation or a read."""
+        session = (driver("POST", "", {"capabilities": {"alwaysMatch": {"browserName": "safari"}}}) or {}).get("sessionId")
+        if not session:
+            return []
+        seen = []
+        for url in steps:
+            went = driver("POST", f"/{session}/back", {}) if url == "back" else driver("POST", f"/{session}/url", {"url": url})
+            time.sleep(4)
+            shown = [driver("GET", f"/{session}/title"), driver("GET", f"/{session}/url"),
+                     driver("POST", f"/{session}/execute/sync", {"script": "return document.body.innerText", "args": []})]
+            seen.append({"ok": went is None and all(isinstance(value, str) for value in shown),
+                         **dict(zip(("title", "url", "text"), map(str, shown)))})
+        driver("DELETE", f"/{session}")
+        return seen
+
+    def devices() -> int:
+        listed = guest.ssh(f"curl -sS --cacert ~/.config/altitude/tls/ca.crt -H \"X-Altitude-Key: $(cat "
+                           f"~/.config/altitude/access/machine.key)\" {address}/api/devices", check=False).stdout
+        return len(json.loads(listed).get("devices", [])) if listed.startswith("{") else -1
+
+    def link() -> str:
+        """The installer's printed link with only its code replaced by a fresh one, as `alt pair` issues it."""
+        return printed.replace(used, re.search(r"Pairing code: (\S+) ", guest.ssh(f"{alt} pair").stdout).group(1))
+
+    guest.ssh("sudo -n safaridriver --enable")
+    agent("safaridriver", ["/usr/bin/safaridriver", "-p", "4444"])
+    within(60, "curl -sf http://127.0.0.1:4444/status")
+    untrusted = (browse([f"{address}/"]) or [{}])[0]
+    log, done = terminal("trust-desktop", f"{alt} trust")
+    window = None
+    if within(120, f"grep -q 'Trust it?' {log}"):
+        guest.command("type y")
+        guest.expect("typed", 30)
+        window = authorize("trust-window")
+    trusted = transcript("trust-desktop", log, done)
+    settings = step("trust-desktop-settings", listed).stdout
+    # #926: the pair screen's own trust check, then a printed link pairing Safari into the app and leaving no code in
+    # its address or history; a used and a malformed link recover in another window; the OS opens a link in Safari.
+    fresh, start = link(), devices()
+    walked = browse([f"{address}/", fresh, "back"])
+    paired = devices()
+    # The installer's own link, used earlier, and a malformed one, each opened as a new page loads it.
+    reopened = browse([printed]) + browse([printed.replace(used, "not-a-code")])
+    opened = link()
+    agent("open-link", ["/usr/bin/open", opened])
+    os_opened = any(devices() > paired or time.sleep(2) for _ in range(30))
+    safari = {"before": untrusted, "walked": walked, "devices": [start, paired, devices()], "reopened": reopened,
+              "os_opened": os_opened}
+    record_pairing = (len(walked) == 3 and all(seen["ok"] for seen in walked + reopened) and "Pair this device" in walked[0]["text"] and "Trusted" in walked[0]["text"]
+                      and "Pair this device" not in walked[1]["text"] and "#pair=" not in walked[1]["url"]
+                      and walked[2]["url"] == walked[0]["url"] and paired == start + 1 and len(reopened) == 2
+                      and "expired or was already used" in reopened[0]["text"] and "#pair=" not in reopened[0]["url"]
+                      and "This pairing link is not valid" in reopened[1]["text"] and os_opened)
+    undo = re.search(r"^  (security delete-certificate -Z [0-9A-F]{64} -t \"\$HOME/Library/Keychains/login\.keychain-db\")$",
+                     trusted, re.M)
+    undone = ""
+    if undo:
+        log, done = terminal("trust-desktop-undo", undo.group(1))
+        authorize("undo-window")
+        undone = transcript("trust-desktop-undo", log, done)
+    after = step("trust-desktop-after", listed).stdout
+    return {"window": window, "settings": settings, "after": after, "safari": safari, "pairing": record_pairing,
+            "passed": bool(window) and untrusted.get("title") == "This Connection Is Not Private"
+            and walked and walked[0]["title"] == "Altitude" and "Trusted in macOS login keychain" in trusted and trusted.endswith("exit 0\n")
+            and settings.count("Cert ") == 1 and re.findall(r"Policy OID\s*:\s*(\S+)", settings) == ["SSL"]
+            and undone.endswith("exit 0\n") and after == unchanged}
+
+
 def phase_login(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """The account's own installation through the public command, its LaunchAgent started again by the automatic login
     after the guest restarts, and its uninstall."""
@@ -954,10 +1112,10 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     check(installed.returncode == 0 and f"Altitude {version} is installed" in installed.stdout, "the installer failed")
     origin, port = re.search(r"^Address: (https://\S+:(\d+)) ", installed.stdout, re.M).groups()
     port = int(port)
-    link = re.search(r"It pairs this browser and opens First run:\n +(\S+)/projects#pair=(\S+)\n +Works once, for 10 "
+    link = re.search(r"It pairs this browser and opens First run:\n +((\S+)/projects#pair=(\S+))\n +Works once, for 10 "
                      r"minutes\. Keep it private\.\n", installed.stdout)
-    check(link is not None and link.group(1) == origin, "the installer printed no private pairing link for its address")
-    code = link.group(2)
+    check(link is not None and link.group(2) == origin, "the installer printed no private pairing link for its address")
+    printed_link, code = link.group(1), link.group(3)
     running()
     printed = step("version", f"{alt} --version")
     check(printed.returncode == 0 and printed.stdout.strip() == f"alt {version}", "alt --version does not print the release")
@@ -1065,6 +1223,7 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     undone = step("undo-sha256", f"sha=$({fingerprint}) && {{ {found} || security add-certificates -k {keychain} "
                                  f"~/.config/altitude/tls/ca.crt; }} && {found} && "
                                  f"security delete-certificate -Z $sha -t {keychain} && ! {found}")
+    trust_desktop = desktop_trust(guest, results, step, alt, listed, unchanged, printed_link)
     removed = step("uninstall", f"{alt} uninstall")
     check(removed.returncode == 0 and json.loads(removed.stdout)["uninstalled"], "uninstall failed")
     gone = step("removed", f"test ! -e {agent} && ! launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} >/dev/null 2>&1 && "
@@ -1072,7 +1231,8 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     check(gone.returncode == 0, "the LaunchAgent or the service is still there")
     record["cases"] = {"login": {"passed": True, "version": version, "service_label": SERVICE_LABEL,
                                  "pids": [before["pid"], after["pid"]]},
-                       "trust-ssh": trust_ssh, "undo-sha256": {"passed": undone.returncode == 0}}
+                       "trust-ssh": trust_ssh, "undo-sha256": {"passed": undone.returncode == 0},
+                       "trust-desktop": trust_desktop, "pair-safari": {"passed": trust_desktop["pairing"]}}
 
 
 # The confinement rows that must refuse private places without macOS asking, and how their details say so.
