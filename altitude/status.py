@@ -67,34 +67,6 @@ def pr(project: str, number: int) -> dict:
     return {"project": project, **record, "errors": errors}
 
 
-def _report_list(report: dict, key: str, errors: list[str]) -> list:
-    value = report.get(key)
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        _error(errors, f"report.{key}", "expected a list")
-        return []
-    return value
-
-
-def _report_sections(report: dict, errors: list[str]) -> dict:
-    landed = report.get("landed") or {}
-    if not isinstance(landed, dict):
-        _error(errors, "report.landed", "expected an object"); landed = {}
-    prs = landed.get("prs") or []
-    if not isinstance(prs, list) or any(not isinstance(row, dict) for row in prs):
-        _error(errors, "report.landed.prs", "expected a list of objects"); prs = []
-    blocked = report.get("blocked")
-    if blocked is not None and not isinstance(blocked, str):
-        _error(errors, "report.blocked", "expected text"); blocked = None
-    spend = report.get("spend") or {}
-    if not isinstance(spend, dict):
-        _error(errors, "report.spend", "expected an object"); spend = {}
-    return {"prs": prs, "blocked": blocked, "spend": spend,
-            **{key: _report_list(report, key, errors)
-               for key in ("decisions", "fyi", "follow_ups", "deviations")}}
-
-
 def task_report(project: str, slug: str) -> dict:
     """The report as landed, plus its persisted verdict and completion digest."""
     errors: list[str] = []
@@ -118,7 +90,7 @@ def task_report(project: str, slug: str) -> dict:
     if report is None:
         _error(errors, "report", "report.json missing")
     safe = report or {}
-    sections = _report_sections(safe, errors)
+    sections = verify.report_sections(safe, errors)
     verified = task.get("verified") if isinstance(task.get("verified"), dict) else {}
     return {"project": project, "slug": task.get("slug") or slug, "state": task.get("state"),
             "verdict": verified.get("verdict"), **sections,
