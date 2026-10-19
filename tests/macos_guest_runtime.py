@@ -23,7 +23,9 @@ import ssl
 import subprocess
 import sys
 import tarfile
+import threading
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -73,6 +75,10 @@ def setup() -> dict:
     gh.write_text(f"#!/bin/sh\nFAKE_GH_DIR={GH_STATE} exec {PYTHON} -B {FIXTURE}/fake_gh.py \"$@\"\n")
     for path in (engine, gh):
         path.chmod(0o755)
+    # A fictional Codex sign-in, whose access token Altitude hands each Codex worker, as tests/support.py signs in.
+    (HOME / ".codex").mkdir(mode=0o700, exist_ok=True)
+    (HOME / ".codex/auth.json").write_text(json.dumps({"tokens": {
+        "access_token": "fictional-access", "refresh_token": "fictional-refresh", "account_id": "fictional-account"}}))
     repo = HOME / "Projects" / PROJECT
     repo.mkdir(parents=True)
     git(repo, "init", "-q", "-b", "main")
@@ -189,11 +195,13 @@ def service_pid() -> int | None:
     return int(pid[1]) if found.returncode == 0 and "state = running" in found.stdout and pid else None
 
 
-def healthy() -> bool:
+def origin() -> str:
     environment = json.loads((HOME / ".config/altitude/install.json").read_text()).get("environment", {})
-    port = environment.get("ALTITUDE_PORT", "8890")
-    return shell(f"curl -fsS --max-time 5 --cacert {HOME}/.config/altitude/tls/ca.crt "
-                 f"https://127.0.0.1:{port}/api/health").returncode == 0
+    return f"https://127.0.0.1:{environment.get('ALTITUDE_PORT', '8890')}"
+
+
+def healthy() -> bool:
+    return shell(f"curl -fsS --max-time 5 --cacert {HOME}/.config/altitude/tls/ca.crt {origin()}/api/health").returncode == 0
 
 
 def restart() -> dict:
@@ -215,14 +223,70 @@ def new_task(title: str, brief: str) -> str:
 
 def page(path: str, body: dict | None = None, timeout: float = 60):
     """The service's answer to one request as the page sends it, with the CLI's machine key."""
-    environment = json.loads((HOME / ".config/altitude/install.json").read_text()).get("environment", {})
     request = urllib.request.Request(
-        f"https://127.0.0.1:{environment.get('ALTITUDE_PORT', '8890')}{path}",
+        origin() + path,
         data=None if body is None else json.dumps(body).encode(),
         headers={"Content-Type": "application/json",
                  "X-Altitude-Key": (HOME / ".config/altitude/access/machine.key").read_text().strip()})
     context = ssl.create_default_context(cafile=str(HOME / ".config/altitude/tls/ca.crt"))
     return urllib.request.urlopen(request, context=context, timeout=timeout)
+
+
+class Safari:
+    """Altitude's page in Safari on the account's desktop, as the operator reads it: one automation window through
+    Safari's own WebDriver, which the lane starts after `alt trust` made Safari trust Altitude's authority, paired
+    with a fresh code, since each window keeps storage of its own. Safari drives one window at a time."""
+
+    WEBDRIVER = "http://127.0.0.1:4444/session"
+    NOTICE = '[role="status"][aria-label="New version"]'
+
+    def __init__(self):
+        self.window = None
+        self.window = self.call("POST", "", {"capabilities": {"alwaysMatch": {"browserName": "safari"}}})["sessionId"]
+        code = re.search(r"Pairing code: (\S+)", alt("pair", project=False))[1]
+        self.go(f"/projects#pair={code}")
+        wait("Safari to pair", lambda: "#pair=" not in self.call("GET", "/url")
+             and "Pair this device" not in self.text("body"), timeout=60)
+
+    def call(self, method: str, path: str, body: dict | None = None):
+        session = self.WEBDRIVER if self.window is None else f"{self.WEBDRIVER}/{self.window}{path}"
+        request = urllib.request.Request(session, method=method, headers={"Content-Type": "application/json"},
+                                         data=None if body is None else json.dumps(body).encode())
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.loads(response.read()).get("value")
+        except urllib.error.HTTPError as error:
+            raise Failed(f"Safari's WebDriver refused {method} {path or 'session'}: {error.read()[:300]!r}") from None
+
+    def go(self, path: str) -> None:
+        self.call("POST", "/url", {"url": origin() + path})
+
+    def text(self, selector: str) -> str:
+        """The text of SELECTOR's first element, screen-reader labels included, or ''."""
+        return self.call("POST", "/execute/sync", {"script": "const found = document.querySelector(arguments[0]); "
+                                                            "return found ? found.textContent : '';",
+                                                  "args": [selector]}) or ""
+
+    def shows(self, path: str, selector: str, expected: str, timeout: float = 60) -> str:
+        """SELECTOR's text at PATH once it contains EXPECTED, the page opened afresh every ten seconds."""
+        seen, deadline = "", time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.go(path)
+            for _ in range(5):
+                time.sleep(2)
+                if expected in (seen := self.text(selector)):
+                    return seen
+        raise Failed(f"timed out after {timeout:.0f} s waiting for Safari at {path} to show {expected!r}; "
+                     f"it showed {seen!r}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        try:
+            self.call("DELETE", "")
+        except (Failed, OSError):
+            pass
 
 
 def coordinator(text: str) -> None:
@@ -572,7 +636,7 @@ def row_schedule() -> dict:
     return facts
 
 
-def relabelled(version: str, newer: str) -> None:
+def relabelled(version: str, newer: str) -> Path:
     """The installed release's archive served as NEWER, changed only in the version it declares, as the lifecycle
     lane's synthetic releases are: a release the daemon installs without a second build."""
     repository = Path(os.environ["LANE_LATEST"]).parent.parent.relative_to(SHARED / "root/repos")
@@ -588,13 +652,30 @@ def relabelled(version: str, newer: str) -> None:
                 member.size = len(data)
             bundle.addfile(member, io.BytesIO(data) if data is not None else None)
     (downloads / newer / f"{archive.name}.sha256").write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + "\n")
+    return archive
+
+
+def held(archive: Path):
+    """ARCHIVE served as a named pipe, which the fake GitHub opens as any file: the update's download of it waits until
+    the returned release is called, so its installing state lasts long enough for the page to show it. Released
+    within the download's 60-second timeout."""
+    data = archive.read_bytes()
+    archive.unlink()
+    os.mkfifo(archive)
+
+    def feed() -> None:
+        with open(archive, "wb") as pipe:
+            pipe.write(data)
+    return lambda: threading.Thread(target=feed, daemon=True).start()
 
 
 def row_quiet_point() -> dict:
     """#1003: an automatic update offered while a validation run holds the machine waits for that run and names it
-    in `alt doctor`; a new validation request is told Altitude restarts soon and runs only after the restart; once
-    the run ends the update installs itself and the service restarts into it while the validating task's worker
-    stays in its turn."""
+    in `alt doctor`, the page's notice and Settings' About; a new validation request is told Altitude restarts soon
+    and runs only after the restart; once the run ends the update installs itself, the page saying so while its
+    download is held, when a new task waits for dispatch and the operator's chat message for a coordinator turn,
+    and the service restarts into it while the validating task's worker stays in its turn, the page then saying it
+    updated and the waiting task and message starting."""
     record = lambda: json.loads((ROOT / "update.json").read_text())  # noqa: E731
     installed = lambda: json.loads((HOME / ".local/share/altitude/current/release.json").read_text())["version"]  # noqa: E731
     settings = ROOT / "settings.json"
@@ -602,38 +683,63 @@ def row_quiet_point() -> dict:
     settings.write_text(json.dumps({**current, "update_automatic": True}))
     version = os.environ["LANE_VERSION"]
     newer = re.sub(r"(\d+)$", lambda m: str(int(m[1]) + 1), version)
-    relabelled(version, newer)
-    running = new_task("Validation during an update", "Fictional task that validates its candidate, then stays in "
-                       "its turn.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo validation-started; sleep 120'\n"
-                       "FIXTURE-END: hold 400\n")
-    run = wait("the validation run", lambda: next((r for r in machine(running) if r.get("purpose") == "validation"),
-                                                  None), timeout=120)
-    wait("its launchd job", lambda: job_running(run["unit"]), timeout=60)
-    held = f"the validation run of {PROJECT}/{running}"
-    unit, before = worker_unit(running), service_pid()  # the service cannot restart while the run holds the machine
-    lookup(newer)
-    waiting = wait("the offered update to name the run", lambda: (record().get("waiting") or {}).get("for") == [held]
-                   and record()["waiting"], timeout=90)
-    doctor = next((line for line in alt("doctor", project=False).splitlines() if line.startswith("Update:")), "")
-    later = new_task("Validation while an update waits", "Fictional task that asks for a validation run while an "
-                     "update waits.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo second-run'\n")
-    ended = wait("the validation run to end", lambda: next((r for r in machine(running) if r.get("n") == run["n"]
-                                                            and r.get("finished")), None), timeout=150)
-    attempt = wait("the automatic update to start", lambda: (record().get("attempt") or {}).get("version") == newer
-                   and record()["attempt"], timeout=120)
-    try:
-        wait(f"the service to restart into {newer}", lambda: installed() == newer
-             and (service_pid() or before) != before and healthy(), timeout=180)
-    except Failed as error:
-        raise Failed(f"{error}: installed {installed()}, service {before} then {service_pid()}, healthy {healthy()}, "
-                     f"attempt {record().get('attempt')}") from None
+    release = held(relabelled(version, newer))
+    with Safari() as safari:
+        running = new_task("Validation during an update", "Fictional task that validates its candidate, then stays in "
+                           "its turn.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo validation-started; sleep 150'\n"
+                           "FIXTURE-END: hold 400\n")
+        run = wait("the validation run", lambda: next((r for r in machine(running) if r.get("purpose") == "validation"),
+                                                      None), timeout=120)
+        wait("its launchd job", lambda: job_running(run["unit"]), timeout=60)
+        held_by = f"the validation run of {PROJECT}/{running}"
+        unit, before = worker_unit(running), service_pid()  # the service cannot restart while the run holds the machine
+        lookup(newer)
+        waiting = wait("the offered update to name the run", lambda: (record().get("waiting") or {}).get("for") == [held_by]
+                       and record()["waiting"], timeout=90)
+        doctor = next((line for line in alt("doctor", project=False).splitlines() if line.startswith("Update:")), "")
+        page_shows = {"notice": safari.shows("/projects", Safari.NOTICE, f"Altitude {newer} installs automatically at the "
+                                             f"next quiet moment. Waiting for {held_by}."),
+                      "about": safari.shows("/settings", ".settings-version", f"{version} · {newer} waits for {held_by}")}
+        later = new_task("Validation while an update waits", "Fictional task that asks for a validation run while an "
+                         "update waits.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo second-run'\n")
+        ended = wait("the validation run to end", lambda: next((r for r in machine(running) if r.get("n") == run["n"]
+                                                                and r.get("finished")), None), timeout=180)
+        try:
+            attempt = wait("the automatic update to start", lambda: (record().get("attempt") or {}).get("version") == newer
+                           and record()["attempt"], timeout=120)
+            page_shows["installing"] = safari.shows("/projects", Safari.NOTICE, f"Installing Altitude {newer}… Altitude "
+                                                    "restarts when it is ready.", timeout=30)
+            # While it installs, a new task is not dispatched and the operator's chat message waits for no turn.
+            mark = len(lines(LOG))
+            fenced = alt("task", "new", "--title", "Created while an update installs", "--engine", "codex", "-",
+                         stdin="Fictional task created while an update installs.\n")["slug"]
+            with page("/api/chat", {"project": PROJECT, "text": "FIXTURE-RUN: echo chat-after-update"}) as response:
+                chat = json.loads(response.read())
+            time.sleep(10)
+            installing = {"task": task(fenced).get("state"), "task_turns": len(turns(fenced)),
+                          "chat_queued": bool(chat.get("queued")),
+                          "coordinator_turns": len([entry for entry in lines(LOG)[mark:] if entry.get("role") == "l3"])}
+        finally:
+            release()
+        try:
+            wait(f"the service to restart into {newer}", lambda: installed() == newer
+                 and (service_pid() or before) != before and healthy(), timeout=180)
+        except Failed as error:
+            raise Failed(f"{error}: installed {installed()}, service {before} then {service_pid()}, healthy {healthy()}, "
+                         f"attempt {record().get('attempt')}") from None
+        page_shows["updated"] = safari.shows("/projects", Safari.NOTICE, f"Updated to {newer}.", timeout=90)
+    installing["after_restart"] = {
+        "task_turn": bool(wait("the fenced task's first turn", lambda: turns(fenced), timeout=120)),
+        "chat_ran": bool(wait("the queued chat message's turn", lambda: any(
+            entry.get("role") == "l3" and entry.get("command") == "echo chat-after-update" for entry in lines(LOG)[mark:]),
+            timeout=120))}
     second = wait("the second request's answer", lambda: ran(later, "alt task validate"), timeout=120)
     # The restarted service's start, to the second; a run it started begins at or after it.
     activated = datetime.strptime(shell(f"ps -o lstart= -p {service_pid()}").stdout.strip(),
                                   "%a %b %d %H:%M:%S %Y").timestamp()
     after_update = lambda row: datetime.fromisoformat(row["started"]).timestamp() >= activated  # noqa: E731
-    facts = {"installed": version, "newer": newer, "waiting": waiting, "doctor": doctor,
-             "second": {key: second.get(key) for key in ("exit", "stderr")},
+    facts = {"installed": version, "newer": newer, "waiting": waiting, "doctor": doctor, "page": page_shows,
+             "while_installing": installing, "second": {key: second.get(key) for key in ("exit", "stderr")},
              "second_runs": [{key: r.get(key) for key in ("n", "started", "exit")} for r in machine(later)
                              if r.get("purpose") == "validation"],
              "run": {key: ended.get(key) for key in ("n", "ended", "exit", "finished")},
@@ -643,16 +749,76 @@ def row_quiet_point() -> dict:
              "now": installed(), "service": {"before": before, "after": service_pid(), "started": activated},
              "worker_kept": {"job": job_running(unit), "unit": worker_unit(running) == unit,
                              "state": task(running).get("state")}}
+    stopped_cleanly(fenced)
     stopped_cleanly(later)
     stopped_cleanly(running)
     facts["passed"] = (doctor == f"Update: Altitude {newer} installs automatically at the next quiet moment; "
-                                 f"waiting for {held}."
+                                 f"waiting for {held_by}."
+                       and installing == {"task": "queued", "task_turns": 0, "chat_queued": True, "coordinator_turns": 0,
+                                          "after_restart": {"task_turn": True, "chat_ran": True}}
                        and "restarts soon to apply an update" in second.get("stderr", "") and second.get("exit") == 0
                        and bool(facts["second_runs"]) and all(after_update(r) for r in facts["second_runs"])
                        and ended.get("exit") == 0 and 0 <= facts["attempt_after_run_s"] < 45
                        and facts["attempt"].get("state") == "succeeded" and facts["attempt"].get("automatic") is True
                        and facts["now"] == newer and facts["worker_kept"] == {"job": True, "unit": True,
                                                                                "state": "running"})
+    return facts
+
+
+def row_terminal_hold() -> dict:
+    """#1003: an automatic update offered while the project's browser terminal is open waits for it and names it in
+    `alt doctor`, the page's notice and Settings' About, starting nothing while it stays open; once it closes, the
+    update starts within the daemon's next ticks and the service restarts into it."""
+    record = lambda: json.loads((ROOT / "update.json").read_text())  # noqa: E731
+    installed = lambda: json.loads((HOME / ".local/share/altitude/current/release.json").read_text())["version"]  # noqa: E731
+    settings = ROOT / "settings.json"
+    current = json.loads(settings.read_text()) if settings.exists() else {}
+    settings.write_text(json.dumps({**current, "update_automatic": True}))
+    version = installed()
+    newer = re.sub(r"(\d+)$", lambda m: str(int(m[1]) + 1), version)
+    relabelled(os.environ["LANE_VERSION"], newer)
+
+    def call(path: str, body: dict | None = None):
+        with page(path, body) as response:
+            return json.loads(response.read() or b"null")
+
+    held_by = f"the browser terminal open in {PROJECT}"
+    before = service_pid()
+    call("/api/terminal-access", {"enabled": True})
+    with Safari() as safari:
+        terminal = call(f"/api/terminal/{PROJECT}/open", {})["id"]
+        lookup(newer)
+        waiting = wait("the offered update to name the terminal", lambda: (record().get("waiting") or {}).get("for")
+                       == [held_by] and record()["waiting"], timeout=90)
+        found = time.monotonic()
+        doctor = next((line for line in alt("doctor", project=False).splitlines() if line.startswith("Update:")), "")
+        page_shows = {"notice": safari.shows("/projects", Safari.NOTICE, f"Altitude {newer} installs automatically at the "
+                                             f"next quiet moment. Waiting for {held_by}."),
+                      "about": safari.shows("/settings", ".settings-version", f"{version} · {newer} waits for {held_by}")}
+    time.sleep(max(0.0, found + 65 - time.monotonic()))  # past two more of the daemon's 30-second ticks
+    kept = {"attempt": (record().get("attempt") or {}).get("version") == newer, "service": service_pid() == before,
+            "terminal": call(f"/api/terminal/{PROJECT}").get("state")}
+    call(f"/api/terminal/{PROJECT}/close", {"id": terminal})
+    closed = time.time()
+    attempt = wait("the automatic update to start", lambda: (record().get("attempt") or {}).get("version") == newer
+                   and record()["attempt"], timeout=120)
+    try:
+        wait(f"the service to restart into {newer}", lambda: installed() == newer
+             and (service_pid() or before) != before and healthy(), timeout=180)
+    except Failed as error:
+        raise Failed(f"{error}: installed {installed()}, service {before} then {service_pid()}, healthy {healthy()}, "
+                     f"attempt {record().get('attempt')}") from None
+    facts = {"installed": version, "newer": newer, "waiting": waiting, "doctor": doctor, "page": page_shows,
+             "while_open": kept, "attempt_after_close_s": round(attempt["started"] - closed, 1),
+             "attempt": wait("the attempt's outcome", lambda: record()["attempt"].get("state") != "running"
+                             and record()["attempt"], timeout=60),
+             "now": installed(), "service": {"before": before, "after": service_pid()}}
+    facts["passed"] = (doctor == f"Update: Altitude {newer} installs automatically at the next quiet moment; "
+                                 f"waiting for {held_by}."
+                       and kept == {"attempt": False, "service": True, "terminal": "running"}
+                       and 0 <= facts["attempt_after_close_s"] < 45
+                       and facts["attempt"].get("state") == "succeeded" and facts["attempt"].get("automatic") is True
+                       and facts["now"] == newer)
     return facts
 
 
@@ -931,6 +1097,7 @@ STATE: dict = {}
 ROWS = {"coordinator-stop": row_coordinator_stop, "failed-turn": row_failed_turn, "status-unknown": row_status_unknown,
         "validation-restart": row_validation_restart, "grants": row_grants, "contention": row_contention,
         "incident": row_incident, "schedule": row_schedule, "quiet-point": row_quiet_point,
+        "terminal-hold": row_terminal_hold,
         "scratch": row_scratch, "operator-step": row_operator_step,
         "coordinator-channel": row_coordinator_channel, "logout-login": row_logout_login, "sign-in": row_sign_in}
 

@@ -1314,11 +1314,13 @@ class TestInstallationMacosVm(AltitudeCase):
                 target.mkdir(parents=True)
                 (target / "rows.jsonl").write_text("".join(json.dumps(row) + "\n" for row in self.rows))
 
-        def judged(rows, **kwargs):
+        def judged(rows, phase=vm.phase_workers, **kwargs):
             guest, record = Guest(rows, **kwargs), {}
             shutil.rmtree(self.tmp / "evidence", ignore_errors=True)
-            with mock.patch.object(vm, "prerequisites", return_value={}), mock.patch.object(vm.time, "sleep"):
-                vm.phase_workers(guest, "fictional-owner/fictional-altitude", self.tmp, record, self.tmp, "c" * 40)
+            with mock.patch.object(vm, "prerequisites", return_value={}), mock.patch.object(vm.time, "sleep"), \
+                    mock.patch.object(vm, "browser") as browser:
+                phase(guest, "fictional-owner/fictional-altitude", self.tmp, record, self.tmp, "c" * 40)
+            self.assertEqual(browser.called, phase in (vm.phase_update, vm.phase_terminal))  # Safari only where read
             return guest, record["cases"]
 
         every = [{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["workers"]]
@@ -1336,6 +1338,9 @@ class TestInstallationMacosVm(AltitudeCase):
         self.assertEqual(cases["validation-restart"], {"passed": False, "unavailable": "no restart"})
         with self.assertRaisesRegex(vm.Stop, "install failed"):
             judged(every, installed="")
+        guest, cases = judged([{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["terminal"]], vm.phase_terminal)
+        self.assertIn("rows operator-step terminal-hold", "".join(guest.commands))
+        self.assertTrue(all(case["passed"] for case in cases.values()))
 
     def test_guest_engine_runs_its_prompts_commands_and_ends_the_turn_as_told(self):
         engine, log = REPO / "tests/macos_guest_engine.py", self.tmp / "log.jsonl"
