@@ -766,16 +766,18 @@ its sender. Streamed launch input with images is marked as the human's, as a tex
 
 A skill or custom command typed by name in a chat (`/name arguments`) reaches the session as part of
 the message text, after the line naming its sender, so the engine's own expansion of a leading slash
-never runs; whether it is used depends on what the session loads. A Claude owner loads the operator's
+never runs, and the session's model decides whether to use it. A Claude owner loads the operator's
 skills and commands through its linked folder and the project's skills from its worktree, and its model
 invokes the named one with the arguments that follow through Claude's Skill tool, on a new turn, in a
-running one (Send now) and on a resumed session alike. A Claude coordinator runs in restricted mode,
-which loads none of the operator's or the project's skills or commands and has no Skill tool, so the
-project conversation receives the name as words: the coordinator says it cannot find it, or follows a
-project skill's file it finds by reading. Loading them there would change the coordinator's
-confinement. A Codex session has the operator's skills and prompts in its folder and receives the name
-as text the same way. Claude's behavior here is a provider property established by recorded runs on
-Linux with Claude Code 2.1, not by the suite; Codex's has no recorded run yet.
+running one (Send now) and on a resumed session alike. Claude offers its model no skill marked
+`disable-model-invocation`, so such a skill runs only when typed in a terminal. A Claude coordinator
+runs in restricted mode, which loads none of the operator's or the project's skills or commands and has
+no Skill tool, so the project conversation receives the name as words: the coordinator says it cannot
+find it, or follows a project skill's file it finds by reading. Loading them there would change the
+coordinator's confinement. A Codex task worker has the operator's skills and prompts linked into its
+folder, and a Codex coordinator runs on the operator's own Codex folder; both receive the name as text.
+Claude's behavior here is a provider property established by recorded runs on Linux with Claude Code
+2.1, not by the suite; Codex's has no recorded run yet.
 
 | Module | Integration responsibility |
 | --- | --- |

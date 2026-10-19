@@ -5,9 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
-- Typing a skill or custom command by name in a task conversation (`/name arguments`) runs it on a Claude
-  owner as in your terminal, your own skills and the project's alike. The project conversation's Claude
-  coordinator does not load skills or commands, and Codex sessions are not yet confirmed.
+- A Claude task owner uses a skill or custom command you type by name in its conversation
+  (`/name arguments`), your own and the project's alike, with what follows as its arguments. The project
+  conversation's Claude coordinator does not load skills or commands, and Codex is not yet confirmed.
 - When something does not work, a repair agent finds out why and fixes it: **Repair** on a failed
   update's notice or **Repair…** in Settings → About starts one with your full access for two hours,
   and its page shows each step it takes, asks you before it deletes, installs or changes anything

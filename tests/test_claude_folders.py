@@ -100,6 +100,7 @@ class TestClaudeFolders(AltitudeCase):
         self.fake_engines()
         (self.operator / "settings.json").write_text("{}")
         (self.operator / "skills").mkdir(exist_ok=True)
+        (self.operator / "commands").mkdir(exist_ok=True)
         log, job_root = self.tmp / "engine.log", self.runtime_tmp / "l2-engine"
         launches = []
 
@@ -119,8 +120,9 @@ class TestClaudeFolders(AltitudeCase):
         spec = json.loads(sent)
         self.assertNotIn(TOKEN, json.dumps(spec["command"]))
         # A skill or command typed in task chat runs because the worker loads them and keeps the Skill tool.
-        for flag in ("--restricted", "--safe-mode", "--bare", "--disable-slash-commands", "--tools"):
-            self.assertNotIn(flag, spec["command"])
+        off = ("--restricted", "--safe-mode", "--bare", "--disable-slash-commands", "--tools", "--disallowedTools",
+               "--setting-sources")
+        self.assertEqual([arg for arg in spec["command"] if arg.startswith(off)], [])
         self.assertEqual(spec["env"], {"CLAUDE_CONFIG_DIR": str(job_root / "claude"), "CLAUDE_CODE_OAUTH_TOKEN": TOKEN})
         # The driver, inside the job, prepares the folder before Claude starts.
         job = subprocess.run(command[command.index("--") + 1:], input=sent, capture_output=True, timeout=60)
@@ -130,6 +132,7 @@ class TestClaudeFolders(AltitudeCase):
         home = job_root / "claude"
         self.assertEqual(os.readlink(home / "settings.json"), str(self.operator / "settings.json"))
         self.assertEqual(os.readlink(home / "skills"), str(self.operator / "skills"))
+        self.assertEqual(os.readlink(home / "commands"), str(self.operator / "commands"))
         self.assertFalse(os.path.lexists(home / "plugins"), "only what the operator has is linked")
         self.assertFalse((home / ".claude.json").exists(), "the folder's state file starts empty")
 
