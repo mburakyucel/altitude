@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import platform, server, terminal  # noqa: F401 server loads urllib before a test pretends to be darwin
+from altitude import engines, platform, server, terminal  # noqa: F401 server loads urllib before a test pretends to be darwin
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -347,11 +347,14 @@ class Jobs(DarwinCase):
         self.assertEqual(spec, {"label": "dev.altitude.job.altitude-codex-w1", "mode": "pipe", "command": ["codex", "exec"],
                                 "env": {**env, "TMPDIR": temporary}, "runtime_max": 60, "temporary": temporary,
                                 "profile": None})
+        codex = engines.codex.operator_home()
+        codex.mkdir(parents=True, exist_ok=True)
         spec = self.spec(platform.job_command("altitude-claude-c.service", ["claude"], env,
                                               writable=(Path("/work/tree"), Path("/home/.altitude")),
                                               sockets=(Path("/home/.config/altitude/x/ab12"),)))
         self.assertEqual(spec["profile"], platform.seatbelt_profile(["/work/tree", "/home/.altitude"], temporary=temporary,
-                                                                    sockets=["/home/.config/altitude/x/ab12"]))
+                                                                    sockets=["/home/.config/altitude/x/ab12"],
+                                                                    hidden=[str(codex), platform.DATA_VOLUME + str(codex)]))
         log, status = self.tmp / "machine.log", self.tmp / "machine.exit"
         spec = self.spec(platform.logged_job_command("altitude-machine-p-1.service", "brew list", log=log, status=status,
                                                      env=env, timeout=300))

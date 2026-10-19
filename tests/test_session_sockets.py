@@ -1,6 +1,7 @@
 """A confined job reaches no Unix socket of the desktop session: none in the per-user runtime folder, none in the shared
 temporary folders and, where the kernel offers Landlock's scope, no abstract one, while its own sockets and temporary
-folder work. Every socket here is a fictional fixture the test itself listens on."""
+folder work. It sees nothing of an engine's folder of the operator's own beyond the entries its launch names. Every
+socket and folder here is a fictional fixture the test itself makes."""
 
 import errno
 import json
@@ -33,6 +34,25 @@ own = socket.socket(socket.AF_UNIX); own.bind(folder + "/own.sock"); own.listen(
 mine = socket.socket(socket.AF_UNIX); mine.bind("\0" + places["abstract"] + "-own"); mine.listen()
 seen["own"], seen["own abstract"] = reach(folder + "/own.sock"), reach("\0" + places["abstract"] + "-own")
 open(folder + "/written", "w").write("job")
+print(json.dumps(seen))
+'''
+
+#: Run inside the job: read each named file, try to write the second argument and list the folder in the third.
+FILES = r'''
+import json, os, sys
+seen = {}
+for name, path in json.loads(sys.argv[1]).items():
+    try:
+        with open(path) as stream:
+            seen[name] = stream.read()
+    except OSError as exc:
+        seen[name] = exc.errno
+try:
+    open(sys.argv[2], "a").close()
+    seen["write"] = "written"
+except OSError as exc:
+    seen["write"] = exc.errno
+seen["listing"] = sorted(os.listdir(sys.argv[3]))
 print(json.dumps(seen))
 '''
 
@@ -134,6 +154,27 @@ class TestSandboxedJob(AltitudeCase):
     def test_a_coordinator_reaches_its_own_broker_and_nothing_else_in_the_runtime_folder(self):
         seen = self.run_job(sockets=[self.places["broker"]])
         self.assertEqual((seen["broker"], seen["runtime"], seen["shared"]), ("reached", errno.ENOENT, errno.ENOENT))
+
+    def test_an_engines_folder_of_the_operators_own_shows_a_job_only_what_its_folder_links_to(self):
+        operator = self.home / ".codex"
+        (operator / "sessions").mkdir(parents=True)
+        for name, text in (("auth.json", "fictional sign-in"), ("config.toml", "fictional settings"),
+                           ("sessions/rollout.jsonl", "fictional conversation")):
+            (operator / name).write_text(text)
+        own = self.work / "codex"
+        own.mkdir()
+        (own / "config.toml").symlink_to(operator / "config.toml")
+        argv = platform.bubblewrap_profile([str(self.work)], [str(operator / "config.toml")],
+                                           temporary=str(self.temporary), hidden=[str(operator)])
+        files = {"sign-in": str(operator / "auth.json"), "conversation": str(operator / "sessions/rollout.jsonl"),
+                 "linked settings": str(own / "config.toml")}
+        done = subprocess.run([*argv, sys.executable, "-I", "-c", FILES, json.dumps(files), str(operator / "config.toml"),
+                               str(operator)], capture_output=True, text=True, timeout=60, cwd=self.work)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"sign-in": errno.ENOENT, "conversation": errno.ENOENT,
+                                                   "linked settings": "fictional settings", "write": errno.EROFS,
+                                                   "listing": ["config.toml"]})
+        self.assertEqual((operator / "auth.json").read_text(), "fictional sign-in", "the host's folder is unchanged")
 
 
 class TestJobTemporaryFolder(AltitudeCase):

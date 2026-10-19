@@ -1603,7 +1603,8 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
     Every job has a temporary folder of its own (`_job_temporary`), its TMPDIR, removed when the job ends.
     `writable` confines the job with Altitude's own sandbox, Seatbelt on macOS and bubblewrap on Linux: it may signal
     only its own processes and write only under these roots and its temporary folder, except under `read_only`,
-    never reads Altitude's credentials and reaches no Unix socket of the desktop session; `sockets` are the ones
+    never reads Altitude's credentials or the engines' folders of the operator's own (`engines.operator_places`),
+    except a `read_only` path inside one, and reaches no Unix socket of the desktop session; `sockets` are the ones
     outside its roots it may reach. Without it, file confinement is left to the engine.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
@@ -1613,20 +1614,40 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
     """
     temporary = _job_temporary()
     roots, protected, reached = ([str(path) for path in paths] for paths in (writable or (), read_only, sockets))
+    hidden = [] if writable is None else _operator_places()
     if _darwin():
         return _entry("launch", json.dumps({
             "label": _label(name), "mode": "pipe", "command": command, "env": {**env, "TMPDIR": temporary},
             "runtime_max": runtime_max, "temporary": temporary,
             "profile": None if writable is None else seatbelt_profile(roots, protected, temporary=temporary,
-                                                                      sockets=reached)}))
+                                                                      sockets=reached, hidden=hidden)}))
     return [SYSTEMD_RUN, "--user", "--wait", "--pipe", f"--unit={name}", "--quiet", "--collect",
             "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
             "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no",
             f"--property=ExecStopPost=-{RM} -rf -- {temporary}",
             *([f"--property=RuntimeMaxSec={runtime_max}", "--property=TimeoutStopSec=5"] if runtime_max else []),
             "--", *_scrub({**env, "TMPDIR": temporary if writable is None else "/tmp"}),
-            *([] if writable is None else bubblewrap_profile(roots, protected, temporary=temporary, sockets=reached)),
+            *([] if writable is None else bubblewrap_profile(roots, protected, temporary=temporary, sockets=reached,
+                                                             hidden=hidden)),
             *command]
+
+
+def _operator_places() -> list[str]:
+    """The engines' folders of the operator's own that no job in Altitude's sandbox sees, resolved and present; on
+    macOS each also through the data volume's other name, as `secret_places` spells them."""
+    from .engines import common
+    found = [place for place in dict.fromkeys(map(os.path.realpath, common.operator_places())) if os.path.isdir(place)]
+    return list(_volume_spellings(found)) if _darwin() else found
+
+
+def _inside(path: str, places: list[str]) -> bool:
+    return any(path == place or path.startswith(place.rstrip("/") + "/") for place in places)
+
+
+def _reopened(read_only, hidden: list[str]) -> list[str]:
+    """The `read_only` paths inside a `hidden` place, as named: a link there (an engine's settings file kept elsewhere)
+    is read through, where the job looks for it."""
+    return [path for path in map(os.path.abspath, read_only) if _inside(path, hidden)]
 
 
 #: The start of a job's own command inside Altitude's Linux sandbox, before it runs the command: Landlock's scope
@@ -1655,13 +1676,14 @@ def abstract_scope() -> bool:
 
 
 def bubblewrap_profile(writable: list[str], read_only: list[str] = (), *, temporary: str,
-                       sockets: list[str] = ()) -> list[str]:
+                       sockets: list[str] = (), hidden: list[str] = ()) -> list[str]:
     """Altitude's bubblewrap sandbox on Linux, the counterpart of `seatbelt_profile`, as the command that runs a job's
     own command inside it. The file system is read-only except `writable` (a root ending in * admits every name in its
     folder that starts with it) and /tmp and /var/tmp, which are both the job's own `temporary` folder, with
     `read_only` read-only again, the most specific path deciding; the control groups are read-only too. The per-user
     runtime folder is an empty one, so the session bus, the user manager and the desktop session's sockets are out of
-    reach; `sockets` (a coordinator's broker) come back read-only, and so does a root inside it. The job sees only its
+    reach; `sockets` (a coordinator's broker) come back read-only, and so does a root inside it. Each `hidden` folder
+    is an empty one too, with only the `read_only` paths inside it back, read-only. The job sees only its
     own processes and a device folder of its own with its own terminals, never Altitude's credentials and, where the
     kernel offers the scope (`ABSTRACT_SCOPE`), no abstract socket it did not make. A writable folder that does not
     exist yet is created first, so what the job writes there lasts; a * root admits only the names present at launch.
@@ -1677,12 +1699,13 @@ def bubblewrap_profile(writable: list[str], read_only: list[str] = (), *, tempor
                 mounts.append((entry.path, 0, ["--symlink", os.readlink(entry.path), entry.path]))
             else:
                 mounts.append((entry.path, 0, ["--ro-bind", entry.path, entry.path]))
-    for place in map(str, job_control_paths()):
+    for place in (*map(str, job_control_paths()), *hidden):
         if os.path.isdir(place):
             mounts.append((place, 0, ["--tmpfs", place]))
         elif os.path.lexists(place):
             mounts.append((place, 0, ["--ro-bind", "/dev/null", place]))
     mounts.extend((shared, 0, ["--bind", temporary, shared]) for shared in map(os.path.realpath, ("/tmp", "/var/tmp")))
+    reopened = _reopened(read_only, hidden)
     for root in dict.fromkeys(writable):
         if root.endswith("*"):
             folder, prefix = os.path.realpath(os.path.dirname(root)), os.path.basename(root)[:-1]
@@ -1694,7 +1717,9 @@ def bubblewrap_profile(writable: list[str], read_only: list[str] = (), *, tempor
             paths = [os.path.realpath(root)]
             os.makedirs(paths[0], exist_ok=True)
         mounts.extend((path, 1, ["--bind", path, path]) for path in paths)
-    mounts.extend((path, 2, ["--ro-bind-try", path, path]) for path in map(os.path.realpath, (*read_only, *sockets)))
+    kept = [path for path in read_only if os.path.abspath(path) not in reopened]
+    mounts.extend((path, 2, ["--ro-bind-try", path, path]) for path in map(os.path.realpath, (*kept, *sockets)))
+    mounts.extend((path, 2, ["--ro-bind-try", path, path]) for path in reopened)
     mounts.sort(key=lambda mount: (mount[0].count("/"), mount[1]))
     masks = []
     for place in map(str, (*private_places(), *secret_places())):
@@ -2688,10 +2713,13 @@ def secret_places() -> tuple[str, ...]:
     from . import access, config
     browsers = (Path.home() / place for place in BROWSER_PROFILES["darwin" if _darwin() else "linux"])
     found = [os.path.realpath(path) for path in (access.DIR, config.TLS_DIR, *browsers) if path.exists()]
-    if _darwin():
-        found = [spelling for path in found for spelling in
-                 (path, path.removeprefix(DATA_VOLUME), DATA_VOLUME + path.removeprefix(DATA_VOLUME))]
-    return tuple(dict.fromkeys(found))
+    return _volume_spellings(found) if _darwin() else tuple(dict.fromkeys(found))
+
+
+def _volume_spellings(paths) -> tuple[str, ...]:
+    """Each macOS path as Seatbelt may match it: as named, and through the data volume's other name."""
+    return tuple(dict.fromkeys(spelling for path in paths for spelling in
+                               (path, path.removeprefix(DATA_VOLUME), DATA_VOLUME + path.removeprefix(DATA_VOLUME))))
 
 
 def private_rule() -> str:
@@ -2887,15 +2915,17 @@ def unix_socket_rule(subpaths, literals=()) -> str:
 
 
 def seatbelt_profile(writable: list[str], read_only: list[str] = (), *, temporary: str,
-                     sockets: list[str] = ()) -> str:
+                     sockets: list[str] = (), hidden: list[str] = ()) -> str:
     """Altitude's Seatbelt profile. The job may signal only processes in its own sandbox, never its supervisor, and
     write only under `writable` (a root ending in * admits every path that starts with it), the user's temporary and
     cache directories, /private/tmp and devices, except under `read_only`, the most specific path deciding, and
     neither read nor write macOS's private places. Seatbelt matches resolved paths and lets the last matching rule
     decide, so rules follow from shallow to deep. It reaches Unix sockets only under its own roots and `temporary`
-    folder, at `sockets` and the system's, never one another program keeps in the shared temporary folders. launchd
-    refuses service control to every sandboxed process, and the profile refuses the services and Apple Events that
-    would run a program outside it."""
+    folder, at `sockets` and the system's, never one another program keeps in the shared temporary folders. It
+    neither reads nor writes a `hidden` folder, apart from reading the `read_only` paths inside it, as named and
+    resolved, each also through the data volume; these rules come before the private places' refusal, which stays last. launchd refuses service control
+    to every sandboxed process, and the profile refuses the services and Apple Events that would run a program
+    outside it."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
     rules = []
     for root in dict.fromkeys((*writable, temporary, user, "/private/tmp", "/private/var/tmp", "/dev")):
@@ -2907,8 +2937,12 @@ def seatbelt_profile(writable: list[str], read_only: list[str] = (), *, temporar
     rules.extend((path, "deny", rule) for path in map(os.path.realpath, read_only) for rule in _filters("subpath", [path]))
     rules.sort(key=lambda rule: (rule[0].count("/"), rule[1] == "deny"))
     own = [os.path.realpath(root) for root in (*writable, temporary) if not root.endswith("*")]
+    reopened = _volume_spellings(kept for path in _reopened(read_only, hidden) for kept in (path, os.path.realpath(path)))
+    hide = "".join(f"(deny file-read* file-write* {rule})" for rule in _filters("subpath", hidden)) + "".join(
+        f"(allow file-read-metadata {rule})" for rule in _filters("literal", hidden)) + "".join(
+        f"(allow file-read* {rule})" for rule in _filters("subpath", reopened))
     return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))(deny file-write*)"
-            + "".join(f"({verdict} file-write* {rule})" for _, verdict, rule in rules)
+            + "".join(f"({verdict} file-write* {rule})" for _, verdict, rule in rules) + hide
             + unix_socket_rule(own, map(os.path.realpath, sockets)) + private_rule() + SERVICE_ESCAPES)
 
 
@@ -3705,12 +3739,12 @@ def local_names() -> dict[str, set[str]]:
             "user": {name for name in user if name.lower() not in generic}}
 
 
-def job_confinement(*, profile: bool) -> str:
-    """The job a worker runs in; `profile` is whether Altitude's own sandbox wraps it."""
+def job_confinement() -> str:
+    """The job a worker runs in, with Altitude's own sandbox."""
     if _darwin():
-        return "launchd job with Altitude's Seatbelt profile" if profile else "launchd job"
+        return "launchd job with Altitude's Seatbelt profile"
     unit = "systemd user unit in the Altitude container" if containerized() else "systemd user unit"
-    return f"{unit} with Altitude's bubblewrap sandbox" if profile else unit
+    return f"{unit} with Altitude's bubblewrap sandbox"
 
 
 def validation_runroot() -> str:

@@ -1,7 +1,9 @@
-"""Native diagnostic against the packaged image profiles; fictional data and no provider session.
+"""Native diagnostic against the packaged image's sandboxes; fictional data and no provider session.
 
-Executed by container_acceptance.py in a disposable container, never against operator state.
-The application deployment is root-owned, so its unsandboxed write control must already deny.
+A task worker runs in Altitude's own sandbox with the roots a Codex worker's launch names; a Codex coordinator turn
+runs in the native diagnostic's own sandbox with its generated profile. Executed by container_acceptance.py in a
+disposable container, never against operator state. The application deployment is root-owned, so its unsandboxed
+write control must already deny.
 """
 import json
 import os
@@ -39,7 +41,7 @@ config.PROJECTS_FILE.write_text(json.dumps({'fixture': {'path': str(project)}}))
 task = T.new('fixture', 'Confined status fixture', 'Provider-free image identity probe.', hold_merge='Fixture hold')
 task.update(worktree=str(workspace), branch='task')
 S.save_task('fixture', task)
-git_roots, git_read_only = git_policy.worker_git_access(workspace)
+git_roots, _ = git_policy.worker_git_access(workspace)
 scratch = config.task_scratch('fixture', task['slug'])
 targets = {'workspace': workspace, 'git_common': git_roots[0], 'git_worktree': git_roots[-1],
            **{'git_' + name: git_roots[0] / name for name in ('hooks', 'info', 'modules', 'worktrees')},
@@ -101,13 +103,15 @@ for path in (platform.CONTAINER_MARKER, platform.CONTAINER_INSTANCE):
         out['identity_writes'][str(path)] = True
     except OSError:
         out['identity_writes'][str(path)] = False
+# Kept for the caller, which judges a write by whether it reached the real folder: a sandbox may hide a folder
+# behind an empty one of its own, where a write succeeds and ends with the job.
 for name, directory in spec['targets'].items():
     path = Path(directory) / ('probe-' + role)
     try:
-        path.write_text('fictional write'); path.unlink()
-        out['writes'][name] = {'allowed': True}
+        path.write_text('fictional write')
+        out['writes'][name] = {'written': True}
     except OSError as e:
-        out['writes'][name] = {'allowed': False, 'errno': e.errno}
+        out['writes'][name] = {'written': False, 'errno': e.errno}
 for name, file in {**spec.get('git_files', {}), **spec.get('home_files', {})}.items():
     existed = os.path.lexists(file)
     try:
@@ -129,9 +133,8 @@ for name, family, address in [(name, socket.AF_UNIX, path) for name, path in spe
         out['connections'][name] = {'connected': False, 'errno': e.errno, 'error': str(e)}
 out['reads'] = {}
 for name, directory in spec['credentials'].items():
-    try:
-        os.listdir(directory)  # names only: nothing is opened
-        out['reads'][name] = {'allowed': True}
+    try:  # names only: nothing is opened; an empty folder standing in for it shows none
+        out['reads'][name] = {'allowed': 'fixture-credential' in os.listdir(directory)}
     except OSError as e:
         out['reads'][name] = {'allowed': False, 'errno': e.errno}
 out['security'] = [x for x in Path('/proc/self/status').read_text().splitlines()
@@ -154,28 +157,45 @@ if role == 'task':
     out['git_commit'] = {'exit': git.returncode, 'stderr': git.stderr}
 print(json.dumps(out))
 '''
+for folder in spec['credentials'].values():
+    Path(folder, 'fixture-credential').write_text('fictional')
+
+
+def settle(observed, role):
+    """Whether each write reached the real folder, seen from outside, where the probe's file is then removed."""
+    for name, directory in spec['targets'].items():
+        written = Path(directory) / ('probe-' + role)
+        observed['writes'][name]['allowed'] = written.exists()
+        written.unlink(missing_ok=True)
+    return observed
+
+
 records = {}
-records['unsandboxed_control'] = json.loads(command(
-    ['/usr/bin/python3', '-c', child, json.dumps(spec), 'control']).stdout)
-profiles = {'task': engines.codex_sandbox(workspace, extra_roots=(*git_roots, scratch), read_only=git_read_only),
-            'coordinator': engines.codex_l3_permissions(runtime, project='fixture')}
-for role, settings in profiles.items():
-    args = [str(binary), 'sandbox']
-    # Select the actual application profile without translating its rules.
-    args += ['-P', tomllib.loads('\n'.join(settings))['default_permissions']]
-    for value in settings:
-        args += ['-c', value]
-    args += ['-C', str(workspace if role == 'task' else runtime),
-             '/usr/bin/python3', '-c', child, json.dumps(spec), role]
+records['unsandboxed_control'] = settle(json.loads(command(
+    ['/usr/bin/python3', '-c', child, json.dumps(spec), 'control']).stdout), 'control')
+_, _, writable, read_only, _, _ = engines.codex.prepare_worker(
+    'fixture/task', 'brief', cwd=workspace, scratch=scratch, job_root=S.task_dir('fixture', task['slug']) / 'l2-engine',
+    persona=None, model=None, settings=None, effort=None, resume=None, images=())
+job_temporary = home / 'job-temporary'
+job_temporary.mkdir()
+settings = engines.codex_l3_permissions(runtime, project='fixture')
+roles = {'task': (platform.bubblewrap_profile([str(path) for path in writable], [str(path) for path in read_only],
+                                              temporary=str(job_temporary), hidden=platform._operator_places()),
+                  workspace),
+         # Select the actual application profile without translating its rules.
+         'coordinator': ([str(binary), 'sandbox', '-P', tomllib.loads('\n'.join(settings))['default_permissions'],
+                          *(arg for value in settings for arg in ('-c', value)), '-C', str(runtime)], runtime)}
+for role, (sandbox, cwd) in roles.items():
+    args = [*sandbox, '/usr/bin/python3', '-c', child, json.dumps(spec), role]
     try:
-        run = subprocess.run(args, capture_output=True, text=True, timeout=30)
-        row = {'settings': settings, 'exit': run.returncode, 'stdout': run.stdout, 'stderr': run.stderr}
+        run = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=30)
+        row = {'command': sandbox, 'exit': run.returncode, 'stdout': run.stdout, 'stderr': run.stderr}
         try:
-            row['observed'] = json.loads(run.stdout)
+            row['observed'] = settle(json.loads(run.stdout), role)
         except ValueError:
-            row['unavailable'] = 'Native sandbox did not produce fixture observation.'
+            row['unavailable'] = 'The sandbox did not produce the fixture observation.'
     except subprocess.TimeoutExpired:
-        row = {'settings': settings, 'unavailable': 'Native sandbox timed out after 30 seconds.'}
+        row = {'command': sandbox, 'unavailable': 'The sandbox timed out after 30 seconds.'}
     records[role] = row
 unix_server.close(); tcp_server.close(); broker.unlink()
 records['versions'] = {name: command(args).stdout.strip() for name, args in {
@@ -197,11 +217,14 @@ if not all(r['connected'] for r in control['connections'].values()):
     failures.append('unsandboxed socket controls failed')
 if not all(r['allowed'] for r in control['reads'].values()):
     failures.append('unsandboxed credential folder controls failed')
-for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'scratch', 'temporary'}),
+# A task's temporary folders are its own, never the shared one; like a Claude worker, it may write its worktree's
+# engine settings folders, which no other task loads.
+for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'scratch', 'protected_codex',
+                                 'protected_agents'}),
                        ('coordinator', {'runtime'})]:
     row = records[role]
     if row.get('exit') != 0 or 'observed' not in row:
-        failures.append(role + ': native sandbox unavailable')
+        failures.append(role + ': sandbox unavailable')
         continue
     observed = row['observed']
     if not observed['identity']['containerized'] or not observed['native_refused']:
@@ -216,7 +239,7 @@ for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'scr
         if observed['writes'][name]['allowed'] != (name in writable):
             failures.append(role + ': unexpected write permission for ' + name)
     for name, outcome in observed['connections'].items():
-        expected = role == 'task' and name in {'broker', 'loopback'}
+        expected = role == 'task' and name == 'loopback'
         if outcome['connected'] != expected:
             failures.append(role + ': unexpected connection permission for ' + name)
     if any(r['allowed'] for r in observed['reads'].values()):

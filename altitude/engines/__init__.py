@@ -77,6 +77,7 @@ from .common import (
     worker_detail,
     cli_version,
     worker_confinement,
+    worker_sign_in,
     review_capability,
     review_mcp,
     review_active,
@@ -106,10 +107,7 @@ from .claude import (
 
 from .codex import (
     CODEX_UNIT_PREFIX,
-    CODEX_PATCH_NOTE,
-    CODEX_CONTAINER_PATCH_NOTE,
     codex_turns,
-    codex_sandbox,
     codex_l3_permissions,
     codex_l3_mcp,
     codex_bg,

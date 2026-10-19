@@ -114,7 +114,7 @@ print(json.dumps({"type":"turn.completed", "usage":{"input_tokens":7}}), flush=T
 
         with mock.patch.object(platform, "job_command",
                                return_value=[sys.executable, "-c", script, str(self.rollout)]):
-            result = engines.codex_exec("one prompt", unit="altitude-coordinator-fixture.service", cwd=self.tmp, timeout=5,
+            result = engines.codex_exec("one prompt", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.tmp, timeout=5,
                                        extra_env={"CODEX_HOME": str(self.home)},
                                        on_session=observed)
         self.assertEqual(observations, [{"session_id": "thread-1", "engine_model": "actual-model",

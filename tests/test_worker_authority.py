@@ -124,12 +124,6 @@ class TestCoordinatorFolder(AltitudeCase):
         self.addCleanup(l3._remove_runtime, runtime)
         self.assertEqual((runtime.parent, l3.verb_socket_path(self.project).parent), (folder, folder))
         self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
-        worktree = self.tmp / "worktree"
-        worktree.mkdir()
-        settings = engines.codex_sandbox(worktree, extra_roots=[self.repo])
-        roots = json.loads(next(s for s in settings if ".workspace_roots=" in s).split("=", 1)[1]
-                           .replace("=true", ":true"))
-        self.assertFalse([root for root in roots if folder.resolve().is_relative_to(root)])
         self.assertFalse(folder.resolve().is_relative_to(config.ROOT.resolve()))
         self.assertEqual(platform.coordinator_directory(), folder, "one folder per installation")
 
@@ -180,10 +174,9 @@ class TestCredentialsHidden(AltitudeCase):
         self.assertNotIn(".cache", platform.BROWSER_PROFILES["linux"], "Playwright's own browsers stay visible")
         worktree = self.tmp / "worktree"
         worktree.mkdir()
-        for settings in (engines.codex_sandbox(worktree), engines.codex_l3_permissions(worktree, project=self.project)):
-            rules = next(s for s in settings if ".filesystem=" in s)
-            for place in secrets:
-                self.assertIn(f'{json.dumps(place)}="deny"', rules)
+        rules = next(s for s in engines.codex_l3_permissions(worktree, project=self.project) if ".filesystem=" in s)
+        for place in secrets:
+            self.assertIn(f'{json.dumps(place)}="deny"', rules)
         rule = platform.private_rule()
         for place in secrets:
             self.assertIn(f'(subpath "{place}")', rule)

@@ -1289,7 +1289,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     native = implementation(engine)
     scratch = task_scratch(extra_env)
     root = Path(job_root)
-    cmd, content, writable, read_only, own_env = native.prepare_worker(
+    cmd, content, writable, read_only, own_env, launch = native.prepare_worker(
         name, prompt, cwd=cwd, scratch=scratch, job_root=root, persona=persona, model=model, settings=settings,
         effort=effort, resume=resume, images=images)
     worker_id = uuid.uuid4().hex
@@ -1297,7 +1297,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     root.mkdir(parents=True, exist_ok=True)
     paths = _worker_paths(root, worker_id)
     record = {"id": worker_id, "name": name, "pid": None, "unit": unit, "engine": engine,
-              "started_at": datetime.now(timezone.utc).isoformat(), **native.worker_record(launch_env(extra_env)),
+              "started_at": datetime.now(timezone.utc).isoformat(), **native.worker_record({**launch_env(extra_env), **own_env}),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
               "launch_model": model, "launch_effort": effort, "input_delivered": False, "sends": str(paths["sends"])}
     S.write_json(paths["record"], record)
@@ -1317,7 +1317,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
             task = ({"project": extra_env["ALTITUDE_PROJECT"], "slug": extra_env["ALTITUDE_TASK"]}
                     if extra_env and extra_env.get("ALTITUDE_PROJECT") and extra_env.get("ALTITUDE_TASK") else None)
             token = github_token(worker_env)
-            data = _driver_input({"engine": engine, "command": cmd, "input": content, "cwd": str(cwd),
+            data = _driver_input({**launch, "engine": engine, "command": cmd, "input": content, "cwd": str(cwd),
                                   "model": model, "resume": resume, "worker_id": worker_id, "task": task,
                                   "sends": str(paths["sends"]),
                                   "env": {**({"GH_TOKEN": token} if token else {}), **own_env}}).encode()
@@ -1511,8 +1511,21 @@ def cli_version(engine: str) -> str | None:
 def worker_confinement(engine: str) -> str:
     """The job and the engine boundary an L2 worker of this engine runs under on this host."""
     native = _configured(engine)
-    boundary = native.CONFINEMENT if native else "engine boundary"
-    return f"{platform.job_confinement(profile=native.JOB_PROFILE if native else False)}, {boundary}"
+    return f"{platform.job_confinement()}, {native.CONFINEMENT if native else 'engine boundary'}"
+
+
+def operator_places() -> tuple[str, ...]:
+    """Every engine's folders of the operator's own that no job in Altitude's sandbox sees (`platform.job_command`),
+    whether or not the engine is in use."""
+    return tuple(place for engine in config.ENGINES for place in implementation(engine).operator_places())
+
+
+def worker_sign_in(engine: str) -> dict:
+    """The sign-in a running worker of `engine` asks altd for through the task door; never kept, as it holds a token."""
+    found = implementation(engine).worker_sign_in()
+    if not found.get("access_token"):
+        raise ValueError(found.get("error") or "No sign-in to hand over.")
+    return found
 
 
 def review_capability(engine: str) -> dict:

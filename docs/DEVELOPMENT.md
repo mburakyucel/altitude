@@ -239,8 +239,8 @@ asked the operator about "Python 3.12". Altitude never needs these places, and a
 through `/System/Volumes/Data`. `/Volumes` is refused whole, including the startup disk's link there;
 sandboxed code reaches the startup disk by its own paths. A sandbox's refusal comes before macOS's consent check, so a refused
 read asks the operator nothing. Every sandbox Altitude applies refuses them as its last file rule, so no
-root it admits reopens one: the worker profile, the validation profile, and Codex's worker and
-coordinator permissions. The same rule refuses secrets on both hosts (`platform.secret_places()`):
+root it admits reopens one: the worker profile, the validation profile, and Codex's coordinator
+permissions. The same rule refuses secrets on both hosts (`platform.secret_places()`):
 Altitude's access store and TLS folder, so no confined agent reads the machine key, paired devices or
 the certificate keys, and the common browsers' profile folders that exist (`platform.BROWSER_PROFILES`),
 so none copies a site's sign-in. Playwright's own browsers, under the cache folder, stay visible. Altitude code that runs outside a sandbox (altd, the coordinator launch,
@@ -470,14 +470,7 @@ harness. This sacrifices separate renderer protection; shared Mach and network e
 CPU/memory/process quotas remain limitations. It is neither private/live-content verification nor
 native worker, installation, Simulator or GUI acceptance. Linux validation keeps the container
 and Chromium sandbox. No new operator-facing mode, runtime patch or lifecycle trial is installed.
-The custom runtime preparation and trial route are retired, having never been adopted. Stock Codex's
-Seatbelt rules keep a writable root's protected metadata names (`.git`, `.agents`, `.codex` and the
-like) out of that root's own write rule only, so a broader root admits them: a Codex worker can
-write those names inside its linked worktree's Git directory, which the common Git directory's rule
-covers. Neither Git nor the engines read them there, and the worker writes the common Git directory
-by design; the emitted rules belong to Codex, so Altitude has no seam that changes them.
-[Issue 625](https://github.com/mburakyucel/altitude/issues/625) holds the original evidence and
-native runtime tracking keeps the limitation.
+The custom runtime preparation and trial route are retired, having never been adopted.
 
 A pass requires the actual daemon receipt's candidate tree/profile identity, native job context
 where applicable, finite browser evidence and successful process/area cleanup. The environment
@@ -966,8 +959,8 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself; with `TRUST`, the installer's consented certificate trust opening its private link in Playwright's Chromium and Firefox without a warning; on Ubuntu 24.04 x86_64 | Desktop login/logout, distribution or snap browsers, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable Linux sandbox VM | `make sandbox-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Altitude's bubblewrap sandbox hiding a fictional runtime folder, shared temporary folder and abstract socket while keeping the job's own sockets and a coordinator's broker, with real bubblewrap under Ubuntu's AppArmor profile and Landlock's abstract-socket scope, on Ubuntu 24.04 x86_64 | A desktop session's own programs, Codex's sandbox, macOS | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, `alt trust` from an SSH session refused for the login keychain with no trust setting added, the SHA-256 undo command removing the certificate, `alt trust` on the desktop through macOS's password window trusting the authority for SSL only and its printed undo removing that, Safari refusing the address before and pairing through the pair screen, a printed link and a link macOS opens after, with used and malformed links refused and no code left in its address or history, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop and time limits end every descendant, a pseudo-terminal's child among them, and whose idle-sleep assertion lasts as long as the job, and the awake-time clock their limit's wait counts; interrupted mutation runs leaving no scratch folder or process behind; the suite's read-only-home cases, each confining a child with Seatbelt or Codex's own sandbox; a source checkout cloned from an origin in the guest, whose first start creates Altitude's own copy of its repository and runs from it, and whose service deploys a newer main pushed to that origin through the copy; the installed service with a fictional engine and GitHub CLI: a coordinator's Stop, a worker ended at its failed turn, unknown worker status, a validation run and a granted command across the service's restart, revocation, an answer reused for another task, a second command waiting for the machine-run place, Settings' Claude sign-in with a fictional setup screen saving its token privately and leaving nothing behind after finishing, cancelling or a restart, an incident held behind a newer release, the release lookup's 12-hour schedule and once-a-day notice on the guest's moved clock, an operator's command waiting in Needs you until the project terminal runs it to its end, an automatic update waiting for a validation run, holding new runs until it has restarted and installing itself once the run ends, a worker's scratch folder removed at completion, a coordinator channel refusing task workers and other projects' coordinators, and logout and login without a restart; with `PUBLISHED`, a published release's own daemon, with an outside process's caches in its release, installing a later published or source-built release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, an actual sleep (the guest refuses it), Chrome and Firefox trust, an iPhone's trust, the guest's own download from GitHub, a schedule's real elapsed hours, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
+| Disposable Linux sandbox VM | `make sandbox-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Altitude's bubblewrap sandbox hiding a fictional runtime folder, shared temporary folder and abstract socket while keeping the job's own sockets and a coordinator's broker, and hiding an engine's folder of the operator's own apart from what the job's folder links to, with real bubblewrap under Ubuntu's AppArmor profile and Landlock's abstract-socket scope, on Ubuntu 24.04 x86_64 | A desktop session's own programs, a Codex coordinator's own sandbox, macOS | In use |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its printed private link pairing a browser once, a second run of the public command keeping that browser and the certificate, its HTTPS health, `alt doctor`'s next step through first run and a project waiting for a coding tool with no incident, `alt trust` from an SSH session refused for the login keychain with no trust setting added, the SHA-256 undo command removing the certificate, `alt trust` on the desktop through macOS's password window trusting the authority for SSL only and its printed undo removing that, Safari refusing the address before and pairing through the pair screen, a printed link and a link macOS opens after, with used and malformed links refused and no code left in its address or history, the service moved to a VPN-range address with Safari trusting and pairing there and back, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; the job probe's launchd jobs, whose Stop and time limits end every descendant, a pseudo-terminal's child among them, and whose idle-sleep assertion lasts as long as the job, and the awake-time clock their limit's wait counts; interrupted mutation runs leaving no scratch folder or process behind; the suite's read-only-home cases, each confining a child with Altitude's Seatbelt profile; a source checkout cloned from an origin in the guest, whose first start creates Altitude's own copy of its repository and runs from it, and whose service deploys a newer main pushed to that origin through the copy; the installed service with a fictional engine and GitHub CLI: a coordinator's Stop, a worker ended at its failed turn, unknown worker status, a validation run and a granted command across the service's restart, revocation, an answer reused for another task, a second command waiting for the machine-run place, Settings' Claude sign-in with a fictional setup screen saving its token privately and leaving nothing behind after finishing, cancelling or a restart, an incident held behind a newer release, the release lookup's 12-hour schedule and once-a-day notice on the guest's moved clock, an operator's command waiting in Needs you until the project terminal runs it to its end, an automatic update waiting for a validation run, holding new runs until it has restarted and installing itself once the run ends, a worker's scratch folder removed at completion, a coordinator channel refusing task workers and other projects' coordinators, and logout and login without a restart; with `PUBLISHED`, a published release's own daemon, with an outside process's caches in its release, installing a later published or source-built release and keeping the state made through the app, a project and a planned task's conversation among it | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, an actual sleep (the guest refuses it), Chrome and Firefox trust, an iPhone's trust, the guest's own download from GitHub, a schedule's real elapsed hours, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
@@ -1651,10 +1644,15 @@ shell trusts, with `github.com` resolving to the loopback.
   (`pair-safari`). The printed link with a fresh code from `alt pair` must pair Safari as one new
   device and leave no code in its address, and Back must return to the page before the link. In new
   windows the installer's own link, used earlier, must read expired or already used and a malformed
-  one not valid, and another fresh link opened by macOS (`open`) must pair its browser too. The printed undo, run in Terminal and
-  answered in the password window, must leave the trust settings as before; over SSH macOS refuses
-  it, since removing a trust setting needs that window. Uninstall must then remove the LaunchAgent and
-  stop the service.
+  one not valid, and another fresh link opened by macOS (`open`) must pair its browser too. Then
+  `alt service configure --host 100.64.0.10 --apply` must move the service to an address in the shared
+  VPN range, which the runner assigns to the guest's loopback in place of a VPN's interface, verified,
+  with the server certificate reissued under the same authority (`address-vpn`). There Safari must
+  trust it, pair with a fresh code as one new device and show the address on Settings › Network as a
+  selected private address; moving back to `127.0.0.1` the same way must keep every device. The
+  printed undo, run in Terminal and answered in the password window, must leave the trust settings as
+  before; over SSH macOS refuses it, since removing a trust setting needs that window. Uninstall must
+  then remove the LaunchAgent and stop the service.
 - `privacy`: the account, logged in and outside any sandbox, runs the revision's own
   `scripts/platform_probe.py --only confinement validation-confinement` with Homebrew's Python 3.12,
   which nothing in the guest has ever asked for access to a private place. Both rows must pass, their
@@ -1681,13 +1679,10 @@ shell trusts, with `github.com` resolving to the loopback.
   read-only-home suite cases (`tests.test_worker_writes`, `tests.test_worker_roots` and the read-only
   landing case) with Homebrew's Python 3.12. Every case must run and pass, none skipped: each confines
   a child with a Seatbelt profile that keeps Altitude's home read-only, the roots case with the roots
-  each engine's worker launch names. A Codex worker runs under Codex's own sandbox rather than
-  Altitude's profile, so the runner copies this Mac's Codex CLI into the guest with an empty settings
-  folder and no sign-in, and the opt-in `ALTITUDE_TEST_CODEX_SANDBOX=1` case runs that sandbox with a
-  task's permissions and the job's environment, asking no model; only the scratch folder may be
-  written. Under both sandboxes the launcher's job folders, and a job's input saved there, can be
-  neither read nor written. The suite's home lies outside the temporary folders that sandbox admits,
-  as in a validation run. A Mac without the Codex CLI stops the phase.
+  each engine's worker launch names; only the scratch folder and the worker's own engine folder may be
+  written there. The launcher's job folders, and a job's input saved there, can be neither read nor
+  written. The suite's home lies outside the temporary folders the profile admits, as in a validation
+  run.
 - `mutation`: the [mutation run](#mutation-run) needs `ps`, which no sandbox here allows. The runner
   downloads its hash-pinned packages on this Mac, and the account installs them from those files in the
   offline guest, in the revision's files made a Git checkout. `tests/macos_guest_mutation.py` starts
@@ -1781,16 +1776,19 @@ and commit the tag names. The files reach the offline guest over the host-guest 
 throwaway HOME, as in `lifecycle`, a server on the guest's loopback answers GitHub's release lookup
 and downloads with the baseline's and candidate's files. The baseline installs through its own public
 command; a device pairs and the operator's name is saved through the app's own requests, beside
-fictional data. An outside process then imports from the installed baseline with `-I` and without
+fictional data, and the baseline's own code adds a fictional project with a planned task, which waits
+and never runs, and an operator message on it. An outside process then imports from the installed baseline with `-I` and without
 `-B`, writing Python caches into it. The baseline's own daemon must then find the candidate, install
 it automatically at a quiet point, leave those caches where they were and download only its archive
 and checksum. Only a baseline from v0.8.0 or older, whose own check refuses the caches with its
 earlier error, updates without them, which its results record as a limit. The candidate must answer
 health with its own version and commit and pass `alt doctor`, recognize the same paired device, show
-the saved name, and keep configuration, TLS identity and data unchanged before uninstall. A baseline
+the saved name, read the project's registration and the task's title, request, state, wait and conversation
+exactly as the baseline did, and keep configuration, TLS identity and data unchanged before uninstall. A baseline
 from before v0.7.0 must also have its machine key replaced (#947); a later one keeps it. Fictional
 files of an earlier voice runtime planted in `~/.altitude/speech` must be gone once the candidate has
-started (#940).
+started (#940). Before uninstall, the task is rejected and the project removed through the app, since
+uninstall keeps the application while a project is registered.
 
 `RESULTS/macos-vm.json` records the source and harness commits, this Mac's macOS version, free disk
 and load average before and after, the guest's sizing, each image's restore image, macOS build,

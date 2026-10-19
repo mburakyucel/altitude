@@ -215,7 +215,8 @@ python3 scripts/container.py sign-in claude --name altitude
 The copy keeps the date the sign-in was first saved, so the renewal reminder a year on is right in both
 places; after renewing it on the host, run the command again. That sign-in is fixed for its year,
 so copies do not sign each other out. Codex runs use the Codex CLI's own sign-in, a login that renews
-itself, so it is made inside the container (`codex login`) and never copied in.
+itself, so it is made inside the container (`codex login`) and never copied in. Codex task workers never read it:
+Altitude hands each one a short-lived access token from it.
 
 For phone-only sign-in, Claude's **Sign in** needs no terminal; otherwise use the installed engine's device-code flow when it offers one, and
 enable device-code login in the account's security settings if required. Complete the displayed
@@ -541,9 +542,9 @@ through `alt task run` under an operator grant, which L3 records from the
 [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac) on request. The launcher,
 `--logout` and `--image-workflow` lanes pass, the last also with `--native-sandbox-binary` and diagnostic CLI
 0.162.1 for Linux arm64 (Ubuntu 24.04 arm64, kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1, macOS
-26.6.2 on Apple M3). This is Linux guest behavior: the Mac side owns only the guest process,
-and a Mac-side controller and Mac logout/restart and sleep/wake stay open in
-[#643](https://github.com/mburakyucel/altitude/issues/643).
+26.6.2 on Apple M3). The launcher lane also passes on kernel 6.8.0-147. This is Linux guest behavior:
+the Mac side owns only the guest process, and a Mac-side controller and Mac logout/restart and
+sleep/wake stay open in [#643](https://github.com/mburakyucel/altitude/issues/643).
 
 The VM observes system-manager calls independently of the launcher's environment, before their result
 is known. Beginning and ending fictional denied Stop controls prove coverage. Unexpected management
@@ -568,9 +569,9 @@ The reviewed Ubuntu tuple additionally permits these exact readable predicates f
 `/proc/acpi/wakeup`, `/proc/scsi/device_info`, `/proc/scsi/scsi`, `/proc/scsi/sg`, and
 `/proc/scsi/sg/{allow_dio,debug,def_reserved_size,device_hdr,device_strs,devices,version}`.
 The expanded inventory measured these descendants without reading their contents; none adds a
-writable predicate. The same Ubuntu tuple on arm64, measured in the Mac's guest, adds no predicate
-for either UID; it lacks `/proc/acpi`, `/proc/asound` and root's `kernel/cad_pid` and `kernel/pid_max`
-writes. The acceptance policy accepts these two reviewed tuples and rejects any other
+writable predicate. The same Ubuntu release on arm64, measured in the Mac's guest on kernels 6.8.0-142 and
+6.8.0-147, adds no predicate for either UID; it lacks `/proc/acpi`, `/proc/asound` and root's
+`kernel/cad_pid` and `kernel/pid_max` writes. The acceptance policy accepts these reviewed tuples and rejects any other
 kernel/runtime/network/architecture tuple rather than inheriting this list; other tuples require
 full remeasurement and review.
 
@@ -602,20 +603,21 @@ internal port and fictional advertised certificate name. The recorded run verifi
 and the requested certificate SAN; it does not test host port publication or client-device access.
 
 An explicit `--native-sandbox-binary /path/to/diagnostic-executable` additionally copies an ordinary
-installed native diagnostic into the disposable image and exercises the application-generated task
-and coordinator profiles. It retains binary/probe hashes, positive controls, allowed/denied writes,
-manager/broker/loopback socket checks and a fictional Git commit. It also checks the normal confined
+installed native diagnostic into the disposable image. It runs a task worker's role in Altitude's own
+sandbox with the roots a Codex worker's launch names, and the application-generated coordinator profile
+in the diagnostic's own sandbox. It retains binary/probe hashes, positive controls, allowed/denied writes
+(judged by whether a write reached the real folder, since Altitude's sandbox hides a place behind an empty
+folder of its own), manager/broker/loopback socket checks and a fictional Git commit. It also checks the normal confined
 `alt task status` command, image-instance recognition, a Python workspace edit, denied image/ancestor
 writes and native-operation refusal. The task probe requires the actual unmapped-owner namespace;
 a literal-root view cannot satisfy that regression check. This proves the bundled interpreter's
 editing operation inside the native sandbox, not a provider session following the instruction.
 The source deployment is already root-owned and denies the unsandboxed write control.
-The earlier permission-matrix lane (before these identity/status/edit checks) passed with diagnostic
-CLI 0.158.0 and bubblewrap 0.12.0. Task writes were limited to worktree/Git/state/temp; coordinator
-writes were limited to scratch. Both denied user-manager sockets and Git-consent writes; the task
-retained broker/loopback access and the coordinator denied direct connections. Both sandboxed roles
-reported zero effective capabilities, NoNewPrivs=1 and Seccomp=2. This makes no provider-session,
-authentication or other-engine confinement claim.
+A task worker writes only its worktree, its Git folders, its scratch folder and its own engine folder,
+reaches loopback but neither the user manager's sockets nor the coordinator's broker, and reads no
+credential folder; the coordinator writes only its runtime folder and makes no direct connections. Both
+roles must report zero effective capabilities, NoNewPrivs=1 and Seccomp=2. This makes no
+provider-session or authentication claim.
 
 The Ubuntu 24.04 launcher lane passes private backup/restore, truncated transfer, byte-limit refusal,
 killed transfer worker/client cleanup, interrupted-restore volume cleanup and recovery after the

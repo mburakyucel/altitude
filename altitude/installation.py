@@ -637,12 +637,10 @@ def prerequisites() -> list[dict]:
                       "detail": "Then sign in to it.", "command": None,
                       "options": [{"label": config.ENGINE_LABELS[engine], "command": engines.install_command(engine)}
                                   for engine in config.ENGINES]})
-    agents, ready = [], []
+    agents = []
     for engine in installed:
         label = config.ENGINE_LABELS[engine]
         signed = engines.sign_in(engine)
-        if signed["signed_in"]:
-            ready.append(engine)
         # `sign_in`: the page signs Altitude in itself (engines.token_setup); the command is for a terminal.
         agents.append({"key": engine, "label": f"{label} {'signed in' if signed['signed_in'] else 'not signed in'}",
                        "step": f"Sign in to {label}", "state": "met" if signed["signed_in"] else "unmet",
@@ -655,12 +653,8 @@ def prerequisites() -> list[dict]:
     items += agents
     sandbox = platform.sandbox_tool()
     if sandbox:
-        # Only agents Altitude confines itself run inside it: a signed-in agent with its own sandbox is enough, as
-        # project setup judges the coordinator ready.
-        confined = lambda engine: engines.common.implementation(engine).JOB_PROFILE
-        needed = not any(not confined(engine) for engine in ready) and (not installed or any(map(confined, ready or installed)))
         items.append({"key": "sandbox", "label": "Agent sandbox", "step": "Install the agent sandbox",
-                      "state": "met" if sandbox["enabled"] else "unmet" if needed else "optional",
+                      "state": "met" if sandbox["enabled"] else "unmet",
                       "detail": (None if sandbox["scoped"] else platform.UNSCOPED) if sandbox["enabled"]
                       else "Altitude runs agents inside bubblewrap on Linux."
                       + ("" if sandbox["command"] else " Install it with this computer's package manager."),

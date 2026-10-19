@@ -22,13 +22,18 @@ class TestEngineDriver(AltitudeCase):
         for path in (self.log, self.tool):
             path.unlink(missing_ok=True)
 
+    def codex_launch(self) -> dict:
+        """What a Codex launch adds to its input: the operator's folder, its own folder and a fictional sign-in."""
+        return {"operator": str(self.tmp / "operator-codex"), "env": {"CODEX_HOME": str(self.tmp / "codex")},
+                "sign_in": {"access_token": "fixture-access", "account_id": "fixture-account"}}
+
     def drive(self, engine, *, tool=True, ask=False, task=None, helpers=False, end="completed", output=None,
-              refuse=False):
+              refuse=False, extra=None):
         command = [sys.executable, str(FAKE), *(["app-server"] if engine == "codex" else [])]
         spec = {"engine": engine, "command": command, "input": engines.common._engine_input(engine, "Start the work.", ()),
                 "cwd": str(self.repo), "sends": str(self.sends), "worker_id": "worker", "task": task,
-                "env": {"CLAUDE_CONFIG_DIR": str(self.tmp / "claude")} if engine == "claude" else {}}
-        env = {**os.environ, "FAKE_ENGINE_LOG": str(self.log), **({"FAKE_ENGINE_TOOL": str(self.tool)} if tool else {}),
+                **({"env": {"CLAUDE_CONFIG_DIR": str(self.tmp / "claude")}} if engine == "claude" else self.codex_launch())}
+        env = {**os.environ, **(extra or {}), "FAKE_ENGINE_LOG": str(self.log), **({"FAKE_ENGINE_TOOL": str(self.tool)} if tool else {}),
                **({"FAKE_ENGINE_ASK": "1"} if ask else {}),
                **({"FAKE_ENGINE_HELPERS": str(helpers)} if helpers else {}), "FAKE_ENGINE_END": end,
                **({"FAKE_ENGINE_REFUSE_STEER": "1"} if refuse else {}),
@@ -279,9 +284,9 @@ class TestEngineDriver(AltitudeCase):
     def test_a_completed_turn_with_no_steer_reply_closes_without_replaying_the_message(self):
         spec = {"engine": "codex", "command": [sys.executable, str(FAKE), "app-server"],
                 "input": engines.common._engine_input("codex", "Start.", ()), "sends": str(self.sends),
-                "cwd": str(self.repo)}
+                "cwd": str(self.repo), **self.codex_launch()}
         engines.send_into_turn(self.sends, "m1", TEXT)
-        env = {**os.environ, "FAKE_ENGINE_TOOL": str(self.tool), "FAKE_ENGINE_DROP_STEER_ACK": "1"}
+        env = {**os.environ, **spec["env"], "FAKE_ENGINE_TOOL": str(self.tool), "FAKE_ENGINE_DROP_STEER_ACK": "1"}
         driver = engines.codex._CodexDriver(spec, env)
         self.addCleanup(lambda: driver.child.poll() is None and driver.child.kill())
         self.addCleanup(driver.child.stdout.close)
@@ -321,7 +326,7 @@ class TestEngineDriver(AltitudeCase):
             "    print(json.dumps({'id': message['id'], **reply}), flush=True)\n"))
         script.chmod(0o755)
         spec = {"engine": "codex", "command": [str(script)], "input": engines.common._engine_input("codex", "Start.", ()),
-                "cwd": str(self.repo)}
+                "cwd": str(self.repo), **self.codex_launch()}
         proc = subprocess.run(engines.common._driver_command(), input=engines.common._driver_input(spec).encode(),
                               capture_output=True, timeout=30)
         events = [json.loads(line) for line in proc.stdout.decode().splitlines()]
@@ -548,7 +553,7 @@ class TestChatTurns(AltitudeCase):
                   item("agent_message", text="Found it.\n"),
                   {"type": "turn.completed", "usage": {"input_tokens": 5, "output_tokens": 2}}]
         with mock.patch.object(config, "CODEX_BIN", self.scripted("codex-turn", events)):
-            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=30)
+            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.repo, timeout=30)
         self.assertIsNone(result["error"], result)
         self.assertEqual(result["text"], "A clear request, so I'll check the code first.\n\nFound it.")
         self.assertEqual(result["tools"], [engines.common._tool("Bash", "grep -n busy web")])
@@ -558,7 +563,7 @@ class TestChatTurns(AltitudeCase):
         script.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('codex: not signed in\\n')\nsys.exit(3)\n")
         script.chmod(0o755)
         with mock.patch.object(config, "CODEX_BIN", str(script)):
-            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=30)
+            result = engines.codex_exec("hello", unit="altitude-coordinator-fixture.service", sandbox_settings=[], cwd=self.repo, timeout=30)
         self.assertEqual(result["returncode"], 3)
         self.assertEqual(result["error"], "codex: not signed in")
 

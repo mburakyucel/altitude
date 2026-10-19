@@ -7,7 +7,6 @@ import os
 import subprocess
 import sys
 import time
-import tomllib
 from pathlib import Path
 from unittest import mock
 
@@ -61,7 +60,7 @@ class TestClaudeFolders(AltitudeCase):
         worktree = add_worktree(make_repo(self.repo), "folders")
         job_root = self.runtime_tmp / "l2-engine"
         self.patch(engines.claude, "claude_agents", return_value=[])
-        _, _, writable, _, env = engines.claude.prepare_worker(
+        _, _, writable, _, env, _ = engines.claude.prepare_worker(
             "p/folders", "brief", cwd=worktree, scratch=config.task_scratch(self.project, "folders"), job_root=job_root,
             persona=None, model=None, settings=None,
             effort=None, resume=None, images=())
@@ -82,12 +81,12 @@ class TestClaudeFolders(AltitudeCase):
         self.assert_none_shared(captured["writable"])
         self.assert_none_shared(engines.claude.review_writable(self.tmp / "runtime"))
 
-        roots = []
-        for setting in engines.codex.codex_sandbox(worktree, extra_roots=(job_root,)):
-            if ".workspace_roots=" in setting:
-                roots += tomllib.loads("roots = " + setting.split("=", 1)[1])["roots"]
-        self.assertTrue(roots)
-        self.assert_none_shared(roots)
+        _, _, writable, _, env, _ = engines.codex.prepare_worker(
+            "p/folders", "brief", cwd=worktree, scratch=config.task_scratch(self.project, "folders"), job_root=job_root,
+            persona=None, model=None, settings=None, effort=None, resume=None, images=())
+        self.assertIn(job_root / "codex", writable)
+        self.assertEqual(env["CODEX_HOME"], str(job_root / "codex"))
+        self.assert_none_shared(writable)
         self.assertIsNone(engines.codex.review_writable(self.tmp / "runtime"))
 
     def test_a_worker_starts_with_its_own_folder_and_sign_in_off_its_command_line(self):
@@ -244,10 +243,10 @@ class TestClaudeFolders(AltitudeCase):
         jobs = os.path.realpath(platform._jobs())
         with mock.patch.object(platform, "_darwin", return_value=True):
             profile = platform.seatbelt_profile([str(self.tmp)], temporary=str(self.tmp))
-            codex = engines.codex.codex_sandbox(self.tmp)
+            coordinator = engines.codex.denied()
         self.assertIn('(deny file-read* file-write* ', profile)
         self.assertIn(f'(subpath "{jobs}")', profile.rsplit("(deny file-read* file-write* ", 1)[1])
-        self.assertIn(f'"{jobs}"="deny"', " ".join(codex))
+        self.assertIn(jobs, coordinator)
 
     def test_a_review_reads_its_sign_in_from_its_input_not_its_command(self):
         self.save_token()

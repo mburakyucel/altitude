@@ -383,6 +383,14 @@ else:
 '''
 
 
+def codex_token(*, issued: float, expires: float, account: str = "fixture-account") -> str:
+    """A fictional, unsigned Codex access token: only its claims matter to Altitude."""
+    import base64
+    claims = {"iat": issued, "exp": expires, "https://api.openai.com/auth": {"chatgpt_account_id": account}}
+    part = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    return f"e30.{part}.fixture"
+
+
 def set_project_setting(project: str, setting: str, value) -> None:
     """Save one project setting the way Settings and `alt project set` do: a reasoned request altd applies."""
     from altitude import config, dispatch
@@ -536,6 +544,21 @@ class AltitudeCase(unittest.TestCase):
         config.save_projects(projects)
         shutil.rmtree(config.project_dir(name), ignore_errors=True)
 
+    def codex_home(self) -> Path:
+        """The case's own Codex folder, standing for the operator's."""
+        home = self.tmp / "operator-codex"
+        home.mkdir(exist_ok=True)
+        self.setenv("CODEX_HOME", str(home))
+        return home
+
+    def codex_signed_in(self, token: str | None = None) -> str:
+        """Sign the case's Codex folder in with a fictional access token, valid for a day unless given; returns it."""
+        import time
+        token = token or codex_token(issued=time.time(), expires=time.time() + 86400)
+        (self.codex_home() / "auth.json").write_text(json.dumps({"tokens": {
+            "access_token": token, "refresh_token": "fixture-refresh", "account_id": "fixture-account"}}))
+        return token
+
     def setenv(self, key: str, value: str | None) -> None:
         """Set (or unset, with None) an environment variable for the rest of the case."""
         old = os.environ.get(key)
@@ -568,7 +591,9 @@ class AltitudeCase(unittest.TestCase):
         return path
 
     def fake_engines(self) -> Path:
-        """Both engine executables become `tests/fake_engine.py`, which the real engine driver runs for the case."""
+        """Both engine executables become `tests/fake_engine.py`, which the real engine driver runs for the case, and
+        Codex is signed in with a fictional token."""
+        self.codex_signed_in()
         fake = Path(__file__).resolve().parent / "fake_engine.py"
         engine = self.tmp / "engine"
         engine.write_text(f"#!{sys.executable}\nimport runpy, sys\nsys.argv[0] = {str(fake)!r}\n"

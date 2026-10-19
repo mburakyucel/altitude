@@ -14,13 +14,12 @@ import subprocess
 import sys
 import threading
 import time
-import tomllib
 import urllib.error
 import zipfile
 from pathlib import Path
 
 from tests.support import AltitudeCase, add_worktree, make_repo
-from altitude import access, config, engines, git_policy, platform, server, speech, speech_worker, state as S, terminal
+from altitude import access, config, engines, platform, server, speech, speech_worker, state as S, terminal
 
 #: Where this process keeps voice's runtime, before any test patches it.
 RUNTIME_HOME = speech.ROOT
@@ -825,18 +824,17 @@ class TestSetup(SpeechCase):
         return add_worktree(make_repo(self.tmp / "project"), "task")
 
     def writable_roots(self, tree: Path) -> dict[str, list[Path]]:
-        """What the real launch code gives each engine's task worker: Codex's sandbox on both hosts, Claude's
-        Seatbelt profile on macOS (which matches resolved paths)."""
-        git_roots, read_only = git_policy.worker_git_access(tree)
+        """What the real launch code gives each engine's task worker, as the Seatbelt profile on macOS matches them:
+        resolved."""
         scratch = config.task_scratch("fixture", "task")
-        codex = tomllib.loads("\n".join(engines.codex.codex_sandbox(tree, extra_roots=(*git_roots, scratch),
-                                                                   read_only=read_only)))
         self.patch(engines.claude, "claude_agents", return_value=[])
-        _, _, claude, _, _ = engines.claude.prepare_worker(
-            "task", "Fictional.", cwd=tree, scratch=scratch, job_root=self.tmp / "l2-engine", persona=None,
-            model=None, settings=self.tmp / "settings.json", effort=None, resume=None, images=())
-        return {"codex": [Path(root) for root in codex["permissions"]["altitude-task"]["workspace_roots"]],
-                "claude": [Path(os.path.realpath(str(root).rstrip("*"))) for root in claude]}
+        roots = {}
+        for engine in ("codex", "claude"):
+            _, _, writable, *_ = engines.common.implementation(engine).prepare_worker(
+                "task", "Fictional.", cwd=tree, scratch=scratch, job_root=self.tmp / "l2-engine", persona=None,
+                model=None, settings=self.tmp / "settings.json", effort=None, resume=None, images=())
+            roots[engine] = [Path(os.path.realpath(str(root).rstrip("*"))) for root in writable]
+        return roots
 
     def test_no_task_worker_can_write_the_runtime(self):
         self.assertEqual(RUNTIME_HOME, config.beside_root("speech"))
