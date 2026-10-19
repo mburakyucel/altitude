@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
+import { settingsOpener } from "../components/visitMemory";
 import type { Attention, Overview } from "./api";
 import { attentionPath, isStep } from "./decisions";
 
@@ -545,8 +546,9 @@ const BELL = "M5 13.5V9a5 5 0 0 1 10 0v4.5l1.5 1.5h-13zM8.5 17.5a1.7 1.7 0 0 0 3
 /** The link on Needs you (SPEC.md §3.8.1): this device's alerts at a glance, opening them in Settings. */
 export function AlertStatus() {
   const { label, tone } = useAlertStatus();
+  const location = useLocation();
   return (
-    <Link className="btn needs-alerts" to="/settings#notifications" state={{ settingsFrom: "/" }} data-tone={tone}
+    <Link className="btn needs-alerts" to="/settings#notifications" state={settingsOpener(location)} data-tone={tone}
       aria-label={`${label}, alert settings`}>
       <svg aria-hidden viewBox="0 0 20 20" width="16" height="16">
         <path d={BELL} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 import { ALERTS_KEY, ALERTS_LAST_KEY, ALERTS_PUSH_KEY, ALERTS_SEEN_KEY } from "./alerts";
 
-/** Decision alerts (issue #221) through the whole app: the shell watches, Needs you switches. */
+/** Decision alerts (issue #221) through the whole app: the shell watches, Settings switches, Needs you names the state. */
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -176,6 +176,16 @@ function alreadyOn(seen: string[], pushes = false) {
 
 const KEY = "altitude:choose-retention:q-retention";
 
+/** The switch in Settings → Notifications, the one place alerts turn on and off; it waits for the queue. */
+async function alertSwitch() {
+  const control = await screen.findByRole("switch", { name: "Decision alerts" });
+  await waitFor(() => expect(control).toBeEnabled());
+  return control;
+}
+
+/** The pill on the Needs you title row, naming this device's alerts. */
+const pill = (label: string) => screen.findByRole("link", { name: `${label}, alert settings` });
+
 afterEach(() => {
   paceRefusal = null;
   ended.clear();
@@ -192,15 +202,15 @@ describe("decision alerts", () => {
     const stored = new Map<string, string>(); // the worker's own record, in Cache Storage
     vi.stubGlobal("caches", { open: async () => ({ put: async (key: string, value: Response) => { stored.set(key, await value.text()); } }) });
     mockFetch([question]);
-    const { user } = renderApp({ route: "/" });
+    const { user } = renderApp({ route: "/settings" });
 
-    await user.click(await screen.findByRole("button", { name: "Alert me about new decisions" }));
+    await user.click(await alertSwitch());
     await waitFor(() => expect(browser.register).toHaveBeenCalledWith("/sw.js"));
     expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([KEY]);
     // The first wake must not announce the backlog either.
     await waitFor(() => expect(stored.get("/announced")).toBe(JSON.stringify([KEY])));
     expect(browser.shown).not.toHaveBeenCalled();
-    expect(await screen.findByRole("button", { name: "Alerts on" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("switch", { name: "Decision alerts" })).toBeChecked();
 
     // This device also subscribes for a push, so a closed phone still learns a decision is waiting.
     await waitFor(() => expect(browser.registration.pushManager.subscribe).toHaveBeenCalled());
@@ -216,6 +226,44 @@ describe("decision alerts", () => {
     expect(browser.installing.pushManager.subscribe).not.toHaveBeenCalled();
   });
 
+  it("names this device's alerts on Needs you and opens them in Settings, whose Back returns to Needs you", async () => {
+    alertingBrowser("default", "granted");
+    mockFetch([question]);
+    const { router, user } = renderApp({ route: "/" });
+
+    const off = await pill("Alerts off");
+    expect(off).toHaveAttribute("href", "/settings#notifications");
+    expect(screen.queryByRole("switch", { name: "Decision alerts" })).toBeNull();
+    await user.click(off);
+    expect(router.state.location.pathname).toBe("/settings");
+    await user.click(await alertSwitch());
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Decision alerts" })).toBeChecked());
+
+    await user.click(screen.getByRole("button", { name: "‹ Back" }));
+    expect(router.state.location.pathname).toBe("/");
+    expect(await pill("Alerts on")).toBeVisible();
+    expect(screen.getByRole("article", { name: "Choose backup retention" })).toBeVisible();
+  });
+
+  it("keeps the Settings switch unavailable until it has read what is already waiting", async () => {
+    alertingBrowser("default", "granted");
+    let release = () => {};
+    const read = new Promise<void>((resolve) => { release = resolve; });
+    mockFetch([question]);
+    const answer = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/overview")) await read;
+      return answer(input, init);
+    });
+    const { user } = renderApp({ route: "/settings" });
+
+    const control = await screen.findByRole("switch", { name: "Decision alerts" });
+    expect(control).toBeDisabled();
+    act(() => release());
+    await user.click(await alertSwitch());
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([KEY]));
+  });
+
   it("replaces a subscription made with a key this machine no longer signs with", async () => {
     const browser = alertingBrowser("default", "granted");
     const stale = {
@@ -224,9 +272,9 @@ describe("decision alerts", () => {
     };
     browser.registration.subscribed = stale;
     mockFetch([question]);
-    const { user } = renderApp({ route: "/" });
+    const { user } = renderApp({ route: "/settings" });
 
-    await user.click(await screen.findByRole("button", { name: "Alert me about new decisions" }));
+    await user.click(await alertSwitch());
     await waitFor(() => expect(stale.unsubscribe).toHaveBeenCalled());
     // Altitude forgets the endpoint it replaces, so no record outlives its subscription.
     expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
@@ -257,8 +305,7 @@ describe("decision alerts", () => {
       body: JSON.stringify({ endpoint: "https://push.example/wake/old", remove: true }),
     }));
     expect(browser.registration.pushManager.subscribe).toHaveBeenCalledTimes(1);
-    expect(await screen.findByRole("button", { name: "Alerts on" })).toBeVisible();
-    expect(screen.getByText(/even when Altitude is closed/)).toBeVisible();
+    expect(await pill("Alerts on")).toBeVisible();
 
     // Back on screen, the renewed subscription is told again and left as it is.
     act(() => { document.dispatchEvent(new Event("visibilitychange")); });
@@ -282,7 +329,7 @@ describe("decision alerts", () => {
     expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
       body: JSON.stringify({ endpoint: dead.endpoint, remove: true }),
     }));
-    expect(screen.getByText(/even when Altitude is closed/)).toBeVisible();
+    expect(await pill("Alerts on")).toBeVisible();
   });
 
   it("says alerts arrive only while open when a renewal cannot subscribe again, and tries again next time", async () => {
@@ -295,12 +342,12 @@ describe("decision alerts", () => {
     mockFetch([question]);
     renderApp({ route: "/" });
 
-    expect(await screen.findByText(/only while Altitude is open/)).toBeVisible();
+    expect(await pill("Alerts while open")).toBeVisible();
     expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBeNull();
 
     // Back on screen, the push service takes the subscription, and nobody touched the switch.
     act(() => { document.dispatchEvent(new Event("visibilitychange")); });
-    expect(await screen.findByText(/even when Altitude is closed/)).toBeVisible();
+    expect(await pill("Alerts on")).toBeVisible();
     expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBe("on");
   });
 
@@ -326,9 +373,9 @@ describe("decision alerts", () => {
     let answer = () => {};
     keyRead = new Promise((resolve) => { answer = resolve; });
     mockFetch([question]);
-    const { user } = renderApp({ route: "/" });
+    const { user } = renderApp({ route: "/settings" });
 
-    await user.click(await screen.findByRole("button", { name: "Alerts on" }));
+    await user.click(await alertSwitch());
     act(() => answer());
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
       body: JSON.stringify({ endpoint: ENDPOINT, remove: true }),
@@ -337,10 +384,10 @@ describe("decision alerts", () => {
     const told = vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/alerts/subscription").map(([, init]) => init?.body);
     expect(told.at(-1)).toBe(JSON.stringify({ endpoint: ENDPOINT, remove: true }));
     expect(browser.registration.subscription.unsubscribe).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toBeVisible();
+    expect(screen.getByRole("switch", { name: "Decision alerts" })).not.toBeChecked();
 
     // On again: subscribing waits its turn too, so the device ends subscribed.
-    await user.click(screen.getByRole("button", { name: "Alert me about new decisions" }));
+    await user.click(screen.getByRole("switch", { name: "Decision alerts" }));
     expect(await screen.findByText(/even when Altitude is closed/)).toBeVisible();
     const after = vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/alerts/subscription").map(([, init]) => init?.body);
     expect(after.at(-1)).toBe(JSON.stringify({ endpoint: ENDPOINT, every: 0 }));
@@ -349,10 +396,10 @@ describe("decision alerts", () => {
   it("keeps alerting while Altitude is open, and says so, when this device cannot be woken", async () => {
     const browser = alertingBrowser("default", "granted");
     const setQueue = mockFetch([question], null); // altd has no key: nothing can wake this device
-    const { user, queryClient, router } = renderApp({ route: "/" });
+    const { user, queryClient, router } = renderApp({ route: "/settings" });
 
-    await user.click(await screen.findByRole("button", { name: "Alert me about new decisions" }));
-    expect(await screen.findByRole("button", { name: "Alerts on" })).toBeVisible();
+    await user.click(await alertSwitch());
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Decision alerts" })).toBeChecked());
     expect(browser.registration.pushManager.subscribe).not.toHaveBeenCalled();
     expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBeNull();
     expect(screen.getByText(/only while Altitude is open/)).toBeVisible();
@@ -368,10 +415,13 @@ describe("decision alerts", () => {
     ["403 BadJwtToken", "Give Altitude a real contact address in ALTITUDE_PUSH_CONTACT on the computer it runs on."],
     ["429 TooManyRequests", "Altitude keeps trying until one gets through."],
   ])("names this device's push service refusing alerts (%s), with what to do", async (reason, todo) => {
-    const browser = alreadyOn([KEY], true);
+    alreadyOn([KEY], true);
     mockFetch([question], PUSH_KEY, false, reason);
-    renderApp({ route: "/" });
+    const { router } = renderApp({ route: "/" });
 
+    // Needs you names it in two words; the pill opens the whole line in Settings.
+    expect(await pill("Push refused")).toHaveAttribute("data-tone", "danger");
+    await act(async () => { await router.navigate("/settings#notifications"); });
     expect(await screen.findByText(`The push service at push.example refused Altitude's last alert (${reason}), so this `
       + `device gets alerts only while Altitude is open. ${todo}`)).toBeVisible();
     expect(screen.queryByText(/even when Altitude is closed/)).toBeNull();
@@ -382,7 +432,7 @@ describe("decision alerts", () => {
     mockFetch([question], PUSH_KEY, false, "403 BadJwtToken");
     renderApp({ route: "/" });
 
-    expect(await screen.findByText(/only while Altitude is open\. On a phone/)).toBeVisible();
+    expect(await pill("Alerts while open")).toBeVisible();
     expect(screen.queryByText(/refused/)).toBeNull();
     expect(fetch).not.toHaveBeenCalledWith("/api/alerts/subscription", expect.anything());
   });
@@ -496,7 +546,7 @@ describe("decision alerts", () => {
     const browser = alreadyOn([]);
     const setQueue = mockFetch([]);
     const { queryClient } = renderApp({ route: "/" });
-    await screen.findByRole("button", { name: "Alerts on" });
+    await pill("Alerts while open");
 
     setQueue([question]);
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
@@ -515,28 +565,26 @@ describe("decision alerts", () => {
     mockFetch([question]);
     const { unmount, user } = renderApp({ route: "/" });
     expect(await screen.findByRole("article", { name: "Choose backup retention" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText(/blocked in this browser's settings/)).toHaveClass("sr-only");
-    await user.click(screen.getByRole("button", { name: "Alert me about new decisions" }));
-    expect(screen.getByText(/blocked in this browser's settings/)).not.toHaveClass("sr-only");
+    // The pill names why, and opens Settings with the reason already showing: the press asked for it.
+    await user.click(await pill("Alerts blocked"));
+    expect(await screen.findByText(/blocked in this browser's settings/)).not.toHaveClass("sr-only");
+    expect(screen.getByRole("switch", { name: "Decision alerts" })).toHaveAttribute("aria-disabled", "true");
     expect(browser.request).not.toHaveBeenCalled();
     unmount();
 
     Reflect.deleteProperty(navigator, "serviceWorker");
-    renderApp({ route: "/" });
+    const again = renderApp({ route: "/" });
     expect(await screen.findByRole("article", { name: "Choose backup retention" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText("This browser cannot show alerts.")).toHaveClass("sr-only");
-    await user.click(screen.getByRole("button", { name: "Alert me about new decisions" }));
-    expect(screen.getByText("This browser cannot show alerts.")).not.toHaveClass("sr-only");
+    await again.user.click(await pill("Alerts unavailable"));
+    expect(await screen.findByText("This browser cannot show alerts.")).not.toHaveClass("sr-only");
     expect(browser.request).not.toHaveBeenCalled();
   });
 
   it("stops alerting and gives up its push subscription when the switch goes off", async () => {
     const browser = alreadyOn([], true);
     const setQueue = mockFetch([]);
-    const { queryClient, user } = renderApp({ route: "/" });
-    await user.click(await screen.findByRole("button", { name: "Alerts on" }));
+    const { queryClient, router, user } = renderApp({ route: "/settings" });
+    await user.click(await alertSwitch());
     expect(localStorage.getItem(ALERTS_KEY)).toBeNull();
     await waitFor(() => expect(browser.registration.subscription.unsubscribe).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
@@ -545,16 +593,17 @@ describe("decision alerts", () => {
 
     setQueue([question]);
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
-    await screen.findByRole("article", { name: "Choose backup retention" });
+    await act(async () => { await router.navigate("/projects/altitude"); });
+    expect(await screen.findByRole("heading", { name: /altitude/i })).toBeVisible();
     expect(browser.shown).not.toHaveBeenCalled();
   });
 
   it("gives up the push subscription even while altd cannot be told", async () => {
     const browser = alreadyOn([], true);
     mockFetch([], PUSH_KEY, true);
-    const { user } = renderApp({ route: "/" });
+    const { user } = renderApp({ route: "/settings" });
 
-    await user.click(await screen.findByRole("button", { name: "Alerts on" }));
+    await user.click(await alertSwitch());
     // The push service is told first, so nothing wakes this device again; altd drops the endpoint
     // the next time its push service answers that it is gone.
     await waitFor(() => expect(browser.registration.subscription.unsubscribe).toHaveBeenCalled());

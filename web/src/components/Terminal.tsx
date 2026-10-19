@@ -9,6 +9,7 @@ import { useToast } from "../data/Toast";
 import { subscribeCommands, takeCommand } from "../data/terminalCommand";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
+import { settingsOpener } from "./visitMemory";
 
 /** The terminal's code did not arrive; any other error inside the terminal screen is not this. */
 class ScreenLoadFailure extends Error {}
@@ -213,7 +214,7 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
   } else if (openError) {
     content = <Card tone="danger" title="Couldn't open a terminal" action={<button type="button" className="btn" onClick={() => void open()}>Retry</button>}>{openError}</Card>;
   } else if (off) {
-    content = <Card title="Terminal is off" action={<Link className="btn" to="/settings" state={{ settingsFrom: `${location.pathname}${location.search}` }}>Open Settings</Link>}>A terminal runs any command as you on this computer. Turn it on for this computer in Settings.</Card>;
+    content = <Card title="Terminal is off" action={<Link className="btn" to="/settings" state={settingsOpener(location)}>Open Settings</Link>}>A terminal runs any command as you on this computer. Turn it on for this computer in Settings.</Card>;
   } else if (screenError === "updated" || screenError === "failed") {
     const updated = screenError === "updated";
     content = <Card tone={updated ? undefined : "danger"} title={updated ? "Altitude was updated" : "Couldn't load the terminal"}

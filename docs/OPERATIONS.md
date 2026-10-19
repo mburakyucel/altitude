@@ -182,7 +182,8 @@ not cleared this way; it waits for its reset.
 
 ## Decision alerts on a device
 
-A subscribed phone or browser is woken once for each new decision that still needs you after L3 has had
+Alerts are turned on per device in Settings → Notifications; the pill at the end of the Needs you title
+row names that device's alert state and opens it. A subscribed phone or browser is woken once for each new decision that still needs you after L3 has had
 its turn and the owner has stopped, or an hour after it was asked if either is still busy, and again when a
 decision is asked again after you reply; a rewording while it waits wakes nothing. The banner reads
 "<project> needs a decision" with the task name, and tapping it opens that decision. Away from Altitude's
@@ -211,9 +212,9 @@ Any other refusal keeps its device subscribed, and altd tries that device again 
 push gets through, even for a decision another device already took, so a fix on either side takes
 effect without another step. altd records the refusal and the short reason code the service gave,
 logs it once as `push to <host> refused with <status> <reason>` and logs `push to <host> delivered
-again` once a push gets through. Until then, the line under the alert switch on that device alone
-names its push service and the reason, says that it gets alerts only while Altitude is open and
-what to do:
+again` once a push gets through. Until then, that device alone shows **Push refused** on the Needs you title row, and the line under
+its switch in Settings → Notifications names its push service and the reason, says that it gets
+alerts only while Altitude is open and what to do:
 
 - `401` or `403`, such as `403 BadJwtToken`: the service rejects the signed sender token, most often
   its contact address. Set `ALTITUDE_PUSH_CONTACT` to a `mailto:` address with a real domain (see

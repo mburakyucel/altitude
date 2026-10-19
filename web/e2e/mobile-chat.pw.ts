@@ -209,7 +209,7 @@ test("phone text controls keep their line and answer taps across a 44px target @
   const walk = walkthrough(page, info);
   const targets = [
     { path: project.path, control: page.locator(".sys-line").getByRole("button", { name: "Show", exact: true }).first() },
-    { path: "/", control: page.getByRole("button", { name: "Alert me about new decisions", exact: true }) },
+    { path: "/", control: page.getByRole("link", { name: /, alert settings$/ }) },
     { path: `${project.path}?tab=work`, control: page.locator(".wp-fold-summary").first() },
     { path: `${project.path}/tasks/document-search-contract/report`, control: page.locator(".report-page > .text-meta > a") },
   ];

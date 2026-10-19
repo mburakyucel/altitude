@@ -18,6 +18,7 @@ import { ProjectSetup, useSetupReading } from "./Setup";
 import Conversation from "./Conversation";
 import FirstRun from "./FirstRun";
 import Terminal from "../components/Terminal";
+import { settingsOpener } from "../components/visitMemory";
 
 /** The payload's loose corners (live, l3, config) arrive as `unknown`. */
 function dict(value: unknown): Record<string, unknown> {
@@ -164,7 +165,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
   const reset = useL3Reset(name);
   const setup = useSetupReading(name);
   const pending = reset.isPending || starting;
-  const settings = (path: string) => navigate(path, { state: { settingsFrom: window.location.pathname + window.location.search } });
+  const settings = (path: string) => navigate(path, { state: settingsOpener(window.location) });
 
   const close = useCallback((refocus = false) => {
     if (pending) return;

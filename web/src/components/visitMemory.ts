@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useLocation } from "react-router";
+import { useLocation, type NavigateFunction } from "react-router";
 
 /**
  * What a page holds when the operator leaves one history entry, such as unsent answers or the question
@@ -9,6 +9,22 @@ import { useLocation } from "react-router";
  */
 const kept = new Map<string, unknown>();
 const id = (entry: string, item: string) => `${entry}\n${item}`;
+
+/** Where Settings returns: the page that opened it and, in the browser's history, its entry, so Back brings that
+ * same entry back with what it kept, such as unsent answers (SPEC.md §3.15). */
+export function settingsOpener(location: { pathname: string; search: string }) {
+  const index = (window.history.state as { idx?: unknown } | null)?.idx;
+  return { settingsFrom: location.pathname + location.search, settingsFromIndex: typeof index === "number" ? index : undefined };
+}
+
+/** Back to the entry that opened Settings when the history still holds it; otherwise to its page anew. */
+export function leaveSettings(navigate: NavigateFunction,
+  state: { settingsFrom?: string; settingsFromIndex?: number } | null) {
+  const here = (window.history.state as { idx?: unknown } | null)?.idx;
+  const from = state?.settingsFromIndex;
+  if (typeof here === "number" && typeof from === "number" && from < here) navigate(from - here);
+  else navigate(state?.settingsFrom || "/projects", { replace: true });
+}
 
 /** A pairing starts the app fresh, like its cached replies. */
 export function forgetVisits() {

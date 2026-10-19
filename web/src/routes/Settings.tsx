@@ -21,6 +21,7 @@ import { dateText } from "../data/observed";
 import { disableAlerts, enableAlerts, savePreferences, useAlertNote, useAlertState, usePreferences } from "../data/alerts";
 import type { Preferences, Reveal } from "../data/alerts";
 import "./settings.css";
+import { leaveSettings } from "../components/visitMemory";
 
 const labels: Record<VoiceBackend, string> = { host: "This computer", browser: "Browser recognition", service: "Your speech service" };
 const explanations: Record<VoiceBackend, string> = {
@@ -408,10 +409,11 @@ function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
         {settled ? <button id="alerts-switch" type="button" role="switch" className="settings-switch" aria-checked="false"
           aria-label="Decision alerts" aria-disabled="true" aria-describedby="alerts-switch-note" onClick={() => setShowReason(!showReason)} />
           : <input id="alerts-switch" type="checkbox" role="switch" className="settings-switch" aria-label="Decision alerts"
-            checked={state === "on"} disabled={asking} aria-describedby="alerts-switch-note" onChange={(event) => {
+            checked={state === "on"} disabled={asking || !overview} aria-describedby="alerts-switch-note" onChange={(event) => {
               if (!event.target.checked) return disableAlerts();
               setAsking(true);
-              void enableAlerts(overview?.queue ?? []).catch(disableAlerts).finally(() => setAsking(false));
+              // The switch waits for the queue (disabled until read): turning on records what is waiting, not a backlog to announce.
+              void enableAlerts(overview!.queue).catch(disableAlerts).finally(() => setAsking(false));
             }} />}
       </div>
       {state === "on" && shown ? <>
@@ -758,7 +760,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
       return host.state === "setting-up" || (host.update && !["failed", "cancelled"].includes(host.update.state)) ? 1000 : false;
     } });
   const [reloadKey, setReloadKey] = useState(0);
-  const state = location.state as { settingsFrom?: string } | null;
+  const state = location.state as { settingsFrom?: string; settingsFromIndex?: number } | null;
   const machine = useMachine();
   const devices = useDevices();
   const roots = overview.data?.roots ?? [];
@@ -773,7 +775,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   const title = page === "repair" ? repairTitle : page ? titles[page] : "Settings";
   const back = page === "repair" ? <Link to="/settings/repairs" state={state} className="btn settings-back">‹ Repairs</Link>
     : page ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
-    : <button type="button" className="btn settings-back" onClick={() => navigate(state?.settingsFrom || "/projects", { replace: true })}>‹ Back</button>;
+    : <button type="button" className="btn settings-back" onClick={() => leaveSettings(navigate, state)}>‹ Back</button>;
   const voiceRow = settings.isPending ? <p className="settings-row"><StatusMark label="Loading voice settings…" /></p>
     : settings.isError ? <p role="alert" className="settings-row text-danger">Could not load voice settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
       : <Link className="settings-row" to="/settings/voice" state={state}>
