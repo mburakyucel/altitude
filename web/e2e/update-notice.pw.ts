@@ -81,10 +81,10 @@ test("a newer release is offered, confirmed, installed or failed, and dismissed 
   await page.reload();
   await expect(notice.getByText("Installing Altitude v0.2.0…")).toBeVisible();
 
-  state.update = { ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt update in a terminal to see why." } };
+  state.update = { ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } };
   await page.reload();
   await walk.state("06-failed", {
-    visible: [notice.getByText(/The update to v0.2.0 did not finish\. Run alt update in a terminal to see why\. Altitude v0.1.0 keeps running\./),
+    visible: [notice.getByText(/The update to v0.2.0 did not finish\. Run alt repair in a terminal to find out why and fix it\. Altitude v0.1.0 keeps running\./),
       notice.getByRole("button", { name: "Try again" }), dismiss],
     hidden: [update],
   });
@@ -233,7 +233,7 @@ test("Settings shows the version, the command that installs a newer one and the 
     state.update = { ...available, automatic, attempt: { version: "v0.2.0", state: "running" } };
     return route.fulfill({ json: { update: state.update } });
   });
-  state.update = { ...available, automatic, attempt: { version: "v0.2.0", state: "failed", error: "Run alt update in a terminal to see why." } };
+  state.update = { ...available, automatic, attempt: { version: "v0.2.0", state: "failed", error: "Run alt repair in a terminal to find out why and fix it." } };
   await page.reload();
   await walk.state("15-automatic-failure", {
     visible: [notice.getByText(/The update to v0.2.0 did not finish/), notice.getByRole("button", { name: "Try again" })],

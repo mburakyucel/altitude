@@ -418,7 +418,7 @@ live updater's fence. The app announces a successful automatic update with its i
 and release notes after reconnecting.
 A failed attempt records its cause, the failure's first line with the home folder shortened to `~`,
 which the notice, Settings → About and `alt doctor` show beside Try again or `alt update`; an attempt
-that stopped without one says "Run alt update in a terminal to see why." Tracebacks stay in the update
+that stopped without one says "Run alt repair in a terminal to find out why and fix it." Tracebacks stay in the update
 unit's log or the terminal. Detached updater failures settle their own reservation even when
 preflight fails before activation.
 
@@ -2394,6 +2394,35 @@ workflow, which checks that commit's main `check` run, builds and attests the ar
 and the generated `install.sh`, and publishes them as the GitHub release that the one-command install
 fetches. They add no runtime lifecycle state and do not gate automatic activation of merged changes. The UI and testing rules remain in the
 project instructions file, which both worker personas direct the task owner to read first.
+
+### Repairs
+
+A [repair](OPERATIONS.md#repairs) is the one agent session Altitude starts outside every sandbox,
+and only the operator starts it: `alt repair` in their own terminal, or `install.py --repair`, which
+loads the installed release's verified `repair.py` when `alt` cannot start. `repair.start` refuses
+when the actor is not the operator, when a task, attempt or door variable is set, inside a repair, and
+when its process sits in any of Altitude's jobs (`platform.process_table`, with the same unit names on
+both platforms): reviewers and coordinator turns, which carry no actor, commands under an operator
+grant, and browser terminals, where a `run` block runs on the operator's Enter whatever its quoting.
+
+Each repair keeps `repairs/<id>/repair.json` (route, engine, problem, failed update, version, start,
+end, report, check, outcome) and `brief.md` under Altitude's home, each record changed under its own
+lock. `repairs/lock` allows one repair at a time: `alt repair` holds it exclusively and passes the
+descriptor to the session, so the kernel releases it only when both, and whatever the session left
+holding it, have ended; `running.json` names the repair holding it. The session is `engines.interactive(engine, prompt)`, the engine's own CLI in its
+normal mode with the operator's sign-in and settings, run with `ALTITUDE_REPAIR=<id>` in the repair's
+folder. With that variable `bin/alt` admits only reads, the installation verbs and `repair report`.
+The brief quotes what the operator wrote as a block quote and Altitude's records (a failed update's
+cause, the doctor description, and system faults from the fields Altitude writes itself, never their
+free text) in fences no line can close.
+
+The service's tick runs `repair.check_ended`: every repair without an outcome that is not running
+gets `installation.doctor()`, `installation.installed_release()` (the active version and its
+manifest check) and the version the service runs, and `repair.outcome` sets `repaired`, `changed_by_hand`, `confirm`, `not_repaired` or
+`no_report`; a repair whose process died before recording its end gets its end time then.
+`GET /api/repairs` returns the running repair and every record without briefs, and
+`GET /api/repairs/<id>` one record with its brief; Settings → About renders them. Both read through `storage`, so a
+link planted in a repair's folder reads as no record or no brief.
 
 ### Web delivery
 

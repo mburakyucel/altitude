@@ -452,16 +452,11 @@ values remain distinct. See [model choices](CLI.md#model-choices) for precedence
 
 ## When something does not work
 
-- **The page does not load:** check `alt service status`, `alt service logs`, the address and the
-  certificate trust above. Never turn off HTTPS to get past a certificate error.
-- **The installer or `alt doctor` refuses:** follow the fix it prints; settings are in
-  [configuration](OPERATIONS.md#configuration).
-- **The coordinator does not answer:** check that your coding CLI works in a terminal as this
-  account, and the route explanation in the conversation. A lapsed sign-in is covered in
-  [engine sign-in recovery](OPERATIONS.md#engine-sign-in-recovery).
-- **A task cannot start or land:** read the reason it shows. It usually needs a clean `main` that
-  matches `origin/main`, a signed-in GitHub CLI or passing checks; see
-  [recovering dirty main](OPERATIONS.md#recovering-dirty-main).
+Run `alt repair` in a terminal on this computer: a coding agent finds out why and fixes it, with your
+full access while it works, and Altitude checks the result
+([repairs](OPERATIONS.md#repairs)). When `alt` itself cannot start, run
+`python3.12 install.py --repair` from the release. Settings are in
+[configuration](OPERATIONS.md#configuration).
 
 [Open an issue](../README.md#feedback) with the command, your OS, Altitude's version and the error,
 with private details removed.
