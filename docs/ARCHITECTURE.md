@@ -1559,8 +1559,7 @@ its windows, the SSH and keyring agents, terminal multiplexers and editor server
 lives only in an agent, a worker's own fetch over SSH stops working; landing, which altd does, is unaffected.
 Still reachable from a job: system-wide sockets under /run, among them a container engine's socket when the
 operator's account may use it, and sockets kept inside the home folder; on Linux, abstract sockets for every job on
-a kernel older than 6.12; on macOS, whether a Codex coordinator turn's own Seatbelt profile refuses sockets in the
-shared temporary folders awaits confirmation on a Mac.
+a kernel older than 6.12. A Codex coordinator turn's own profile refuses sockets in the shared temporary folders too.
 
 Every Claude job Altitude starts has a Claude folder of its own (`CLAUDE_CONFIG_DIR`), so no job writes
 the operator's `~/.claude`, `~/.claude.json` or the GitHub CLI's configuration, which another run or

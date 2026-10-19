@@ -10,6 +10,7 @@ Prints one JSON document of rows (pass, fail or skip with detail) and exits non-
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 from pathlib import Path
@@ -362,6 +363,58 @@ def launch_input():
     return ("the job takes its folder and sign-in from its input's first line, not its command line, writes its own "
             "folder and reads but cannot write the home settings linked into it, and can neither list the launcher's "
             "job folders nor read its own job folder or another job's saved launch input there")
+
+
+# Run inside the job: report its TMPDIR, reach the socket another program keeps in the shared temporary folder, then
+# make one of its own in its TMPDIR and reach that.
+SOCKETS = r"""
+import json, os, socket, sys
+def reach(address):
+    with socket.socket(socket.AF_UNIX) as peer:
+        try:
+            peer.connect(address)
+            return "reached"
+        except OSError as exc:
+            return exc.errno
+temporary = os.environ["TMPDIR"]
+seen = {"temporary": temporary, "shared": reach(sys.argv[1])}
+with socket.socket(socket.AF_UNIX) as own:
+    own.bind(os.path.join(temporary, "own.sock"))
+    own.listen()
+    seen["own"] = reach(os.path.join(temporary, "own.sock"))
+print(json.dumps(seen))
+"""
+
+
+@row
+def job_temporary():
+    """A confined job reaches a socket in its own temporary folder, its TMPDIR, and is refused one another program keeps
+    in the shared temporary folder; its supervisor removes the folder once the job ends."""
+    if not DARWIN:
+        return None  # tests/test_session_sockets.py runs Linux's in real bubblewrap (make sandbox-vm)
+    job = name("temporary")
+    shared = Path(tempfile.mkdtemp(prefix="fictional-desk-", dir="/private/tmp"))
+    try:
+        with socket.socket(socket.AF_UNIX) as desk, tempfile.TemporaryDirectory() as folder:
+            desk.bind(str(shared / "s.sock"))
+            desk.listen()
+            host = json.loads(subprocess.run([sys.executable, "-I", "-c", SOCKETS, str(shared / "s.sock")],
+                                             env={**os.environ, "TMPDIR": folder}, capture_output=True, text=True,
+                                             timeout=30).stdout)
+            result = subprocess.run(platform.job_command(job, [sys.executable, "-I", "-c", SOCKETS, str(shared / "s.sock")],
+                                                         env(), writable=(Path(folder).resolve(),), runtime_max=60),
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
+    finally:
+        shutil.rmtree(shared, ignore_errors=True)
+    check(result.returncode == 0, f"the job failed: {result.returncode} {result.stderr.strip()[-300:]!r}")
+    seen = json.loads(result.stdout)
+    check(host["shared"] == "reached", f"the fixture socket is unreachable even outside the job: {host}")
+    check((seen["shared"], seen["own"]) == (errno.EPERM, "reached")
+          and Path(seen["temporary"]).name.startswith("altitude-"), f"the job saw {seen}")
+    check(not os.path.lexists(seen["temporary"]), f"the job's temporary folder outlived it: {seen['temporary']}")
+    check(not platform.job_active(job, env()), "job still active after it ended")
+    return ("Altitude's Seatbelt profile refuses a socket in /private/tmp with EPERM and reaches one in the job's own "
+            "TMPDIR, which its supervisor removed when the job ended")
 
 
 LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/"
