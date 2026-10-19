@@ -592,8 +592,9 @@ def relabelled(version: str, newer: str) -> None:
 
 def row_quiet_point() -> dict:
     """#1003: an automatic update offered while a validation run holds the machine waits for that run and names it
-    in `alt doctor`; a new validation request is refused meanwhile; once the run ends the update installs itself and
-    the service restarts into it while the validating task's worker stays in its turn."""
+    in `alt doctor`; a new validation request is told Altitude restarts soon and runs only after the restart; once
+    the run ends the update installs itself and the service restarts into it while the validating task's worker
+    stays in its turn."""
     record = lambda: json.loads((ROOT / "update.json").read_text())  # noqa: E731
     installed = lambda: json.loads((HOME / ".local/share/altitude/current/release.json").read_text())["version"]  # noqa: E731
     settings = ROOT / "settings.json"
@@ -616,7 +617,6 @@ def row_quiet_point() -> dict:
     doctor = next((line for line in alt("doctor", project=False).splitlines() if line.startswith("Update:")), "")
     later = new_task("Validation while an update waits", "Fictional task that asks for a validation run while an "
                      "update waits.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo second-run'\n")
-    refused = wait("the second request's answer", lambda: ran(later, "alt task validate"), timeout=90)
     ended = wait("the validation run to end", lambda: next((r for r in machine(running) if r.get("n") == run["n"]
                                                             and r.get("finished")), None), timeout=150)
     attempt = wait("the automatic update to start", lambda: (record().get("attempt") or {}).get("version") == newer
@@ -627,9 +627,12 @@ def row_quiet_point() -> dict:
     except Failed as error:
         raise Failed(f"{error}: installed {installed()}, service {before} then {service_pid()}, healthy {healthy()}, "
                      f"attempt {record().get('attempt')}") from None
+    second = wait("the second request's answer", lambda: ran(later, "alt task validate"), timeout=120)
+    after_update = lambda row: datetime.fromisoformat(row["started"]).timestamp() >= attempt["started"]  # noqa: E731
     facts = {"installed": version, "newer": newer, "waiting": waiting, "doctor": doctor,
-             "refused": {key: refused.get(key) for key in ("exit", "stdout", "stderr")},
-             "second_runs": [r for r in machine(later) if r.get("purpose") == "validation"],
+             "second": {key: second.get(key) for key in ("exit", "stderr")},
+             "second_runs": [{key: r.get(key) for key in ("n", "started", "exit")} for r in machine(later)
+                             if r.get("purpose") == "validation"],
              "run": {key: ended.get(key) for key in ("n", "ended", "exit", "finished")},
              "attempt_after_run_s": round(attempt["started"] - datetime.fromisoformat(ended["finished"]).timestamp(), 1),
              "attempt": wait("the attempt's outcome", lambda: record()["attempt"].get("state") != "running"
@@ -641,8 +644,9 @@ def row_quiet_point() -> dict:
     stopped_cleanly(running)
     facts["passed"] = (doctor == f"Update: Altitude {newer} installs automatically at the next quiet moment; "
                                  f"waiting for {held}."
-                       and refused.get("exit") != 0 and "restarts soon to apply an update" in refused.get("stderr", "")
-                       and not facts["second_runs"] and ended.get("exit") == 0 and facts["attempt_after_run_s"] < 45
+                       and "restarts soon to apply an update" in second.get("stderr", "") and second.get("exit") == 0
+                       and bool(facts["second_runs"]) and all(after_update(r) for r in facts["second_runs"])
+                       and ended.get("exit") == 0 and facts["attempt_after_run_s"] < 45
                        and facts["attempt"].get("state") == "succeeded" and facts["attempt"].get("automatic") is True
                        and facts["now"] == newer and facts["worker_kept"] == {"job": True, "unit": True,
                                                                                "state": "running"})

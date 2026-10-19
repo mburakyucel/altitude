@@ -1416,7 +1416,7 @@ def phase_incident(guest: Guest, repository: str, results: Path, record: dict, i
 
 def phase_update(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """A command the coordinator hands the operator waits in Needs you until the project terminal runs it to its end
-    (#1017); an automatic update offered during a validation run waits for it, refusing new runs, and installs itself
+    (#1017); an automatic update offered during a validation run waits for it, holding new runs, and installs itself
     once the run ends, while the validating task's worker stays in its turn (#1003)."""
     runtime(guest, repository, results, record, inputs, "update")
 
