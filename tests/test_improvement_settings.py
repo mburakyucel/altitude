@@ -4,13 +4,12 @@ lines. Projects are fictional records; the reviewer is scripted at the engine se
 import http.client
 import json
 import threading
-from datetime import timedelta
+import time
+from datetime import datetime, timedelta
 from unittest import mock
 
 from tests.test_improvement_runs import NOW, RunCase
 from altitude import access, config, improve, l3, server, state as S
-
-MONDAY = improve._monday(NOW, 1)   # next Monday at 08:00, local time
 
 
 class TestAgreement(RunCase):
@@ -76,65 +75,84 @@ class TestAgreement(RunCase):
 
 
 class TestWeekly(RunCase):
-    def switched(self, at=NOW, count=6):
+    """The Weekly scenarios at the clock's time; the variants below repeat them from fixed local hours around Monday's
+    run and in two time zones."""
+    zone = None
+    hour = None  # (days after this week's Monday, hour, minute) in local time, or None for the clock
+
+    def setUp(self):
+        if self.zone:
+            self.addCleanup(time.tzset)
+            self.setenv("TZ", self.zone)
+            time.tzset()
+        super().setUp()
+        if self.hour:
+            days, hour, minute = self.hour
+            day = improve._monday(NOW).date() + timedelta(days=days)
+            self.now = datetime(day.year, day.month, day.day, hour, minute).astimezone()
+        # The first Monday run after the switch is turned on at self.now, at most a week away, so the fixture's six
+        # tasks stay inside its first window; and the run a week later.
+        this = improve._monday(self.now)
+        self.monday = this if self.now < this else improve._monday(self.now, 1)
+        self.following = improve._monday(self.monday, 1)
+
+    def switched(self, at=None, count=6):
         self.load(count)
-        improve.set_weekly(self.project, True, now=at)
+        improve.set_weekly(self.project, True, now=at or self.now)
 
     def test_monday_morning_claims_the_weeks_one_run(self):
         self.switched()
-        self.assertIsNone(improve.weekly(self.project, now=MONDAY - timedelta(minutes=1)))
-        self.assertEqual(improve.settings(self.project, now=MONDAY - timedelta(minutes=1))["line"],
-                         f"Next: Monday, {improve._day(MONDAY.isoformat())}.")
-        receipt = improve.weekly(self.project, now=MONDAY + timedelta(minutes=1))
+        self.assertIsNone(improve.weekly(self.project, now=self.monday - timedelta(minutes=1)))
+        self.assertEqual(improve.settings(self.project, now=self.monday - timedelta(minutes=1))["line"],
+                         f"Next: Monday, {improve._day(self.monday.isoformat())}.")
+        receipt = improve.weekly(self.project, now=self.monday + timedelta(minutes=1))
         self.assertEqual((receipt["state"], receipt["tasks"]), ("reading", 6))
         improve.execute(self.project, receipt["run"])
-        self.assertIsNone(improve.weekly(self.project, now=MONDAY + timedelta(days=2)))
+        self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(days=2)))
         record = improve._load(self.project)
-        self.assertEqual(record["weeks"], {MONDAY.date().isoformat(): {
-            "at": (MONDAY + timedelta(minutes=1)).replace(microsecond=0).isoformat(), "run": receipt["run"]}})
-        self.assertEqual(record["runs"][-1]["message"], f"week {MONDAY.date().isoformat()}")
-        self.assertEqual(improve.settings(self.project, now=MONDAY + timedelta(hours=1))["line"],
-                         f"Next: Monday, {improve._day(improve._monday(NOW, 2).isoformat())}, if 5 more tasks finish.")
+        self.assertEqual(record["weeks"], {self.monday.date().isoformat(): {
+            "at": (self.monday + timedelta(minutes=1)).replace(microsecond=0).isoformat(), "run": receipt["run"]}})
+        self.assertEqual(record["runs"][-1]["message"], f"week {self.monday.date().isoformat()}")
+        self.assertEqual(improve.settings(self.project, now=self.monday + timedelta(hours=1))["line"],
+                         f"Next: Monday, {improve._day(self.following.isoformat())}, if 5 more tasks finish.")
 
     def test_a_week_altitude_was_down_runs_at_the_first_check_and_a_missed_week_is_not_caught_up(self):
         self.switched()
-        following = improve._monday(NOW, 2)
-        improve.weekly(self.project, now=following + timedelta(days=3))
-        self.assertEqual(list(improve._load(self.project)["weeks"]), [following.date().isoformat()])
+        improve.weekly(self.project, now=self.following + timedelta(days=3))
+        self.assertEqual(list(improve._load(self.project)["weeks"]), [self.following.date().isoformat()])
 
     def test_turned_on_after_mondays_run_it_first_runs_the_next_monday(self):
-        self.switched(at=MONDAY + timedelta(hours=1))
-        self.assertIsNone(improve.weekly(self.project, now=MONDAY + timedelta(hours=2)))
+        self.switched(at=self.monday + timedelta(hours=1))
+        self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(hours=2)))
         self.assertEqual(improve._load(self.project).get("weeks", {}), {})
-        self.assertRegex(improve.settings(self.project, now=MONDAY + timedelta(hours=2))["line"],
-                         rf"^Next: Monday, {improve._day(improve._monday(NOW, 2).isoformat())}")
+        self.assertRegex(improve.settings(self.project, now=self.monday + timedelta(hours=2))["line"],
+                         rf"^Next: Monday, {improve._day(self.following.isoformat())}")
 
     def test_a_week_that_fails_a_condition_is_skipped_recorded_and_said_only_in_settings(self):
         self.switched(count=3)
-        self.assertIsNone(improve.weekly(self.project, now=MONDAY + timedelta(minutes=1)))
-        week = MONDAY.date().isoformat()
+        self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(minutes=1)))
+        week = self.monday.date().isoformat()
         self.assertEqual(improve._load(self.project)["weeks"][week]["skipped"], "3 tasks had finished")
-        self.assertIsNone(improve.weekly(self.project, now=MONDAY + timedelta(hours=1)))
-        self.assertEqual(improve.settings(self.project, now=MONDAY + timedelta(hours=1))["line"],
-                         f"Skipped {improve._day(MONDAY.isoformat())}: 3 tasks had finished. "
-                         f"Next: Monday, {improve._day(improve._monday(NOW, 2).isoformat())}, if 2 more tasks finish.")
+        self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(hours=1)))
+        self.assertEqual(improve.settings(self.project, now=self.monday + timedelta(hours=1))["line"],
+                         f"Skipped {improve._day(self.monday.isoformat())}: 3 tasks had finished. "
+                         f"Next: Monday, {improve._day(self.following.isoformat())}, if 2 more tasks finish.")
         self.assertEqual(self.chat(), [])
         self.engine.assert_not_called()
 
     def test_reserve_and_a_running_review_skip_the_week_and_a_pending_restart_waits(self):
         self.switched()
         with mock.patch.object(config, "activation_pending", return_value=True):
-            self.assertIsNone(improve.weekly(self.project, now=MONDAY + timedelta(minutes=1)))
+            self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(minutes=1)))
         self.assertEqual(improve._load(self.project).get("weeks", {}), {})
         self.usage.return_value = {"claude": (95.0, 10.0), "codex": (None, None)}
-        self.assertIsNone(improve.weekly(self.project, now=MONDAY + timedelta(minutes=2)))
-        self.assertEqual(improve._load(self.project)["weeks"][MONDAY.date().isoformat()]["skipped"],
+        self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(minutes=2)))
+        self.assertEqual(improve._load(self.project)["weeks"][self.monday.date().isoformat()]["skipped"],
                          "Claude's weekly allowance is inside Altitude's reserve")
         self.usage.return_value = {"claude": (40.0, 10.0), "codex": (None, None)}
-        improve.start(self.project, self.operator("Get improvement suggestions"), now=NOW)
-        following = improve._monday(NOW, 2)
-        self.assertIsNone(improve.weekly(self.project, now=following + timedelta(minutes=1)))
-        self.assertEqual(improve._load(self.project)["weeks"][following.date().isoformat()]["skipped"],
+        improve.start(self.project, self.operator("Get improvement suggestions"), now=self.now)
+        self.assertIsNone(improve.weekly(self.project, now=self.following + timedelta(minutes=1)))
+        self.assertEqual(improve._load(self.project)["weeks"][self.following.date().isoformat()]["skipped"],
                          "another review was running")
 
     def test_weekly_turned_off_while_the_tick_reads_starts_nothing(self):
@@ -142,18 +160,18 @@ class TestWeekly(RunCase):
         finished = improve.finished
 
         def turned_off(*args):
-            improve.set_weekly(self.project, False, now=MONDAY)
+            improve.set_weekly(self.project, False, now=self.monday)
             return finished(*args)
         with mock.patch.object(improve, "finished", side_effect=turned_off):
-            self.assertIsNone(improve.weekly(self.project, now=MONDAY + timedelta(minutes=1)))
+            self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(minutes=1)))
         record = improve._load(self.project)
         self.assertEqual((record["runs"], record.get("weeks", {})), ([], {}))
 
     def test_weekly_off_runs_nothing(self):
         self.switched()
-        improve.set_weekly(self.project, False, now=NOW)
-        self.assertIsNone(improve.weekly(self.project, now=MONDAY + timedelta(minutes=1)))
-        self.assertEqual(improve.settings(self.project, now=NOW)["line"],
+        improve.set_weekly(self.project, False, now=self.now)
+        self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(minutes=1)))
+        self.assertEqual(improve.settings(self.project, now=self.now)["line"],
                          "Every Monday morning, when at least 5 tasks have finished.")
 
     def test_the_tick_starts_the_monday_run_on_its_own_thread(self):
@@ -164,10 +182,20 @@ class TestWeekly(RunCase):
         self.patch(server.dispatch, "poll", return_value=[])
         spawn = self.patch(server, "spawn")
         weekly = improve.weekly
-        with mock.patch.object(improve, "weekly", side_effect=lambda p: weekly(p, now=MONDAY + timedelta(minutes=1))):
+        with mock.patch.object(improve, "weekly", side_effect=lambda p: weekly(p, now=self.monday + timedelta(minutes=1))):
             server.tick_project(self.project)
         run = improve._load(self.project)["runs"][-1]
         spawn.assert_called_once_with(f"improve:{self.project}", improve.execute, self.project, run["id"])
+
+
+# Sunday night, the early Monday hours before that day's run, Monday after it, and mid-week; in UTC and in a zone
+# behind it.
+for _zone in ("UTC", "America/Los_Angeles"):
+    for _name, _hour in (("sunday_2330", (-1, 23, 30)), ("monday_0030", (0, 0, 30)), ("monday_0230", (0, 2, 30)),
+                         ("monday_0900", (0, 9, 0)), ("wednesday_1200", (2, 12, 0))):
+        _case = f"TestWeekly_{_zone.split('/')[-1]}_{_name}"
+        globals()[_case] = type(_case, (TestWeekly,), {"zone": _zone, "hour": _hour})
+del _zone, _name, _hour, _case
 
 
 class TestSection(RunCase):
