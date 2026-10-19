@@ -1331,7 +1331,7 @@ class TestInstallationMacosVm(AltitudeCase):
             with mock.patch.object(vm, "prerequisites", return_value={}), mock.patch.object(vm.time, "sleep"), \
                     mock.patch.object(vm, "browser") as browser:
                 phase(guest, "fictional-owner/fictional-altitude", self.tmp, record, self.tmp, "c" * 40)
-            self.assertEqual(browser.called, phase in (vm.phase_update, vm.phase_terminal))  # Safari only where read
+            self.assertEqual(browser.called, phase in (vm.phase_update, vm.phase_terminal, vm.phase_agents))  # Safari only where read
             return guest, record["cases"]
 
         every = [{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["workers"]]
@@ -1352,25 +1352,47 @@ class TestInstallationMacosVm(AltitudeCase):
         guest, cases = judged([{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["terminal"]], vm.phase_terminal)
         self.assertIn("rows operator-step terminal-hold", "".join(guest.commands))
         self.assertTrue(all(case["passed"] for case in cases.values()))
+        guest, cases = judged([{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["agents"]], vm.phase_agents)
+        self.assertIn("rows agent-refusal codex-sign-in", "".join(guest.commands))
+        self.assertTrue(all(case["passed"] for case in cases.values()))
 
     def test_guest_engine_runs_its_prompts_commands_and_ends_the_turn_as_told(self):
         engine, log = REPO / "tests/macos_guest_engine.py", self.tmp / "log.jsonl"
         environment = {**os.environ, "FIXTURE_LOG": str(log), "ALTITUDE_TASK": "fictional-task"}
 
-        def worker(prompt):
+        def worker(prompt, *later):
             requests = [{"id": 1, "method": "initialize", "params": {}}, {"method": "initialized"},
                         {"id": 2, "method": "account/rateLimits/read"}, {"id": 3, "method": "thread/start"},
-                        {"id": 4, "method": "turn/start", "params": {"input": [{"type": "text", "text": prompt}]}}]
+                        {"id": 4, "method": "turn/start", "params": {"input": [{"type": "text", "text": prompt}]}},
+                        *later]
             result = subprocess.run([sys.executable, str(engine), "app-server"], text=True, capture_output=True,
                                     env=environment, input="".join(json.dumps(request) + "\n" for request in requests),
                                     timeout=30)
             return [json.loads(line) for line in result.stdout.splitlines()]
 
+        def logged():
+            return list(map(json.loads, log.read_text().splitlines()))
+
         answers = worker("FIXTURE-RUN: echo ran-in-turn\n")
         self.assertEqual(answers[1]["result"]["rateLimits"]["primary"]["usedPercent"], 1)
         self.assertEqual(answers[-1]["params"]["turn"]["status"], "completed")
-        self.assertEqual([entry.get("stdout") for entry in map(json.loads, log.read_text().splitlines())][-1],
-                         "ran-in-turn\n")
+        self.assertEqual([entry.get("stdout") for entry in logged()][-1], "ran-in-turn\n")
+        asked = worker("FIXTURE-REFRESH: unauthorized\n", {"id": "fixture-refresh", "result": {"accessToken": "new"}})
+        self.assertEqual([answer.get("method") for answer in asked].count("account/chatgptAuthTokens/refresh"), 1)
+        self.assertEqual(logged()[-1]["refresh"], {"accessToken": "new"})
+        self.assertEqual(asked[-1]["params"]["turn"]["status"], "completed")
+        login = {"type": "chatgptAuthTokens", "accessToken": "fictional-access"}
+        subprocess.run([sys.executable, str(engine), "app-server"], text=True, capture_output=True, env=environment,
+                       input=json.dumps({"id": 1, "method": "account/login/start", "params": login}) + "\n", timeout=30)
+        self.assertEqual(logged()[-1]["login"], login)
+        (self.tmp / "codex").mkdir()
+        (self.tmp / "codex/auth.json").write_text(json.dumps({"tokens": {"access_token": "fictional-old"}}))
+        subprocess.run([sys.executable, str(engine), "app-server"], text=True, capture_output=True,
+                       env={**environment, "CODEX_HOME": str(self.tmp / "codex")},
+                       input=json.dumps({"id": 1, "method": "account/read", "params": {"refreshToken": True}}) + "\n",
+                       timeout=30)
+        self.assertEqual(json.loads((self.tmp / "codex/auth.json").read_text())["tokens"]["access_token"],
+                         "fictional-refreshed")
         failed = worker("FIXTURE-END: failed\n")[-1]["params"]["turn"]
         self.assertEqual((failed["status"], failed["error"]["message"]), ("failed", "Fictional turn failed."))
         held = worker("FIXTURE-END: exit 3\n")

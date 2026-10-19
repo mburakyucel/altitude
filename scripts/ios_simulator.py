@@ -6,6 +6,8 @@ Then these steps, in this order, each selectable with --steps (`make ui-simulato
 
 - navigation: a project's work in the phone layout, a task and back;
 - dictation: voice input's restart after the X (issue #698) with diagnostics on;
+- terminal: a task terminal and the project terminal from a real shell: the soft keyboard a tap opens, the prompt and
+  key row above it, typing, scrollback by a drag, a reload with the keyboard open, the key row's Enter and a restart;
 - https: a page over HTTPS with the run's certificate from Altitude's generator, whose CA altd trusted in the phone,
   and an untrusted control refused;
 - profile: the device setup page of a CA from the same generator, then altd's native profile walk (Download the
@@ -56,7 +58,7 @@ SAFARI = "com.apple.mobilesafari"
 WEB_APP = "com.apple.webapp"   # the Home Screen app
 OPEN, OPENED = "_rpc_altitudeOpenURL:", "_rpc_altitudeOpenedURL:"
 WALK, WALKED = "_rpc_altitudeWalk:", "_rpc_altitudeWalked:"
-STEPS = ("navigation", "dictation", "https", "profile", "home-screen")
+STEPS = ("navigation", "dictation", "terminal", "https", "profile", "home-screen")
 WALK_WAIT = 1200    # seconds for altd's answer to one walk, building the walks at the first included
 SHARE_MINUTES = 30  # the setup page's window, longer than the profile walk
 PHONE_WIDTH = 500   # widest viewport this walkthrough accepts as the phone layout
@@ -731,6 +733,174 @@ class Secure:
         self.server.server_close()
 
 
+#: The terminal's screen as the page lays it out: whether its last prompt line is inside both the screen and the
+#: visual viewport (above the soft keyboard), where the key row ends, and whether the screen has focus.
+TERMINAL = """
+var lines = () => [...document.querySelectorAll('.terminal-screen .xterm-rows > div')].map((row) => row.textContent);
+var inView = (pattern) => {
+  const screen = document.querySelector('.terminal-screen')?.getBoundingClientRect();
+  const rows = [...document.querySelectorAll('.terminal-screen .xterm-rows > div')];
+  const line = rows.filter((row) => pattern.test(row.textContent)).pop()?.getBoundingClientRect();
+  return Boolean(screen && line && line.top >= screen.top && line.bottom <= screen.bottom &&
+                 line.bottom <= visualViewport.offsetTop + visualViewport.height);
+};
+var promptInView = () => inView(/\\$\\s*$/);
+var last = (count) => lines().filter((line) => line.trim()).slice(-count);
+var keysEnd = () => document.querySelector('[role="toolbar"][aria-label="Terminal keys"]')?.getBoundingClientRect().bottom;
+var typing = () => Boolean(document.activeElement?.closest('.terminal-screen'));
+var type = (text) => { const field = document.querySelector('.terminal-screen textarea');
+  field.dispatchEvent(new InputEvent('input', {data: text, inputType: 'insertText', bubbles: true})); };
+if (!window.__resizes) {
+  window.__resizes = [];
+  const original = window.fetch;
+  window.fetch = function (...args) {
+    if (String(args[0]?.url ?? args[0]).endsWith('/resize')) __resizes.push(JSON.parse(args[1]?.body ?? '{}').rows);
+    return original.apply(this, args);
+  };
+}
+"""
+
+#: A finger dragging down the terminal's screen by `{pixels}`, resting before it lifts, as iOS delivers the touches.
+DRAG = """(() => {
+  const screen = document.querySelector('.terminal-screen'), box = screen.getBoundingClientRect();
+  const x = box.left + box.width / 2, y = box.top + 40;
+  const touch = (dy) => new Touch({identifier: 1, target: screen, clientX: x, clientY: y + dy});
+  screen.dispatchEvent(new TouchEvent('touchstart', {touches: [touch(0)], bubbles: true, cancelable: true}));
+  for (let step = 1; step <= 8; step++)
+    screen.dispatchEvent(new TouchEvent('touchmove', {touches: [touch({pixels} * step / 8)], bubbles: true, cancelable: true}));
+  setTimeout(() => screen.dispatchEvent(new TouchEvent('touchend', {touches: [], bubbles: true})), 200);
+  return 0;
+})()"""
+
+
+def terminal(run: Run) -> None:
+    """A task terminal and the project terminal in iOS Safari, from web/e2e/terminal-service.py's real shell on a
+    pseudo-terminal: the soft keyboard a tap opens shrinks the viewport, the shell gets fewer rows once, and the prompt
+    and the key row stay above the keyboard; typing reaches the shell; scrolled back by a drag, new output keeps the
+    view and typing returns to the prompt; a reload with the keyboard open reattaches to the same shell, replays its
+    output at the prompt with the keyboard closed; Enter on the key row with the keyboard closed sends Return and
+    leaves it closed; Altitude restarting under the page says the terminal closed while the connection was lost. The
+    inspector stands in for the finger: a tap is a focus with a user gesture, typing an input event, a drag synthetic
+    touches."""
+    safari, rows = run.safari, []
+    log = (run.results / "terminal-service.log").open("w")
+    service = subprocess.Popen([sys.executable, "e2e/terminal-service.py"], cwd=REPO / "web", stdout=subprocess.PIPE,
+                               stderr=log, text=True)
+    task, slug = "/projects/atlas/tasks/prepare-index-migration", "prepare-index-migration"
+    try:
+        ready = json.loads(service.stdout.readline() or "{}")
+        if not ready.get("disposable"):
+            raise RuntimeError("the terminal's fixture service did not start; see terminal-service.log")
+        url = ready["url"]
+
+        def post(path: str, body: dict) -> dict:
+            request = urllib.request.Request(url + path, method="POST", data=json.dumps(body).encode(), headers={
+                "Cookie": f"{access.COOKIE}={ready['device']}", "Content-Type": "application/json"})
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10) as answer:
+                return json.load(answer)
+
+        def shell(query: str) -> str:
+            request = urllib.request.Request(url + "/api/terminal/atlas" + query,
+                                             headers={"Cookie": f"{access.COOKIE}={ready['device']}"})
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10) as answer:
+                return json.load(answer)["id"]
+
+        def state(name: str, check_: str, what: str, seconds: float = 20) -> None:
+            try:
+                safari.wait(HELPERS + TERMINAL + check_, what, seconds)
+                safari.snapshot(run.results / f"{name}.png")
+                rows.append({"step": name, "status": "completed", "detail": what,
+                             "seen": safari.evaluate(TERMINAL + "({viewport: [innerHeight, visualViewport.height], "
+                                                     "keys: keysEnd(), typing: typing(), resizes: __resizes, "
+                                                     "last: lines().filter(Boolean).slice(-3)})")})
+            except FAILURES as exc:
+                rows.append({"step": name, "status": "failed", "reason": str(exc)})
+                raise
+
+        post("/api/terminal-access", {"enabled": True})
+        leave(safari, url + task + "/terminal")
+        safari.wait("location.href.startsWith(" + json.dumps(url) + ")", "the terminal service's page")
+        # Cookies belong to the host, whatever its port: this page pairs as the terminal service's device.
+        safari.evaluate(f"document.cookie = '{access.COOKIE}={ready['device']}; path=/; max-age=600'; location.reload(); 0")
+        state("terminal-1-opened", "lines().some((line) => /\\$\\s*$/.test(line)) && !typing() && fits()",
+              "the task terminal at its prompt, the keyboard closed")
+        resting = safari.evaluate("visualViewport.height")
+        term = shell(f"?task={slug}")
+        post("/api/terminal/atlas/input", {"task": slug, "id": term, "data": "seq -f 'kb-%03g' 1 120\r"})
+        state("terminal-2-output", "lines().some((line) => line.includes('kb-120')) && promptInView()",
+              "a screenful of output, the prompt in view")
+        safari.evaluate(TERMINAL + "__resizes.length = 0; 0")
+        opened = safari.evaluate("document.querySelector('.terminal-screen .xterm-rows').children.length")
+        safari.evaluate("document.querySelector('.terminal-screen textarea').focus(); 0", gesture=True)
+        state("terminal-3-keyboard", f"visualViewport.height < {resting} - 100 && promptInView() && "
+              "keysEnd() <= visualViewport.offsetTop + visualViewport.height && typing() && "
+              f"__resizes.length === 1 && __resizes[0] < {opened} && "
+              "!shown('nav[aria-label=\"Primary\"]')",
+              "the keyboard open: the shell resized once to fewer rows, the prompt and key row above the keyboard")
+        safari.evaluate(TERMINAL + "type('echo typed-$((6*7))'); type('\\r'); 0")
+        state("terminal-4-typed", "lines().some((line) => line.trim() === 'typed-42') && promptInView() && typing()",
+              "typed text reached the shell, the prompt in view")
+        safari.evaluate(DRAG.replace("{pixels}", "400"))
+        state("terminal-5-scrolled-back", "!promptInView()", "a drag scrolled back through the output")
+        top = safari.evaluate(TERMINAL + "lines()[0]")
+        post("/api/terminal/atlas/input", {"task": slug, "id": term, "data": "echo meanwhile-$((2+3))\r"})
+        time.sleep(1.5)
+        state("terminal-6-output-while-back", f"lines()[0] === {json.dumps(top)} && !promptInView()",
+              "new output left the earlier lines in place")
+        safari.evaluate(TERMINAL + "type('x'); 0")
+        state("terminal-7-typed-at-prompt", "inView(/\\$ x\\s*$/)",
+              "typing while scrolled back returned the screen to the prompt")
+        post("/api/terminal/atlas/input", {"task": slug, "id": term, "data": "\x15"})
+        safari.evaluate("location.reload(); 0")
+        state("terminal-8-reopened", f"lines().some((line) => line.includes('meanwhile-5')) && promptInView() && "
+              f"!typing() && visualViewport.height >= {resting} - 1",
+              "reloaded with the keyboard open: the same shell's output again, at the prompt, the keyboard closed",
+              seconds=30)
+        if shell(f"?task={slug}") != term:
+            raise RuntimeError("the reload opened another shell")
+        safari.evaluate(HELPERS + "shown('button[aria-label=\"Enter\"]').click(); 0", gesture=True)
+        time.sleep(1)
+        state("terminal-9-enter-key", "last(2).every((line) => /\\$\\s*$/.test(line)) && "
+              f"!typing() && visualViewport.height >= {resting} - 1",
+              "Enter on the key row sent Return and left the keyboard closed")
+        mark = len(safari.console)
+        post("/fixture/restart", {})
+        state("terminal-10-restarted", "document.body.innerText.includes("
+              "'The terminal closed while the connection was lost.')",
+              "Altitude restarted under the page: the terminal closed while the connection was lost", seconds=30)
+        # The dropped streams are the restart itself; Safari logs each cut-off request.
+        expected = [m for m in safari.console[mark:] if "/api/terminal/" in str(m.get("url", ""))]
+        safari.console[mark:] = [m for m in safari.console[mark:] if m not in expected]
+        safari.evaluate(f"location.href = {json.dumps(url + '/projects/atlas/terminal')}; 0")
+        state("terminal-11-project", "lines().some((line) => /\\$\\s*$/.test(line)) && !typing() && fits()",
+              "the project terminal at its prompt, the keyboard closed")
+        safari.evaluate("document.querySelector('.terminal-screen textarea').focus(); 0", gesture=True)
+        state("terminal-12-project-keyboard", f"visualViewport.height < {resting} - 100 && promptInView() && "
+              "keysEnd() <= visualViewport.offsetTop + visualViewport.height",
+              "the project terminal's prompt and key row above the keyboard")
+        safari.evaluate("document.activeElement.blur(); 0")
+        safari.evaluate(f"document.cookie = '{access.COOKIE}={run.device}; path=/; max-age={access.COOKIE_SECONDS}'; 0")
+        leave(safari, run.url + run.work + "?tab=work")
+        safari.wait(HELPERS + run.task_link(), "the project's work again")
+        run.steps.append({"step": "terminal", "walk": rows, "url": url, "restart_requests_cut": len(expected),
+                          "reached": "the task and project terminals with the soft keyboard, scrollback, a reload, the "
+                                     "key row's Enter and a restart"})
+    except FAILURES:
+        run.steps.append({"step": "terminal", "walk": rows, "reached": "not every terminal state"})
+        raise
+    finally:
+        service.terminate()
+        try:
+            service.wait(10)
+        except subprocess.TimeoutExpired:
+            service.kill()
+            service.wait()
+        log.close()
+    if service.returncode or (run.results / "terminal-service.log").stat().st_size:
+        raise RuntimeError(f"the terminal's fixture service exited with {service.returncode} or logged errors; "
+                           "see terminal-service.log")
+
+
 def secure_page(nonce: str) -> bytes:
     return (f'<!doctype html><meta name="viewport" content="width=device-width"><title>{nonce}</title>'
             "<h1>HTTPS without a warning</h1><p>Served with an Altitude certificate.</p>").encode()
@@ -939,7 +1109,7 @@ def main() -> int:
     safari, left = None, False
     steps = {"navigation": navigation, "dictation": lambda run: run.steps.extend(
                  dictation(run.safari, run.url, run.work, run.task, run.results)),
-             "https": https, "profile": profile, "home-screen": home_screen}
+             "terminal": terminal, "https": https, "profile": profile, "home-screen": home_screen}
     try:
         ready = json.loads(service.stdout.readline() or "{}")
         if not ready.get("disposable"):

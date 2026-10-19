@@ -6,6 +6,8 @@ lines of its own, so the host's harness acts as L2 or L3 by writing them into a 
 
     FIXTURE-RUN: <shell command>     run in the turn's folder; its exit and output go to FIXTURE_LOG
     FIXTURE-WAIT: <path>             after the commands, end the turn only once PATH exists (at most 120 s)
+    FIXTURE-REFRESH: <reason>        then ask Altitude for a fresh access token, as Codex does once its token
+                                     expires, and record the answer
     FIXTURE-END: completed           the default: an answer, then a completed turn
     FIXTURE-END: failed              a failed turn, after which the server stays open until its input closes
     FIXTURE-END: failed-linger <s>   a failed turn, after which the server stays alive, ignoring its input, as an
@@ -13,7 +15,9 @@ lines of its own, so the host's harness acts as L2 or L3 by writing them into a 
     FIXTURE-END: hold <seconds>      no answer: the turn stays in progress, then the server exits
     FIXTURE-END: exit <code>         the server exits mid-turn
 
-FIXTURE_LOG (JSON lines) receives each turn's role, task and session, then each command's result.
+FIXTURE_LOG (JSON lines) receives each turn's role, task and session, then each command's result. A worker records
+the sign-in Altitude hands it; asked outside a worker to refresh the sign-in (`account/read`), the CLI replaces the
+access token in its folder's `auth.json` with `fictional-refreshed`, as the provider's refresh does.
 """
 import json
 import os
@@ -92,7 +96,14 @@ def server() -> None:
             prompt = "".join(item.get("text", "") for item in params.get("input", []))
             out({"id": identity, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}})
             notify("turn/started", {"turn": {"id": "turn-1"}})
-            end = turn("l2" if os.environ.get("ALTITUDE_TASK") else "l3", session, prompt)
+            role = "l2" if os.environ.get("ALTITUDE_TASK") else "l3"
+            end = turn(role, session, prompt)
+            if directives(prompt, "REFRESH"):
+                out({"id": "fixture-refresh", "method": "account/chatgptAuthTokens/refresh",
+                     "params": {"reason": directives(prompt, "REFRESH")[-1], "previousAccountId": None}})
+                while (answer := json.loads(sys.stdin.readline() or "{}")).get("id") not in ("fixture-refresh", None):
+                    pass
+                record({"role": role, "session": session, "refresh": answer.get("result") or answer.get("error")})
             if end[0] == "hold":
                 time.sleep(int(end[1]))
                 raise SystemExit(0)
@@ -110,6 +121,16 @@ def server() -> None:
             if end[0] == "failed-linger":
                 time.sleep(int(end[1]))
                 raise SystemExit(0)
+        elif method == "account/login/start":
+            record({"role": "l2" if os.environ.get("ALTITUDE_TASK") else "l3", "login": params})
+            out({"id": identity, "result": {"type": params.get("type")}})
+        elif method == "account/read" and params.get("refreshToken"):
+            auth = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+            stored = json.loads(auth.read_text())
+            stored["tokens"]["access_token"] = "fictional-refreshed"
+            auth.write_text(json.dumps(stored))
+            record({"role": "sign-in", "refreshed": str(auth)})
+            out({"id": identity, "result": {"account": {"type": "chatgpt"}, "requiresOpenaiAuth": True}})
         elif method == "turn/steer":
             out({"id": identity, "error": {"code": -32600, "message": "no active turn"}})
         elif identity is not None:

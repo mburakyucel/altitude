@@ -26,10 +26,10 @@ this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or 
 interrupts two mutation runs, whose cleanup lists processes with `ps`, from packages downloaded on this Mac.
 `source` installs from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
 repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
-`incident`, `update`, `terminal` and `session` install the release into the account's own home with a scripted fictional
-engine and the tests' fake GitHub CLI, then drive the guest's own service through the revision's
-tests/macos_guest_runtime.py rows; `update` and `terminal` first trust Altitude's authority on the desktop for Safari,
-whose page those rows read. `online`, run only when named, is the one phase whose guest keeps its network: the guest downloads
+`incident`, `update`, `terminal`, `session` and `agents` install the release into the account's own home with a scripted
+fictional engine and the tests' fake GitHub CLI, then drive the guest's own service through the revision's
+tests/macos_guest_runtime.py rows; `update`, `terminal` and `agents` first trust Altitude's authority on the desktop for
+Safari, whose page those rows read. `online`, run only when named, is the one phase whose guest keeps its network: the guest downloads
 Homebrew's python@3.13 and Google Chrome and Firefox from their publishers, installs the latest published release
 through the public command from GitHub itself, whose service must run on Python 3.13, and Chrome and Firefox must
 refuse Altitude's address before `alt trust` on the desktop and open it after.
@@ -1760,9 +1760,10 @@ git push -q origin main && git rev-parse HEAD""")
 RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
                 "grants": ("grants", "contention", "sign-in"), "incident": ("incident", "schedule"),
                 "update": ("quiet-point",), "terminal": ("operator-step", "terminal-hold"),
-                "session": ("scratch", "coordinator-channel", "logout-login")}
+                "session": ("scratch", "coordinator-channel", "logout-login"),
+                "agents": ("agent-refusal", "codex-sign-in")}
 # The phases whose rows read Altitude's page in Safari.
-BROWSED = ("update", "terminal")
+BROWSED = ("update", "terminal", "agents")
 GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
 # Rows may end the account's session, so they run in the background while the host polls.
 ROWS_BUDGET = 420
@@ -1871,6 +1872,13 @@ def phase_terminal(guest: Guest, repository: str, results: Path, record: dict, i
     runtime(guest, repository, results, record, inputs, "terminal")
 
 
+def phase_agents(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """Safari's POST admitted and a worker's, with the same paired cookie, refused, and a worker unable to list a
+    browser's profile (#1053); a Codex worker signing in with the token Altitude hands it and refreshing it through the
+    task door (#1058)."""
+    runtime(guest, repository, results, record, inputs, "agents")
+
+
 def phase_session(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """A worker's scratch folder through completion (#958), the coordinator channel refusing a worker and another
     project's coordinator (#943), then logout and login without a restart (#731, #226).
@@ -1884,7 +1892,7 @@ PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle
           "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home,
           "mutation": phase_mutation, "source": phase_source,
           "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "update": phase_update,
-          "terminal": phase_terminal, "session": phase_session,
+          "terminal": phase_terminal, "session": phase_session, "agents": phase_agents,
           "published": phase_published, "online": phase_online}
 # The phases a run includes only when named: `published` with --published, `online` with --phase online.
 NAMED = ("published", "online")
