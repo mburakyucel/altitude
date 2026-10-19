@@ -33,6 +33,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   drops, the answer stays Waiting until Altitude shows whether it was saved, and Retry never sends it twice.
 - A sent image stays on screen from Send to saved: the message no longer blinks to "Loading image…"
   when Altitude saves it, and its picture is named beneath while it is on its way, as it is once saved.
+- Settings change the moment you press: the Terminal, Validation runs, update and Weekly suggestions
+  switches, project routing, the coordinator and New tasks model picks, and removing a device. If
+  Altitude refuses, the setting goes back and says why, with Retry.
 - A device whose alert subscription stopped working, such as one made before Altitude's alert key
   changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
   old subscription. The warning about it shows only on the device it concerns, and only

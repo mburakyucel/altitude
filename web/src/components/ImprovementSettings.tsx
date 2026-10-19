@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { sendImprovementSetting, useImprovementSettings } from "../data/api";
+import { sendImprovementSetting, useImprovementSettings, useSaveWeekly } from "../data/api";
 import type { ImprovementSettings } from "../data/api";
 import { Overlay } from "../shell/Overlay";
 import { useViewport } from "../shell/breakpoints";
@@ -41,7 +41,9 @@ export function ImprovementSection({ name }: { name: string }) {
   const client = useQueryClient();
   // The open sheet keeps the terms it showed: a refetch behind it never changes its text or the version Turn on sends.
   const [sheet, setSheet] = useState<{ action: Action; terms: Terms } | null>(null);
-  const [saving, setSaving] = useState<Action | null>(null);
+  // Weekly shows the change at once and holds still until it lands; Get suggestions now asks Altitude to run.
+  const weekly = useSaveWeekly(name);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const data = settings.data;
   const { hash } = useLocation();
@@ -58,34 +60,34 @@ export function ImprovementSection({ name }: { name: string }) {
   const send = async (action: Action, terms?: string) => {
     setSheet(null);
     setError(null);
-    setSaving(action);
+    if (action === "weekly") return weekly.mutate({ on: !data.weekly, ...terms ? { terms } : {} });
+    setStarting(true);
     try {
-      await sendImprovementSetting(name, action === "weekly" ? { action, on: !data.weekly } : { action }, terms);
+      await sendImprovementSetting(name, { action }, terms);
     } catch (failure) {
       setError((failure as Error).message);
     }
-    // A refusal shows what is stored now: the switch returns to its saved value.
     await client.refetchQueries({ queryKey: ["project", name] }).catch(() => undefined);
-    setSaving(null);
+    setStarting(false);
   };
   // Turning Weekly off needs no agreement; turning it on or running does, so the sheet comes first.
   const press = (action: Action) => (action === "weekly" && data.weekly) || data.agreed ? void send(action) : setSheet({ action, terms: data.terms! });
-  const weekly = saving === "weekly" ? !data.weekly : Boolean(data.weekly);
+  const busy = weekly.isPending || starting;
   return <section className="settings-section" id="improvement" aria-labelledby="settings-improvement">
     <div><h2 id="settings-improvement">Improvement suggestions</h2>
       <p className="text-meta text-muted">Finds friction that keeps coming back in this project's tasks and suggests fixes.</p></div>
     <div className="settings-group">
       <div className="settings-row settings-switch-row">
         <label htmlFor="improvement-weekly"><strong>Weekly</strong>{" "}<small id="improvement-weekly-line">{data.line}</small></label>
-        <input id="improvement-weekly" type="checkbox" role="switch" className="settings-switch" checked={weekly}
-          aria-describedby="improvement-weekly-line" disabled={saving !== null} onChange={() => press("weekly")} />
+        <input id="improvement-weekly" type="checkbox" role="switch" className="settings-switch" checked={Boolean(data.weekly)}
+          aria-describedby="improvement-weekly-line" disabled={busy} onChange={() => press("weekly")} />
       </div>
       {data.running ? <div className="settings-row improve-running"><ImprovementRunning project={name} run={data.running} /></div>
         : data.now ? <div className="settings-row improve-now">
           {data.now.unavailable ? <span className="improve-unavailable"><UnavailableAction label="Get suggestions now" reason={data.now.unavailable} /></span>
             : <>
-              <button type="button" className="btn" disabled={saving !== null} onClick={() => press("run")}>
-                <BusyLabel busy={saving === "run"} label="Get suggestions now" working="Starting…" />
+              <button type="button" className="btn" disabled={busy} onClick={() => press("run")}>
+                <BusyLabel busy={starting} label="Get suggestions now" working="Starting…" />
               </button>
               <small>{data.now.line}</small>
             </>}
@@ -94,8 +96,10 @@ export function ImprovementSection({ name }: { name: string }) {
       {data.past ? <p className="settings-row improve-past"><small>{data.past.line}{data.past.latest ? <>
         {" · "}<Link to={`/projects/${encodeURIComponent(name)}#improvement-${data.past.latest}`}>Latest</Link></> : null}</small></p> : null}
     </div>
-    {saving === "weekly" ? <StatusMark label="Saving…" /> : null}
-    {error ? <p role="alert" className="text-meta text-danger">{error}</p> : null}
+    {weekly.isPending ? <StatusMark label="Saving…" /> : null}
+    {weekly.error ? <p role="alert" className="text-meta text-danger">Not saved: {weekly.error.message}{" "}
+      <button type="button" className="link" onClick={() => weekly.variables && weekly.mutate(weekly.variables)}>Retry</button></p>
+      : error ? <p role="alert" className="text-meta text-danger">{error}</p> : null}
     {sheet ? <Sheet terms={sheet.terms} onAgree={() => void send(sheet.action, sheet.terms.version)} onClose={() => setSheet(null)} /> : null}
   </section>;
 }

@@ -797,3 +797,58 @@ describe("Pair another device", () => {
     expect(within(card).queryByText(/SHA-256/)).toBeNull();
   });
 });
+
+describe("Remove a device", () => {
+  const device = (id: string, name: string) => ({ id, name, paired: "2026-10-01T08:00:00Z", used: "2026-10-18T08:00:00Z" });
+  /** Three paired browsers; each removal waits until the test answers it. */
+  function removalFixture() {
+    let devices = [device("mine", "Safari on iPhone"), device("mac", "Chrome on Mac"), device("pad", "Safari on iPad")];
+    const answers: Record<string, (refusal?: string) => void> = {};
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/devices/revoke") {
+        const { id } = JSON.parse(String(init?.body));
+        const refusal = await new Promise<string | undefined>((resolve) => { answers[id] = resolve; });
+        if (refusal) return json({ error: refusal }, 503);
+        devices = devices.filter((each) => each.id !== id);
+      }
+      if (path === "/api/devices" || path === "/api/devices/revoke") return json({ devices, current: "mine", certificate: null });
+      if (path === "/api/overview") return json({ projects: [], queue: [], engines: [], wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });
+      if (path === "/api/machine") return json({ operator: null, incident_repository: null, altitude_repository: "fixture/altitude", terminal: false });
+      return json({}, 404);
+    }));
+    return answers;
+  }
+  const row = (name: string) => screen.getByText(name, { exact: true }).closest("li") as HTMLElement;
+  async function remove(user: { click: (element: Element) => Promise<void> }, name: string) {
+    await user.click(within(row(name)).getByRole("button", { name: "Remove" }));
+    await user.click(within(row(name)).getByRole("button", { name: "Remove device" }));
+  }
+
+  it("a refused removal says why with Retry even while another removal is on its way", async () => {
+    const answers = removalFixture();
+    const { user } = renderApp({ route: "/settings/devices" });
+    await screen.findByText("Chrome on Mac", { exact: true });
+    await remove(user, "Chrome on Mac");
+    await waitFor(() => expect(screen.queryByText("Chrome on Mac", { exact: true })).toBeNull());
+    await remove(user, "Safari on iPad");
+    await waitFor(() => expect(screen.queryByText("Safari on iPad", { exact: true })).toBeNull());
+    await waitFor(() => expect(Object.keys(answers)).toEqual(["mac", "pad"]));
+    await act(async () => answers.mac!("Altitude is busy."));
+    expect(await within(await screen.findByRole("alert")).findByText(/^Not removed: Altitude is busy\./)).toBeVisible();
+    expect(within(row("Chrome on Mac")).getByRole("button", { name: "Retry" })).toBeVisible();
+    await act(async () => answers.pad!());
+    await waitFor(() => expect(screen.queryByText("Safari on iPad", { exact: true })).toBeNull());
+    expect(within(row("Chrome on Mac")).getByRole("alert")).toHaveTextContent("Not removed: Altitude is busy.");
+  });
+
+  it("this browser's row stays, saying Removing…, while its own removal is on its way", async () => {
+    removalFixture();
+    const { user } = renderApp({ route: "/settings/devices" });
+    await screen.findByText("Safari on iPhone", { exact: true });
+    await remove(user, "Safari on iPhone");
+    expect(await within(row("Safari on iPhone")).findByText("Removing…")).toBeVisible();
+    expect(within(row("Safari on iPhone")).getByRole("button")).toBeDisabled();
+    expect(screen.queryByText(/No browser is paired/)).toBeNull();
+  });
+});

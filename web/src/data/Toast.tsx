@@ -10,11 +10,6 @@ import {
   type ReactNode,
 } from "react";
 
-/** Shared toast copy so failures read the same everywhere. */
-export const TOAST_COPY = {
-  saveFailed: "Couldn't save — your change was put back.",
-} as const;
-
 export interface ToastOptions {
   message: string;
   action?: { label: string; onClick: () => void };

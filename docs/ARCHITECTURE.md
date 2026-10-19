@@ -2563,6 +2563,12 @@ works. A refused write stops overlaying and stays with its card until Retry or a
 its task that lists it as saved; a refused answer also goes once a read shows none of its questions
 still waiting. Entries live only in memory, belong to their project, and go with it, with pairing and
 with a reload. Alerts read the record without the overlay.
+Settings saves (machine and update switches, Weekly suggestions, project routing and model picks, New
+tasks, removing a device) render the same way through `web/src/data/saves.ts`: each save is a mutation
+keyed by the read it changes, and that read's hook lays the saves still pending over the server's data,
+so every view of it shows the change. The control holds still until the save lands; the save ends only
+after reads of that key in flight are cancelled and the stored value is in the cache. A refused save
+stops overlaying, reads the key again and offers Retry. Nothing outlives the save's own mutation.
 Screen-reader names retain the status words. Unavailable terminal, voice and alert
 controls disclose their reason on press without invoking the action. Authored blockers, errors,
 setup instructions and resource/privacy consequences remain visible; task-page descriptions do
