@@ -3,15 +3,16 @@ import { resolve } from "node:path";
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
-// The README's feature illustrations (design/readme/README.md#feature-pictures): a pull request waiting for the
-// operator's review, a command typed into the task's terminal, a fault the coordinator repairs, and improvement
-// suggestions. With ALTITUDE_README_IMAGES naming a folder, each state is written there as
+// The README's feature illustrations (design/readme/README.md#feature-pictures): a task created from the
+// coordinator's offer, a design proposal with its review, a task page with its question and live session, a pull
+// request waiting for the operator's review, a command typed into the task's terminal, a fault the coordinator
+// repairs, and improvement suggestions. With ALTITUDE_README_IMAGES naming a folder, each state is written there as
 // `<feature>-<viewport>.png` at 2×.
 const images = process.env.ALTITUDE_README_IMAGES ? resolve(process.env.ALTITUDE_README_IMAGES) : undefined;
 test.use({ serviceScript: "readme-features-service.py", deviceScaleFactor: 2, locale: "en-US", timezoneId: "UTC", colorScheme: "light" });
 test.setTimeout(90_000);
 
-test("review before merge, a repaired fault and improvement suggestions", async ({ page, request }, info) => {
+test("a created task, a proposal review, the task view, review before merge, a repaired fault and improvement suggestions", async ({ page, request }, info) => {
   const phone = info.project.name === "phone";
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -24,6 +25,50 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   }
   const nav = page.getByRole("navigation", { name: phone ? "Primary" : "Rail", exact: true });
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+
+  // The coordinator's reply offers a task; one press creates it, and its card appears under the reply.
+  await page.goto("/projects/atlas");
+  const chat = page.getByRole("region", { name: "Conversation", exact: true });
+  const offer = chat.getByRole("button", { name: "Create task", exact: true });
+  await expect(offer).toBeVisible();
+  await capture("create-1-offer");
+  await offer.click();
+  const created = chat.locator(".task-card").filter({ hasText: "Hold cursors during the index switch" });
+  await expect(created).toBeVisible();
+  await expect(chat.getByRole("button", { name: "Task created", exact: true })).toBeVisible();
+  // The coordinator's turn has ended: its reply shows and it no longer answers.
+  await expect(chat.getByText("Started it, with the empty searches at the switch in its brief.", { exact: true })).toBeVisible();
+  await expect(chat.getByRole("status", { name: "L3 is answering" })).toBeHidden();
+  await capture("create-2-created");
+
+  // The synonyms editor's owner asks to build its design; Needs you shows the proposal, its document and its review.
+  await nav.getByRole("link", { name: /Needs you/ }).click();
+  const proposal = page.getByRole("article", { name: "Add a synonyms editor for search admins", exact: true });
+  await expect(proposal).toContainText("Build the synonyms editor as shown?");
+  await expect(proposal.getByRole("button", { name: "Approve proposal", exact: true })).toBeEnabled();  // Needs you has read its current list
+  await proposal.evaluate((card) => card.scrollIntoView({ block: "start" }));
+  await capture("proposal");
+  await proposal.getByRole("link", { name: /Open L2 chat/ }).click();
+  await expect(conversation).toContainText("Here is the editor I propose");
+  await conversation.getByRole("button", { name: "Show proposal review details", exact: true }).click();
+  await conversation.locator(`[data-review-id="readme-synonyms-proposal"]`).evaluate((card) => card.scrollIntoView({ block: "start" }));
+  await capture("proposal-review");
+
+  // The task view: the typo-tolerance owner's conversation and open question, beside its live session on a computer.
+  await page.goto(phone ? "/projects/atlas?tab=work" : "/projects/atlas");
+  await page.getByRole("region", { name: "Work", exact: true })
+    .getByRole("link", { name: /Add typo tolerance to search/ }).first().click();
+  await expect(conversation).toContainText("Allow two typos in long words?");
+  if (!phone) {
+    const toggle = page.getByRole("button", { name: "Live session", exact: true });
+    if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+    await expect(page.getByRole("region", { name: "Live session", exact: true })).toContainText("One choice is yours");
+  }
+  const latest = conversation.getByRole("button", { name: "Latest messages", exact: true });
+  if (await latest.isVisible()) await latest.click();  // the conversation's end: the question and its answers
+  await expect(latest).toBeHidden();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());  // the jump to the question focuses it
+  await capture("task-view");
 
   // The other engine's review is done, both findings fixed; the PR waits for the operator's merge.
   await page.goto(phone ? "/projects/atlas?tab=work" : "/projects/atlas");
@@ -40,6 +85,7 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   await nav.getByRole("link", { name: /Needs you/ }).click();
   const review = page.getByRole("article", { name: "Add per-tenant limits to the public API", exact: true });
   await expect(review).toContainText("Review PR #214 before merge");
+  await expect(review.getByRole("button", { name: "Approve merge", exact: true })).toBeEnabled();
   await review.evaluate((card) => card.scrollIntoView({ block: "start" }));
   await capture("review");
 
@@ -50,8 +96,6 @@ test("review before merge, a repaired fault and improvement suggestions", async 
     .getByRole("link", { name: /Sign billing webhook payloads/ }).first().click();
   const command = conversation.getByRole("group", { name: "Command" });
   await expect(command.locator("pre")).toHaveText("make deploy ENV=staging");
-  await command.scrollIntoViewIfNeeded();
-  await capture("terminal-1-command");
   await command.getByRole("button", { name: "Open in terminal" }).click();
   await expect(page).toHaveURL(/\/terminal$/);
   const screen = page.locator(".terminal-screen .xterm-rows");
@@ -76,7 +120,6 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   await expect(signOn).toContainText("L2 working");
   await signOn.scrollIntoViewIfNeeded();  // the resumed task joins the end of the working list
   if (phone) await nav.getByRole("link", { name: "Chat", exact: true }).click();
-  const chat = page.getByRole("region", { name: "Conversation", exact: true });
   await expect(chat).toContainText("resumed the task");
   await chat.getByRole("button", { name: "Show", exact: true }).last().click();
   await expect(chat.getByRole("article", { name: /Add SAML single sign-on/ })).toContainText("L3 replied");
