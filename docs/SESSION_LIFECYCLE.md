@@ -1129,8 +1129,9 @@ changes the task's records [through altd](ARCHITECTURE.md#task-door),
 with the Git settings, hooks and worktree records inside them [read-only](ARCHITECTURE.md#isolation-and-landing), the network stays on for pushes, PRs, and tests, and the launch environment
 carries the task identity. The driver signs Codex in with the access token altd hands over in the launch input and
 asks altd for a fresh one when Codex requests it ([Codex sign-in](ARCHITECTURE.md#isolation-and-landing)); the
-operator's Codex folder stays hidden apart from what the worker's folder links to. A Codex L3 turn uses a dedicated permission profile: it writes only one fresh per-turn
-runtime directory; the deployment checkout and Altitude home are read-only, direct command networking and the
+operator's Codex folder stays hidden apart from what the worker's folder links to, as the operator's Claude folder and
+state file stay hidden from every job apart from what a Claude job's launch reopens ([Claude folders](ARCHITECTURE.md#isolation-and-landing)). A Codex L3 turn uses a dedicated permission profile: it writes only one fresh per-turn
+runtime directory, cannot read the operator's Claude folder or, until the operator's Claude next replaces them, the state files present when it starts ([Claude folders](ARCHITECTURE.md#isolation-and-landing)), the deployment checkout and Altitude home are read-only, direct command networking and the
 user-service bus are denied. A required stdio MCP adapter exposes one coordinator tool for `alt` verbs and
 GitHub/service reads, forwarding argument arrays and stdin to the project's fixed altd socket. Every fresh
 and resumed turn receives this configuration and the instruction to use the tool; shell wrappers remain

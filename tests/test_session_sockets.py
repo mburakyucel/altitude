@@ -1,7 +1,7 @@
 """A confined job reaches no Unix socket of the desktop session: none in the per-user runtime folder, none in the shared
 temporary folders and, where the kernel offers Landlock's scope, no abstract one, while its own sockets and temporary
-folder work. It sees nothing of an engine's folder of the operator's own beyond the entries its launch names. Every
-socket and folder here is a fictional fixture the test itself makes."""
+folder work. It sees nothing of an engine's folders and files of the operator's own beyond the entries its launch
+names. Every socket and folder here is a fictional fixture the test itself makes."""
 
 import errno
 import json
@@ -14,8 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.support import AltitudeCase
-from altitude import platform
+from tests.support import NATIVE_PLATFORM, AltitudeCase
+from altitude import config, engines, platform
 
 #: Run inside the job: connect to each named socket and report what happened, then make a socket of its own in its
 #: temporary folder (the second argument) and an abstract one, and reach both.
@@ -52,7 +52,10 @@ try:
     seen["write"] = "written"
 except OSError as exc:
     seen["write"] = exc.errno
-seen["listing"] = sorted(os.listdir(sys.argv[3]))
+try:
+    seen["listing"] = sorted(os.listdir(sys.argv[3]))
+except OSError as exc:
+    seen["listing"] = exc.errno
 print(json.dumps(seen))
 '''
 
@@ -175,6 +178,82 @@ class TestSandboxedJob(AltitudeCase):
                                                    "linked settings": "fictional settings", "write": errno.EROFS,
                                                    "listing": ["config.toml"]})
         self.assertEqual((operator / "auth.json").read_text(), "fictional sign-in", "the host's folder is unchanged")
+
+
+class TestOperatorsClaudeFolder(AltitudeCase):
+    """The operator's Claude folder and state file, named through the engine seam (`engines.operator_places`), in the
+    platform's own sandbox: bubblewrap on Linux, where `make sandbox-vm` runs it, and Seatbelt on macOS. A Claude
+    worker reads only what its launch reopens: the entries its own folder links to, the project's notes and a session
+    it resumes for the first time."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = Path(os.path.realpath(self.tmp)) / "home"
+        self.operator = self.home / ".claude"
+        for name, text in ((".credentials.json", "fictional sign-in"), ("settings.json", "fictional settings"),
+                           ("skills/fixture/SKILL.md", "fictional skill"),
+                           ("projects/-repo/memory/MEMORY.md", "fictional notes"),
+                           ("projects/-repo/sid-old.jsonl", "fictional resumed session"),
+                           ("projects/-repo/sid-other.jsonl", "fictional conversation")):
+            (self.operator / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.operator / name).write_text(text)
+        for name in (".claude.json", ".claude.json.tmp.1.fixture", "dotfiles/claude.json"):
+            (self.home / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.home / name).write_text("fictional state")
+        (self.home / ".claude.json.backup.fixture").symlink_to(self.home / "dotfiles/claude.json")
+        self.patch(platform.Path, "home", return_value=self.home)
+        self.patch(config, "HOME", self.home)
+        self.patch(engines.claude, "OPERATOR_HOME", self.operator)
+        self.work = Path(os.path.realpath(self.tmp)) / "work"
+        self.work.mkdir()
+        self.temporary = tempfile.mkdtemp(prefix="altitude-", dir=self.tmp)
+        # Not inside an Altitude worker or a validation run, nor on a Linux runner refusing user namespaces.
+        try:
+            ready = subprocess.run([*self.sandbox(), sys.executable, "-I", "-c", "pass"], capture_output=True,
+                                   text=True, timeout=60)
+            why = ready.stderr.strip() if ready.returncode else None
+        except FileNotFoundError:
+            why = "not installed"
+        if why:
+            self.skipTest(f"the platform's sandbox does not start here: {why}")
+
+    def sandbox(self, read_only=(), hidden=()) -> list[str]:
+        if NATIVE_PLATFORM == "darwin":
+            return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile([str(self.work)], list(read_only),
+                                                                            temporary=self.temporary, hidden=hidden)]
+        return platform.bubblewrap_profile([str(self.work)], list(read_only), temporary=self.temporary, hidden=hidden)
+
+    def test_a_claude_job_sees_only_what_its_launch_reopens_of_the_operators_claude_folder(self):
+        hidden = platform._operator_places()
+        self.assertLessEqual({str(self.operator), str(self.home / ".claude.json") + "*"}, set(hidden))
+        own = self.work / "claude"
+        resumed = self.operator / "projects/-repo/sid-old.jsonl"
+        notes = self.operator / "projects/-repo/memory"
+        engines.claude._own_folder(own, [])
+        read_only = [str(path) for path in (*engines.claude._linked(), notes, resumed)]
+        files = {"sign-in": self.operator / ".credentials.json", "state": self.home / ".claude.json",
+                 "state copy": self.home / ".claude.json.tmp.1.fixture",
+                 "linked state copy": self.home / ".claude.json.backup.fixture",
+                 "conversation": self.operator / "projects/-repo/sid-other.jsonl",
+                 "linked settings": own / "settings.json", "linked skill": own / "skills/fixture/SKILL.md",
+                 "notes": notes / "MEMORY.md", "resumed": resumed}
+        done = subprocess.run([*self.sandbox(read_only, hidden), sys.executable, "-I", "-c", FILES,
+                               json.dumps({name: str(path) for name, path in files.items()}),
+                               str(self.operator / "settings.json"), str(self.operator)],
+                              capture_output=True, text=True, timeout=60, cwd=self.work)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        # Linux shows a hidden folder empty and refuses a hidden file, a device node on a mount without devices;
+        # Seatbelt refuses both.
+        missing, refused = (errno.EPERM, errno.EPERM) if NATIVE_PLATFORM == "darwin" else (errno.ENOENT, errno.EACCES)
+        self.assertEqual(json.loads(done.stdout), {
+            "sign-in": missing, "state": refused, "state copy": refused, "linked state copy": refused,
+            "conversation": missing,
+            "linked settings": "fictional settings", "linked skill": "fictional skill", "notes": "fictional notes",
+            "resumed": "fictional resumed session",
+            "write": errno.EPERM if NATIVE_PLATFORM == "darwin" else errno.EROFS,
+            "listing": errno.EPERM if NATIVE_PLATFORM == "darwin" else ["projects", "settings.json", "skills"]})
+        self.assertEqual((self.home / ".claude.json").read_text(), "fictional state", "the host's files are unchanged")
+        self.assertEqual((self.operator / "settings.json").read_text(), "fictional settings")
 
 
 class TestJobTemporaryFolder(AltitudeCase):

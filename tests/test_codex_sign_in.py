@@ -129,7 +129,7 @@ class OwnFolder(AltitudeCase):
         with mock.patch.object(platform, "_darwin", return_value=False), \
              mock.patch.object(platform, "bubblewrap_profile", side_effect=lambda *a, **kw: captured.update(kw) or []):
             platform.job_command("u.service", ["true"], {}, writable=(self.tmp,))
-            self.assertEqual(captured["hidden"], [hidden])
+            self.assertEqual(captured["hidden"], platform._operator_places())
             captured.clear()
             platform.job_command("u.service", ["true"], {})
             self.assertEqual(captured, {}, "a job without Altitude's sandbox is the engine's to confine")

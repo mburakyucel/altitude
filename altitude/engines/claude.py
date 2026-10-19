@@ -181,7 +181,7 @@ class _ClaudeDriver(common._Driver):
     and Claude then finishes what it has accepted and exits."""
 
     def __init__(self, spec: dict, env: dict):
-        _own_folder(Path(env["CLAUDE_CONFIG_DIR"]), spec.get("resume"))
+        _own_folder(Path(env["CLAUDE_CONFIG_DIR"]), spec.get("copies") or ())
         super().__init__(spec, env)
         self.waiting: dict[str, str | None] = {}
         self.ended_at: float | None = None
@@ -278,10 +278,23 @@ class _ClaudeDriver(common._Driver):
             time.sleep(common.SEND_POLL)
 
 
-#: The operator's own Claude folder. No Claude job Altitude starts writes it: each has a folder of its own.
+#: The operator's own Claude folder. No Claude job Altitude starts writes it, nor reads it beyond what its launch
+#: reopens (`operator_places`): each has a folder of its own.
 OPERATOR_HOME = config.HOME / ".claude"
-#: The operator's customisation a job's own folder links to, read-only where the platform confines the job.
+#: The operator's customisation a job's own folder links to, read-only in the job.
 LINKED = ("settings.json", "CLAUDE.md", "skills", "agents", "commands", "plugins", "output-styles")
+
+
+def operator_places() -> tuple[str, ...]:
+    """What no job in Altitude's sandbox sees (`platform.job_command`): the operator's Claude folder, with their
+    sign-in, sessions and notes, and their Claude state file beside it with every copy of it Claude makes there."""
+    return (str(OPERATOR_HOME), str(config.HOME / ".claude.json") + "*")
+
+
+def _linked() -> list[Path]:
+    """The entries of the operator's folder a job's own folder links to (`_own_folder`), which a worker's and a
+    coordinator's launch reopen read-only; a review links none."""
+    return [OPERATOR_HOME / name for name in LINKED if os.path.lexists(OPERATOR_HOME / name)]
 
 
 def job_env(home: Path) -> dict:
@@ -291,23 +304,33 @@ def job_env(home: Path) -> dict:
     return {"CLAUDE_CONFIG_DIR": str(home), **({"CLAUDE_CODE_OAUTH_TOKEN": token} if token else {})}
 
 
-def _own_folder(home: Path, resume: str | None) -> None:
+def _first_resume(home: Path, resume: str | None) -> list[Path]:
+    """The records of a session a job resumes for the first time in its own folder: in the operator's folder, where
+    Claude kept every session before jobs had folders of their own. Its launch reopens them read-only."""
+    if not resume or "/" in resume or "\\" in resume or _session_files(home, resume):
+        return []
+    return [path for found in _session_files(OPERATOR_HOME, resume) for path in (found.with_suffix(""), found)
+            if path == found or path.is_dir()]
+
+
+def _own_folder(home: Path, copies) -> None:
     """Prepare a job's own Claude folder from inside the job, so Altitude never writes where the job can.
 
-    It links the operator's customisation, and a session resumed for the first time in this folder is copied in
-    from the operator's folder, where Claude kept every session before jobs had folders of their own."""
+    It links the operator's customisation and copies in the records of a session it resumes for the first time
+    (`_first_resume`), which the job reads where the operator's folder is otherwise hidden."""
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
     for name in LINKED:
         if os.path.lexists(OPERATOR_HOME / name) and not os.path.lexists(home / name):
             os.symlink(OPERATOR_HOME / name, home / name)
-    if not resume or "/" in resume or any(home.glob(f"projects/*/{resume}.jsonl")):
-        return
-    for found in OPERATOR_HOME.glob(f"projects/*/{resume}.jsonl"):
-        folder = home / "projects" / found.parent.name
-        folder.mkdir(parents=True, exist_ok=True)
-        if found.with_suffix("").is_dir():
-            shutil.copytree(found.with_suffix(""), folder / resume, symlinks=True, dirs_exist_ok=True)
-        shutil.copy2(found, folder / found.name)
+    for name in map(Path, copies):
+        target = home / name.relative_to(OPERATOR_HOME)
+        if os.path.lexists(target):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if name.is_dir():
+            shutil.copytree(name, target, symlinks=True)
+        else:
+            shutil.copy2(name, target)
 
 
 def notes_folder(repo: Path) -> Path:
@@ -386,8 +409,10 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
     env.update(extra_env or {})
     if effort is not None:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+    copies = _first_resume(Path(home), resume)
     driver = platform.job_command(unit, common._driver_command(), common.launch_env(env), runtime_max=timeout,
-                                  writable=(Path(cwd), config.ROOT, Path(home)), sockets=sockets)
+                                  writable=(Path(cwd), config.ROOT, Path(home)), read_only=(*_linked(), *copies),
+                                  sockets=sockets)
     env = common.launch_env(env, retain_user_bus=True)
     # prompt goes through the driver's input: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(driver, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -395,7 +420,8 @@ def claude_print(prompt: str, *, cwd: Path, unit: str, resume: str | None = None
     if on_start:
         on_start(proc.pid)
     common._feed(proc.stdin, common._driver_input({"engine": "claude", "command": cmd, "input": content,
-                                     "resume": resume, "sends": str(sends) if sends is not None else None,
+                                     "resume": resume, "copies": list(map(str, copies)),
+                                     "sends": str(sends) if sends is not None else None,
                                      "env": job_env(Path(home))}))
     stdout_capture, stderr_capture = common._BoundedRawCapture(), common._BoundedRawCapture()
 
@@ -711,6 +737,9 @@ def review_result_facts(records: list[dict]) -> dict:
 
 
 def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images):
+    """A Claude worker in Altitude's sandbox: its worktree, Git directories, scratch folder and own Claude folder
+    (`l2-engine/claude`) writable, and the operator's Claude folder hidden from it except the entries its folder
+    links to, the project's notes its settings name and a session it resumes for the first time."""
     cmd = [config.CLAUDE_BIN, "-p", "--input-format", "stream-json", "--replay-user-messages",
            "--output-format", "stream-json", "--verbose", "--name", name,
            "--permission-mode", "auto", "--allowedTools", "Bash(alt *)",
@@ -731,7 +760,11 @@ def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, sett
             claude_stop(row["id"])
     git_writable, read_only = git_policy.worker_git_access(cwd)
     home = Path(job_root) / "claude"
-    return cmd, content, (Path(cwd), *git_writable, scratch, home), read_only, job_env(home), {}
+    copies = _first_resume(home, resume)
+    notes = S.read_json(settings, {}).get("autoMemoryDirectory") if settings else None
+    reopened = (*_linked(), *([Path(notes)] if notes and os.path.lexists(notes) else []), *copies)
+    return (cmd, content, (Path(cwd), *git_writable, scratch, home), (*read_only, *reopened), job_env(home),
+            {"copies": list(map(str, copies))})
 
 
 worker_unit_name = _claude_unit
@@ -1061,11 +1094,6 @@ def review_launch_env(runtime):
 
 
 CONFINEMENT = 'Claude permission rules'
-
-
-def operator_places():
-    """None: a Claude job reads the operator's Claude folder its own folder links to (`_own_folder`)."""
-    return ()
 
 
 def worker_sign_in():
