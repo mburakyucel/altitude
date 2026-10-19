@@ -853,7 +853,9 @@ def row_sign_in() -> dict:
     binary.write_text(f"#!/bin/sh\n[ \"$1\" = setup-token ] || exit 1\nFAKE_SETUP_LOG={setup_log} exec {PYTHON} -B "
                       f"{SOURCE}/tests/fake_token_setup.py \"$@\"\n")
     binary.chmod(0o755)
-    token = ast.literal_eval(re.search(r"^TOKEN = (.+)$", (SOURCE / "tests/fake_token_setup.py").read_text(), re.M)[1])
+    # The fixture's token, written there as joined string literals.
+    token = "".join(re.findall(r'"([^"]*)"', re.search(r"^TOKEN = (.+)$", (SOURCE / "tests/fake_token_setup.py")
+                                                         .read_text(), re.M)[1]))
     call = lambda body=None: json.loads(page("/api/sign-in/claude", body).read())  # noqa: E731
     leftovers = lambda: sorted(path.name for path in store.glob("claude.setup.*"))  # noqa: E731
     command = lambda: processes("fake_token_setup.py")  # noqa: E731
