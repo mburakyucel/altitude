@@ -946,8 +946,9 @@ print(json.dumps({"cwd": os.getcwd()}))
 
 def row_coordinator_channel() -> dict:
     """#943 A1, A2: a coordinator turn, here the fictional Codex CLI's, runs from a fresh folder in the private
-    coordinator folder and is admitted to its own project's channel; another project's channel and a task worker are
-    refused. The folder is the account's alone and each socket's path fits macOS's limit."""
+    coordinator folder and is admitted to its own project's channel, while another project's channel refuses it; a
+    task worker cannot connect to its project's channel at all, which Altitude's sandbox refuses. The folder is the
+    account's alone and each socket's path fits macOS's limit."""
     other = "fictional-other"
     repo = HOME / "Projects" / other
     repo.mkdir(parents=True)
@@ -974,12 +975,13 @@ def row_coordinator_channel() -> dict:
     admitted = lambda answer: answer.get("answer") == {"error": "unknown L3 read"}  # noqa: E731
     refused = lambda answer: answer.get("answer") == {  # noqa: E731
         "error": "this socket serves only the project's running coordinator turn"}
+    confined = lambda answer: answer.get("error") == "[Errno 1] Operation not permitted"  # noqa: E731
     mode = lambda path: oct(path.stat().st_mode & 0o777)  # noqa: E731
     facts = {"coordinator": answers, "worker": worker, "folder_mode": mode(folder),
              "socket_modes": {name: mode(path) for name, path in sockets.items()},
              "socket_bytes": {name: len(str(path).encode()) for name, path in sockets.items()}}
     facts["passed"] = (admitted(answers[0]) and refused(answers[1])
-                       and answers[2]["cwd"].startswith(f"{folder}/l3-codex-") and refused(worker[0])
+                       and answers[2]["cwd"].startswith(f"{folder}/l3-codex-") and confined(worker[0])
                        and facts["folder_mode"] == "0o700" and max(facts["socket_bytes"].values()) <= 103
                        and all(path.stat().st_uid == UID for path in sockets.values()))
     return facts

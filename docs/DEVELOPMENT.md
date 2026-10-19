@@ -1788,7 +1788,7 @@ fresh `alt pair` code.
   nothing afterwards, in Altitude's home or a recreated scratch folder (`scratch`, #958). With a second project
   registered, a coordinator turn of the fictional Codex CLI must run from a fresh folder in the coordinator folder,
   which only the account may open, be admitted to its own project's channel and refused at the other project's,
-  while a task worker is refused at its own project's; each channel's path stays within macOS's 103 bytes
+  while a task worker's connection to its own project's is refused by Altitude's sandbox; each channel's path stays within macOS's 103 bytes
   (`coordinator-channel`, #943). Then ending the login
   session without a restart stops the service and the automatic login starts it again
   (`logout-login`, #731); a login that does not return is recorded as unavailable with its reason. Sleep is
