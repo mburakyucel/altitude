@@ -2627,7 +2627,8 @@ within ties and the session continuity rule described above. A chat turn belongs
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
 lands in the history. Its reply is everything the coordinator wrote in the turn, in order: a Claude
 turn streams its text as written, each text after a tool call starting a new paragraph, and stores that
-same text; a Codex turn streams nothing and stores its messages joined the same way. The typing indicator
+same text, taking from each finished message any text the stream did not carry (Claude can send a message
+without streaming it); a Codex turn streams nothing and stores its messages joined the same way. The typing indicator
 stays under the streamed words until the stream ends, and with no stream open, while `active` names the
 turn. Each send carries a page-made UUID `request_id`, kept as the stored user row's
 `request_id`, as the queue row's `id` and, once delivered from the queue, in that row's `queue_ids`.

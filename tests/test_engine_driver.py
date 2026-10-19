@@ -486,6 +486,32 @@ class TestChatTurns(AltitudeCase):
         self.assertEqual(streamed, ["Checking.", "\n\nDone."])
         self.assertEqual(result["text"], "Checking.\n\nDone.")
 
+    def test_claude_text_sent_without_streaming_still_joins_the_reply_in_order(self):
+        """The operator's second report: an opening line, then the whole answer arriving as one finished message with
+        an `alt task offer` call (no text deltas), then a closing line; the answer must not vanish. A stream cut short
+        is completed by its message."""
+        def delta(text):
+            return {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": text}}}
+
+        def message(*content):
+            return {"type": "assistant", "message": {"model": "fake-model", "content": list(content)}}
+
+        answer = "Yes, I understand.\n\nDecided myself: offered as one small task below."
+        events = [delta("I follow you."), message({"type": "text", "text": "I follow you."}),
+                  message({"type": "tool_use", "id": "t1", "name": "Grep", "input": {}}),
+                  message({"type": "text", "text": answer},
+                          {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "alt task offer -"}}),
+                  delta("Press the offered "), message({"type": "text", "text": "Press the offered task if you want it."}),
+                  {"type": "result", "subtype": "success", "is_error": False, "result": "Press the offered task if you want it.",
+                   "session_id": "s"}]
+        streamed = []
+        with mock.patch.object(config, "CLAUDE_BIN", self.scripted("claude-unstreamed", events)):
+            result = engines.claude_print("hello", unit="altitude-coordinator-fixture.service", home=self.tmp / "claude-home",
+                                          cwd=self.repo, timeout=30, on_text=streamed.append)
+        self.assertEqual(result["text"], f"I follow you.\n\n{answer}\n\nPress the offered task if you want it.")
+        self.assertEqual(streamed, ["I follow you.", f"\n\n{answer}", "\n\nPress the offered ", "task if you want it."])
+        self.assertEqual([tool["name"] for tool in result["tools"]], ["Grep", "Bash"])
+
     def test_a_codex_turn_keeps_every_message_it_wrote_around_its_commands(self):
         def item(kind, **fields):
             return {"type": "item.completed", "item": {"id": f"item-{kind}-{len(fields)}", "type": kind, **fields}}
