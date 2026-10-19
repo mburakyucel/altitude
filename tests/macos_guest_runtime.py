@@ -609,6 +609,7 @@ def row_quiet_point() -> dict:
                                                   None), timeout=120)
     wait("its launchd job", lambda: job_running(run["unit"]), timeout=60)
     held = f"the validation run of {PROJECT}/{running}"
+    unit, before = worker_unit(running), service_pid()  # the service cannot restart while the run holds the machine
     lookup(newer)
     waiting = wait("the offered update to name the run", lambda: (record().get("waiting") or {}).get("for") == [held]
                    and record()["waiting"], timeout=90)
@@ -616,7 +617,6 @@ def row_quiet_point() -> dict:
     later = new_task("Validation while an update waits", "Fictional task that asks for a validation run while an "
                      "update waits.\nFIXTURE-RUN: alt task validate -- /bin/sh -c 'echo second-run'\n")
     refused = wait("the second request's answer", lambda: ran(later, "alt task validate"), timeout=90)
-    unit, before = worker_unit(running), service_pid()
     ended = wait("the validation run to end", lambda: next((r for r in machine(running) if r.get("n") == run["n"]
                                                             and r.get("finished")), None), timeout=150)
     attempt = wait("the automatic update to start", lambda: (record().get("attempt") or {}).get("version") == newer
