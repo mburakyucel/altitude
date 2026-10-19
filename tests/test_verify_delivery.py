@@ -4,7 +4,7 @@ import json
 import os
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import state as S, tasks as T, verify
+from altitude import incidents, state as S, tasks as T, verify
 
 
 class TestVerifyDelivery(AltitudeCase):
@@ -310,3 +310,24 @@ class TestVerifyDelivery(AltitudeCase):
         with self.assertRaisesRegex(T.TransitionError, "coordination records where open review findings are tracked"):
             T.done(self.project, "continue", actor="l2", expected_attempt=1, findings_tracked="#461")
         self.assertEqual(S.load_task(self.project, "continue")["state"], "running")
+
+    def test_a_malformed_report_returns_to_its_owner_naming_the_field(self):
+        self.publish(41)
+        well_formed = self.report()
+        for field, change in (
+                ("report.landed.prs: expected a list of objects", lambda r: r["landed"].update(prs=[41])),
+                ("report.landed: expected an object", lambda r: r.update(landed="merged")),
+                ("report.review: expected a list of objects", lambda r: r.update(review=["looked fine"])),
+                ("report.blocked: expected text", lambda r: r.update(blocked={"why": "waiting"})),
+                ("report.follow_ups: expected a list", lambda r: r.update(follow_ups="later"))):
+            with self.subTest(field=field):
+                report = json.loads(json.dumps(well_formed))
+                change(report)
+                S.write_json(self.report_path, report)
+
+                result = verify.verify(self.project, "continue")
+
+                self.assertEqual((result["verdict"], result["problems"]), ("contradicted", [field]))
+                self.assertNotIn("fault", result)
+        self.assertEqual(incidents.index(self.project), [])
+        self.assertFalse(incidents.FAULTS.exists())

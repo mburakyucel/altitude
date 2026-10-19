@@ -1314,11 +1314,13 @@ class TestInstallationMacosVm(AltitudeCase):
                 target.mkdir(parents=True)
                 (target / "rows.jsonl").write_text("".join(json.dumps(row) + "\n" for row in self.rows))
 
-        def judged(rows, **kwargs):
+        def judged(rows, phase=vm.phase_workers, **kwargs):
             guest, record = Guest(rows, **kwargs), {}
             shutil.rmtree(self.tmp / "evidence", ignore_errors=True)
-            with mock.patch.object(vm, "prerequisites", return_value={}), mock.patch.object(vm.time, "sleep"):
-                vm.phase_workers(guest, "fictional-owner/fictional-altitude", self.tmp, record, self.tmp, "c" * 40)
+            with mock.patch.object(vm, "prerequisites", return_value={}), mock.patch.object(vm.time, "sleep"), \
+                    mock.patch.object(vm, "browser") as browser:
+                phase(guest, "fictional-owner/fictional-altitude", self.tmp, record, self.tmp, "c" * 40)
+            self.assertEqual(browser.called, phase in (vm.phase_update, vm.phase_terminal))  # Safari only where read
             return guest, record["cases"]
 
         every = [{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["workers"]]
@@ -1336,6 +1338,9 @@ class TestInstallationMacosVm(AltitudeCase):
         self.assertEqual(cases["validation-restart"], {"passed": False, "unavailable": "no restart"})
         with self.assertRaisesRegex(vm.Stop, "install failed"):
             judged(every, installed="")
+        guest, cases = judged([{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["terminal"]], vm.phase_terminal)
+        self.assertIn("rows operator-step terminal-hold", "".join(guest.commands))
+        self.assertTrue(all(case["passed"] for case in cases.values()))
 
     def test_guest_engine_runs_its_prompts_commands_and_ends_the_turn_as_told(self):
         engine, log = REPO / "tests/macos_guest_engine.py", self.tmp / "log.jsonl"
@@ -1377,6 +1382,35 @@ class TestInstallationMacosVm(AltitudeCase):
                     vm.main()
             self.assertIn(error, stderr.getvalue())
             lock.assert_not_called()
+
+    def test_online_and_the_complete_mutation_run_only_when_named(self):
+        from scripts import installation_macos_vm as vm
+        named = ("published", "online", "mutation-complete")
+        for argv, phases in (([], [name for name in vm.PHASES if name not in named]), (["--phase", "online"], ["online"]),
+                             (["--phase", "mutation-complete"], ["mutation-complete"])):
+            with mock.patch.object(vm.sys, "argv", ["installation_macos_vm.py", "run", str(self.tmp / "r"), *argv]), \
+                    mock.patch.object(vm.sys, "platform", "darwin"), mock.patch.object(vm.platform, "machine", return_value="arm64"), \
+                    mock.patch.object(vm, "watch_disk"), mock.patch.object(vm.signal, "signal"), \
+                    mock.patch.object(vm, "lock"), mock.patch.object(vm, "lane", return_value=0) as lane:
+                self.assertEqual(vm.main(), 0)
+            self.assertEqual(lane.call_args.args[2], phases)
+
+    def test_complete_mutation_run_alone_gets_the_revisions_files(self):
+        from scripts import installation_macos_vm as vm
+        archived = []
+        real_run = vm.run
+        def run(*args, **kwargs):
+            if args[:2] == ("git", "archive"):
+                archived.append(args[3])
+                return subprocess.CompletedProcess(args, 0, "", "")
+            return real_run(*args, **kwargs)
+        with mock.patch.object(vm, "run", side_effect=run), mock.patch.object(vm, "build") as build, \
+                mock.patch.object(vm, "CACHE", self.tmp), \
+                mock.patch.object(vm, "run_phase", side_effect=lambda name, inputs, results, record, commits:
+                                  record["phases"].setdefault(name, {"passed": True})):
+            self.assertEqual(vm.lane(self.tmp / "results", "c" * 40, ["mutation-complete"]), 0)
+        build.assert_not_called()
+        self.assertEqual([path.name for path in archived], ["source.tar"])
 
     def test_published_run_downloads_both_releases_and_builds_nothing(self):
         from scripts import installation_macos_vm as vm

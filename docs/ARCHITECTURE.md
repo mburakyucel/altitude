@@ -1258,7 +1258,10 @@ The ordinary operator composer and resume admission retain their open-PR require
 
 `report_after` marks follow-up work, and verification carries its owner identity, worker start and
 block identity. Messages arriving at report handoff invalidate completion evidence; pending inbox
-messages return to the ordinary resume path. The verifier reads each reported PR through GitHub's REST
+messages return to the ordinary resume path. A report whose sections do not have their schema's shapes,
+such as PRs listed as bare numbers, is `contradicted` with each such field named before anything else is
+read, so the owner corrects it like any other contradicted report; `alt task report` names the same fields
+through the same check. The verifier reads each reported PR through GitHub's REST
 API. If GitHub refuses that read for a rate limit, the task stays as it is and the next tick verifies again,
 without a verifier fault. A read that gets no answer from GitHub (gh's time limit, or a connection, DNS, TLS or
 gateway error) also waits for the next tick, and becomes a verifier fault only once the same worker's verification

@@ -1,8 +1,10 @@
-"""The macOS VM lane's `mutation` phase, run inside the offline guest by its account from the revision's files made a
-Git checkout (`scripts/installation_macos_vm.py`): two mutation runs of the task door one after the other, each
-interrupted as Ctrl-C interrupts it once mutmut runs, with a process planted outside mutmut whose command names the
-run's scratch folder, as a test's leftover does. Prints one JSON object: each run's scratch folder, what named it
-during and after the run, and whether the planted process ended."""
+"""The macOS VM lane's `mutation` phases, run inside the offline guest by its account from the revision's files made a
+Git checkout (`scripts/installation_macos_vm.py`). Without arguments: two mutation runs of the task door one after
+the other, each interrupted as Ctrl-C interrupts it once mutmut runs, with a process planted outside mutmut whose
+command names the run's scratch folder, as a test's leftover does; prints each run's scratch folder, what named it
+during and after the run, and whether the planted process ended. With `complete MODULE`: one whole run of MODULE;
+prints its exit, its minutes, the report's row for MODULE and the scratch folders left. Either prints one JSON
+object."""
 import glob
 import json
 import os
@@ -54,7 +56,22 @@ def interrupted(n: int) -> dict:
             "folder_left": bool(folder) and os.path.exists(folder), "after": after}
 
 
-if __name__ == "__main__":
+def complete(module: str) -> dict:
+    before, results, started = folders(), f"{SHARED}/mutation-complete", time.monotonic()
+    with open(f"{SHARED}/mutation-complete.log", "wb") as log:
+        code = subprocess.run([sys.executable, "-B", "scripts/mutation.py", results, module], stdout=log,
+                              stderr=subprocess.STDOUT).returncode
+    report = os.path.join(results, "report.md")
+    text = open(report).read() if os.path.exists(report) else ""
+    row = next((line for line in text.splitlines() if line.startswith(f"| `{module}` |")), None)
+    left = [folder for folder in folders() if folder not in before]
+    return {"module": module, "exit": code, "minutes": round((time.monotonic() - started) / 60), "row": row,
+            "functions": text.count("\n### `"), "left": left, "passed": code == 0 and row is not None and not left}
+
+
+if __name__ == "__main__" and sys.argv[1:2] == ["complete"]:
+    print(json.dumps(complete(sys.argv[2])))
+elif __name__ == "__main__":
     runs = [interrupted(1), interrupted(2)]
     print(json.dumps({"runs": runs, "left": folders(), "passed": all(
         run["mutmut"] and run["exit"] not in (0, "did not end") and run["planted_ended"] and not run["folder_left"]
