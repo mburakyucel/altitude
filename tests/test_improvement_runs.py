@@ -228,7 +228,7 @@ class TestPosting(RunCase):
         self.assertNotIn("line", improve._find(improve._load(self.project), run["id"]))
 
     def test_the_window_reads_as_days(self):
-        day = lambda d, h=12: datetime(2026, 10, d, h, tzinfo=timezone.utc).astimezone().replace(hour=h).isoformat()
+        day = lambda d, h=12: datetime(2026, 10, d, h).astimezone().isoformat()
         self.assertEqual(improve._span(day(12, 9), day(12, 15)), "Oct 12")
         self.assertEqual(improve._span(day(5), day(12)), "Oct 5–12")
         self.assertEqual(improve._span(datetime(2026, 9, 28, 12).astimezone().isoformat(), day(5)), "Sep 28–Oct 5")
