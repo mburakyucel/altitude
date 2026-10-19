@@ -2640,8 +2640,8 @@ project and task queries. The server reads its baseline before the response open
 first or after a reconnect, refetches all of those queries, so a change between a snapshot and the
 subscription is never lost. Events carry no records: repeated events only refetch canonical reads.
 
-Decision alerts (issue #221) ride that stream. `web/src/data/alerts.tsx` holds the per-device switch
-under `altitude.alerts`, the permission states, and the keys already alerted under
+Decision alerts (issue #221) ride that stream. `web/src/data/alerts.tsx` holds the per-device setting
+under `altitude.alerts`, which the Settings → Notifications switch turns on and the Needs you pill names, the permission states, and the keys already alerted under
 `altitude.alerts.seen`; the shell watches the overview queue on every page. Only a newly published operator
 question alerts: faults, stops and reviews stay in Needs you without one. Every alert is shown through
 `web/public/sw.js`, the one service worker, whose registration Android requires for a notification and whose
@@ -2670,7 +2670,7 @@ alerts on keeps its change stream while hidden; every other hidden tab still clo
 
 A device is also woken while Altitude is closed. `altitude/push.py` keeps the VAPID signing key in
 the access folder, which no Altitude sandbox can read, and the subscribed endpoints in `~/.altitude/push.json`, both written only by the
-daemon; the switch registers its endpoint through `/api/alerts/subscription` and reads the public key
+daemon; turning alerts on registers the device's endpoint through `/api/alerts/subscription` and reads the public key
 from `/api/alerts`, and with alerts on subscribes and tells it again each time Altitude opens or returns to
 the screen there, one step at a time with the switch. The answer says whether altd still held the endpoint
 and whether that device's push service refuses Altitude's alerts; the page replaces a subscription made with

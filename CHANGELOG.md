@@ -5,9 +5,13 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Needs you gives its space to decisions: one small pill at the end of its title names this device's
+  alerts (on, off, only while open, push refused, blocked or unavailable) and opens Settings →
+  Notifications, where the alert switch and its explanation now live. Back from Settings returns to the
+  same visit, with any unsent answer still typed.
 - A device whose alert subscription stopped working, such as one made before Altitude's alert key
   changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
-  old subscription. The warning under the alert switch shows only on the device it concerns, and only
+  old subscription. The warning about it shows only on the device it concerns, and only
   when there is something left to do.
 - No job Altitude confines can read your own Claude folder or Claude state file any more, on Linux or macOS:
   a Claude job sees only your settings, instructions, skills, agents, commands, plugins and output styles,
