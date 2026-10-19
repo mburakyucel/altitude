@@ -1870,7 +1870,7 @@ PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle
 NAMED = ("published", "online", "mutation-complete")
 # The phases that install the release built from the source, and those that also read the revision's files.
 BUILT = ("fresh", "prerequisites", "lifecycle", "login", *RUNTIME_ROWS)
-SOURCED = ("privacy", "jobs", "read-only-home", "mutation", *RUNTIME_ROWS)
+SOURCED = ("privacy", "jobs", "read-only-home", "mutation", "mutation-complete", *RUNTIME_ROWS)
 
 
 def build(commit: str, work: Path, log: Path, version: str = "v0.0.1", output: str = "release") -> None:

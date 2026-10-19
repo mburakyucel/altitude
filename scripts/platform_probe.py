@@ -269,14 +269,20 @@ def real_sleep():
         status = proc.wait(timeout=900)
         awake = time.clock_gettime(time.CLOCK_UPTIME_RAW) - awake
         slept = time.clock_gettime(time.CLOCK_MONOTONIC) - wall - awake
+        active = platform.job_active(job, env())
+        survivors = [] if until(lambda: not marked(marker), 5) else marked(marker)
     finally:
+        # Whatever happened, the endless tree goes: the job outlives its launcher by design.
+        platform.job_stop(job, env())
         proc.kill()
         proc.wait()
+        left = [] if until(lambda: not marked(marker), 15) else marked(marker)
     check(slept >= 30, f"the Mac did not sleep: {slept:.0f}s between the clocks")
     check(status != 0 and limit - 5 <= awake < limit + 20,
           f"status {status} after {awake:.0f}s awake, {slept:.0f}s asleep; the limit is {limit}s of awake time")
-    check(not platform.job_active(job, env()), "job active after its limit")
-    check(until(lambda: not marked(marker), 5), f"survivors after the limit: {marked(marker)}")
+    check(not active, "job active after its limit")
+    check(not survivors, f"survivors after the limit: {survivors}")
+    check(not left, f"the job's tree outlived Stop: {left}")
     return (f"the Mac slept {slept:.0f}s; the job stopped at its {limit}s limit after {awake:.0f}s awake, "
             f"{awake + slept:.0f}s on the wall clock, with its whole tree (status {status})")
 

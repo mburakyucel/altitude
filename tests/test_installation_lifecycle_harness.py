@@ -1390,6 +1390,23 @@ class TestInstallationMacosVm(AltitudeCase):
                 self.assertEqual(vm.main(), 0)
             self.assertEqual(lane.call_args.args[2], phases)
 
+    def test_complete_mutation_run_alone_gets_the_revisions_files(self):
+        from scripts import installation_macos_vm as vm
+        archived = []
+        real_run = vm.run
+        def run(*args, **kwargs):
+            if args[:2] == ("git", "archive"):
+                archived.append(args[3])
+                return subprocess.CompletedProcess(args, 0, "", "")
+            return real_run(*args, **kwargs)
+        with mock.patch.object(vm, "run", side_effect=run), mock.patch.object(vm, "build") as build, \
+                mock.patch.object(vm, "CACHE", self.tmp), \
+                mock.patch.object(vm, "run_phase", side_effect=lambda name, inputs, results, record, commits:
+                                  record["phases"].setdefault(name, {"passed": True})):
+            self.assertEqual(vm.lane(self.tmp / "results", "c" * 40, ["mutation-complete"]), 0)
+        build.assert_not_called()
+        self.assertEqual([path.name for path in archived], ["source.tar"])
+
     def test_published_run_downloads_both_releases_and_builds_nothing(self):
         from scripts import installation_macos_vm as vm
         tags = {"v0.3.0": "a" * 40, "v0.4.0": "b" * 40}
