@@ -1563,8 +1563,8 @@ horizontal swipe never takes it Back. Under
 reduced motion nothing moves with the finger and a release past the same thresholds switches at once.
 Accessible labeled tabs remain the direct alternative. Swipes do not start from the composer or form
 controls, and leave browser-edge Back, text selection, recording, dialogs, horizontally scrollable
-session content and the terminal screen and key row alone; on Terminal a swipe starts from the notes
-and cards around the screen. Vertical scrolling stays native. Desktop keeps simultaneous panes.
+session content and the terminal screen and key row alone; on Terminal a swipe starts from the lines,
+notes and cards around the screen. Vertical scrolling stays native. Desktop keeps simultaneous panes.
 Phone tab and swipe switches replace its current history entry, keep the originating shell tab, and update the URL;
 the desktop panel button adds no history. A `/live` deep link and reload select Live session on
 phone and open the desktop panel. Back in the phone header and the desktop crumb both return to
@@ -1743,8 +1743,8 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Off | "Terminal is off", what it does, **Open Settings** (returns here with Back, which opens the shell). |
 | Starting | Skeleton lines and "Starting the terminal…". |
 | Running | The screen, its cursor focused on desktop; on phone the soft keyboard closed until the screen is tapped; **Close** / ×; the phone key row. |
-| Running, reader note | Also a grey note above the screen: "This task's owner can read this terminal's output, and what it reads reaches its AI provider." A project terminal names the coordinator instead: "The coordinator can read this terminal's output, …". |
-| Restart pending | A grey note above the screen: "Altitude restarts at its next quiet point to apply an update. This terminal will close then." |
+| Running, reader line | Also one line of secondary meta text above the screen, with no box: "This task's owner and its AI provider can read this output." A project terminal names the coordinator instead: "The coordinator and its AI provider can read this output." It stays in view at every scroll position and with the keyboard open, and wraps rather than truncates on a narrow screen. |
+| Restart pending | A grey note under the reader line: "Altitude restarts at its next quiet point to apply an update. This terminal will close then." |
 | Reconnecting | A small "Reconnecting…" badge over the screen's top right, so the shell keeps its size, also when a page shown again cannot reach Altitude; it disappears when output resumes and missed output appears. When more than the 256 KB replay went by, the screen starts over from what was kept, as a fresh visit shows it. |
 | Typing stopped | Input failed (a program not reading it, Altitude unreachable), so part of it may not have arrived: an amber alert "Typing stopped: <reason> Part of what you typed may not have arrived; check the screen." with **Resume typing**. Keys typed meanwhile are dropped, not queued. |
 | Close with a running command | "Close the terminal?" card naming the command that will be stopped, **Close** (primary) and **Cancel**. Close without a running command acts at once. |

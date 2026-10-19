@@ -62,10 +62,15 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   await run(page, "echo hello-$((6*7)); basename $PWD");
   await expect(output).toContainText("hello-42");
   await walk.state("03-running", {
-    visible: [output.getByText("prepare-index-migration", { exact: false }).last(), close, panel.getByText("This task's owner can read this terminal's output, and what it reads reaches its AI provider.")],
+    visible: [output.getByText("prepare-index-migration", { exact: false }).last(), close, panel.getByText("This task's owner and its AI provider can read this output.")],
     hidden: [panel.getByText(/L2's worktree/), panel.getByRole("button", { name: "Open terminal" }), ...(phone ? [] : [keys])],
   });
   if (phone) await expect(keys).toBeVisible();
+  // Who can read the terminal is one quiet line, not a box, at either width.
+  const reader = panel.locator(".terminal-reader");
+  const line = await reader.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+  expect((await reader.boundingBox())!.height).toBeLessThanOrEqual(line + 1);
+  expect(await reader.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
 
   // Tab completion, arrows and Escape reach the shell; nothing around the terminal takes them.
   await page.locator(".terminal-screen").click();
@@ -233,9 +238,12 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
   await run(page, "basename $PWD");
   await expect(output).toContainText("atlas");
   await walk.state("12-project-running-restart-pending", {
-    visible: [panel.getByText(/Altitude restarts at its next quiet point/), output.getByText("atlas").last(), close],
-    hidden: [refused, panel.getByText(/clean main/), panel.getByText(/task's owner can read/)],
+    visible: [panel.getByText("The coordinator and its AI provider can read this output."), panel.getByText(/Altitude restarts at its next quiet point/), output.getByText("atlas").last(), close],
+    hidden: [refused, panel.getByText(/clean main/), panel.getByText(/task's owner/)],
   });
+  // The temporary restart notice keeps its box, under the standing line.
+  const reader = (await panel.locator(".terminal-reader").boundingBox())!;
+  expect((await panel.getByText(/Altitude restarts at its next quiet point/).boundingBox())!.y).toBeGreaterThanOrEqual(reader.y + reader.height);
   await page.locator(".terminal-screen").click();
   await page.keyboard.type("ech");
   await page.keyboard.press("Tab");
@@ -630,7 +638,7 @@ test("@phone-only swipes move through Conversation, Live session and Terminal; a
   await walk.state("05-swipe-on-terminal-text-stays", { visible: [panel, output.getByText("line-30")], hidden: [live] });
 
   // Past the last view the track gives a little and never switches.
-  const note = await center(panel.locator(".terminal-note"));
+  const note = await center(panel.locator(".terminal-reader"));
   await swipe(page, 300, note.y, -160, async () => {
     await expect.poll(offset).toBeLessThan(0);
     expect(await offset()).toBeGreaterThan(-60);

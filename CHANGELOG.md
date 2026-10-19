@@ -22,6 +22,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   press Ctrl; the other keys, Paste and an opened chat command leave it as it was. Coming back to the app
   after the background reads on from where it was, even when the phone dropped the connection quietly,
   instead of leaving the screen still.
+- The terminal says who can read it in one quiet line above the screen instead of a box, giving the
+  phone screen back about two rows.
 - Answering a question or approving a merge shows at once: the card leaves Needs you and your answer
   appears in the chat, Waiting, the moment you press, then settles in place when Altitude saves it. If
   Altitude refuses, the card comes back with your picks and **Not sent** with Retry; if the connection
