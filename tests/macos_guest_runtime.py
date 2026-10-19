@@ -998,6 +998,50 @@ def row_operator_step() -> dict:
     return facts
 
 
+HIDDEN = 90  # seconds the terminal's tab stays behind another while its shell writes
+
+
+def row_terminal_return() -> dict:
+    """#1071: the project terminal in Safari, its tab hidden behind another while the shell writes, takes up the same
+    shell once shown again, each hidden line on screen once and no Reconnecting left, and its prompt takes typing."""
+    def script(source: str):
+        return safari.call("POST", "/execute/sync", {"script": source, "args": []})
+
+    call("/api/terminal-access", {"enabled": True})
+    facts: dict = {}
+    with Safari() as safari:
+        safari.go(f"/projects/{PROJECT}/terminal")
+        terminal = wait("the project terminal", lambda: call(f"/api/terminal/{PROJECT}").get("id"), timeout=30)
+        wait("its prompt", lambda: "%" in safari.text(".terminal-screen .xterm-rows"), timeout=30)
+        script("window.__seen = []; document.addEventListener('visibilitychange', "
+               "() => window.__seen.push(document.visibilityState)); return true;")
+        own = safari.call("GET", "/window")
+        safari.call("POST", "/window", {"handle": safari.call("POST", "/window/new", {"type": "tab"})["handle"]})
+        call(f"/api/terminal/{PROJECT}/input", {"id": terminal, "data": "sleep 20; for n in 1 2 3; do echo "
+                                                                         "fictional-hidden-$n; done\r"})
+        time.sleep(HIDDEN)
+        safari.call("DELETE", "/window")
+        safari.call("POST", "/window", {"handle": own})
+        facts["visibility"] = wait("the tab shown again", lambda: (seen := script("return window.__seen;"))
+                                   and seen[-1] == "visible" and seen, timeout=30)
+        shown = wait("the hidden lines on screen", lambda: "fictional-hidden-3" in (
+            text := safari.text(".terminal-screen .xterm-rows")) and text, timeout=30)
+        facts.update(same=call(f"/api/terminal/{PROJECT}").get("id") == terminal,
+                     lines=[shown.count(f"fictional-hidden-{n}") for n in (1, 2, 3)],
+                     reconnecting="Reconnecting" in safari.text("body"))
+        safari.screenshot("terminal-return-1-shown-again")
+        safari.click("//div[contains(@class, 'terminal-screen')]")
+        for key in "echo fictional-back":
+            safari.press(key)
+        safari.press("")  # Enter
+        facts["typed"] = "\nfictional-back" in transcript(terminal, "fictional-back").replace("\r", "")
+        safari.screenshot("terminal-return-2-typed")
+    call(f"/api/terminal/{PROJECT}/close", {"id": terminal})
+    facts["passed"] = ("hidden" in facts["visibility"] and facts["same"] and facts["lines"] == [1, 1, 1]
+                       and not facts["reconnecting"] and facts["typed"])
+    return facts
+
+
 def row_agent_refusal() -> dict:
     """#1053: Safari on the account's desktop, outside Altitude's jobs, is admitted on a POST, while the same paired
     cookie in a command of a worker's job is refused with 403, since libproc names one of Altitude's own jobs as the
@@ -1468,7 +1512,7 @@ ROWS = {"coordinator-stop": row_coordinator_stop, "failed-turn": row_failed_turn
         "validation-restart": row_validation_restart, "grants": row_grants, "contention": row_contention,
         "incident": row_incident, "schedule": row_schedule, "quiet-point": row_quiet_point,
         "terminal-hold": row_terminal_hold,
-        "scratch": row_scratch, "operator-step": row_operator_step,
+        "scratch": row_scratch, "operator-step": row_operator_step, "terminal-return": row_terminal_return,
         "coordinator-channel": row_coordinator_channel, "logout-login": row_logout_login, "sign-in": row_sign_in,
         "agent-refusal": row_agent_refusal, "codex-sign-in": row_codex_sign_in,
         "repair-terminal": row_repair_terminal, "repair-page-terminal": row_repair_page_terminal,

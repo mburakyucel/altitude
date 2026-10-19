@@ -1811,8 +1811,10 @@ fresh `alt pair` code.
   command typed at the prompt, and Enter, typed there, runs it to its end; its notice must clear the step, so
   Needs you reads `Nothing needs you.`, start a coordinator turn and leave the task no longer the operator's
   turn on its Work row. Each state is kept as a screenshot. A second step's terminal, closed before its
-  command ends, must leave that step waiting (`operator-step`, #1017). Then, with the project terminal
-  open, a newer release is offered for automatic installation: `alt doctor`, Safari's notice and Settings' version
+  command ends, must leave that step waiting (`operator-step`, #1017). The project terminal, open in Safari
+  and hidden behind another tab for 90 seconds while its shell writes, must take up the same shell once shown
+  again, each hidden line on screen once and no Reconnecting left, and its prompt must take typing
+  (`terminal-return`, #1071). Then, with the project terminal open, a newer release is offered for automatic installation: `alt doctor`, Safari's notice and Settings' version
   row must name `the browser terminal open in fictional`, and nothing starts or restarts for over a minute while
   it stays open; within 45 seconds of its closing the update starts, succeeds and the service restarts into the
   newer version (`terminal-hold`, #1003).

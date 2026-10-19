@@ -1759,7 +1759,7 @@ git push -q origin main && git rev-parse HEAD""")
 # finishes within `alt task run`'s ten minutes.
 RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
                 "grants": ("grants", "contention", "sign-in"), "incident": ("incident", "schedule"),
-                "update": ("quiet-point",), "terminal": ("operator-step", "terminal-hold"),
+                "update": ("quiet-point",), "terminal": ("operator-step", "terminal-return", "terminal-hold"),
                 "session": ("scratch", "coordinator-channel", "logout-login"),
                 "agents": ("agent-refusal", "codex-sign-in"),
                 "repairs": ("repair-terminal", "repair-page-terminal", "repair-installer"),

@@ -1351,7 +1351,7 @@ class TestInstallationMacosVm(AltitudeCase):
         with self.assertRaisesRegex(vm.Stop, "install failed"):
             judged(every, installed="")
         guest, cases = judged([{"row": row, "passed": True} for row in vm.RUNTIME_ROWS["terminal"]], vm.phase_terminal)
-        self.assertIn("rows operator-step terminal-hold", "".join(guest.commands))
+        self.assertIn("rows operator-step terminal-return terminal-hold", "".join(guest.commands))
         self.assertTrue(all(case["passed"] for case in cases.values()))
         for phase, rows in ((vm.phase_agents, "agent-refusal codex-sign-in"),
                             (vm.phase_repairs, "repair-terminal repair-page-terminal repair-installer"),
