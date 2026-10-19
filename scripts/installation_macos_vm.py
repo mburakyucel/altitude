@@ -22,8 +22,9 @@ Each refused attempt must leave the account's files and launchd jobs as they wer
 platform_probe.py confinement rows as the logged-in account in a guest whose Python was never asked for access to a
 private place; `jobs` runs its launchd job rows, Stop of every descendant and the time limits among them, which no
 worker sandbox can; `read-only-home` runs the revision's suite cases that confine a child with Seatbelt or, with
-this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or worker can start. `source` installs
-from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
+this Mac's Codex CLI copied in, Codex's own sandbox, which no validation run or worker can start; `mutation`
+interrupts two mutation runs, whose cleanup lists processes with `ps`, from packages downloaded on this Mac.
+`source` installs from a source checkout cloned from an origin in the guest: the first start must create Altitude's own copy of its
 repository and run from it, and a newer main pushed to the origin must deploy through that copy. `workers`, `grants`,
 `incident`, `update` and `session` install the release into the account's own home with a scripted fictional engine
 and the tests' fake GitHub CLI, then drive the guest's own service through the revision's tests/macos_guest_runtime.py
@@ -1148,6 +1149,32 @@ def phase_read_only_home(guest: Guest, repository: str, results: Path, record: d
                                           and bool(found) and all(outcome == "ok" for outcome in found.values())}}
 
 
+def phase_mutation(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """The mutation run on macOS (#993), whose cleanup lists processes with `ps`, which no sandbox here allows. Its
+    hash-pinned packages are downloaded on this Mac and installed in the offline guest from those files. Each of two
+    runs of the task door is interrupted once mutmut runs; its scratch folder, mutmut and a planted process naming
+    that folder must be gone afterwards, and the second run starts afresh. A whole run takes hours on four CPUs."""
+    wheels = inputs / "mutation-wheels"
+    run(sys.executable, "-m", "pip", "download", "--quiet", "--disable-pip-version-check", "--no-cache-dir",
+        "--require-hashes", "--only-binary=:all:", "-d", wheels, "-r", SCRIPTS / "mutation-requirements.txt",
+        timeout=300)
+    guest.copy(wheels, f"{SHARED}/wheels")
+    command = (f"git init -q && git add -A && git -c user.name=Lane -c user.email=lane@example.invalid commit -qm "
+               f"source && PIP_NO_INDEX=1 PIP_FIND_LINKS={SHARED}/wheels {GUEST_PYTHON} -B tests/macos_guest_mutation.py")
+    result = in_source(guest, inputs, command, 900)
+    (results / "mutation.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
+    for n in (1, 2):
+        try:
+            guest.fetch(f"{SHARED}/mutation-{n}.log", results / f"mutation-{n}.log")
+        except subprocess.CalledProcessError:  # the run never started
+            pass
+    try:
+        found = json.loads(result.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        found = {"passed": False}
+    record["cases"] = {"mutation": {"exit": result.returncode, **found}}
+
+
 HOMEBREW = Path("/opt/homebrew")
 CHECKOUT = f"/Users/{ACCOUNT}/Projects/altitude"
 SOURCE_COPY = f"/Users/{ACCOUNT}/.altitude-repository"   # config.SOURCE_COPY beside the default ALTITUDE_HOME
@@ -1342,7 +1369,7 @@ git push -q origin main && git rev-parse HEAD""")
 # The runtime rows each phase drives in the guest (tests/macos_guest_runtime.py), split so that a `run` of one phase
 # finishes within `alt task run`'s ten minutes.
 RUNTIME_ROWS = {"workers": ("coordinator-stop", "failed-turn", "status-unknown", "validation-restart"),
-                "grants": ("grants", "contention"), "incident": ("incident", "schedule"),
+                "grants": ("grants", "contention", "sign-in"), "incident": ("incident", "schedule"),
                 "update": ("operator-step", "quiet-point"), "session": ("scratch", "coordinator-channel", "logout-login")}
 GUEST_PYTHON = "/opt/homebrew/bin/python3.12"
 # Rows may end the account's session, so they run in the background while the host polls.
@@ -1409,7 +1436,7 @@ def phase_workers(guest: Guest, repository: str, results: Path, record: dict, in
 def phase_grants(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """Granted commands as launchd jobs: revocation stops one, also across the service's restart, the coordinator
     reuses an answer for the identical purpose, and a second command waits for the one machine-run place (#656, #668,
-    #728)."""
+    #728); Altitude's own Claude sign-in from Settings saves its token privately and leaves nothing behind (#1025)."""
     runtime(guest, repository, results, record, inputs, "grants")
 
 
@@ -1436,13 +1463,14 @@ def phase_session(guest: Guest, repository: str, results: Path, record: dict, in
 
 # `fresh` starts from the fresh image, every other phase from prerequisites; `published` runs only with --published.
 PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login,
-          "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home, "source": phase_source,
+          "privacy": phase_privacy, "jobs": phase_jobs, "read-only-home": phase_read_only_home,
+          "mutation": phase_mutation, "source": phase_source,
           "workers": phase_workers, "grants": phase_grants, "incident": phase_incident, "update": phase_update,
           "session": phase_session,
           "published": phase_published}
 # The phases that install the release built from the source, and those that also read the revision's files.
 BUILT = ("fresh", "prerequisites", "lifecycle", "login", *RUNTIME_ROWS)
-SOURCED = ("privacy", "jobs", "read-only-home", *RUNTIME_ROWS)
+SOURCED = ("privacy", "jobs", "read-only-home", "mutation", *RUNTIME_ROWS)
 
 
 def build(commit: str, work: Path, log: Path, version: str = "v0.0.1", output: str = "release") -> None:
