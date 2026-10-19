@@ -136,9 +136,14 @@ async function overlay(page: Page, name: string, state: Overlay) {
   await page.route((url) => url.pathname.startsWith(`/api/task/${name}/`), async (route, request) => {
     const slug = decodeURIComponent(new URL(request.url()).pathname.split("/").pop() ?? "");
     if (state.taskFail) return route.fulfill({ status: 500, json: { error: "state file unreadable" } });
+    // A queue the overlay serves is the record: the task's own read lists the questions it still asks.
+    const asked = (state.queue ?? []).filter((row) => row["slug"] === slug && row["id"]);
+    const asking = (json: Record<string, unknown>) => ({ ...json, questions: [...((json["questions"] as Row[] | undefined) ?? [])
+      .filter((question) => !asked.some((row) => row["id"] === question["id"])), ...asked] });
     const patched = state.task?.[slug];
-    if (patched) return route.fulfill({ json: patched });
-    return route.continue();
+    if (patched) return route.fulfill({ json: asking(patched) });
+    if (!asked.length) return route.continue();
+    return serve(route, asking);
   });
   await page.route((url) => url.pathname === `/api/chat/${name}`, async (route) => serve(route, (json) => (state.chat ? state.chat(json) : json)));
 }

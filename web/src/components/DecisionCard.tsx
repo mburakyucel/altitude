@@ -289,7 +289,7 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
   const approve = () => {
     if (sent) dropPending(queryClient, sent.id);
     const { project, slug } = decision;
-    void sendApproval(queryClient, decision).then((outcome) => {
+    void sendApproval(queryClient, decision, sent?.id).then((outcome) => {
       if (outcome.state === "saved") {
         if (!chatOnScreen(project, slug)) toast.show({ message: "Approval saved", action: { label: "Open L2 chat", onClick: () => {
           setSelectedProject(project);

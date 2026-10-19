@@ -1020,11 +1020,12 @@ A message is an approval when its text is exactly the one the merge check accept
 #N.", optionally with "at" and a short head), so those words typed in the composer show as the action
 too. Both come from the saved conversation, so a reload, another device and a mixed batch look the same.
 
-On a card, in Needs you and the chat, **Approve merge** is the primary pill and changes in place: a
-clock at once while the message waits for the L2, keeping focus and ignoring presses. A refused send keeps
-**Approve merge** with the retry mark and **Not sent** (`role=alert`), and a denied write disables it with
-"You cannot approve here." **View PR #N** and the
-hint stay beside it. Saving hands the turn back and the card leaves Needs you. Where a card stays in
+On a card, in Needs you and the chat, **Approve merge** is the primary pill. Pressing it hands the turn
+back at once: the card leaves Needs you and the chat, and the approval shows in the chat as the
+operator's pill, Waiting (the table above). A refused send brings the card back with **Approve merge**
+carrying the retry mark and **Not sent** (`role=alert`), scrolled into view; Retry is the same send. A
+denied write disables it with "You cannot approve here." **View PR #N** and the hint stay beside it.
+Where a card stays in
 view with a saved answer (the owning chat after re-parking, or a member answered in another window),
 an option shows its pill and a typed answer its words under its delivery state, until the owner
 records the decision.

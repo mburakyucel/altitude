@@ -860,8 +860,10 @@ describe("Task on desktop", () => {
       expect(approval()).toHaveAttribute("data-state", "wait");
       const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
       expect(sent).toHaveLength(2);
-      // Retry sends the same message as a new send.
-      for (const call of sent) expect(JSON.parse(String(call[1]?.body)).text).toBe("Approved: merge PR #204.");
+      // Retry is the same send under the same id, so Altitude saves it once even if the first was saved after all.
+      const bodies = sent.map((call) => JSON.parse(String(call[1]?.body)) as { text: string; request_id: string });
+      for (const body of bodies) expect(body.text).toBe("Approved: merge PR #204.");
+      expect(bodies[1]!.request_id).toBe(bodies[0]!.request_id);
     });
 
     it("replaces a stale card refused by the server with the task's current state", async () => {

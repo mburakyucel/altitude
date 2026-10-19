@@ -25,12 +25,15 @@ const task = (change: Partial<TaskView> = {}): TaskView => ({ slug: "rollout", s
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 /** A server that holds each write until the test answers it, and serves reads from `record`. */
-function server(record: { overview: Overview; task: TaskView }) {
+function server(record: { overview: Overview; task: TaskView; offline?: boolean }) {
   const writes: { path: string; body: Record<string, unknown>; answer: (response: Response | Error) => void }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path === "/api/overview") return json(record.overview);
-    if (path === "/api/task/sample/rollout") return json(record.task);
+    if (path === "/api/task/sample/rollout") {
+      if (record.offline) throw new TypeError("Failed to fetch");
+      return json(record.task);
+    }
     if (path === "/api/project/sample") return json({ name: "sample", tasks: [], decisions: record.overview.queue });
     return new Promise<Response>((resolve, reject) => writes.push({ path, body: JSON.parse(String(init?.body)),
       answer: (response) => response instanceof Error ? reject(response) : resolve(response) }));
@@ -154,6 +157,31 @@ describe("pending writes", () => {
     expect(shown(client).queue).toEqual(["q1"]);
     expect(shown(client).task.messages).toHaveLength(1);
     expect(shown(client).entries.map((entry) => entry.picks)).toEqual([{ "sample:rollout:q1:1": { option: "a" } }]);
+    // The owner revised the question: no card is left for these picks, so the next read of the task drops them.
+    record.task = task({ questions: [question("q1", { revision: 2 }), question("q2")] });
+    await read(client);
+    await flush();
+    expect(shown(client).entries).toEqual([]);
+  });
+
+  it("tries the deciding read again on the next read that works, so an answer lost offline is never left hidden", async () => {
+    const record: { overview: Overview; task: TaskView; offline?: boolean } = { overview: overview([question("q1")]), task: task() };
+    const writes = server(record);
+    const client = new QueryClient();
+    await read(client);
+    const outcome = send(client);
+    await flush();
+    record.offline = true;
+    writes[0]!.answer(new TypeError("Failed to fetch"));
+    await flush();
+    await flush();
+    expect(shown(client).entries.map((entry) => entry.state)).toEqual(["unconfirmed"]);
+    expect(shown(client).queue).toEqual([]);
+    // Back online, the overview's next read works; the task is read again, and it does not list the answer.
+    record.offline = false;
+    await client.fetchQuery({ queryKey: ["overview"], queryFn: async () => (await (await fetch("/api/overview")).json()) as Overview, staleTime: 0 });
+    expect((await outcome).error?.message).toBe("Not sent");
+    expect(shown(client).queue).toEqual(["q1"]);
   });
 
   it("keeps an answer with no reply waiting until the task's next read decides it", async () => {

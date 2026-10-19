@@ -49,6 +49,8 @@ interface Reads {
 }
 const tracked = new WeakMap<QueryClient, Reads>();
 const outcomes = new Map<string, (entry: PendingWrite) => void>();
+/** How each unconfirmed entry reads its task again; any later read of a view tries once more until one succeeds. */
+const deciders = new Map<string, () => Promise<unknown>>();
 
 function viewOf(key: readonly unknown[]): View | null {
   if (key[0] === "overview" && key.length === 1) return "overview";
@@ -69,6 +71,8 @@ function reads(client: QueryClient): Reads {
   // The list's identity is its change signal: a copy republished after a read must reach every view.
   client.setQueryDefaults(KEY, { gcTime: Infinity, structuralSharing: false });
   client.getQueryCache().subscribe((event) => {
+    // Pairing removes every query, the entries with them, so nothing waits on them any more.
+    if (event.type === "removed" && event.query.queryKey[0] === KEY[0]) { outcomes.clear(); deciders.clear(); return; }
     const view = viewOf(event.query.queryKey);
     if (!view) return;
     if (event.type === "removed") { queueMicrotask(() => settle(client)); return; }
@@ -99,9 +103,15 @@ function shows(client: QueryClient, entry: PendingWrite, view: View, data: objec
   return readOf(client, data) <= (entry.reads?.[view] ?? 0);
 }
 
+const questionsOf = (task: TaskView) => [...task.questions ?? [], ...task.question_group?.questions ?? []];
 const listed = (entry: PendingWrite, task: TaskView) => Boolean(task.messages?.some((message) => message.id === entry.id))
-  || entry.kind === "answers" && entry.answers.every((answer) => [...task.questions ?? [], ...task.question_group?.questions ?? []]
+  || entry.kind === "answers" && entry.answers.every((answer) => questionsOf(task)
     .some((question) => question.id === answer.question_id && question.revision === answer.revision && question.response?.text === answer.text));
+/** A refused send still has a card to return to: a question it answered still waits at that revision, or its approval was not saved. */
+const returns = (entry: PendingWrite, task: TaskView) => entry.kind === "answers"
+  ? entry.answers.some((answer) => questionsOf(task).some((question) => question.id === answer.question_id
+    && question.revision === answer.revision && question.status === "open" && !question.response))
+  : !listed(entry, task);
 
 function entries(client: QueryClient): PendingWrite[] {
   return client.getQueryData<PendingWrite[]>(KEY) ?? NONE;
@@ -113,29 +123,34 @@ function change(client: QueryClient, id: string, update: (entry: PendingWrite) =
   if (!entry) return;
   const next = update(entry);
   client.setQueryData<PendingWrite[]>(KEY, current.flatMap((row) => row !== entry ? [row] : next ? [next] : []));
+  if (next?.state !== "unconfirmed") deciders.delete(id);
   if (next && next.state !== entry.state && next.state !== "unconfirmed") {
     outcomes.get(id)?.(next);
     outcomes.delete(id);
   }
+  if (!next) outcomes.delete(id);
 }
 
 /**
  * Decide unconfirmed entries on the first read of their task begun after the failure, and drop entries every view
  * has caught up with. A refused answer stays for its card to show the picks with Not sent, until Retry, an edit or
- * a read that lists it.
+ * a later read of its task that leaves it no card to return to.
  */
 function settle(client: QueryClient, read = false) {
   const before = entries(client);
   for (const entry of before) {
     const task = client.getQueryData<TaskView>(["task", entry.project, entry.slug]);
-    if (entry.state === "unconfirmed" && task && readOf(client, task) > (entry.reads?.task ?? 0)) {
-      change(client, entry.id, (current) => listed(current, task) ? { ...current, state: "saved" }
+    const later = Boolean(task) && readOf(client, task!) > (entry.reads?.task ?? 0);
+    if (entry.state === "unconfirmed") {
+      if (later) change(client, entry.id, (current) => listed(current, task!) ? { ...current, state: "saved" }
         : { ...current, state: "refused", error: new Error("Not sent") });
+      // The deciding read failed too, as it does while still offline: the next read that works elsewhere tries again.
+      else if (read) void deciders.get(entry.id)?.().catch(() => undefined);
       continue;
     }
     if (entry.state === "refused" && entry.kind === "message") { change(client, entry.id, () => null); continue; }
-    // A send judged lost from one read that a later read lists was saved after all: its card has nothing to return.
-    if (entry.state === "refused" && task && listed(entry, task)) { change(client, entry.id, () => null); continue; }
+    // A send judged lost that a later read lists was saved after all; one whose questions moved on has no card left.
+    if (entry.state === "refused" && later && !returns(entry, task!)) { change(client, entry.id, () => null); continue; }
     if (entry.state !== "saved") continue;
     const caughtUp = (["overview", "project", "task"] as const).every((view) => {
       const data = client.getQueryData<object>(viewKey(view, entry.project, entry.slug));
@@ -192,7 +207,10 @@ export async function finishPending(client: QueryClient, id: string, state: "sav
   for (const view of views) await client.cancelQueries({ queryKey: viewKey(view, entry.project, entry.slug), exact: true });
   const counts = Object.fromEntries(views.map((view) => [view, countOf(client, viewKey(view, entry.project, entry.slug))])) as Record<View, number>;
   change(client, id, (current) => ({ ...current, state, reads: counts, ...error ? { error } : {} }));
-  if (state === "unconfirmed") void read?.().catch(() => undefined);
+  if (state === "unconfirmed" && read) {
+    deciders.set(id, read);
+    void read().catch(() => undefined);
+  }
   settle(client);
 }
 
@@ -203,8 +221,7 @@ export function dropPending(client: QueryClient, id: string) {
 }
 
 export function forgetPending(client: QueryClient, project: string) {
-  const current = entries(client);
-  if (current.some((entry) => entry.project === project)) client.setQueryData<PendingWrite[]>(KEY, current.filter((entry) => entry.project !== project));
+  for (const entry of entries(client)) if (entry.project === project) dropPending(client, entry.id);
 }
 
 /** Every entry, re-rendering when they change. */

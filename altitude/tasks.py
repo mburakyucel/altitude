@@ -932,18 +932,24 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         raise TransitionError(f"task message summary exceeds {SUMMARY_LIMIT} characters")
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if review_number is not None:
-            # #902: a generated approval card can become stale while the operator reads it.
-            if (role != OPERATOR_MESSAGE_ROLE or type(review_number) is not int or review_number <= 0
-                    or review_pr(project, task) != review_number
-                    or task.get("hold_merge_id") != review_hold_id):
-                raise TransitionError("This PR is not ready for automatic merge approval. Refresh the task.")
         if request_id:
             previous = next((row for row in task.get("image_messages", []) if row["id"] == request_id), None)
             if previous:
                 if previous.get("request_digest") != request_digest:
                     raise TransitionError("This submission identity already belongs to another message.")
                 return {key: value for key, value in previous.items() if key != "delivered"}
+            # A retry after a lost reply returns the saved message, whatever changed since, instead of saving it twice.
+            saved = _message_named(project, slug, request_id)
+            if saved:
+                if uploads or image_ids or saved.get("role") != role or saved.get("text") != text:
+                    raise TransitionError("This submission identity already belongs to another message.")
+                return saved
+        if review_number is not None:
+            # #902: a generated approval card can become stale while the operator reads it.
+            if (role != OPERATOR_MESSAGE_ROLE or type(review_number) is not int or review_number <= 0
+                    or review_pr(project, task) != review_number
+                    or task.get("hold_merge_id") != review_hold_id):
+                raise TransitionError("This PR is not ready for automatic merge approval. Refresh the task.")
         if stop_id is not None and stop_id != task.get("stop_id"):
             raise TransitionError("The stopped session changed. Refresh before sending this correction.")
         allowed = ("running", "blocked", "reported")
@@ -1106,6 +1112,11 @@ def notify(project: str, slug: str, text: str, *, by: str, attempt: int,
         if marked or wake:
             S.regen_state_md(project)
     return row
+
+
+def _message_named(project: str, slug: str, message_id: str) -> dict | None:
+    """The task's message saved under a send id, so one id never names two messages."""
+    return next((row for row in task_messages(project, slug) if row["id"] == message_id), None)
 
 
 def task_messages(project: str, slug: str, limit: int | None = None) -> list[dict]:
@@ -2967,6 +2978,8 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
             raise TransitionError("question is no longer open for responses; refresh the conversation")
         for question, _ in chosen:
             require_shown(project, slug, question)
+        if request_id and _message_named(project, slug, request_id):
+            raise TransitionError("This submission identity already belongs to another message.")
         at, message_id = _conversation_time(), request_id or uuid.uuid4().hex
         text = "\n\n".join(f"{q['question']}\n{o['text']}" for q, o in chosen)
         row = {"id": message_id, "at": at, "role": OPERATOR_MESSAGE_ROLE, "by": OPERATOR_MESSAGE_ROLE,

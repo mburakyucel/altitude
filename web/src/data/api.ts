@@ -1688,8 +1688,8 @@ export async function writePending<T>(client: QueryClient, entry: PendingWrite, 
     return out;
   } catch (error) {
     const refused = error instanceof ApiError && error.status < 500;
-    await finishPending(client, entry.id, refused ? "refused" : "unconfirmed", error instanceof Error ? error : undefined);
-    if (!refused) void client.fetchQuery({ ...taskQuery(project, slug), staleTime: 0 }).catch(() => undefined);
+    await finishPending(client, entry.id, refused ? "refused" : "unconfirmed", error instanceof Error ? error : undefined,
+      () => client.fetchQuery({ ...taskQuery(project, slug), staleTime: 0 }));
     throw error;
   } finally {
     for (const queryKey of views) void client.invalidateQueries({ queryKey });
@@ -1713,8 +1713,8 @@ export function sendAnswers(client: QueryClient, input: DecideInput, answers: Pe
 }
 
 /** #419: the review card's approval, the operator's own message the L2 merges with (SPEC.md §3.8.2). */
-export function sendApproval(client: QueryClient, decision: Decision): Promise<PendingWrite> {
-  const id = sendId();
+/** Approve merge; Retry passes the refused send's id, so a send saved after all is never saved twice. */
+export function sendApproval(client: QueryClient, decision: Decision, id = sendId()): Promise<PendingWrite> {
   const { project, slug } = decision;
   const text = `Approved: merge PR #${decision.pr}.`;
   const entry: PendingWrite = { id, project, slug, kind: "approval", state: "sending", ...handBack(client, project, slug),

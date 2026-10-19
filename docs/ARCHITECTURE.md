@@ -2543,10 +2543,12 @@ actions use spinners, and saved/copied receipts use checks. Action labels retain
 while pending. The operator's own saves (answers, merge approvals, messages) render their result at
 the press: `web/src/data/pending.ts` keeps each write on its way beside the query cache and overlays
 the overview, project and task reads with it, until the first read begun after Altitude's save shows
-the record; a saved entry goes once every cached view has read past it or expired. A refused write
-stops overlaying and keeps its picks for its card; a write with no reply stays until the task's next
-read shows whether it was saved. Entries live only in memory, belong to their project, and go with
-it, with pairing and with a reload. Alerts read the record without the overlay. Screen-reader names retain the status words. Unavailable terminal, voice and alert
+the record; a saved entry goes once every cached view has read past it or expired. A write with no
+reply stays until a read of its task shows whether it was saved, read again after each later read that
+works. A refused write stops overlaying and keeps its picks for its card until Retry, an edit, or a
+read of its task that leaves it no card to return to. Entries live only in memory, belong to their
+project, and go with it, with pairing and with a reload. Alerts read the record without the overlay.
+Screen-reader names retain the status words. Unavailable terminal, voice and alert
 controls disclose their reason on press without invoking the action. Authored blockers, errors,
 setup instructions and resource/privacy consequences remain visible; task-page descriptions do
 not repeat the state chip or question card. These presentation rules do not change delivery,
@@ -3341,7 +3343,8 @@ response. Omitting the key explicitly selects the recorded recommendation. A gro
 `{project, slug, group_id, group_revision, answers: [{question_id, revision, option_key|text}]}`;
 each member supplies exactly one response kind. An optional `request_id`, a UUID the page makes per
 send, becomes the saved message's id, so the page shows the answer under its final id from the press.
-The existing project lock validates the entire batch before saving one attributed operator message and durable delivery receipt. It records no decision.
+The existing project lock validates the entire batch before saving one attributed operator message and
+durable delivery receipt. It records no decision.
 Each submitted question projects `response: {text, at, message_id}` and stays semantically open until
 the owner resolves it. Sent members leave Needs you; the owning chat shows a picked option as that
 choice and typed words as the operator's bubble, each with its delivery state, alongside members still
@@ -3351,7 +3354,9 @@ question revisions, so the owner cannot cite it to approve replacement wording. 
 saved for delivery; **Work resumed** requires observed running state. A queued owner stays explicit.
 
 Typed replies use `POST /api/l2/message`, optionally naming the viewed question/revision or
-`group_id`/`group_revision` as context. The saved message retains the viewed member references so
+`group_id`/`group_revision` as context. A `request_id` names one message across both endpoints: a
+repeated id returns the saved message, and the same id with different words is refused. The saved
+message retains the viewed member references so
 one conversational answer can settle several questions independently.
 The message endpoint returns the stored row even when its immediate resume wake fails; the saved
 resume request remains due for the existing timer. L3 queue wake failures likewise retain the queue

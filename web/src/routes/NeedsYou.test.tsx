@@ -102,7 +102,12 @@ function mockFetch(initialQueue: unknown[], decideStatus = 200) {
         ],
       });
     }
-    if (url.includes("/api/task/")) return jsonResponse({ slug: "x", state: "blocked", messages: [] });
+    if (url.includes("/api/task/")) {
+      // A task's own read lists the questions it still asks, as the queue does.
+      const slug = url.split("/").at(-1);
+      return jsonResponse({ slug, state: "blocked", messages: [],
+        questions: (queue as { slug?: string; id?: string }[]).filter((row) => row.slug === slug && row.id) });
+    }
     if (url.includes("/api/decide")) {
       if (decideStatus !== 200) return jsonResponse({ error: "Could not save" }, decideStatus);
       queue = [];
