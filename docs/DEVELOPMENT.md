@@ -661,7 +661,9 @@ iPhone in a private Simulator device set, as the operator boots one, and removes
 Outside any profile, its Web Inspector socket must answer and a program spawned in it must write in
 the home folder; from the worker profile and the validation profile, both must be out of reach. It
 records whether Xcode's device services list devices from each and, where launching Settings on that
-iPhone through them works outside, requires that launch to be out of reach from both profiles.
+iPhone through them works outside, requires that launch to be out of reach from both profiles. They
+see only the default device set, not the probe's private one, so on Xcode 27 that launch stays
+uncovered and the row says so.
 
 A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),
