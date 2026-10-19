@@ -4,11 +4,12 @@ things are fixtures: the agent check (service_support passes every request; /fix
 and the shell (no profile files, a fixed prompt) and its job, which the service manager runs in production.
 Routes under /fixture/ drive the lifecycle events a walkthrough cannot cause from the page: a lost stream,
 a finished task, an agent request, a restart, an update that replaces the built app under an open page, the
-app's files out of reach. /fixture/notices reads what waits for the task owner and the coordinator."""
+app's files out of reach, a stream gone quiet without closing (a connection the network dropped). /fixture/notices reads what waits for the task owner and the coordinator."""
 import os
 import shutil
 import socket
 import threading
+import time
 
 from service_support import configure, copy_build, serve
 from tests.support import add_worktree, local_terminal_launch, local_terminal_stop, make_repo
@@ -38,16 +39,29 @@ def main():
                 "Run this one on the other machine:\n\n~~~sh\nuname -a\n~~~\n\n"
                 "```run\ncd /tmp\nls\n```", trigger="chat", turn_id="saved-chat")
     streams = set()
+    stalled = set()
+    stream_of = threading.local()
+    read = terminal.read
+
+    def quiet_read(term, offset, wait):
+        if getattr(stream_of, "handler", None) in stalled:
+            time.sleep(wait)
+            return b"", offset, False, False
+        return read(term, offset, wait)
+
+    terminal.read = quiet_read
     held = threading.Event()
     unreachable = threading.Event()
 
     class Handler(server.Handler):
         def _terminal_stream(self, *args):
             streams.add(self)
+            stream_of.handler = self
             try:
                 return super()._terminal_stream(*args)
             finally:
                 streams.discard(self)
+                stalled.discard(self)
 
         def _static(self, raw_path):
             if unreachable.is_set() and (raw_path == "/" or raw_path.startswith("/assets/TerminalScreen-")):
@@ -66,6 +80,10 @@ def main():
                 held.set()
                 for stream in list(streams):
                     stream.connection.shutdown(socket.SHUT_RDWR)
+                return self._json({"ok": True})
+            if self.path == "/fixture/stall":  # open streams deliver nothing more and stay open, as a dropped connection can
+                stalled.update(streams)
+                time.sleep(server.TERMINAL_WAIT_SECONDS * 1.5)  # a read already waiting finishes first
                 return self._json({"ok": True})
             if self.path == "/fixture/back":
                 held.clear()

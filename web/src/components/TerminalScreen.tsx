@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { StatusMark } from "./StatusMark";
@@ -56,11 +57,13 @@ export function inputPiece(text: string): string {
  * task's owner, or the coordinator) hears once the operator has run it. When Altitude does not type it (a program holds
  * the foreground, an earlier command waits for Enter on the line) or no prompt appears, a notice offers Copy instead.
  */
-export default function TerminalScreen({ project, task, id, keys, intro, reconnecting, command, onEnd, onReconnecting, onCommand }: {
+export default function TerminalScreen({ project, task, id, keys, font, intro, reconnecting, command, onEnd, onReconnecting, onCommand }: {
   project: string;
   task?: string;
   id: string;
   keys: boolean;
+  /** Already loaded: the screen measures its cells in it once, as it opens. */
+  font: { family: string; size: number };
   intro: string;
   reconnecting: boolean;
   command?: { text: string; at: number; seq: number } | null;
@@ -73,6 +76,13 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
   const host = useRef<HTMLDivElement>(null);
   const send = useRef<(data: string) => void>(() => undefined);
   const focus = useRef<() => void>(() => undefined);
+  // On phone only the operator's tap on the screen, or Ctrl, opens the soft keyboard. Focus given without a tap opens
+  // none on iOS and could leave the screen focused with the keyboard closed, where a tap may not open it.
+  const phone = useRef(keys);
+  phone.current = keys;
+  const settle = () => { if (!phone.current) focus.current(); };
+  // Whether the screen had focus as a key row key was pressed: the key leaves the soft keyboard as it found it.
+  const typing = useRef<boolean | null>(null);
   const pasteText = useRef<(text: string) => void>(() => undefined);
   const xterm = useRef<XTerm | null>(null);
   const ctrlRef = useRef(false);
@@ -87,15 +97,16 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
   useEffect(() => {
     const term = new XTerm({
       cursorBlink: true,
-      fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
-      fontSize: 13,
+      fontFamily: font.family,
+      fontSize: font.size,
       scrollback: 5000,
       theme: { background: "#111827", foreground: "#e5e7eb", cursor: "#e5e7eb" },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host.current!);
-    term.write(`\x1b[2m${intro}\x1b[0m\r\n`);
+    const introduce = () => term.write(`\x1b[2m${intro}\x1b[0m\r\n`);
+    introduce();
     // The browser keeps Ctrl+V (paste) and, with text selected, Ctrl+C (copy); without a selection Ctrl+C interrupts.
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown" || !event.ctrlKey || event.altKey || event.metaKey) return true;
@@ -106,6 +117,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     let source: EventSource | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let resize: ReturnType<typeof setTimeout> | undefined;
+    let sized = "";
     let done = false;
 
     const finish = (status: TerminalStatus) => {
@@ -115,9 +127,15 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       report.current.onEnd(status);
     };
     const connect = () => {
+      source?.close();
       const stream = terminalStream(project, task, id, offset);
       stream.addEventListener("output", (event) => {
-        const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string };
+        const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string; missed?: boolean };
+        // Output from before the replay buffer's start is gone: the screen starts over, as a fresh attach draws it.
+        if (chunk.missed) {
+          term.reset();
+          introduce();
+        }
         term.write(bytes(chunk.data));
         offset = chunk.offset;
         output.current.seen = true;
@@ -132,6 +150,9 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
         retry = setTimeout(check, RECONNECT_MS);
       };
       source = stream;
+      // Another page may have sized the shell meanwhile: it takes this screen's size again.
+      sized = "";
+      size();
     };
     // After a lost connection: the same terminal resumes from its offset; anything else has ended it.
     const check = async () => {
@@ -141,9 +162,20 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
         if (status.id !== id || status.state === "none") finish(status);
         else connect();
       } catch {
-        if (!done) retry = setTimeout(check, RECONNECT_MS);
+        if (done) return;
+        report.current.onReconnecting(true);
+        retry = setTimeout(check, RECONNECT_MS);
       }
     };
+    // iOS suspends a page in the background and can drop its connection without a word to the stream, which would
+    // then wait on nothing: a page shown again, also from the back-forward cache, resumes from its offset.
+    const resume = (event: Event) => {
+      if (done || document.visibilityState !== "visible" || (event instanceof PageTransitionEvent && !event.persisted)) return;
+      clearTimeout(retry);
+      void check();
+    };
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("pageshow", resume);
 
     let pending = "";
     let sending = false;
@@ -155,10 +187,10 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       try {
         await terminalSend(project, "input", { task, id, data });
       } catch (error) {
-        // An ended (404) or replaced (410) terminal reports its end on the stream.
+        // An ended (404) or replaced (410) terminal reports its end on the stream; the rest has no shell to reach.
+        pending = "";
         if (!done && !(error instanceof ApiError && (error.status === 404 || error.status === 410))) {
           stopped.current = true;
-          pending = "";
           setInputError(error instanceof ApiError ? error.message : "Altitude could not be reached.");
         }
       }
@@ -244,20 +276,28 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     screen.addEventListener("touchend", touchEnd);
     screen.addEventListener("touchcancel", touchEnd);
 
-    const size = () => {
+    // A settled size reaches the shell once, and only when its columns or rows changed.
+    function size() {
       clearTimeout(resize);
       resize = setTimeout(() => {
         fit.fit();
-        if (!done) void terminalSend(project, "resize", { task, id, cols: term.cols, rows: term.rows }).catch(() => undefined);
+        const now = `${term.cols}x${term.rows}`;
+        if (done || now === sized) return;
+        sized = now;
+        void terminalSend(project, "resize", { task, id, cols: term.cols, rows: term.rows }).catch(() => {
+          if (sized === now) sized = "";
+        });
       }, RESIZE_MS);
-    };
+    }
     const observer = new ResizeObserver(size);
     observer.observe(host.current!);
     fit.fit();
     connect();
-    term.focus();
+    settle();
     return () => {
       done = true;
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("pageshow", resume);
       clearTimeout(retry);
       clearTimeout(resize);
       observer.disconnect();
@@ -311,7 +351,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       }
       if (gone) return;
       xterm.current!.scrollToBottom();
-      focus.current();
+      settle();
       report.current.onCommand?.();
     };
     let gone = false;
@@ -323,25 +363,42 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     };
   }, [command?.seq, command?.text]); // eslint-disable-line react-hooks/exhaustive-deps -- one attempt per request
 
+  // A key row key keeps focus where it is as it is pressed, and afterwards returns it to the screen only if the
+  // operator was typing: an open soft keyboard stays open, a closed one stays closed. Ctrl opens it for its letter.
+  const hold = (event: ReactPointerEvent) => {
+    event.preventDefault();
+    typing.current = Boolean(host.current?.contains(document.activeElement));
+  };
+  const wasTyping = () => {
+    const was = typing.current ?? Boolean(host.current?.contains(document.activeElement));
+    typing.current = null;
+    return was;
+  };
+  const press = (data: string) => {
+    const was = wasTyping();
+    send.current(data);
+    if (was) focus.current();
+  };
   const paste = async () => {
+    const was = wasTyping();
     try {
       const text = await navigator.clipboard.readText();
       if (text) pasteText.current(text);
     } catch {
       toast.show({ message: "This browser didn't allow reading the clipboard.", severity: "failure" });
     }
-    focus.current();
+    if (was) focus.current();
   };
 
   return <>
     {inputError ? <div className="terminal-stopped" role="alert">
       <p>{`Typing stopped: ${inputError} Part of what you typed may not have arrived; check the screen.`}</p>
-      <button type="button" className="btn" onClick={() => { stopped.current = false; setInputError(null); focus.current(); }}>Resume typing</button>
+      <button type="button" className="btn" onClick={() => { stopped.current = false; setInputError(null); settle(); }}>Resume typing</button>
     </div> : null}
     {held ? <div className="terminal-held" role="status">
       <p>{held.reason}</p>
       <CopyButton text={held.text} label="Copy command" />
-      <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => { setHeld(null); focus.current(); }}>
+      <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => { setHeld(null); settle(); }}>
         <svg aria-hidden viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
       </button>
     </div> : null}
@@ -351,16 +408,16 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     </div>
     {keys ? <div className="terminal-keys" role="toolbar" aria-label="Terminal keys">
       {[KEYS[0]!, KEYS[1]!].map((key) => <button key={key.name} type="button" aria-label={key.name}
-        onPointerDown={(event) => event.preventDefault()} onClick={() => { send.current(key.data); focus.current(); }}>{key.label}</button>)}
-      <button type="button" aria-label="Control" aria-pressed={ctrl} onPointerDown={(event) => event.preventDefault()}
-        onClick={() => { ctrlRef.current = !ctrlRef.current; setCtrl(ctrlRef.current); focus.current(); }}>Ctrl</button>
+        onPointerDown={hold} onClick={() => press(key.data)}>{key.label}</button>)}
+      <button type="button" aria-label="Control" aria-pressed={ctrl} onPointerDown={hold}
+        onClick={() => { typing.current = null; ctrlRef.current = !ctrlRef.current; setCtrl(ctrlRef.current); focus.current(); }}>Ctrl</button>
       {KEYS.slice(2).map((key) => <button key={key.name} type="button" aria-label={key.name}
-        onPointerDown={(event) => event.preventDefault()} onClick={() => { send.current(key.data); focus.current(); }}>{key.label}</button>)}
-      <button type="button" aria-label="Paste" onPointerDown={(event) => event.preventDefault()} onClick={() => void paste()}>
+        onPointerDown={hold} onClick={() => press(key.data)}>{key.label}</button>)}
+      <button type="button" aria-label="Paste" onPointerDown={hold} onClick={() => void paste()}>
         <svg aria-hidden viewBox="0 0 20 20" width="18" height="18"><path d="M7 4h6v2H7zM6 5H5a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1V6a1 1 0 00-1-1h-1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" /></svg>
       </button>
-      {/* The operator's Enter without the soft keyboard: it leaves focus where it is, so the keyboard stays closed. */}
-      <button type="button" className="terminal-enter" aria-label="Enter" onPointerDown={(event) => event.preventDefault()} onClick={() => send.current("\r")}>
+      {/* The keyboard's Return, also with the soft keyboard closed: it stays closed for a typed line, a `read` or a password. */}
+      <button type="button" className="terminal-enter" aria-label="Enter" onPointerDown={hold} onClick={() => press("\r")}>
         <svg aria-hidden viewBox="0 0 20 20" width="18" height="18"><path d="M15 5v5a2 2 0 01-2 2H5M8.5 8.5L5 12l3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
     </div> : null}

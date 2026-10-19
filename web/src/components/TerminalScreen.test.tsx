@@ -4,17 +4,21 @@ import TerminalScreen, { inputPiece } from "./TerminalScreen";
 import { ApiError, terminalSend, terminalStatus, terminalStream, type TerminalStatus } from "../data/api";
 
 // A stand-in xterm, without bracketed paste unless a test turns it on: a paste reaches onData as the raw text, as a
-// keystroke would.
-const term: { data?: (data: string) => void; bracketed: boolean } = { bracketed: false };
+// keystroke would. Its screen is a focusable box, and the fit gives it `size`.
+const term: { data?: (data: string) => void; bracketed: boolean; written: string[]; resets: number; size: { cols: number; rows: number } } =
+  { bracketed: false, written: [], resets: 0, size: { cols: 80, rows: 24 } };
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
     get modes() { return { bracketedPasteMode: term.bracketed }; }
-    loadAddon() {}
-    open() {}
-    write() {}
-    focus() {}
+    textarea?: HTMLTextAreaElement;
+    loadAddon(addon: { activate(terminal: unknown): void }) { addon.activate(this); }
+    open(parent: HTMLElement) { this.textarea = parent.appendChild(document.createElement("textarea")); }
+    write(data: string | Uint8Array) { term.written.push(typeof data === "string" ? data : new TextDecoder().decode(data)); }
+    reset() { term.resets += 1; }
+    focus() { this.textarea?.focus(); }
+    resize(cols: number, rows: number) { this.cols = cols; this.rows = rows; }
     dispose() {}
     hasSelection() { return false; }
     attachCustomKeyEventHandler() {}
@@ -24,7 +28,13 @@ vi.mock("@xterm/xterm", () => ({
     paste(text: string) { term.data?.(text); }
   },
 }));
-vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() {} } }));
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class {
+    terminal?: { resize(cols: number, rows: number): void };
+    activate(terminal: { resize(cols: number, rows: number): void }) { this.terminal = terminal; }
+    fit() { this.terminal?.resize(term.size.cols, term.size.rows); }
+  },
+}));
 vi.mock("../data/Toast", () => ({ useToast: () => ({ show: vi.fn() }) }));
 vi.mock("../data/api", async (original) => ({
   ...await original<typeof import("../data/api")>(),
@@ -34,16 +44,23 @@ vi.mock("../data/api", async (original) => ({
 }));
 
 const running: TerminalStatus = { state: "running", id: "t1", enabled: true, folder: "/home/fixture/demo", offset: 0, exit_code: null, reason: null, busy: null };
-let emit: () => void;
+const font = { family: "monospace", size: 13 };
+type Stream = { offset: number; closed: boolean; listeners: Record<string, (event: MessageEvent<string>) => void>; addEventListener(name: string, listener: (event: MessageEvent<string>) => void): void; close(): void };
+let streams: Stream[];
+let observed: () => void;
+const output = (offset: number, data: string, missed = false) => streams.at(-1)!.listeners.output?.(new MessageEvent("output", { data: JSON.stringify({ offset, data: btoa(data), missed }) }));
+const emit = () => output(1, "$ ");
 
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  streams = [];
+  Object.assign(term, { written: [], resets: 0, size: { cols: 80, rows: 24 } });
+  vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { observed = callback; } observe() {} disconnect() {} });
   vi.mocked(terminalStatus).mockResolvedValue(running);
-  vi.mocked(terminalStream).mockImplementation(() => {
-    const listeners: Record<string, (event: MessageEvent<string>) => void> = {};
-    emit = () => listeners.output?.(new MessageEvent("output", { data: JSON.stringify({ offset: 1, data: btoa("$ ") }) }));
-    return { addEventListener: (name: string, listener: never) => { listeners[name] = listener; }, close() {} } as unknown as EventSource;
+  vi.mocked(terminalStream).mockImplementation((_project, _task, _id, offset) => {
+    const stream: Stream = { offset, closed: false, listeners: {}, addEventListener(name, listener) { this.listeners[name] = listener; }, close() { this.closed = true; } };
+    streams.push(stream);
+    return stream as unknown as EventSource;
   });
 });
 afterEach(() => {
@@ -54,10 +71,11 @@ afterEach(() => {
 
 const typed = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "input").map(([, , body]) => body.data);
 const handed = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "command").map(([, , body]) => body);
+const sizes = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "resize").map(([, , body]) => `${body.cols}x${body.rows}`);
 
 function show(text: string, keys = false) {
   const onCommand = vi.fn();
-  const props = { project: "demo", id: "t1", keys, intro: "Runs as you", reconnecting: false, onEnd: vi.fn(), onReconnecting: vi.fn(), onCommand };
+  const props = { project: "demo", id: "t1", keys, font, intro: "Runs as you", reconnecting: false, onEnd: vi.fn(), onReconnecting: vi.fn(), onCommand };
   const view = render(<TerminalScreen {...props} />);
   const request = () => view.rerender(<TerminalScreen {...props} command={{ text, at: Date.now(), seq: 1 }} />);
   return { request, onCommand };
@@ -107,7 +125,7 @@ describe("a chat command at the terminal", () => {
   });
 
   it("never turns a browser paste into a control character after Ctrl is latched", () => {
-    const { container } = render(<TerminalScreen project="demo" id="t1" keys intro="Runs as you" reconnecting={false} onEnd={vi.fn()} onReconnecting={vi.fn()} />);
+    const { container } = render(<TerminalScreen project="demo" id="t1" keys font={font} intro="Runs as you" reconnecting={false} onEnd={vi.fn()} onReconnecting={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Control" }));
     fireEvent.paste(container.querySelector(".terminal-screen")!);
     act(() => term.data?.("m"));
@@ -176,5 +194,111 @@ describe("a chat command at the terminal", () => {
     await act(() => vi.advanceTimersByTimeAsync(400));
     expect(onCommand).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+describe("the terminal screen", () => {
+  const open = (keys = false) => {
+    const onEnd = vi.fn();
+    const onReconnecting = vi.fn();
+    const view = render(<TerminalScreen project="demo" id="t1" keys={keys} font={font} intro="Runs as you" reconnecting={false} onEnd={onEnd} onReconnecting={onReconnecting} />);
+    const textarea = view.container.querySelector("textarea")!;
+    return { onEnd, onReconnecting, textarea };
+  };
+  const key = (name: string) => {
+    const button = screen.getByRole("button", { name });
+    fireEvent.pointerDown(button);
+    fireEvent.click(button);
+  };
+  const show = async () => {
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+  };
+
+  it("gives the shell a settled size once, and again only when its columns or rows change", async () => {
+    open();
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(sizes()).toEqual(["80x24"]);
+    act(() => observed());
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(sizes()).toEqual(["80x24"]);
+    // The soft keyboard opening resizes the screen in steps: the shell hears the size it settles on.
+    term.size = { cols: 80, rows: 18 };
+    act(() => observed());
+    await act(() => vi.advanceTimersByTimeAsync(50));
+    term.size = { cols: 80, rows: 13 };
+    act(() => observed());
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(sizes()).toEqual(["80x24", "80x13"]);
+  });
+
+  it("resumes from its offset when the page is shown again, with the shell's size", async () => {
+    open();
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    act(() => output(120, "$ "));
+    await show();
+    expect(streams.map((stream) => [stream.offset, stream.closed])).toEqual([[0, true], [120, false]]);
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(sizes()).toEqual(["80x24", "80x24"]);
+  });
+
+  it("leaves when its shell ended while the page was hidden, and shows Reconnecting while Altitude is out of reach", async () => {
+    const { onEnd, onReconnecting } = open();
+    vi.mocked(terminalStatus).mockRejectedValueOnce(new Error("unreachable"));
+    await show();
+    expect(onReconnecting).toHaveBeenLastCalledWith(true);
+    const ended: TerminalStatus = { state: "none", enabled: true };
+    vi.mocked(terminalStatus).mockResolvedValue(ended);
+    await act(() => vi.advanceTimersByTimeAsync(2_000));
+    expect(onEnd).toHaveBeenCalledWith(ended);
+  });
+
+  it("starts the screen over when output from before the replay buffer is gone", () => {
+    open();
+    act(() => output(10, "$ ls"));
+    expect(term.resets).toBe(0);
+    act(() => output(400_000, "later", true));
+    expect(term.resets).toBe(1);
+    expect(term.written.slice(-2)).toEqual(["\x1b[2mRuns as you\x1b[0m\r\n", "later"]);
+  });
+
+  it("drops what waits to be typed once its terminal has ended", async () => {
+    let refuse!: (error: Error) => void;
+    vi.mocked(terminalSend).mockImplementation(async (_project, action) => {
+      if (action === "input") await new Promise((_resolve, reject) => { refuse = reject; });
+      return { ok: true };
+    });
+    open();
+    act(() => term.data?.("a"));
+    act(() => term.data?.("b"));
+    await act(async () => refuse(new ApiError(404, "No terminal is running here.")));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(typed()).toEqual(["a"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("takes focus as it opens on desktop", () => {
+    const { textarea } = open();
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("on phone leaves the soft keyboard closed until the operator taps, and the key row leaves it as it was", () => {
+    const { textarea } = open(true);
+    expect(document.activeElement).not.toBe(textarea);
+    for (const name of ["Up", "Tab", "Paste", "Enter"]) {
+      key(name);
+      expect(document.activeElement, name).not.toBe(textarea);
+    }
+    act(() => textarea.focus());
+    for (const name of ["Up", "Escape", "Enter"]) {
+      key(name);
+      expect(document.activeElement, name).toBe(textarea);
+    }
+    // Ctrl opens the keyboard for the letter it modifies.
+    act(() => textarea.blur());
+    key("Control");
+    expect(document.activeElement).toBe(textarea);
   });
 });

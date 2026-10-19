@@ -25,6 +25,8 @@ class SilentEventSource extends EventTarget {
 
 // jsdom does no layout, so it has no scrollIntoView; menus scroll their checked row into view.
 Element.prototype.scrollIntoView ??= () => undefined;
+// jsdom has no fonts to load; the terminal waits for its font before opening.
+Object.defineProperty(document, "fonts", { configurable: true, value: { load: async () => [] } });
 
 beforeEach(() => {
   vi.stubGlobal("EventSource", SilentEventSource);

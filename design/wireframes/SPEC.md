@@ -1700,10 +1700,17 @@ title and **Close**. Then any notice and the dark screen filling the rest (edge 
 whose first line, dimmed, says "Runs as you in <folder>"; on phone a key row of Esc, Tab, a sticky
 Ctrl (pressed state), the four arrows and **Paste** (reads the clipboard), each an equal-width 44px
 target, and last a wider accent-filled **Enter** (return-arrow icon) that sends the Return key, as
-the keyboard's would, for a typed command, a `read` or a password prompt. Enter leaves focus where it
-is, so the soft keyboard does not open for it. Desktop has no key row: its keyboard's Enter does the
-same. Showing the view opens the shell, or attaches to the running one; there is no Open step. The
-terminal keeps running when the page leaves; returning replays up to 256 KB. When the shell ends,
+the keyboard's would, for a typed command, a `read` or a password prompt. On phone the soft keyboard
+opens only when the operator taps the screen, or presses Ctrl, whose letter it waits for; showing the
+view, a typed chat command, Paste, Enter and the other keys leave it as it was, open while typing and
+closed otherwise. Desktop has no key row: its keyboard's Enter does the same, and the screen takes focus
+as it shows. The screen fills the height the soft keyboard leaves: the shell takes the new size once it
+has settled, the prompt stays on screen and the key row stays above the keyboard; on a short screen the
+terminal screen gives way first, down to three rows. Showing the view opens the shell, or attaches to
+the running one; there is no Open step. The terminal keeps running when the page leaves; returning
+replays up to 256 KB and lands at the prompt. A page shown again after the background (the app
+switcher, a locked phone, another tab) or the back-forward cache reads on from where it was, so output
+written meanwhile appears once, even when the connection dropped without a sign. When the shell ends,
 however it ends, the view returns to where the operator was — Live session on a task, the project for
 the project terminal — and keeps no output; the next visit opens a fresh shell.
 
@@ -1721,10 +1728,10 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | --- | --- |
 | Off | "Terminal is off", what it does, **Open Settings** (returns here with Back, which opens the shell). |
 | Starting | Skeleton lines and "Starting the terminal…". |
-| Running | The screen with the cursor focused; **Close** / ×; the phone key row. |
+| Running | The screen, its cursor focused on desktop; on phone the soft keyboard closed until the screen is tapped; **Close** / ×; the phone key row. |
 | Running, reader note | Also a grey note above the screen: "This task's owner can read this terminal's output, and what it reads reaches its AI provider." A project terminal names the coordinator instead: "The coordinator can read this terminal's output, …". |
 | Restart pending | A grey note above the screen: "Altitude restarts at its next quiet point to apply an update. This terminal will close then." |
-| Reconnecting | A small "Reconnecting…" badge over the screen's top right, so the shell keeps its size; it disappears when output resumes and missed output appears. |
+| Reconnecting | A small "Reconnecting…" badge over the screen's top right, so the shell keeps its size, also when a page shown again cannot reach Altitude; it disappears when output resumes and missed output appears. When more than the 256 KB replay went by, the screen starts over from what was kept, as a fresh visit shows it. |
 | Typing stopped | Input failed (a program not reading it, Altitude unreachable), so part of it may not have arrived: an amber alert "Typing stopped: <reason> Part of what you typed may not have arrived; check the screen." with **Resume typing**. Keys typed meanwhile are dropped, not queued. |
 | Close with a running command | "Close the terminal?" card naming the command that will be stopped, **Close** (primary) and **Cancel**. Close without a running command acts at once. |
 | Closed by the operator, or clean exit | The view returns; no notice. |
@@ -1738,9 +1745,12 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Terminal code missing | The page predates an update, whose activation removed the terminal code this page would load: "Altitude was updated", "This page is from the earlier version. Reload to open the terminal." If Altitude cannot be reached: "Couldn't load the terminal", "Check the connection to Altitude, then reload." Both add "The shell keeps running. Reloading clears text you have typed but not sent." and **Reload**; nothing reloads by itself. Walkthrough: `web/e2e/app-update.pw.ts`. |
 
 Walkthrough: `web/e2e/terminal.pw.ts` at 390×844 and 1440×900 (the project terminal at 1100 wide, as
-an overlay) walks every state above against real shells, plus tab completion, copy and paste, and
-scrolling back by touch or wheel while output arrives, with the agent check and the restart notice as
-fixtures.
+an overlay) walks every state above against real shells, plus tab completion, copy and paste,
+scrolling back by touch or wheel while output arrives, the soft keyboard opening and closing (a shrinking
+visual viewport), the key row keeping the keyboard as it found it, a page hidden and shown again or restored
+from the back-forward cache over a connection that dropped without a sign, a reload and, on phone, a
+rotation, with the agent check, the restart notice, the keyboard, the page's visibility and the silent
+connection as fixtures.
 
 ### 3.11 Project switcher (phone)
 

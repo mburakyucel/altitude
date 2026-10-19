@@ -17,6 +17,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   alerts (on, off, only while open, push refused, blocked or unavailable) and opens Settings →
   Notifications, where the alert switch and its explanation now live. Back from Settings returns to the
   same visit, with any unsent answer still typed.
+- The phone terminal keeps its prompt on screen as the keyboard opens, closes or the phone turns, and its
+  key row stays above the keyboard on a short screen. The keyboard opens only when you tap the screen or
+  press Ctrl; the other keys, Paste and an opened chat command leave it as it was. Coming back to the app
+  after the background reads on from where it was, even when the phone dropped the connection quietly,
+  instead of leaving the screen still.
 - A device whose alert subscription stopped working, such as one made before Altitude's alert key
   changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
   old subscription. The warning about it shows only on the device it concerns, and only
