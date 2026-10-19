@@ -50,6 +50,41 @@ def open_findings(report: dict | None) -> list[dict]:
     return [finding for finding in (report or {}).get("review") or [] if finding.get("disposition") == "open"]
 
 
+def report_sections(report: dict, errors: list[str]) -> dict:
+    """The report's sections in their schema shapes. A section of another shape names its field in `errors` and
+    reads as empty, so readers show the rest and the verifier hands the report back (I-20261019-110932)."""
+    def objects(section: dict, key: str, field: str) -> list:
+        rows = section.get(key) or []
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            errors.append(f"report.{field}: expected a list of objects")
+            return []
+        return rows
+
+    def items(key: str) -> list:
+        value = report.get(key)
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            errors.append(f"report.{key}: expected a list")
+            return []
+        return value
+
+    landed = report.get("landed") or {}
+    if not isinstance(landed, dict):
+        errors.append("report.landed: expected an object"); landed = {}
+    prs = objects(landed, "prs", "landed.prs")
+    objects(landed, "main_runs", "landed.main_runs")
+    objects(report, "review", "review")
+    blocked = report.get("blocked")
+    if blocked is not None and not isinstance(blocked, str):
+        errors.append("report.blocked: expected text"); blocked = None
+    spend = report.get("spend") or {}
+    if not isinstance(spend, dict):
+        errors.append("report.spend: expected an object"); spend = {}
+    return {"prs": prs, "blocked": blocked, "spend": spend,
+            **{key: items(key) for key in ("decisions", "fyi", "follow_ups", "deviations")}}
+
+
 def gh(args: list[str], cwd: Path) -> dict | list | None:
     try:
         p = subprocess.run(["gh"] + args, cwd=str(cwd), capture_output=True, text=True, timeout=60, env=engines.clean_env())
@@ -106,6 +141,10 @@ def _verify(project: str, slug: str) -> dict:
     from . import tasks as T
     if task.get("report_after") and not T.report_current(task, d / "report.json"):
         out["problems"].append("report predates follow-up work; refresh report.json")
+        out["verdict"] = "contradicted"
+        return _spend(out, project, task, d)
+    report_sections(rep, out["problems"])
+    if out["problems"]:  # the owner corrects its report's shape before the rest can be read
         out["verdict"] = "contradicted"
         return _spend(out, project, task, d)
     for k in ("landed", "review", "blocked"):
