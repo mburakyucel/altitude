@@ -1728,7 +1728,7 @@ shell trusts, with `github.com` resolving to the loopback.
   the page with the mark the first start did not serve. The service's logs are kept.
 
 The runtime phases `workers`, `grants`, `incident`, `update`, `terminal` and `session` install the release into the account's own home through
-the public command, with `tests/macos_guest_engine.py`, a scripted fictional Codex CLI, as its only engine and the
+the public command, with `tests/macos_guest_engine.py`, a scripted fictional Codex CLI, as its only engine, signed in with a fictional token, and the
 tests' fake GitHub CLI first on its saved PATH, and register a fictional project. `tests/macos_guest_runtime.py` then
 drives each row as the account against the installed service: the operator acts through `alt`, the coordinator
 through a turn the service runs for the operator's chat message, sent to `/api/chat` with the CLI's machine key as

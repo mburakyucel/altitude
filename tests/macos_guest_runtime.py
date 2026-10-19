@@ -75,6 +75,10 @@ def setup() -> dict:
     gh.write_text(f"#!/bin/sh\nFAKE_GH_DIR={GH_STATE} exec {PYTHON} -B {FIXTURE}/fake_gh.py \"$@\"\n")
     for path in (engine, gh):
         path.chmod(0o755)
+    # A fictional Codex sign-in, whose access token Altitude hands each Codex worker, as tests/support.py signs in.
+    (HOME / ".codex").mkdir(mode=0o700, exist_ok=True)
+    (HOME / ".codex/auth.json").write_text(json.dumps({"tokens": {
+        "access_token": "fictional-access", "refresh_token": "fictional-refresh", "account_id": "fictional-account"}}))
     repo = HOME / "Projects" / PROJECT
     repo.mkdir(parents=True)
     git(repo, "init", "-q", "-b", "main")
