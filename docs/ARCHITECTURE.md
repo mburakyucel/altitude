@@ -3172,7 +3172,9 @@ Each image is checked and read in page memory when chosen, so Send takes the sel
 message carries its images from Send (its outbox entry keeps them for Retry and Edit until acceptance) and
 the composer stays free. Submitted captions use the existing text recovery; image
 bytes are not persisted in browser storage. Private thumbnails belong to the original saved
-message. The shell owns one modal viewer per page (`ImageViewerHost`): it holds its own copy of the
+message. A saved message the page itself sent starts each thumbnail from the picture its outbox
+entry holds, and keeps that picture only until the thumbnail's own read, which starts at once on screen or off, replaces it or
+shows its error; a queued project message's turn row, which replaces its queued row, reads again. The shell owns one modal viewer per page (`ImageViewerHost`): it holds its own copy of the
 opened image's bytes, so it outlives the queued row that opened it when history admission replaces
 that row, and closes when the route changes. Image interaction states and boundaries are specified in
 `design/wireframes/IMAGE_INPUT.md` and walked at both viewports by `web/e2e/image-input.pw.ts`.

@@ -46,9 +46,13 @@ export function ImageViewerHost({ scope, children }: { scope: string; children: 
 }
 
 /** One private read owns its object URL. Neither retry nor opening the viewer resends a message. */
-function StoredImage({ project, image, open }: { project: string; image: MessageImage; open: () => void }) {
+function StoredImage({ project, image, preview, open }: { project: string; image: MessageImage; preview?: string; open: () => void }) {
   const container = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined");
+  // A message this page just sent starts from the picture it sent, so nothing blinks between Send and the saved
+  // thumbnail (SPEC.md §1.1 Actions answer at once). The image's own read replaces it, and its error still shows,
+  // so that read starts at once, on screen or not.
+  const [held, setHeld] = useState(preview);
+  const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined" || Boolean(preview));
   const [attempt, setAttempt] = useState(0);
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
@@ -77,15 +81,17 @@ function StoredImage({ project, image, open }: { project: string; image: Message
         if (request.signal.aborted) return;
         objectUrl = URL.createObjectURL(bytes);
         setUrl(objectUrl);
+        setHeld(undefined);
       } catch (cause) {
-        if (!request.signal.aborted) setError(cause instanceof Error ? cause.message : "Could not load image.");
+        if (!request.signal.aborted) { setError(cause instanceof Error ? cause.message : "Could not load image."); setHeld(undefined); }
       }
     })();
     return () => { request.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [project, image.id, attempt, visible]);
+  const shown = url || held;
   return <div className="message-image" ref={container} data-image={key} tabIndex={-1}>
-    {url && !error ? <button className="message-image-open" type="button" aria-label={`Open image ${image.name}`} onClick={open}>
-      <img src={url} alt={image.name} onError={() => setError("Could not display image.")} />
+    {shown && !error ? <button className="message-image-open" type="button" aria-label={`Open image ${image.name}`} onClick={open}>
+      <img src={shown} alt={image.name} onError={() => setError("Could not display image.")} />
       <span>{image.name}</span>
     </button> : <div className="message-image-placeholder">
       <span className="message-image-name">{image.name}</span>
@@ -163,15 +169,22 @@ function ImageViewer({ images, start, onClose }: { images: GalleryImage[]; start
   </dialog>, document.body);
 }
 
-export function MessageImages({ project, images }: { project: string; images?: MessageImage[] | null }) {
+/**
+ * A saved message's thumbnails; `previews` are the pictures this page sent with it while it still holds them. The
+ * server keeps them in order and saves all or none, though it may shorten a name, so they match by position.
+ */
+export function MessageImages({ project, images, previews }: { project: string; images?: MessageImage[] | null; previews?: ImagePreview[] }) {
   const open = useGallery();
   if (!images?.length) return null;
   const gallery = images.map((image) => ({ key: `${project}/${image.id}`, name: image.name, url: `/api/images/${project}/${encodeURIComponent(image.id)}` }));
   return <div className="message-images" aria-label="Message images">{images.map((image, index) =>
-    <StoredImage key={image.id} project={project} image={image} open={() => open(gallery, index)} />)}</div>;
+    <StoredImage key={image.id} project={project} image={image} preview={previews?.length === images.length ? previews[index]!.url : undefined}
+      open={() => open(gallery, index)} />)}</div>;
 }
 
+/** A message's pictures on their way, laid out as its saved thumbnails will be. */
 export function PendingImages({ images }: { images?: ImagePreview[] }) {
   return images?.length ? <div className="message-images" aria-label="Sending images">{images.map((image, index) =>
-    <div className="message-image" key={index}><img className="message-image-preview" src={image.url} alt={image.name} /></div>)}</div> : null;
+    <div className="message-image" key={index}><img className="message-image-preview" src={image.url} alt={image.name} />
+      <span className="message-image-label" aria-hidden="true">{image.name}</span></div>)}</div> : null;
 }

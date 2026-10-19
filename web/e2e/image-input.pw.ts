@@ -111,10 +111,18 @@ for (const scope of ["project", "task"] as const) {
     const sendingMessage = page.locator('.msg-row[data-pending][data-mine]').filter({ hasText: caption });
     await walk.state("04-sending-images", { action: () => v.send.click(), visible: [sendingMessage.locator("img")], hidden: [v.strip] });
     await expect(v.field).toBeEnabled(); await expect(v.add).toBeEnabled();
+    // The saved message starts from the picture that was sent, so no loading placeholder ever shows between them.
+    await page.evaluate(() => {
+      const seen = window as unknown as { placeholder?: boolean };
+      seen.placeholder = false;
+      new MutationObserver(() => { if (document.querySelector(".message-image-placeholder")) seen.placeholder = true; })
+        .observe(document.body, { subtree: true, childList: true });
+    });
     release();
     // The saved-image states name the stored row's opener; the queued-to-history transition has its own journey.
     await expect(page.locator(".bubble").getByRole("button", { name: "Open image timer.png", exact: true })).toBeVisible();
     await walk.state("05-saved-image", { visible: [v.preview], hidden: [v.strip] });
+    expect(await page.evaluate(() => (window as unknown as { placeholder?: boolean }).placeholder), "the sent picture stays until the saved one").toBe(false);
     await expect(v.field).toBeEnabled(); await expect(v.field).toHaveValue("");
     await walk.state("06-view-image", { action: () => v.preview.click(), visible: [page.getByRole("dialog", { name: "Image timer.png" })], hidden: [] });
     const fullImage = page.getByRole("dialog").getByRole("img");
@@ -206,21 +214,27 @@ for (const scope of ["project", "task"] as const) {
     await expect(v.field).toHaveValue(caption); await expect(v.strip.locator("img")).toHaveCount(1);
     let mode = "loading";
     let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let gate = new Promise<void>((resolve) => { release = resolve; });
     await page.route((url) => /^\/api\/images\/alpha\/[^/]+$/.test(url.pathname), async (route) => {
       if (mode === "loading") await gate;
       if (mode === "denied") return route.fulfill({ status: 403, json: { error: "denied" } });
       if (mode === "missing") return route.fulfill({ status: 404, json: { error: "missing" } });
       return route.continue();
     });
-    await walk.state("03-private-image-loading", { action: () => v.send.click(), visible: [page.getByText("Loading image…", { exact: true })], hidden: [v.strip] });
+    // While the saved image is read, the message keeps the picture that was sent.
+    await walk.state("03-sent-image-keeps-its-picture", { action: () => v.send.click(), visible: [v.preview], hidden: [v.strip, page.getByText("Loading image…", { exact: true })] });
     mode = "denied"; release();
-    await walk.state("04-private-image-denied", { visible: [page.getByText("Image access denied.", { exact: true })], hidden: [page.getByText("Loading image…", { exact: true })] });
+    await walk.state("04-private-image-denied", { visible: [page.getByText("Image access denied.", { exact: true })], hidden: [v.preview] });
     mode = "missing";
     await walk.state("05-private-image-missing", { action: () => page.getByRole("button", { name: "Retry image timer.png", exact: true }).click(), visible: [page.getByText("Image unavailable.", { exact: true })], hidden: [page.getByText("Image access denied.", { exact: true })] });
     mode = "normal";
     await walk.state("06-private-image-recovered", { action: () => page.getByRole("button", { name: "Retry image timer.png", exact: true }).click(), visible: [v.preview], hidden: [page.getByText("Image unavailable.", { exact: true })] });
     await expect(page.locator(".bubble").filter({ hasText: caption })).toBeVisible();
+    // A page that did not send the image reads it behind an image-sized placeholder.
+    mode = "loading"; gate = new Promise<void>((resolve) => { release = resolve; });
+    await walk.state("07-private-image-loading", { action: () => page.reload(), visible: [page.getByText("Loading image…", { exact: true })], hidden: [v.preview] });
+    mode = "normal"; release();
+    await expect(v.preview).toBeVisible();
   });
 
   test(`${scope}: image selection survives voice cancel, transcription and send`, async ({ page }, info) => {

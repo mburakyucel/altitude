@@ -545,7 +545,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         return;
       }
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at} enter={enter(`msg:${key}`)}
-        images={<MessageImages project={project} images={message.images} />}
+        images={<MessageImages project={project} images={message.images} previews={outbox.find((entry) => entry.id === message.id)?.images} />}
         state={message.delivery?.state}
         side={message.delivery?.removable ? <RemoveMessage message={message.text} removing={removal.isPending && removal.variables === message.id}
           disabled={removeBlocked} onClick={() => removal.mutate(message.id)} /> : undefined}>
