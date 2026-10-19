@@ -17,7 +17,8 @@ SOURCE = Path(__file__).resolve().parents[1]
 SIGN_IN = 'fictional-altitude-sign-in-5521'
 SIGNED = ("import sys,json;sys.path.insert(0,'/opt/altitude');from altitude import access,engines;token=sys.stdin.read();"
           "print(json.dumps({e:{'signed_in':engines.sign_in(e)['signed_in'],'same':access.engine_token(e)==token,"
-          "'saved':access.engine_token_saved(e)} for e in engines.TOKEN_SETUP}))")
+          "'saved':access.engine_token_saved(e),'mode':oct((access.DIR/(e+'.token')).stat().st_mode&0o777)}"
+          " for e in engines.TOKEN_SETUP}))")
 sys.path.insert(0, str(SOURCE))
 os.environ.setdefault('ALTITUDE_HOME', tempfile.mkdtemp(prefix='acp-state-'))  # the sign-in check imports config
 from altitude import access, engines, platform
@@ -103,7 +104,7 @@ def main():
             for engine in engines.TOKEN_SETUP:  # this guest's own Altitude sign-in, handed over on input
                 access.save_engine_token(engine, SIGN_IN, saved=1_700_000_000.0)
                 container.sign_in(instances[0], engine)
-            expected_sign_in = {engine: {'signed_in': True, 'same': True, 'saved': 1_700_000_000.0}
+            expected_sign_in = {engine: {'signed_in': True, 'same': True, 'saved': 1_700_000_000.0, 'mode': '0o600'}
                                 for engine in engines.TOKEN_SETUP}
             if json.loads(container.execute(instances[0], ['python3','-I','-c',SIGNED], input=SIGN_IN)) != expected_sign_in:
                 raise RuntimeError('The container did not take the handed-over sign-in with its saved time')
