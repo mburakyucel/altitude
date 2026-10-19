@@ -79,3 +79,28 @@ a.shown-card[aria-current="page"] { border-color: var(--accent); box-shadow: 0 0
 .shown-gone { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 96px 24px 0; color: var(--text-muted); text-align: center; }
 .shown-gone h2 { margin: 6px 0 0; color: var(--text-primary); font-size: 18px; font-weight: 600; }
 .shown-gone p { max-width: 300px; margin: 0 0 8px; color: var(--text-secondary); font-size: 15px; line-height: 1.5; }
+
+/* A held PR's pictures on its merge card (SPEC.md §3.8.6): stacked frames, each picture whole, over its path. */
+.pr-pictures { display: flex; width: 100%; max-width: 480px; flex-direction: column; gap: 10px; }
+.pr-pictures-label { margin: 0; color: var(--text-secondary); font-size: 13px; font-weight: 600; }
+.pr-picture { display: flex; flex-direction: column; margin: 0; overflow: hidden; border: 1px solid var(--border);
+  border-radius: var(--radius-card); background: var(--card); }
+.pr-picture-frame { position: relative; display: flex; height: 240px; align-items: center; justify-content: center; padding: 8px;
+  border: 0; border-bottom: 1px solid var(--hairline); background: var(--page); cursor: zoom-in; }
+.shell[data-phone] .pr-picture-frame { height: 160px; }
+.pr-picture-frame img { display: block; width: auto; max-width: 100%; height: auto; max-height: 100%; object-fit: contain; }
+.pr-picture-frame:has(img[data-loading]) { background: var(--bubble); }
+.pr-picture-frame img[data-loading], .pr-picture-frame:has(img[data-loading]) .shown-expand { visibility: hidden; }
+.pr-picture-frame.shown-image-failed { min-height: 0; cursor: default; }
+.pr-picture[data-change="removed"] .pr-picture-frame img { opacity: 0.55; filter: grayscale(1); }
+.pr-picture figcaption { display: flex; min-height: 44px; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; }
+.pr-picture-path { min-width: 0; flex: 1; overflow: hidden; color: var(--text-secondary); font-family: var(--font-mono); font-size: 12.5px;
+  text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.pr-picture-sides { display: inline-flex; flex: none; padding: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--page); }
+.pr-picture-sides button { position: relative; height: 28px; padding: 0 12px; border: 0; border-radius: 999px; background: none;
+  color: var(--text-secondary); font-size: 13px; font-weight: 500; cursor: pointer; }
+.pr-picture-sides button::after { content: ""; position: absolute; inset: -8px 0; }
+.pr-picture-sides button[aria-pressed="true"] { background: var(--card); color: var(--text-primary); font-weight: 600;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.12), 0 0 0 1px var(--border); }
+.pr-pictures-more { align-self: flex-start; }
+.pr-pictures-also { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }

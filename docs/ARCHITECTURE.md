@@ -2628,7 +2628,13 @@ a non-Auto pin stays named in the phone header. It pins the project's L3 to one 
 `engines[]` reports it, until set back to Auto; Auto uses project preference tiers, weekly headroom
 within ties and the session continuity rule described above. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
-lands in the history. Each send carries a page-made UUID `request_id`, kept as the stored user row's
+lands in the history. Its reply is everything the coordinator wrote in the turn, in order: a Claude
+turn streams its text as written, each text after a tool call starting a new paragraph, and stores that
+same text, taking from each finished message any text the stream did not carry (Claude can send a message
+without streaming it), and keeping a message Claude rewrote after part of it streamed as it finished, which the
+page shows once the turn ends; a Codex turn streams nothing and stores its messages joined the same way. The typing indicator
+stays under the streamed words until the stream ends, and with no stream open, while `active` names the
+turn. Each send carries a page-made UUID `request_id`, kept as the stored user row's
 `request_id`, as the queue row's `id` and, once delivered from the queue, in that row's `queue_ids`.
 Until the server shows it, the message and the reply it streams live in a project outbox in the client
 query cache under `chat-outbox` and the project name, one entry per send id, with no timed eviction.
@@ -3446,9 +3452,10 @@ The copies are content-named files in the task folder's `shown/` directory and f
 The record on the reply row or question revision holds paths, content names, sizes and dimensions, the
 document's first heading and opening paragraph, and a hash of itself as its identity; it never holds
 the document text. A question showing identical files keeps its revision, changed files advance it,
-and the answer fence binds the files the operator saw. A question is a proposal approval when it
+and the answer fence binds the files the operator saw. An unmarked question is a proposal approval when it
 shows files, so its card carries the proposal review; in a group, `tasks.shown_question` gives the
-files to the one member marked as the proposal and the other listed members publish without them. A review
+files to the one member marked as the proposal, or with none to the one marked as the held PR's merge
+question, and the other listed members publish without them. A review
 whose captured `--show` set differs from the latest showing question's counts as covering an earlier
 version. `require_shown` refuses both the
 operator's answer and the owner's resolution while any copy is missing or altered, or for a question
@@ -3464,6 +3471,22 @@ document as a page card (cover picture, name, heading and excerpt, an **Earlier*
 whose copies are gone or resized is a card reading **Preview unavailable** that does not open (the card
 checks presence and size; reads verify each hash, so changed content of the same size shows the
 reader's unavailable state).
+
+A held PR's merge card carries the pictures the PR changes. `tasks.pr_images` reads the current PR's
+recorded head and base commit from its delivery and, once per head, lists the diff from their
+merge base with Git's raw output: blob ids, modes and paths, with renames paired and no diff drivers or
+textconv. It reads the blobs as Git objects from the project's repository, never the worktree, so later
+edits, a moved branch or a link change nothing shown. Each picture passes the shown-image checks and
+limits; another type, a link, a missing object or one past the limits is listed as `not_shown`. Copies
+are content-named in the same `shown/` folder beside a hashed record, `pr-<number>-<head>.json`. A head
+whose diff cannot be read saves nothing: its card shows the pictures as unavailable, and the next view
+reads it again. `question_view` (for an open
+question about the held PR) and `review_row` project `pr_images`: one entry per path with the change
+(changed first, then added, then removed), the before and after copies' URLs and sizes, the `not_shown` paths and
+whether every copy is present; a PR without pictures projects none. The shown-files API serves them at
+`/api/shown/<project>/<slug>/pr/<number>/files/<name>` while the record matches the task's current PR,
+one file at a time with the same headers. The pictures bind nothing: the approval's check of PR, hold
+and readiness is unchanged.
 
 The reader lives at `/projects/<project>/tasks/<slug>/view/<message>` for a reply and
 `.../view/<question>/<revision>` for a question. Both routes render the task page itself, so the

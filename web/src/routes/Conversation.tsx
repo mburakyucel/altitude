@@ -260,8 +260,9 @@ export default function Conversation({
         result = images ? await sendImageChat(name, text, { request_id: images.request_id, images: images.images, image_ids: images.image_ids }) : await streamChat(name, text, {
           onAccepted: () => { onAccepted?.(); if (copy) releaseSubmitted(conversation, copy); update((cur) => ({ ...cur, accepted: true })); },
           onTurn: (turn, user, delivery) => {
-            if (user === undefined) return update((cur) => ({ ...cur, turnId: turn.id }));
+            // A read names the running turn at once, so the header and the poll's pace follow it from its start.
             void queryClient.invalidateQueries({ queryKey: ["chat", name] });
+            if (user === undefined) return update((cur) => ({ ...cur, turnId: turn.id }));
             update((cur) => ({ ...cur, turnId: turn.id, text: user, reply: "", images: undefined, delivery,
               earlier: [...(cur.earlier ?? []), { turnId: cur.turnId, text: cur.text, reply: cur.reply, delivery: cur.delivery }] }));
           },
@@ -513,9 +514,9 @@ export default function Conversation({
               Retry
             </button>
           </p>
-        ) : entry.accepted && !entry.done ? (
-          <Typing />
         ) : null}
+        {/* The turn keeps working after its first words (tools, more text): the indicator stays until it ends. */}
+        {entry.accepted && inFlight(entry) ? <Typing /> : null}
       </div>,
     );
   }

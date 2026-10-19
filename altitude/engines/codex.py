@@ -624,7 +624,9 @@ def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, t
     if not metadata:
         observe(stdout)
     events = common._parse_events(stdout or "")
-    result = _codex_outcome(events, proc.returncode, stdout, stderr, text=(common._agent_messages(events) or [""])[-1],
+    # Every message the turn wrote, in order and a paragraph each, as a Claude turn keeps its text around tool calls.
+    text = "\n\n".join(message.strip() for message in common._agent_messages(events) if message.strip())
+    result = _codex_outcome(events, proc.returncode, stdout, stderr, text=text,
                             resume=resume, model=model, metadata=metadata)
     result["context"] = _codex_session_context(result.get("reported_session_id"), started_at,
                                               _codex_home(common.launch_env(extra_env)))

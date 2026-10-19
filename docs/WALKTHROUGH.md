@@ -123,8 +123,32 @@ To try a project, follow [setup](SETUP.md).
 
 ## See the features
 
-Five of the README's features in the same Atlas project. On a computer each picture shows two phone
-screens side by side; on a phone it shows the one screen that proves it.
+The README's features in the same Atlas project. On a computer the task view and the terminal show the
+desktop with the phone in front, and each other picture shows two phone screens side by side; on a phone
+each shows the one screen that proves it.
+
+**Start a task from the conversation.** The coordinator's reply offers a task; one press creates it.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-create-phone.webp">
+  <img src="images/feature-create.webp" alt="The coordinator answers that searches started at the index switch can come back empty and offers Create task for holding cursors during the switch; after the press, the reply shows Task created and the coordinator answers that it started the task, with the new task's card." width="860">
+</picture>
+
+**Approve the design before it is built.** The synonyms editor's owner shows its proposal with the other
+engine's review, which fixed two problems and offered an alternative.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-proposal-phone.webp">
+  <img src="images/feature-proposal.webp" alt="Needs you asks whether to build the synonyms editor as shown, with its design document, the proposal review's three resolved findings and Approve proposal recommended; beside it, the review's findings: two fixed and one alternative direction." width="860">
+</picture>
+
+**Work in the task.** The task view holds the owner's conversation and its open question beside the live
+session.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-task-phone.webp">
+  <img src="images/feature-task.webp" alt="The typo tolerance task on a computer: the owner's updates, your message keeping product codes exact and the owner's question whether long words allow one typo or two, beside the live session's replies and commands; on a phone in front, the same conversation." width="860">
+</picture>
 
 **Steer mid-flight.** Your message to the compatibility owner beside its live session.
 
@@ -138,7 +162,7 @@ task's terminal until you press Enter.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-terminal-phone.webp">
-  <img src="images/feature-terminal.webp" alt="The task's terminal with make deploy ENV=staging typed at the prompt, waiting for Enter." width="860">
+  <img src="images/feature-terminal.webp" alt="The billing task on a computer: the owner's message handing you make deploy ENV=staging with Copy and Open in terminal, beside the task's terminal with the command typed at the prompt, waiting for Enter; on a phone in front, the same terminal." width="860">
 </picture>
 
 **Nothing ships unchecked.** The independent review's two findings, both fixed, beside the pull

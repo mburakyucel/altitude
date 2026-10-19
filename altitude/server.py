@@ -1577,8 +1577,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _shown(self, parts: list[str]) -> None:
-        """A reply's or question revision's shown files: the record lists them by digest, and only those saved bytes
-        cross this route. `project/slug/reply` or `project/slug/question/revision`, then `files/<name>` for one file."""
+        """A reply's or question revision's shown files, or the pictures of a task's current PR: the record lists them
+        by digest, and only those saved bytes cross this route. `project/slug/reply`, `project/slug/question/revision`
+        or `project/slug/pr/number`, then `files/<name>` for one file."""
         asset = unquote(parts[-1]) if len(parts) > 2 and parts[-2] == "files" else None
         try:
             target = [unquote(part) for part in (parts[:-2] if asset is not None else parts)]
@@ -1588,6 +1589,8 @@ class Handler(BaseHTTPRequestHandler):
             revision = int(revision[0]) if revision else None
             task, shown = T.shown_target(project, slug, identity, revision)
             if asset is None:
+                if identity == "pr":
+                    raise ValueError("a PR's pictures are read one file at a time")
                 document = shown.get("document")
                 text = T.shown_file(project, slug, shown, document["name"]).decode("utf-8") if document else None
                 view = T.shown_view(project, slug, shown, identity, revision, T.shown_versions(project, slug, task))

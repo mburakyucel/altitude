@@ -273,6 +273,17 @@ export const ShownSchema = z.object({
 export type Shown = z.infer<typeof ShownSchema>;
 export type ShownImage = Shown["images"][number];
 
+/** The pictures a held PR's commit adds, replaces or removes (altitude/tasks.py pr_images_view): one entry per path
+ * with the saved copy of each side it has, and the changed pictures its card cannot show. */
+const PrPictureSideSchema = z.object({ url: z.string(), width: z.number(), height: z.number() });
+export const PrImagesSchema = z.object({
+  available: z.boolean(),
+  pictures: z.array(z.object({ path: z.string(), name: z.string(), change: z.enum(["added", "changed", "removed"]),
+    before: PrPictureSideSchema.nullable(), after: PrPictureSideSchema.nullable() })),
+  not_shown: z.array(z.string()),
+});
+export type PrImages = z.infer<typeof PrImagesSchema>;
+
 /** The same durable dilemma is projected into Needs you and the owning task conversation. */
 export const DecisionSchema = z
   .object({
@@ -315,6 +326,7 @@ export const DecisionSchema = z
     /** The identity every alert uses: the question group since the operator's latest reply (altitude/digest.py). */
     alert_key: z.string().nullish(),
     pr: z.number().nullish(),
+    pr_images: PrImagesSchema.nullish(),
     review_hold_id: z.string().nullish(),
     /** A proposal or merge question's review (SPEC.md §3.8.3): its kind's latest review, or state "none". */
     review: z.object({
