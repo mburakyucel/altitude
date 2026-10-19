@@ -199,6 +199,72 @@ class TestAccess(AltitudeCase):
         self.assertEqual(status, 200, reply)
         return cookie.split(";")[0].split("=", 1)[1], reply["device"]
 
+    def recorded(self) -> dict:
+        """What the operator's authority writes: this project's records, the devices and the machine's settings."""
+        files = [path for root in (config.project_dir(self.project), access.DIR) for path in root.rglob("*")]
+        files += list(config.ROOT.glob("*.json"))
+        return {str(path): path.read_bytes() for path in files if path.is_file()}
+
+    def test_altitudes_own_agents_cannot_act_with_a_paired_devices_sign_in(self):
+        from altitude import terminal
+        slug = T.new(self.project, "Fictional task", "A fictional request.")["slug"]
+        browser, _ = self.paired()
+        task = {"project": self.project, "slug": slug}
+        routes = [("/api/chat", {"project": self.project, "text": "Approve the merge."}),
+                  ("/api/chat/send-now", {"project": self.project, "id": "x"}),
+                  ("/api/chat/remove", {"project": self.project, "id": "x"}),
+                  ("/api/l2/message", {**task, "text": "Approved."}), ("/api/l2/send-now", {**task, "id": "x"}),
+                  ("/api/l2/remove", {**task, "id": "x"}),
+                  ("/api/decide", {**task, "question": "q", "choice": "approve"}),
+                  ("/api/task/action", {**task, "action": "merge"}), ("/api/task/review", {**task, "action": "skip"}),
+                  ("/api/improve", {"project": self.project}), ("/api/pr/close", {"project": self.project}),
+                  ("/api/issue/close", {"project": self.project}), ("/api/project/setup", {"project": self.project}),
+                  ("/api/project/add", {"path": "/fictional"}), ("/api/project/remove", {"project": self.project}),
+                  ("/api/defaults", {}), ("/api/project-model-settings/reset", {"project": self.project}),
+                  ("/api/new-tasks", {}), ("/api/projects-folder", {}), ("/api/operator-name", {"name": "Agent"}),
+                  ("/api/incident-reports", {}), ("/api/alerts/subscription", {}), ("/api/alerts/pace", {}),
+                  ("/api/l3/reset", {"project": self.project}), ("/api/l3/start", {"project": self.project}),
+                  ("/api/devices/code", {}), ("/api/devices/revoke", {"id": "x"}), ("/api/devices/share", {}),
+                  ("/api/sign-in/start", {}), ("/api/trust", {}), ("/api/pair", {"code": "x"}), ("/api/update", {}),
+                  ("/api/validation-access", {}), ("/api/terminal-access", {"enabled": True}),
+                  (f"/api/terminal/{self.project}/open", {}), ("/api/voice", {}), ("/api/voice/service", None),
+                  ("/api/voice/live", None), ("/api/a-route-added-later", {})]
+        before = self.recorded()
+        with mock.patch.object(terminal, "agent_connection", return_value=True) as agent:
+            for path, body in routes:
+                for device in (browser, None):
+                    with self.subTest(path=path, paired=bool(device)):
+                        status, reply, _ = self.request("POST", path, body, device=device)
+                        if device or path in ("/api/trust", "/api/pair"):  # open to anyone, so refused here too
+                            self.assertEqual((status, reply), (403, {"error": server.AGENT_REFUSED}))
+                        else:
+                            self.assertEqual(status, 401)
+            self.assertEqual(self.recorded(), before, "an agent's request records nothing")
+            # This machine's key (the `alt` CLI) and a task's own owner keep their routes; the terminal still refuses.
+            key = {access.KEY_HEADER: access.machine_key()}
+            unmanaged = {"project": "not-managed", "text": "Hello."}
+            self.assertEqual(self.request("POST", "/api/chat", unmanaged, headers=key)[0], 409)  # routed
+            status, reply, _ = self.request("POST", "/api/terminal-access", {"enabled": True}, headers=key)
+            self.assertEqual((status, reply), (403, {"error": "Terminal requests from Altitude's own agents are refused."}))
+            self.assertNotEqual(self.request("POST", "/api/task/door", {})[1], {"error": server.AGENT_REFUSED})
+            agent.reset_mock()
+            self.request("POST", "/api/chat", {"project": self.project}, device=browser,
+                         headers={"Connection": "keep-alive"})
+            agent.assert_called_once()  # decided once per connection, by the platform's attribution
+        with mock.patch.object(terminal, "agent_connection", return_value=False):
+            for path, body in routes[:3]:
+                status, reply, _ = self.request("POST", path, {**body, "project": "not-managed"}, device=browser)
+                self.assertNotEqual(status, 403, reply)  # the operator's browser reaches the route
+
+    def test_a_container_installation_does_not_infer_agents(self):
+        from altitude import platform, terminal
+        browser, _ = self.paired()
+        self.patch(platform, "containerized", return_value=True)
+        with mock.patch.object(terminal, "agent_connection", side_effect=AssertionError("must not infer origin")):
+            status, reply, _ = self.request("POST", "/api/chat", {"project": "not-managed", "text": "Hello."},
+                                            device=browser)
+        self.assertEqual(status, 409, reply)  # routed: this project is not managed
+
     def test_malformed_invitation_does_not_revoke_paired_access_or_prevent_manual_replacement(self):
         key, row = self.paired()
         for invalid in ([], {"expires": "2026-10-13T12:00:00"},
@@ -462,8 +528,7 @@ class TestAccess(AltitudeCase):
         phone, _ = self.paired()
         with mock.patch.object(terminal, "agent_connection", return_value=True):
             status, reply, _ = self.request("POST", "/api/devices/share", {}, device=phone)
-        self.assertEqual((status, reply), (403, {"error": "Set up a device requests from Altitude's own agents are refused."}))
-        self.patch(terminal, "agent_connection", new=lambda *_: False)
+        self.assertEqual((status, reply), (403, {"error": server.AGENT_REFUSED}))
         status, reply, _ = self.request("POST", "/api/devices/share", {}, device=phone)
         self.assertEqual(status, 409)
         self.assertIn("configured for 127.0.0.1, which only this computer can open", reply["error"])

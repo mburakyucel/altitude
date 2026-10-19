@@ -673,6 +673,20 @@ class Confinement(DarwinCase):
             self.assertTrue(text.endswith(rule + platform.SERVICE_ESCAPES), "a later allow would reopen them")
             self.assertLess(text.rindex(inside), text.index(rule))
 
+    def test_every_profile_refuses_the_browsers_profiles_and_altitudes_secrets_by_both_names(self):
+        firefox = self.home / "Library/Application Support/Firefox"
+        firefox.mkdir(parents=True)
+        (self.home / "Library/Application Support/Arc").mkdir()
+        places = platform.secret_places()
+        for folder in (firefox, self.home / "Library/Application Support/Arc"):
+            resolved = os.path.realpath(folder)
+            self.assertIn(resolved, places)
+            self.assertIn("/System/Volumes/Data" + resolved, places)  # how Seatbelt can also match the path
+        self.assertNotIn(os.path.realpath(self.home / "Library/Application Support/Google/Chrome"), places)
+        rule = platform.private_rule()
+        for place in places:
+            self.assertIn(f'(subpath "{place}")', rule)
+
     def test_a_path_is_judged_private_without_looking_inside_a_private_place(self):
         atlas = self.home / "Documents" / "atlas"
         atlas.mkdir(parents=True)

@@ -81,6 +81,10 @@ class TestPush(AltitudeCase):
         self.patch(urllib.request, "_opener", None)  # each case has its own CA; urllib caches its opener
         self.endpoint = f"https://127.0.0.1:{self.service.server_address[1]}/wake/device-1"
 
+    def refusal(self, endpoint: str | None = None):
+        """What the page learns when it tells Altitude about its subscription, as it does each time Altitude opens."""
+        return push.subscribe(endpoint or self.endpoint)["refused"]
+
     def decision(self, title: str, question: str) -> dict:
         task = T.new(self.project, title, "Do it.", actor="burak")
         task.update({"state": "running", "attempt": 1})
@@ -201,8 +205,9 @@ class TestPush(AltitudeCase):
         self.decision("Choose backup retention", "How long should backups stay?")
         sending = push._send
 
-        def resubscribed_meanwhile(endpoint):
+        def resubscribed_meanwhile(endpoint):  # the switch turned off and on while the wake was sent
             outcome = sending(endpoint)
+            push.forget(endpoint)
             push.subscribe(endpoint, every=3600)
             return outcome
 
@@ -218,6 +223,7 @@ class TestPush(AltitudeCase):
 
         def renewed_while_gone(endpoint):
             outcome = sending(endpoint)
+            push.forget(endpoint)
             push.subscribe(endpoint)
             return outcome
 
@@ -330,12 +336,12 @@ class TestPush(AltitudeCase):
         self.assertEqual(len(self.service.requests), 3)  # tried each tick, so a fix on either side needs no step
         self.assertEqual(notes, ["push wakes 1 device(s) for 1 new decision(s)",
                                  "push to %s refused with 403 BadJwtToken" % self.endpoint.split("/")[2]])
-        self.assertEqual(push.refused(), [{"host": self.endpoint.split("/")[2], "reason": "403 BadJwtToken"}])
+        self.assertEqual(self.refusal(), "403 BadJwtToken")  # telling Altitude again keeps what it learned
 
         self.service.status = 201
         push.notify(notes.append)
         self.assertEqual(notes[2:], ["push to %s delivered again" % self.endpoint.split("/")[2]])
-        self.assertEqual(push.refused(), [])
+        self.assertIsNone(self.refusal())
         push.notify(notes.append)
         self.assertEqual((len(notes), len(self.service.requests)), (3, 4))
 
@@ -344,12 +350,51 @@ class TestPush(AltitudeCase):
         self.service.status, self.service.body = 400, b"Bad request\n  no detail"
         self.decision("Choose backup retention", "How long should backups stay?")
         push.notify()
-        self.assertEqual(push.refused()[0]["reason"], "400 Bad request no detail")
-        push.subscribe(self.endpoint)  # turning alerts off and on again subscribes afresh
-        self.assertEqual(push.refused(), [])
+        self.assertEqual(self.refusal(), "400 Bad request no detail")
+        push.forget(self.endpoint)  # turning alerts off and on again subscribes afresh
+        self.assertIsNone(self.refusal())
         push.notify()
         push.forget(self.endpoint)
         self.assertNotIn(self.endpoint, (self.tmp / "push.json").read_text())
+
+    def test_a_refusal_of_the_key_ends_the_subscription_and_another_refusal_keeps_it(self):
+        second = self.endpoint.replace("device-1", "device-2")
+        push.subscribe(self.endpoint)
+        push.subscribe(second)
+        # Apple's answer to a subscription made with a key Altitude no longer signs with.
+        self.service.refusing, self.service.body = {"/wake/device-1": 400}, b'{"reason":"VapidPkHashMismatch"}'
+        self.decision("Choose backup retention", "How long should backups stay?")
+        notes = []
+        push.notify(notes.append)
+        record = json.loads(push.RECORD.read_text())
+        self.assertEqual(record["subscriptions"], [second])
+        self.assertNotIn(self.endpoint, json.dumps(record))  # no refusal, debt or pace outlives it
+        self.assertIn(f"push to {self.endpoint.split('/')[2]} ended with 400 VapidPkHashMismatch: dropped", notes)
+        push.notify()
+        self.assertEqual(len(self.service.requests), 2)  # an ended subscription is not tried again
+        self.assertFalse(push.subscribe(self.endpoint)["known"])  # so the device renewing it makes a new one
+        push.forget(self.endpoint)
+
+        # A refusal that may pass, or that the machine fixes, keeps the device and its retries.
+        self.service.refusing, self.service.body = {"/wake/device-2": 429}, b'{"reason":"TooManyRequests"}'
+        self.decision("Rotate the signing key", "Rotate now or at the next release?")
+        push.notify()
+        push.notify()
+        self.assertEqual(self.refusal(second), "429 TooManyRequests")
+        self.assertEqual([sent["path"] for sent in self.service.requests[2:]], ["/wake/device-2"] * 2)
+
+    def test_telling_altitude_again_about_a_subscription_keeps_what_it_is_owed(self):
+        push.subscribe(self.endpoint, every=3600)
+        self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        self.decision("Rotate the signing key", "Rotate now or at the next release?")
+        push.notify()  # owed, and waiting out the device's pace
+        before = push.RECORD.read_text()
+        self.assertEqual(push.subscribe(self.endpoint, every=3600), {"push": True, "known": True, "refused": None})
+        self.assertEqual(push.RECORD.read_text(), before)  # Altitude opening there changes nothing
+        push.subscribe(self.endpoint)  # the device chose every decision meanwhile
+        push.notify()
+        self.assertEqual(len(self.service.requests), 2)
 
     def test_a_refusal_echoing_the_endpoint_records_only_its_status(self):
         push.subscribe(self.endpoint)
@@ -358,8 +403,8 @@ class TestPush(AltitudeCase):
         self.decision("Choose backup retention", "How long should backups stay?")
         notes = []
         push.notify(notes.append)
-        self.assertEqual(push.refused()[0]["reason"], "403")
-        self.assertNotIn("/wake/", json.dumps([notes, push.refused()]))
+        self.assertEqual(self.refusal(), "403")
+        self.assertNotIn("/wake/", json.dumps(notes))
 
     def test_a_refused_device_is_retried_while_another_device_already_took_the_decision(self):
         second = self.endpoint.replace("device-1", "device-2")
@@ -368,14 +413,14 @@ class TestPush(AltitudeCase):
         self.service.refusing, self.service.body = {"/wake/device-2": 403}, b'{"reason":"BadJwtToken"}'
         self.decision("Choose backup retention", "How long should backups stay?")
         push.notify()
-        self.assertEqual([r["reason"] for r in push.refused()], ["403 BadJwtToken"])
+        self.assertEqual((self.refusal(), self.refusal(second)), (None, "403 BadJwtToken"))  # each device its own
         push.notify()  # the first device took it; only the refused one is tried again
         self.assertEqual([sent["path"] for sent in self.service.requests[2:]], ["/wake/device-2"])
 
         self.service.refusing = {}  # fixed on either side: the next tick gets through and stops retrying
         push.notify()
         push.notify()
-        self.assertEqual(push.refused(), [])
+        self.assertIsNone(self.refusal(second))
         self.assertEqual([sent["path"] for sent in self.service.requests[2:]], ["/wake/device-2"] * 2)
 
     def test_a_device_subscribing_again_while_a_refused_send_is_in_flight_starts_clean(self):
@@ -393,7 +438,7 @@ class TestPush(AltitudeCase):
         push.notify()
         self.patch(push, "_send", resubscribed_meanwhile)
         push.notify()
-        self.assertEqual(push.refused(), [])
+        self.assertIsNone(self.refusal())
 
     def test_a_second_device_does_not_silence_a_decision_the_first_is_still_owed(self):
         push.subscribe(self.endpoint)
@@ -595,16 +640,18 @@ class TestAlertsAPI(AltitudeCase):
 
     def test_the_page_reads_the_key_and_registers_and_drops_its_endpoint(self):
         status, out = self.call("GET", "/api/alerts")
-        self.assertEqual((status, out["refused"]), (200, []))
+        self.assertEqual(status, 200)
         self.assertEqual(len(base64.urlsafe_b64decode(out["key"] + "=" * (-len(out["key"]) % 4))), 65)
 
         endpoint = "https://push.example/wake/device-1"
-        self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint}), (200, {"push": True}))
+        self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint}),
+                         (200, {"push": True, "known": False, "refused": None}))
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [endpoint])
         record = json.loads((self.tmp / "push.json").read_text())
         S.atomic_write(self.tmp / "push.json", json.dumps({**record, "refused": {endpoint: "403 BadJwtToken"}}))
-        self.assertEqual(self.call("GET", "/api/alerts")[1]["refused"],
-                         [{"host": "push.example", "reason": "403 BadJwtToken"}])  # the page says why
+        # The device learns its own refusal each time it tells Altitude about its subscription, and says why.
+        self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint}),
+                         (200, {"push": True, "known": True, "refused": "403 BadJwtToken"}))
         self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint, "remove": True}),
                          (200, {"push": False}))
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [])
@@ -612,7 +659,7 @@ class TestAlertsAPI(AltitudeCase):
     def test_the_page_sets_how_often_its_device_is_woken(self):
         endpoint = "https://push.example/wake/device-1"
         self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint, "every": 900}),
-                         (200, {"push": True}))
+                         (200, {"push": True, "known": False, "refused": None}))
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["every"], {endpoint: 900})
         self.assertEqual(self.call("POST", "/api/alerts/pace", {"endpoint": endpoint, "every": 3600}),
                          (200, {"every": 3600}))

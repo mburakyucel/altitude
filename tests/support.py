@@ -445,7 +445,8 @@ def door_port() -> int:
 
 class AltitudeCase(unittest.TestCase):
     """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
-    their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
+    their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`, whose requests
+    come from the operator's browser rather than one of Altitude's own agents. A case whose
     fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`; on a
     kernel without procfs, a Linux `host` also reads the case's own process from a procfs fixture. A worker
     launch reads no GitHub sign-in unless the case sets `github` and supplies its own `gh` fixture. Public-text
@@ -468,6 +469,9 @@ class AltitudeCase(unittest.TestCase):
         self.addCleanup((config.ROOT / "update.json").unlink, missing_ok=True)
         if not self.gated:
             self.patch(access, "is_machine", return_value=True)
+        else:  # the suite's own requests come from this process, which the platform attributes to altd itself
+            from altitude import terminal
+            self.patch(terminal, "agent_connection", return_value=False)
         if not self.github:
             self.patch(engines.common, "github_token", return_value="")
         self.patch(platform, "local_names", return_value={"host": set(), "user": set()})

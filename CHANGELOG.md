@@ -5,6 +5,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A device whose alert subscription stopped working, such as one made before Altitude's alert key
+  changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
+  old subscription. The warning under the alert switch shows only on the device it concerns, and only
+  when there is something left to do.
+
 ## v0.10.0 — 2026-10-19
 
 Feature release of the early preview.

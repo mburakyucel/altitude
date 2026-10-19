@@ -61,6 +61,8 @@ L3_VERB_REFUSED = "this socket serves only the project's running coordinator tur
 TASK_DOOR = (["api", "task", "run"], ["api", "task", "validate"], ["api", "task", "terminal"],
              ["api", "task", "review", "run"], ["api", "task", "door"])
 TASK_DOOR_REFUSED = "Only the running owner of this task, from its own worker, may use this command."
+#: Altitude records what a paired device's sign-in sends as the operator's, so no agent may send it.
+AGENT_REFUSED = "Altitude's own agents cannot act with a paired device's sign-in."
 # The coordinator's `gh` only reads, from any repository its login can see; `alt issue` verbs are its only writes.
 L3_GH_GROUPS = {"pr", "issue", "release", "repo", "run", "workflow", "ruleset", "label", "cache"}
 L3_GH_VERBS = {"view", "list", "status", "checks", "diff", "watch", "check"}
@@ -2093,12 +2095,18 @@ class Handler(BaseHTTPRequestHandler):
         """Page-only operator actions share origin and agent authority without assuming a native host."""
         if self._cross_site() or json_body and self.headers.get_content_type() != "application/json":
             return f"{subject} requests must come from Altitude's own page."
-        # One connection keeps one client socket, so its first terminal or update request decides for the rest.
-        if self._agent is None:
-            self._agent = terminal.agent_connection(self.client_address, self.connection.getsockname())
-        if self._agent:
+        if self._from_agent():
             return f"{subject} requests from Altitude's own agents are refused."
         return None
+
+    def _from_agent(self) -> bool:
+        """Whether this connection comes from one of Altitude's own agents. One connection keeps one client socket, so
+        its first request decides for the rest. A container installation infers nothing: its clients reach it through
+        the published port, and the operator's browser, which holds the device cookie, is on the host."""
+        if self._agent is None:
+            self._agent = not platform.containerized() and terminal.agent_connection(
+                self.client_address, self.connection.getsockname())
+        return self._agent
 
     def _terminal_get(self, parts: list[str], q: dict) -> None:
         denied = self._terminal_denied(json_body=False)
@@ -2453,9 +2461,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._terminal_get(parts, q)
             if api == "alerts":
                 try:  # without a key the page keeps alerting while it is open, and says so
-                    return self._json({"key": push.public_key(), "refused": push.refused()})
+                    return self._json({"key": push.public_key()})
                 except push.PushFailure as exc:
-                    return self._json({"key": None, "why": str(exc), "refused": []})
+                    return self._json({"key": None, "why": str(exc)})
             if api == "setup" and len(parts) == 3:
                 try:
                     return self._json(project_setup.observe(parts[2]))
@@ -2567,6 +2575,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self._admit(parts) and not owned:
             self.close_connection = True
             return self._json({"error": UNPAIRED, "pair": True}, 401)
+        if not self._machine and not owned and self._from_agent():
+            self.close_connection = True
+            return self._json({"error": AGENT_REFUSED}, 403)
         image_submission = False
         try:
             api = parts[1] if len(parts) > 1 and parts[0] == "api" else ""

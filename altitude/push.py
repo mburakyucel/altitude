@@ -165,8 +165,10 @@ def _pace(every) -> int:
 
 
 def subscribe(endpoint: str, every=0) -> dict:
-    """A device registers what waking it takes and how often it may be woken. Altitude stores the endpoint and
-    nothing else about the device."""
+    """A device registers what waking it takes and how often it may be woken, each time Altitude opens there, and
+    learns whether Altitude already held it, which a renewing device does not when its push service ended it, and
+    whether its push service refuses Altitude's alerts. Altitude stores the endpoint and nothing else about the
+    device."""
     every = _pace(every)
     endpoint = (endpoint or "").strip()
     target = urlparse(endpoint)
@@ -175,20 +177,29 @@ def subscribe(endpoint: str, every=0) -> dict:
         raise PushFailure("A push subscription needs the https endpoint the browser was given.")
     with _LOCK:
         record = _record()
-        kept = [known for known in record["subscriptions"] if known != endpoint]
+        if endpoint in record["subscriptions"]:
+            # The same subscription again: what it is owed and what its service last answered still hold.
+            others = [known for known in record["subscriptions"] if known != endpoint]
+            again = {**record, "subscriptions": [*others, endpoint],
+                     "every": {known: pace for known, pace in record["every"].items() if known != endpoint}}
+            if every:
+                again["every"][endpoint] = every
+            if again != record:
+                _save(again)
+            return {"push": True, "known": True, "refused": record["refused"].get(endpoint)}
         # Already waiting decisions are not news to the first device; a later one must not silence
         # what the devices already subscribed are still owed.
         seen = _waiting()[0] if not record["subscriptions"] else record["seen"]
-        kept = [*kept[-(DEVICES - 1):], endpoint]
-        # A fresh subscription starts unrefused and owed nothing: the page subscribing it shows what waits,
+        kept = [*record["subscriptions"][-(DEVICES - 1):], endpoint]
+        # A new subscription starts unrefused and owed nothing: the page subscribing it shows what waits,
         # and what its push service thinks shows on the next send.
-        refused = {known: why for known, why in record["refused"].items() if known in kept and known != endpoint}
-        owes = {known: keys for known, keys in record["owes"].items() if known in kept and known != endpoint}
-        paces = {known: pace for known, pace in record["every"].items() if known in kept and known != endpoint}
-        woken = {known: at for known, at in record["woken"].items() if known in kept and known != endpoint}
+        refused = {known: why for known, why in record["refused"].items() if known in kept}
+        owes = {known: keys for known, keys in record["owes"].items() if known in kept}
+        paces = {known: pace for known, pace in record["every"].items() if known in kept}
+        woken = {known: at for known, at in record["woken"].items() if known in kept}
         _save({"subscriptions": kept, "seen": seen, "owes": owes, "refused": refused,
                "every": {**paces, endpoint: every} if every else paces, "woken": woken})
-    return {"push": True}
+    return {"push": True, "known": False, "refused": None}
 
 
 def pace(endpoint: str, every) -> dict:
@@ -219,9 +230,11 @@ def forget(endpoint: str) -> dict:
     return {"push": False}
 
 
-def refused() -> list[dict]:
-    """Devices whose push service refuses Altitude's alerts, and why, for the page to say so."""
-    return [{"host": urlparse(endpoint).netloc, "reason": why} for endpoint, why in _record()["refused"].items()]
+def _ended(status: int, reason: str) -> bool:
+    """404 and 410 end a subscription, and so does Apple's 400 VapidPkHashMismatch: a subscription made with
+    another key can never be woken with the one Altitude signs with. Its device subscribes again with the
+    current key the next time Altitude opens there (web/src/data/alerts.tsx)."""
+    return status in (404, 410) or reason == "VapidPkHashMismatch"
 
 
 def notify(log=lambda message: None) -> None:
@@ -264,20 +277,22 @@ def notify(log=lambda message: None) -> None:
         except (PushFailure, OSError) as exc:  # unreachable service or no signing tool: again next tick
             log(f"push to {urlparse(endpoint).netloc} deferred: {exc}")
             continue
-        # 404 and 410: gone for good, and the device subscribes again when it next alerts; any other refusal
-        # stays owed and is recorded with its reason below.
-        outcomes[endpoint] = status if status in (404, 410) else f"{status} {reason}".strip() if status >= 300 else None
+        # An ended subscription is dropped below; any other refusal stays owed and is recorded with its reason.
+        why = f"{status} {reason}".strip() if status >= 300 else None
+        outcomes[endpoint] = (why, _ended(status, reason))
     if not outcomes:
         return
     with _LOCK:
         record = _record()
-        for endpoint, why in outcomes.items():
-            # Subscribing again or turning alerts off while the wake was sent clears what this device owed: the
-            # outcome belongs to the subscription it was sent for, so the new one starts clean.
+        for endpoint, (why, ended) in outcomes.items():
+            # Turning alerts off and on while the wake was sent clears what this device owed: the outcome
+            # belongs to the subscription it was sent for, so the new one starts clean.
             if endpoint not in record["owes"]:
                 continue
-            if why in (404, 410):
+            host = urlparse(endpoint).netloc
+            if ended:
                 _drop(record, endpoint)
+                log(f"push to {host} ended with {why}: dropped")
                 continue
             if why is None:
                 record["owes"][endpoint] = [key for key in record["owes"][endpoint] if key not in waking[endpoint]]
@@ -285,7 +300,6 @@ def notify(log=lambda message: None) -> None:
             if record["refused"].get(endpoint) == why:
                 continue
             # Once per change, with its reason: a refusal logged every tick without one hid its cause.
-            host = urlparse(endpoint).netloc
             log(f"push to {host} refused with {why}" if why else f"push to {host} delivered again")
             if why:
                 record["refused"][endpoint] = why

@@ -641,14 +641,16 @@ def process_facts():
     client = socket.create_connection(listener.getsockname())
     accepted, peer = listener.accept()
     try:
-        handle = platform.client_socket([peer[0]], peer[1], ["127.0.0.1"], accepted.getsockname()[1])
-        check(handle and platform.holds(me, handle), f"own client socket not found: {handle}")
+        started = time.monotonic()
+        found = platform.client_groups([peer[0]], peer[1], ["127.0.0.1"], accepted.getsockname()[1])
+        cost = (time.monotonic() - started) * 1000
+        check(found and all(ours for _, ours in found), f"own client socket not attributed to this process: {found}")
         table = platform.process_table()
         check(me in table and table[me][0] == os.getppid(), "process table misses this process")
     finally:
         for sock in (client, accepted, listener):
             sock.close()
-    return "identity, liveness, names, the process table and TCP socket holders are readable"
+    return f"identity, liveness, names, the process table and TCP client attribution ({cost:.0f} ms) are readable"
 
 
 @row

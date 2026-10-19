@@ -240,9 +240,10 @@ through `/System/Volumes/Data`. `/Volumes` is refused whole, including the start
 sandboxed code reaches the startup disk by its own paths. A sandbox's refusal comes before macOS's consent check, so a refused
 read asks the operator nothing. Every sandbox Altitude applies refuses them as its last file rule, so no
 root it admits reopens one: the worker profile, the validation profile, and Codex's worker and
-coordinator permissions. The same rule refuses Altitude's own secrets on both hosts: the access store
-and the TLS folder (`platform.secret_places()`), so no confined agent reads the machine key, paired
-devices or the certificate keys. Altitude code that runs outside a sandbox (altd, the coordinator launch,
+coordinator permissions. The same rule refuses secrets on both hosts (`platform.secret_places()`):
+Altitude's access store and TLS folder, so no confined agent reads the machine key, paired devices or
+the certificate keys, and the common browsers' profile folders that exist (`platform.BROWSER_PROFILES`),
+so none copies a site's sign-in. Playwright's own browsers, under the cache folder, stay visible. Altitude code that runs outside a sandbox (altd, the coordinator launch,
 doctor, the installer, the speech runtime) follows one rule: it never lists, walks or searches the home
 folder or mounted volumes, and it starts no child in the home folder; it reads only its own named paths.
 Folder selection, browsing, discovery and initial registration inspect paths through the platform
@@ -1998,5 +1999,7 @@ ALTITUDE_DEV_API=http://127.0.0.1:18890 pnpm --dir web dev --host 127.0.0.1 --po
 ```
 
 Use free ports on your machine and follow the component interaction-state rule in the project
-instructions. [Operations](OPERATIONS.md) covers separately authorized service and physical-device
+instructions. The backend refuses actions from Altitude's own agents
+([Altitude's own agents](ARCHITECTURE.md#altitudes-own-agents)), so a backend and browser an agent
+starts this way can read but not act; an agent's walkthroughs use the browser harness. [Operations](OPERATIONS.md) covers separately authorized service and physical-device
 checks. These development URLs do not select the automated test target.
