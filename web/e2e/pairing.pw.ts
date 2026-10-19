@@ -201,19 +201,20 @@ test("removing another device takes its row away at the press; a refused removal
   const { name } = (await devices()).find((device) => !before.some((known) => known.id === device.id))!;
   await page.goto("/settings/devices");
   const list = page.getByRole("list", { name: "Paired devices" });
-  const row = list.getByRole("listitem").filter({ hasText: name });
+  // In a lane whose own browser has the same name, this device's row says so.
+  const row = list.getByRole("listitem").filter({ hasText: name }).filter({ hasNotText: "This device" });
   let release!: () => void;
   const held = new Promise<void>((resolve) => { release = resolve; });
   await page.route("**/api/devices/revoke", async (route) => { await held; await route.fulfill({ status: 503, json: { error: "Altitude is busy." } }); }, { times: 1 });
   await row.getByRole("button", { name: "Remove", exact: true }).click();
   await row.getByRole("button", { name: "Remove device", exact: true }).click();
-  await walk.state("07-removal-at-the-press", { visible: [list.getByText("This device")], hidden: [list.getByText(name, { exact: true })] });
+  await walk.state("07-removal-at-the-press", { visible: [list.getByText("This device")], hidden: [row] });
   release();
   const refused = row.getByRole("alert").filter({ hasText: "Not removed: Altitude is busy." });
-  await walk.state("08-removal-refused", { visible: [list.getByText(name, { exact: true }), refused, refused.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
+  await walk.state("08-removal-refused", { visible: [row, refused, refused.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
   await walk.state("09-removed-by-retry", {
     action: () => refused.getByRole("button", { name: "Retry", exact: true }).click(),
-    visible: [list.getByText("This device")], hidden: [list.getByText(name, { exact: true })],
+    visible: [list.getByText("This device")], hidden: [row],
   });
   await expect.poll(async () => (await devices()).length).toBe(before.length);
 });
@@ -222,7 +223,6 @@ test("Settings shows the address-only QR and the full certificate SHA-256 beside
   const walk = walkthrough(page, info);
   await walk.open("/");
   await pairWith(page, await code(request));
-  await page.goto("/settings/devices");
   const panel = page.getByRole("region", { name: "Pair another device" });
   const directions = { address: "https://pairing.example.test:9443", qr: ["11111110100100011011101111111", "10000010100110110110101000001", "10111010011001110011101011101", "10111010110110001111001011101", "10111010011101000001001011101", "10000010011010100111001000001", "11111110101010101010101111111", "00000000101001100100100000000", "10110111010001101111101001011", "01101000100000011001111110001", "10101010001100110110001110110", "01101101011111110001111000001", "01100010101010000101000101100", "00001000010111000101001000111", "11000011111110100011110100111", "10011101110111000000011000010", "11011011000000001010110111010", "00000101001111011010100101110", "10101111100110010110000110100", "00011101011110001110111100100", "01010111000101000110111111100", "00000000111001100001100011111", "11111110100111000111101011010", "10000010110110000000100011011", "10111010000010111110111110110", "10111010110000110011100111001", "10111010101111000100000100101", "10000010001111110010101011010", "11111110100100011001101101010"],
     certificate: { name: "Altitude CA 4F7K", sha256: ["AA BB CC DD EE FF 00 11", "22 33 44 55 66 77 88 99", "AA BB CC DD EE FF 00 12", "22 33 44 55 66 77 88 9A"] } };
@@ -236,6 +236,8 @@ test("Settings shows the address-only QR and the full certificate SHA-256 beside
     const answer = await route.fetch();
     await route.fulfill({ response: answer, json: { ...await answer.json(), ...directions } });
   });
+  // The routes are in place before Settings opens, so its first machine read already carries them.
+  await page.goto("/settings/devices");
   const image = panel.getByRole("img", { name: `QR code for ${directions.address}` });
   await walk.state("01-before-code", { visible: [panel.getByRole("button", { name: "Make a pairing code" })], hidden: [image] });
   await walk.state("02-address-qr-and-check", {
