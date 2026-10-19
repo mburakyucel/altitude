@@ -3109,13 +3109,21 @@ def _relay(relays: dict[int, int]) -> None:
 
 def _supervise(job: Path) -> int:
     """The launchd end of a job: run the command, hold it to its time limit, stop whatever it leaves in the
-    coalition, record its status and remove this launchd job."""
+    coalition, record its status and remove this launchd job. launchd's SIGTERM, at logout or bootout, reaches this
+    supervisor alone (AbandonProcessGroup), so it stops the job as Stop would and the command's exit ends it."""
     spec = json.loads((job / "spec.json").read_text())
     own = os.getpid()
     coalition = _coalition_of(own)
     _write_private(job / "coalition", str(coalition))
     _write_private(job / "supervisor", str(own))
     terminal = spec.get("mode") == "terminal"
+    terminated: list[int] = []
+
+    def terminate(*_) -> None:
+        terminated.append(1)
+        _confirm_stopped(coalition, spare=own, **_stop_signal(spec))
+
+    signals.signal(signals.SIGTERM, terminate)
     status = 1
     try:
         if spec.get("piped"):
@@ -3151,6 +3159,8 @@ def _supervise(job: Path) -> int:
             except OSError:
                 pass
         (job / "started").touch()
+        if terminated:  # launchd's SIGTERM came before the command it was to stop
+            terminate()
         if child is None:
             status = 127
         else:

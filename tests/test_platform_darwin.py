@@ -13,6 +13,8 @@ import signal
 import subprocess
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -757,6 +759,7 @@ class Supervisor(DarwinCase):
         self.patch(platform, "_running", return_value=True)
         self.patch(platform.os, "execv", side_effect=SystemExit("removed"))
         self.patch(platform, "CAFFEINATE", "/usr/bin/true")  # the power assertion; a fixture needs none
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.getsignal(signal.SIGTERM))  # the supervisor's own
         self.job = self.tmp / "job"
         self.job.mkdir()
         self.out = self.tmp / "out.log"
@@ -806,6 +809,47 @@ class Supervisor(DarwinCase):
             return True
         self.stopped.side_effect = stop
         self.assertEqual(self.supervise(["/bin/sleep", "30"], runtime_max=0.2), 128 + signal.SIGTERM)
+
+    def stop_the_leader(self, coalition, spare, **stop):
+        try:
+            os.kill(int((self.job / "leader").read_text()), stop.get("first", signal.SIGTERM))
+        except (FileNotFoundError, ProcessLookupError):
+            pass
+        return True
+
+    def test_launchds_sigterm_stops_the_whole_job(self):
+        """#1078: at logout launchd signals the supervisor alone, which stops the job as Stop would."""
+        self.stopped.side_effect = self.stop_the_leader
+
+        def logout():
+            while not (self.job / "started").exists():
+                time.sleep(0.02)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        for mode, first in (("pipe", {}), ("terminal", {"first": signal.SIGHUP, "grace": 2})):
+            with self.subTest(mode=mode):
+                (self.job / "started").unlink(missing_ok=True)
+                self.stopped.reset_mock()
+                threading.Thread(target=logout, daemon=True).start()
+                extra = {"tty": os.devnull, "stdin": os.devnull, "grace": 2} if mode == "terminal" else {}
+                if mode == "terminal":
+                    self.patch(platform, "_controlling_terminal", lambda: None)
+                status = self.supervise(["/bin/sleep", "30"], mode=mode, **extra)
+                self.assertEqual(status, 128 + (first.get("first") or signal.SIGTERM))
+                self.assertEqual(self.stopped.call_args_list[0], mock.call(44, spare=os.getpid(), **first))
+
+    def test_launchds_sigterm_before_the_command_starts_stops_it_once_started(self):
+        self.stopped.side_effect = self.stop_the_leader
+        piped = platform._piped
+
+        def signalled(saved):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return piped(saved)
+
+        self.patch(platform, "_piped", side_effect=signalled)
+        (self.job / "stdin").write_bytes(b"")
+        self.assertEqual(self.supervise(["/bin/sleep", "30"], stdin=str(self.job / "stdin"), piped=True),
+                         128 + signal.SIGTERM)
 
     def test_survivors_keep_the_record_after_the_supervisor_has_gone(self):
         self.stopped.return_value = False
