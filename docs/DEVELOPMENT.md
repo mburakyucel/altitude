@@ -660,8 +660,8 @@ operator outside any sandbox (in a task, with `alt task run` under an operator g
 iPhone in a private Simulator device set, as the operator boots one, and removes the set afterwards.
 Outside any profile, its Web Inspector socket must answer and a program spawned in it must write in
 the home folder; from the worker profile and the validation profile, both must be out of reach. It
-records whether Xcode's device services list devices from each; launching a program through them
-needs a paired device, which the probe does not have.
+records whether Xcode's device services list devices from each and, where launching Settings on that
+iPhone through them works outside, requires that launch to be out of reach from both profiles.
 
 A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),
