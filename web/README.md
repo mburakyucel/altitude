@@ -5,7 +5,8 @@ zod own the API boundary; react-router owns navigation; vitest and Testing Libra
 
 - Build for the Python server: `make web` from the repository root. It installs from the frozen
   lockfile and emits `web/dist/`, including the SPA fallback used by `altd`.
-- Develop: `pnpm dev`. Vite proxies `/api` and `/digest.wav` to a local server.
+- Develop: `ALTITUDE_DEV_API=<backend URL> pnpm dev`. Vite proxies `/api` and `/digest.wav` only to the
+  development backend it names ([UI development](../docs/DEVELOPMENT.md#ui-development)).
 - Test: `pnpm test`. Typecheck and production build: `pnpm build`.
 
 The shell has three destinations: Needs you, the projects, and Monitor (`design/wireframes/SPEC.md`

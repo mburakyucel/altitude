@@ -2046,39 +2046,114 @@ def _controlling_terminal() -> None:  # runs in the child between fork and exec
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
-def _hex_address(address: str, port: int) -> tuple[str, str]:
-    """An address as /proc/net/tcp{,6} spells it: host-order 32-bit words in hex, then the port."""
-    ip = ipaddress.ip_address(address)
-    words = struct.unpack(f"{len(ip.packed) // 4}I", ip.packed)
-    return "".join(f"{word:08X}" for word in words) + f":{port:04X}", "6" if ip.version == 6 else ""
+CGROUPS = Path("/sys/fs/cgroup")
+NETLINK_SOCK_DIAG, SOCK_DIAG_BY_FAMILY, INET_DIAG_CGROUP_ID = 4, 20, 21
+NO_COOKIE = 0xFFFFFFFF  # INET_DIAG_NOCOOKIE: look the socket up by its endpoints alone
 
 
-def client_socket(clients: list[str], client_port: int, servers: list[str], server_port: int) -> str | None:
-    """The identity of the client end of a TCP connection on this host, given every spelling of each address,
-    or None when that end is not in this host's network namespace (on macOS, held by none of this user's
-    processes)."""
+def client_groups(clients: list[str], client_port: int, servers: list[str],
+                  server_port: int) -> list[tuple[list[str], bool]] | None:
+    """Who this host attributes the client end of a TCP connection to, given every spelling of each address: for each
+    attribution, the control-group path components (an Altitude job's unit name among them, as on Linux) and whether
+    this process started it. [] when nothing on this host can be named; None when that end is not on this host.
+
+    On Linux the kernel records the control group that created each socket, so the one attribution is that group,
+    started by this process when it is this process's own group or below it; passing the socket to another process,
+    or hiding descriptors, changes nothing. A row without that record, the root group or a group that no longer exists
+    names nothing. On macOS each process that visibly holds the socket is one attribution, started by this process
+    when it descends from it; a socket no process visibly holds is not on this host."""
     if _darwin():
         wanted = {_tcp_handle(ipaddress.ip_address(client), client_port, ipaddress.ip_address(server), server_port)
                   for client in clients for server in servers}
+        holders = []
         for pid in _pids():
             try:
-                found = _tcp_handles(pid) & wanted
+                if _tcp_handles(pid) & wanted:
+                    holders.append(pid)
             except OSError:
                 continue
-            if found:
-                return found.pop()
-        return None
+        if not holders:
+            return None
+        units = _altitude_coalitions()
+        return [([units[coalition]] if (coalition := _coalition_of(pid)) in units else [], _descends(pid))
+                for pid in holders]
     for client in clients:
-        want, family = _hex_address(client, client_port)
         for server in servers:
-            ours, server_family = _hex_address(server, server_port)
-            if server_family != family:
+            group = _socket_group(client, client_port, server, server_port)
+            if group is None:
                 continue
-            for line in (PROC / "net" / f"tcp{family}").read_text().splitlines()[1:]:
-                cols = line.split()
-                if len(cols) > 9 and cols[1] == want and cols[2] == ours:
-                    return f"socket:[{int(cols[9])}]"
+            path = _cgroup_path(group) if group else None
+            if not path:
+                return []
+            own = next((line[3:].split("/") for line in (PROC / "self/cgroup").read_text().splitlines()
+                        if line.startswith("0::")), [])  # none: every group counts as this process's own
+            own = [part for part in own if part]
+            return [(path, path[:len(own)] == own)]
     return None
+
+
+def _socket_group(client: str, client_port: int, server: str, server_port: int) -> int | None:
+    """The id of the control group that created this host's socket from `client` to `server` (sock_diag), 0 when its
+    row carries none, or None when there is no such socket in this network namespace."""
+    ips = ipaddress.ip_address(client), ipaddress.ip_address(server)
+    if ips[0].version != ips[1].version:
+        return None
+    family = socket.AF_INET6 if ips[0].version == 6 else socket.AF_INET
+    sockid = (struct.pack("!HH", client_port, server_port) + b"".join(ip.packed.ljust(16, b"\0") for ip in ips)
+              + struct.pack("=III", 0, NO_COOKIE, NO_COOKIE))
+    request = struct.pack("=BBBBI", family, socket.IPPROTO_TCP, 0, 0, 0xFFFFFFFF) + sockid
+    with socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_SOCK_DIAG) as diag:
+        diag.settimeout(5)
+        diag.send(struct.pack("=IHHII", 16 + len(request), SOCK_DIAG_BY_FAMILY, 1, 1, 0) + request)  # NLM_F_REQUEST
+        reply = diag.recv(65536)
+    length, kind = struct.unpack_from("=IH", reply)
+    if kind == 2:  # NLMSG_ERROR: the kernel found no such socket
+        code = -struct.unpack_from("=i", reply, 16)[0]
+        if code == errno.ENOENT:
+            return None
+        raise OSError(code, "The kernel did not describe the connection")
+    offset = 16 + 72  # nlmsghdr, inet_diag_msg; then the attributes
+    while offset + 4 <= length:
+        size, kind = struct.unpack_from("=HH", reply, offset)
+        if kind == INET_DIAG_CGROUP_ID and size >= 12:
+            return struct.unpack_from("=Q", reply, offset + 4)[0]
+        if size < 4:
+            break
+        offset += (size + 3) & ~3
+    return 0
+
+
+def _cgroup_path(group: int) -> list[str] | None:
+    """The path components of the cgroup2 group with this id (its folder's inode), None for the root group, a group
+    that no longer exists or a host without cgroup2 at /sys/fs/cgroup."""
+    if not (CGROUPS / "cgroup.controllers").exists():
+        return None
+    folders = [(CGROUPS, [])]
+    while folders:
+        folder, parts = folders.pop()
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.inode() == group:
+                            return [*parts, entry.name]
+                        folders.append((Path(entry.path), [*parts, entry.name]))
+        except OSError:
+            continue
+    return None
+
+
+def _descends(pid: int) -> bool:
+    """Whether the macOS process descends from this one, read up its parents."""
+    me = os.getpid()
+    while pid > 1:
+        if pid == me:
+            return True
+        try:
+            pid = _bsd(pid).ppid
+        except OSError:
+            return False
+    return False
 
 
 def process_table() -> dict[int, tuple[int, list[str]]]:
@@ -2110,13 +2185,8 @@ def process_table() -> dict[int, tuple[int, list[str]]]:
 
 
 def holds(pid: int, handle: str) -> bool:
-    """Whether the process visibly holds the socket. Unreadable descriptors (another user's process, or
-    one made undumpable) prove nothing either way."""
-    if _darwin():
-        try:
-            return handle in _tcp_handles(pid)
-        except OSError:
-            return False
+    """Whether the Linux process visibly holds the socket (`socket:[inode]`). Unreadable descriptors (another user's
+    process, or one made undumpable) prove nothing either way."""
     try:
         for fd in (PROC / str(pid) / "fd").iterdir():
             try:
@@ -2567,12 +2637,34 @@ def _filters(kind: str, values) -> list[str]:
     return [f'({kind} "' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '")' for value in values]
 
 
+#: The common browsers' profile folders in the home, which hold every site's sign-ins, Altitude's among them.
+BROWSER_PROFILES = {
+    "linux": (".mozilla", ".config/mozilla", ".config/google-chrome", ".config/google-chrome-beta",
+              ".config/google-chrome-unstable", ".config/chromium", ".config/BraveSoftware", ".config/microsoft-edge",
+              ".config/microsoft-edge-beta", ".config/microsoft-edge-dev", ".config/vivaldi", ".config/opera",
+              ".config/opera-beta", "snap/firefox", "snap/chromium", "snap/brave",
+              ".var/app/org.mozilla.firefox", ".var/app/com.google.Chrome", ".var/app/org.chromium.Chromium",
+              ".var/app/com.brave.Browser", ".var/app/com.microsoft.Edge", ".var/app/com.vivaldi.Vivaldi",
+              ".var/app/com.opera.Opera"),
+    "darwin": tuple(f"Library/Application Support/{name}" for name in (
+        "Google/Chrome", "Google/Chrome Beta", "Firefox", "Chromium", "BraveSoftware", "Microsoft Edge",
+        "Microsoft Edge Beta", "Microsoft Edge Dev", "Vivaldi", "com.operasoftware.Opera", "Arc")),
+}
+
+
 def secret_places() -> tuple[str, ...]:
-    """Altitude's own credentials, which no sandbox Altitude applies may read or write: the access folder with the
-    CLI's key, the pairing record and the push signing key, and the HTTPS folder with the certificate keys. Resolved,
-    as sandboxes match paths, and only those present, since a sandbox masks a folder that exists."""
+    """Credentials no sandbox Altitude applies may read or write: Altitude's own (the access folder with the CLI's
+    key, the pairing record and the push signing key, and the HTTPS folder with the certificate keys) and the common
+    browsers' profiles, whose sign-ins include a paired device's. Resolved, as sandboxes match paths, and only those
+    present, since a sandbox masks a folder that exists; on macOS each also through the data volume's other name, as
+    `private_places` spells them."""
     from . import access, config
-    return tuple(dict.fromkeys(os.path.realpath(path) for path in (access.DIR, config.TLS_DIR) if path.exists()))
+    browsers = (Path.home() / place for place in BROWSER_PROFILES["darwin" if _darwin() else "linux"])
+    found = [os.path.realpath(path) for path in (access.DIR, config.TLS_DIR, *browsers) if path.exists()]
+    if _darwin():
+        found = [spelling for path in found for spelling in
+                 (path, path.removeprefix(DATA_VOLUME), DATA_VOLUME + path.removeprefix(DATA_VOLUME))]
+    return tuple(dict.fromkeys(found))
 
 
 def private_rule() -> str:

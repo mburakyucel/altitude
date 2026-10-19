@@ -46,6 +46,8 @@ image still under validation, run on a Linux host or, through a Podman machine, 
 - [Responsibilities](ARCHITECTURE.md#responsibilities): L3 and L2 duties, inbox, Stop, resume claims,
   handoff, L1 helpers, L3 context and search, model and effort, source exports, installs, updates,
   TLS and pairing.
+  - [Altitude's own agents](ARCHITECTURE.md#altitudes-own-agents): actions refused to Altitude's own
+    agents, the one check that decides and its limits.
   - [Linux and macOS](ARCHITECTURE.md#linux-and-macos): `platform.py` differences in service, jobs,
     Stop, confinement, installer and updates.
   - [Project setup](ARCHITECTURE.md#project-setup): setup receipts, Setup menu and Retry, Git guard

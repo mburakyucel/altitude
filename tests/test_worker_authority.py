@@ -167,11 +167,17 @@ class TestCoordinatorFolder(AltitudeCase):
 
 
 class TestCredentialsHidden(AltitudeCase):
-    def test_every_altitude_sandbox_refuses_the_key_pairing_and_https_folders(self):
+    def test_every_altitude_sandbox_refuses_the_key_pairing_https_and_browser_profile_folders(self):
         access.prepare()
         config.TLS_DIR.mkdir(parents=True, exist_ok=True)
-        secrets = {os.path.realpath(access.DIR), os.path.realpath(config.TLS_DIR)}
-        self.assertEqual(set(platform.secret_places()), secrets)
+        home = self.tmp / "home"
+        self.patch(platform.Path, "home", return_value=home)
+        browsers = [home / ".mozilla", home / ".config/google-chrome", home / "snap/chromium"]
+        for folder in browsers:
+            folder.mkdir(parents=True)
+        secrets = {os.path.realpath(access.DIR), os.path.realpath(config.TLS_DIR), *map(os.path.realpath, browsers)}
+        self.assertEqual(set(platform.secret_places()), secrets, "a browser that is not installed is not listed")
+        self.assertNotIn(".cache", platform.BROWSER_PROFILES["linux"], "Playwright's own browsers stay visible")
         worktree = self.tmp / "worktree"
         worktree.mkdir()
         for settings in (engines.codex_sandbox(worktree), engines.codex_l3_permissions(worktree, project=self.project)):
