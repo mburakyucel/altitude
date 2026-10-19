@@ -1049,7 +1049,11 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
     keychain = f"/Users/{ACCOUNT}/Library/Keychains/login.keychain-db"
     listed = f"security dump-trust-settings 2>&1; security find-certificate -a -Z {keychain} | grep SHA-256"
     unchanged = step("trust-before", listed).stdout
-    answered = step("trust-ssh", f"printf 'y\\n' | /usr/bin/script -q /dev/null {alt} trust", timeout=150)
+    # The answer is typed once the question shows: `alt trust` discards keys typed before it asks.
+    answered = step("trust-ssh", f"/usr/bin/expect -c 'set timeout 240; spawn {alt} trust; expect \"Trust it?\"; "
+                                 "send \"y\\r\"; expect {{ eof {{}} timeout {{ puts STILL-WAITING; "
+                                 "exec ps -axo pid,etime,command >@ stdout; exit 9 }} }}; catch wait result; "
+                                 "exit [lindex $result 3]'", timeout=300)
     trust_ssh = {"passed": "This is an SSH session" in answered.stdout
                  and "a remote terminal cannot show; run alt trust there, or follow the Mac steps on the pair page"
                  in answered.stdout.replace("\r", "").replace("\n", " ")
