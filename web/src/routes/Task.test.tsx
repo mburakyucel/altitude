@@ -122,7 +122,8 @@ const transcript = {
 interface StubOptions {
   repository?: string | null;
   overview?: typeof overview;
-  message?: () => Response | Promise<Response>;
+  /** The server's answer to a message; none (or a promise of none) saves it as the server does. */
+  message?: () => Response | Promise<Response | undefined> | undefined;
   action?: () => Response | Promise<Response>;
   task?: () => Response;
   sendNow?: () => Response | Promise<Response>;
@@ -236,7 +237,8 @@ function stub(task: unknown, options: StubOptions = {}) {
       return jsonResponse({ ...record, repository: options.repository ?? null, messages: [...(record.messages ?? []), ...sent] });
     }
     if (url.includes("/api/l2/message")) {
-      if (options.message) return options.message();
+      const answer = await options.message?.();
+      if (answer) return answer;
       const body = JSON.parse(String(init?.body)) as { text: string; request_id: string };
       const message = { id: body.request_id, at: new Date().toISOString(), role: running.messages[0]?.role, text: body.text };
       sent.push(message);
@@ -800,11 +802,14 @@ describe("Task on desktop", () => {
     const review = { project: "altitude", slug: "fix-timer", title: "Fix the timer", kind: "review", pr: 204, asked_by: "l2",
       question: "Review PR #204 before merge", detail: hold, asked: ago(2), since: ago(2) };
     const reported = { ...stuck, state: "reported", blocked_reason: null, hold_merge: hold, delivery: { number: 204 } };
-    const approved = () => jsonResponse({ message: { id: "approval", at: new Date().toISOString(), role: running.messages[0]?.role, text: "Approved: merge PR #204." } });
     const reviewTurn = () => within(screen.getByRole("region", { name: "Task conversation" })).getByText("Your turn · review before merge").closest(".conversation-question")! as HTMLElement;
+    const approval = () => within(screen.getByRole("region", { name: "Task conversation" })).queryByText("Approve merge", { selector: ".choice-label" })?.closest(".choice") ?? null;
 
-    it("approves the PR with the operator's own message and confirms the receipt", async () => {
-      const fetchMock = stub(reported, { repository: "https://github.com/example/altitude", overview: { ...overview, queue: [review] }, message: approved });
+    it("shows the approval in the chat at the press, and the saved message settles it in place", async () => {
+      let release!: () => void;
+      const held = new Promise<undefined>((resolve) => { release = () => resolve(undefined); });
+      const current = { ...overview, queue: [review] };
+      const fetchMock = stub(reported, { repository: "https://github.com/example/altitude", overview: current, message: () => held });
       const { user } = renderApp({ route });
       await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
       const turn = await waitFor(reviewTurn);
@@ -812,36 +817,57 @@ describe("Task on desktop", () => {
       expect(turn).toHaveTextContent(hold);
       expect(within(turn).getByRole("link", { name: "View PR #204" })).toHaveAttribute("href", "https://github.com/example/altitude/pull/204");
       expect(screen.getByText("Your turn · review PR #204")).toBeInTheDocument();
-      const approve = within(turn).getByRole("button", { name: "Approve merge" });
-      await user.click(approve);
-      // The button changes in place and keeps focus: saved, waiting for the L2 to read it (SPEC.md §3.8.2).
-      expect(await within(turn).findByRole("button", { name: "Approve merge, waiting for the L2" })).toBe(approve);
-      expect(approve).toHaveFocus();
-      expect(approve).toHaveAttribute("aria-disabled", "true");
+      await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
+      // Before Altitude answers, the card has left and the approval waits in the chat as the operator's pill (SPEC.md §3.8.2).
+      await waitFor(() => expect(screen.queryByText("Your turn · review before merge")).toBeNull());
+      const pill = approval()!;
+      expect(pill).toHaveAttribute("data-state", "wait");
+      expect(pill).toHaveTextContent("PR #204");
+      expect(screen.queryByText("Your turn · review PR #204")).toBeNull();
       const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
       expect(sent).toHaveLength(1);
       expect(JSON.parse(String(sent[0]![1]?.body))).toEqual({ project: "altitude", slug: "fix-timer",
-        text: "Approved: merge PR #204.", review_pr: 204, review_hold_id: null });
+        text: "Approved: merge PR #204.", review_pr: 204, review_hold_id: null, request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
+      current.queue = [];
+      const reads = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/task/")).length;
+      release();
+      await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/task/")).length).toBeGreaterThan(reads));
+      // The saved message has the send id, so the same pill stays where it was.
+      await waitFor(() => expect(approval()).toBe(pill));
+      expect(screen.queryByText("Your turn · review before merge")).toBeNull();
     });
 
-    it("turns Approve merge into a red Retry with Not sent when the send fails", async () => {
+    it("returns Approve merge with Not sent and retry when the approval was not saved", async () => {
       let fail = true;
-      const fetchMock = stub(reported, { overview: { ...overview, queue: [review] },
-        message: () => fail ? jsonResponse({ error: "unavailable" }, 500) : approved() });
+      const current = { ...overview, queue: [review] };
+      const fetchMock = stub(reported, { overview: current, message: () => {
+        if (fail) return jsonResponse({ error: "unavailable" }, 500);
+        current.queue = [];
+        return undefined;
+      } });
       const { user } = renderApp({ route });
       await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
       const turn = await waitFor(reviewTurn);
       expect(within(turn).queryByRole("link", { name: /View PR/ })).toBeNull();
+      const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
       await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
-      expect(await within(turn).findByRole("alert")).toHaveTextContent(/^Not sent$/);
+      // No answer came, and the task's next read does not list the approval: the card comes back with Not sent.
+      const retry = await screen.findByRole("button", { name: "Approve merge, retry" });
+      expect(within(reviewTurn()).getByRole("alert")).toHaveTextContent(/^Not sent\.$/);
+      expect(approval()?.closest(".conversation-question")).toBe(reviewTurn());
+      // The returned card brings its Not sent line into view (SPEC.md §3.8.2).
+      await waitFor(() => expect(scroll.mock.contexts).toContain(within(reviewTurn()).getByRole("group", { name: "Merge review" })));
       fail = false;
-      await user.click(within(turn).getByRole("button", { name: "Retry, Approve merge" }));
-      await within(turn).findByRole("button", { name: "Approve merge, waiting for the L2" });
-      expect(within(turn).queryByRole("alert")).toBeNull();
+      await user.click(retry);
+      await waitFor(() => expect(screen.queryByText("Your turn · review before merge")).toBeNull());
+      expect(approval()).toHaveAttribute("data-state", "wait");
       const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
       expect(sent).toHaveLength(2);
-      // Retry resends the same message.
-      for (const call of sent) expect(JSON.parse(String(call[1]?.body)).text).toBe("Approved: merge PR #204.");
+      // Retry is the same send under the same id, so Altitude saves it once even if the first was saved after all.
+      const bodies = sent.map((call) => JSON.parse(String(call[1]?.body)) as { text: string; request_id: string });
+      for (const body of bodies) expect(body.text).toBe("Approved: merge PR #204.");
+      expect(bodies[1]!.request_id).toBe(bodies[0]!.request_id);
+      scroll.mockRestore();
     });
 
     it("replaces a stale card refused by the server with the task's current state", async () => {

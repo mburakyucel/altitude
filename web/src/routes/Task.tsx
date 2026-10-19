@@ -4,7 +4,9 @@ import { createPortal } from "react-dom";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask, useSendNow } from "../data/api";
+import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask, useSendNow, writePending } from "../data/api";
+import { handBack, startPending, useDecisionSurface } from "../data/pending";
+import type { PendingWrite } from "../data/pending";
 import { SendNow, SendNowError } from "../components/SendNow";
 import { BusyLabel } from "../components/StatusMark";
 import type { Decision, Overview, Step, TaskMessage, TaskView } from "../data/api";
@@ -237,6 +239,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   transfer: Transfer;
 }) {
   const queryClient = useQueryClient();
+  useDecisionSurface(active ? `${project}/${task.slug}` : null);
   const location = useLocation();
   const params = new URLSearchParams(location.search);
   const questionId = params.get("question");
@@ -396,9 +399,13 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const id = (images?.request_id ?? crypto.randomUUID()).replaceAll("-", "");
     if (copy) markSubmitted(conversation, copy, null);
     startTaskOutgoing(queryClient, project, task.slug, { id, text, images: images?.previews, replay: images, copy, target: to }, replaces);
+    // A reply hands the task back at once: its questions and merge review leave Needs you and the badge (SPEC.md §1.1).
+    const entry: PendingWrite = { id, project, slug: task.slug, kind: "message", state: "sending", ...handBack(queryClient, project, task.slug),
+      at: new Date().toISOString(), text, answers: [] };
+    void startPending(queryClient, entry);
     try {
-      const row = await sendL2Message({ project, slug: task.slug, text, request_id: images?.request_id ?? id, ...to,
-        ...(images ? { images: images.images } : {}) });
+      const row = await writePending(queryClient, entry, () => sendL2Message({ project, slug: task.slug, text, request_id: images?.request_id ?? id, ...to,
+        ...(images ? { images: images.images } : {}) }));
       onAccepted?.();
       if (copy) releaseSubmitted(conversation, copy);
       await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });

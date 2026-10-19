@@ -22,6 +22,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   press Ctrl; the other keys, Paste and an opened chat command leave it as it was. Coming back to the app
   after the background reads on from where it was, even when the phone dropped the connection quietly,
   instead of leaving the screen still.
+- Answering a question or approving a merge shows at once: the card leaves Needs you and your answer
+  appears in the chat, Waiting, the moment you press, then settles in place when Altitude saves it. If
+  Altitude refuses, the card comes back with your picks and **Not sent** with Retry; if the connection
+  drops, the answer stays Waiting until Altitude shows whether it was saved, and Retry never sends it twice.
 - A device whose alert subscription stopped working, such as one made before Altitude's alert key
   changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
   old subscription. The warning about it shows only on the device it concerns, and only

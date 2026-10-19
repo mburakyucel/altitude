@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useOverview } from "../data/api";
+import { useDecisionSurface } from "../data/pending";
 import type { Attention, Decision, Overview } from "../data/api";
 import { DecisionCard, StepCard } from "../components/DecisionCard";
 import { ImprovementCard } from "../components/Improvement";
@@ -70,6 +71,7 @@ function Suggestions({ suggestions, selected }: { suggestions: Overview["suggest
 /** Needs you (SPEC.md §2.1): contiguous project sections, each collapsible from its heading. */
 export default function NeedsYou() {
   const overview = useOverview();
+  useDecisionSurface("*");
   const selected = useSelectedProject();
   // Page state only: cards stay mounted while collapsed, so staged answers survive.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
