@@ -188,7 +188,8 @@ class TestOperatorsClaudeFolder(AltitudeCase):
 
     def setUp(self):
         super().setUp()
-        self.home = Path(os.path.realpath(self.tmp)) / "home"
+        # A dash, a dot and a space, which a profile must quote and match as written.
+        self.home = Path(os.path.realpath(self.tmp)) / "fictional a-b.c home"
         self.operator = self.home / ".claude"
         for name, text in ((".credentials.json", "fictional sign-in"), ("settings.json", "fictional settings"),
                            ("skills/fixture/SKILL.md", "fictional skill"),
@@ -223,6 +224,26 @@ class TestOperatorsClaudeFolder(AltitudeCase):
                                                                             temporary=self.temporary, hidden=hidden)]
         return platform.bubblewrap_profile([str(self.work)], list(read_only), temporary=self.temporary, hidden=hidden)
 
+    def job(self, files: dict, write: Path, listing: Path, read_only=(), hidden=(), before=None) -> dict:
+        """What a job sees of `files`, the write and the listing; `before` runs once the job has started, before it
+        looks."""
+        go = self.work / "go"
+        wait = f"import os, time\nwhile not os.path.exists({str(go)!r}): time.sleep(0.05)\n"
+        job = subprocess.Popen([*self.sandbox(read_only, hidden), sys.executable, "-I", "-c", wait + FILES,
+                                json.dumps({name: str(path) for name, path in files.items()}), str(write), str(listing)],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.work)
+        if before:
+            before()
+        go.touch()
+        out, err = job.communicate(timeout=60)
+        self.assertEqual(job.returncode, 0, err)
+        return json.loads(out)
+
+    def claude_files(self, own: Path) -> dict:
+        return {"sign-in": self.operator / ".credentials.json", "state": self.home / ".claude.json",
+                "conversation": self.operator / "projects/-repo/sid-other.jsonl",
+                "linked settings": own / "settings.json", "linked skill": own / "skills/fixture/SKILL.md"}
+
     def test_a_claude_job_sees_only_what_its_launch_reopens_of_the_operators_claude_folder(self):
         hidden = platform._operator_places()
         self.assertLessEqual({str(self.operator), str(self.home / ".claude.json") + "*"}, set(hidden))
@@ -231,21 +252,14 @@ class TestOperatorsClaudeFolder(AltitudeCase):
         notes = self.operator / "projects/-repo/memory"
         engines.claude._own_folder(own, [])
         read_only = [str(path) for path in (*engines.claude._linked(), notes, resumed)]
-        files = {"sign-in": self.operator / ".credentials.json", "state": self.home / ".claude.json",
-                 "state copy": self.home / ".claude.json.tmp.1.fixture",
+        files = {**self.claude_files(own), "state copy": self.home / ".claude.json.tmp.1.fixture",
                  "linked state copy": self.home / ".claude.json.backup.fixture",
-                 "conversation": self.operator / "projects/-repo/sid-other.jsonl",
-                 "linked settings": own / "settings.json", "linked skill": own / "skills/fixture/SKILL.md",
                  "notes": notes / "MEMORY.md", "resumed": resumed}
-        done = subprocess.run([*self.sandbox(read_only, hidden), sys.executable, "-I", "-c", FILES,
-                               json.dumps({name: str(path) for name, path in files.items()}),
-                               str(self.operator / "settings.json"), str(self.operator)],
-                              capture_output=True, text=True, timeout=60, cwd=self.work)
-        self.assertEqual(done.returncode, 0, done.stderr)
+        seen = self.job(files, self.operator / "settings.json", self.operator, read_only, hidden)
         # Linux shows a hidden folder empty and refuses a hidden file, a device node on a mount without devices;
         # Seatbelt refuses both.
         missing, refused = (errno.EPERM, errno.EPERM) if NATIVE_PLATFORM == "darwin" else (errno.ENOENT, errno.EACCES)
-        self.assertEqual(json.loads(done.stdout), {
+        self.assertEqual(seen, {
             "sign-in": missing, "state": refused, "state copy": refused, "linked state copy": refused,
             "conversation": missing,
             "linked settings": "fictional settings", "linked skill": "fictional skill", "notes": "fictional notes",
@@ -254,6 +268,51 @@ class TestOperatorsClaudeFolder(AltitudeCase):
             "listing": errno.EPERM if NATIVE_PLATFORM == "darwin" else ["projects", "settings.json", "skills"]})
         self.assertEqual((self.home / ".claude.json").read_text(), "fictional state", "the host's files are unchanged")
         self.assertEqual((self.operator / "settings.json").read_text(), "fictional settings")
+
+    @unittest.skipUnless(NATIVE_PLATFORM == "darwin", "Seatbelt matches resolved paths and names made later")
+    def test_a_linked_claude_folder_shows_a_job_its_linked_entries_and_nothing_else_of_the_target(self):
+        target = self.home / "dotfiles/claude-folder"
+        self.operator.rename(target)
+        self.operator.symlink_to(target)
+        own = self.work / "claude"
+        engines.claude._own_folder(own, [])
+        read_only = [str(path) for path in engines.claude._linked()]
+        files = {**self.claude_files(own), "sign-in, by the target": target / ".credentials.json",
+                 "settings, by the target": target / "settings.json"}
+        seen = self.job(files, target / "settings.json", target, read_only, platform._operator_places())
+        self.assertEqual(seen, {"sign-in": errno.EPERM, "state": errno.EPERM, "conversation": errno.EPERM,
+                                "sign-in, by the target": errno.EPERM, "linked settings": "fictional settings",
+                                "linked skill": "fictional skill", "settings, by the target": "fictional settings",
+                                "write": errno.EPERM, "listing": errno.EPERM})
+
+    @unittest.skipUnless(NATIVE_PLATFORM == "darwin", "Seatbelt refuses a name the state file's prefix starts")
+    def test_a_state_file_copy_made_after_a_claude_job_starts_is_refused_inside_it(self):
+        later = self.home / ".claude.json.backup.1700000000000"
+        own = self.work / "claude"
+        engines.claude._own_folder(own, [])
+        seen = self.job({"later copy": later, "state": self.home / ".claude.json"}, later, self.home,
+                        [str(path) for path in engines.claude._linked()], platform._operator_places(),
+                        before=lambda: later.write_text("fictional state"))
+        self.assertEqual((seen["later copy"], seen["state"], seen["write"]), (errno.EPERM,) * 3)
+
+    @unittest.skipUnless(NATIVE_PLATFORM == "darwin", "Seatbelt hides the folder; bubblewrap's case is TestSandboxedJob")
+    def test_a_job_sees_only_the_entries_its_codex_folder_links_to_of_the_operators_codex_folder(self):
+        operator = self.home / ".codex"
+        (operator / "sessions").mkdir(parents=True)
+        for name, text in (("auth.json", "fictional sign-in"), ("config.toml", "fictional settings"),
+                           ("sessions/rollout.jsonl", "fictional conversation")):
+            (operator / name).write_text(text)
+        self.patch(engines.codex, "operator_home", return_value=operator)
+        hidden = platform._operator_places()
+        self.assertIn(str(operator), hidden)
+        own = self.work / "codex"
+        engines.codex._own_folder(own, operator, [])
+        files = {"sign-in": operator / "auth.json", "conversation": operator / "sessions/rollout.jsonl",
+                 "linked settings": own / "config.toml"}
+        seen = self.job(files, operator / "config.toml", operator, [str(operator / "config.toml")], hidden)
+        self.assertEqual(seen, {"sign-in": errno.EPERM, "conversation": errno.EPERM,
+                                "linked settings": "fictional settings", "write": errno.EPERM, "listing": errno.EPERM})
+        self.assertEqual((operator / "config.toml").read_text(), "fictional settings", "the host's folder is unchanged")
 
 
 class TestJobTemporaryFolder(AltitudeCase):
