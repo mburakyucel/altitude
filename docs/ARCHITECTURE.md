@@ -2403,7 +2403,8 @@ gets `installation.doctor()`, `installation.installed_release()` (the active ver
 manifest check) and the version the service runs, and `repair.outcome` sets `repaired`, `changed_by_hand`, `confirm`, `not_repaired` or
 `no_report`; a repair whose process died before recording its end gets its end time then.
 `GET /api/repairs` returns the running repair and every record without briefs, and
-`GET /api/repairs/<id>` one record with its brief; Settings → About renders them.
+`GET /api/repairs/<id>` one record with its brief; Settings → About renders them. Both read through `storage`, so a
+link planted in a repair's folder reads as no record or no brief.
 
 ### Web delivery
 

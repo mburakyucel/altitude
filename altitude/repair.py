@@ -7,6 +7,7 @@ Altitude's home; the service sets its outcome from Altitude's own checks once it
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import re
 import signal
@@ -89,7 +90,11 @@ def _folder(ident: str) -> Path:
 
 
 def record(ident: str) -> dict:
-    found = S.read_json(_folder(ident) / "repair.json", None)
+    """A repair's record. A request names it, so a link in its place is refused as no repair."""
+    try:
+        found = json.loads(storage.read_text(_folder(ident) / "repair.json"))
+    except (OSError, storage.NotRegularFile):
+        raise KeyError(ident) from None
     if not isinstance(found, dict):
         raise KeyError(ident)
     return found
@@ -127,8 +132,8 @@ def listing() -> dict:
 def view(ident: str) -> dict:
     """One repair's page: its record and the brief it started with."""
     try:
-        brief = (_folder(ident) / "brief.md").read_text()
-    except FileNotFoundError:
+        brief = storage.read_text(_folder(ident) / "brief.md")
+    except (OSError, storage.NotRegularFile):
         brief = None
     return {**record(ident), "brief": brief}
 

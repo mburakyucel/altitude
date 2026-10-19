@@ -309,3 +309,14 @@ class RepairPages(RepairCase):
         self.assertEqual((status, page["report"]["wrong"]), (200, "w"))
         self.assertIn("# Repair brief", page["brief"])
         self.assertEqual(get("/api/repairs/not-a-repair"), (404, {"error": "That repair is not on this computer."}))
+        # A link planted in a repair's place is never followed: its brief reads as absent and a linked record as none.
+        outside = self.tmp / "outside.md"
+        outside.write_text("not Altitude's brief\n")
+        brief = repair.DIR / row["id"] / "brief.md"
+        brief.unlink()
+        brief.symlink_to(outside)
+        self.assertIsNone(get(f"/api/repairs/{row['id']}")[1]["brief"])
+        linked = repair.DIR / ("0" * 32)
+        linked.symlink_to(repair.DIR / row["id"])
+        self.assertEqual(get(f"/api/repairs/{linked.name}")[0], 404)
+        self.assertEqual([item["id"] for item in get("/api/repairs")[1]["repairs"]], [row["id"]])

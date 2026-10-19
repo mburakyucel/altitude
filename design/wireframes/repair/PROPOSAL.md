@@ -234,17 +234,17 @@ native Mac service; those stay listed on each step's issue for the Mac installat
 
 ## Screens
 
-Fictional data. Phone 390×844, desktop 1440×900.
+Fictional data. Phone 390×844, desktop 1440×900. Boards, written by `gen.py` beside this file:
 
-![Failed-update notice, phone](captures/PhoneNotice.png)
-![Start a repair, phone](captures/PhoneSheet.png)
-![A repair at work, phone](captures/PhoneRunning.png)
-![A repair asks before a big change, phone](captures/PhoneAsk.png)
-![Repair reports, phone](captures/PhoneReport.png)
-![Settings → About with Repair, phone](captures/PhoneAbout.png)
-![A repair on desktop](captures/Desktop.png)
-![All states](captures/States.png)
-![The terminal route](captures/Terminal.png)
+- [Failed-update notice, phone](PhoneNotice.html)
+- [Start a repair, phone](PhoneSheet.html)
+- [A repair at work, phone](PhoneRunning.html)
+- [A repair asks before a big change, phone](PhoneAsk.html)
+- [Repair reports, phone](PhoneReport.html)
+- [Settings → About with Repair, phone](PhoneAbout.html)
+- [A repair on desktop](Desktop.html)
+- [All states](States.html)
+- [The terminal route](Terminal.html)
 
 ### Exact text and states
 
