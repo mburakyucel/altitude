@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
@@ -21,6 +21,7 @@ import { dateText } from "../data/observed";
 import { disableAlerts, enableAlerts, savePreferences, useAlertNote, useAlertState, usePreferences } from "../data/alerts";
 import type { Preferences, Reveal } from "../data/alerts";
 import "./settings.css";
+import { leaveSettings } from "../components/visitMemory";
 
 const labels: Record<VoiceBackend, string> = { host: "This computer", browser: "Browser recognition", service: "Your speech service" };
 const explanations: Record<VoiceBackend, string> = {
@@ -376,7 +377,9 @@ function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
   const note = useAlertNote(state);
   const chosen = usePreferences();
   const [asking, setAsking] = useState(false);
-  const [showReason, setShowReason] = useState(false);
+  // Needs you opens this group by its link (SPEC.md §3.8.1), which asks for the reason a switch cannot be on.
+  const { hash } = useLocation();
+  const [showReason, setShowReason] = useState(hash === "#notifications");
   const [save, setSave] = useState<{ status: "idle" | "saving"; change?: Partial<Preferences> } | { status: "failed"; error: Error }>({ status: "idle" });
   const settled = state === "unsupported" || state === "blocked";
   const project = managedProjects(overview).at(0)?.name ?? "atlas";
@@ -392,10 +395,19 @@ function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
       setSave({ status: "failed", error: error as Error });
     }
   };
+  const section = useRef<HTMLElement>(null);
+  // Rows above load after arrival (a phone has one column), so the group is brought into view again until they have.
+  const loading = useIsFetching() > 0;
+  const placed = useRef(false);
+  useEffect(() => {
+    if (hash !== "#notifications" || placed.current) return;
+    section.current?.scrollIntoView({ block: "nearest" });
+    if (!loading) placed.current = true;
+  }, [hash, loading]);
   const busy = save.status === "saving";
   const shows = !shown ? "" : shown.reveal === "task" ? `“${project} needs a decision” and the task name`
     : shown.reveal === "project" ? `“${project} needs a decision”` : "“A decision needs you”";
-  return <section className="settings-section" aria-label="Notifications">
+  return <section ref={section} id="notifications" className="settings-section" aria-label="Notifications">
     <h2>Notifications</h2>
     <div className="settings-group">
       <div className="settings-row settings-switch-row">
@@ -404,10 +416,11 @@ function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
         {settled ? <button id="alerts-switch" type="button" role="switch" className="settings-switch" aria-checked="false"
           aria-label="Decision alerts" aria-disabled="true" aria-describedby="alerts-switch-note" onClick={() => setShowReason(!showReason)} />
           : <input id="alerts-switch" type="checkbox" role="switch" className="settings-switch" aria-label="Decision alerts"
-            checked={state === "on"} disabled={asking} aria-describedby="alerts-switch-note" onChange={(event) => {
+            checked={state === "on"} disabled={asking || !overview} aria-describedby="alerts-switch-note" onChange={(event) => {
               if (!event.target.checked) return disableAlerts();
               setAsking(true);
-              void enableAlerts(overview?.queue ?? []).catch(disableAlerts).finally(() => setAsking(false));
+              // The switch waits for the queue (disabled until read): turning on records what is waiting, not a backlog to announce.
+              void enableAlerts(overview!.queue).catch(disableAlerts).finally(() => setAsking(false));
             }} />}
       </div>
       {state === "on" && shown ? <>
@@ -754,7 +767,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
       return host.state === "setting-up" || (host.update && !["failed", "cancelled"].includes(host.update.state)) ? 1000 : false;
     } });
   const [reloadKey, setReloadKey] = useState(0);
-  const state = location.state as { settingsFrom?: string } | null;
+  const state = location.state as { settingsFrom?: string; settingsFromIndex?: number } | null;
   const machine = useMachine();
   const devices = useDevices();
   const roots = overview.data?.roots ?? [];
@@ -766,7 +779,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   }, [settings.data]);
   const title = page ? titles[page] : "Settings";
   const back = page ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
-    : <button type="button" className="btn settings-back" onClick={() => navigate(state?.settingsFrom || "/projects", { replace: true })}>‹ Back</button>;
+    : <button type="button" className="btn settings-back" onClick={() => leaveSettings(navigate, state)}>‹ Back</button>;
   const voiceRow = settings.isPending ? <p className="settings-row"><StatusMark label="Loading voice settings…" /></p>
     : settings.isError ? <p role="alert" className="settings-row text-danger">Could not load voice settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
       : <Link className="settings-row" to="/settings/voice" state={state}>

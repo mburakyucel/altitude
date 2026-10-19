@@ -150,7 +150,7 @@ small group; a question link names its durable ID and revision and focuses the o
   Hardware keyboards retain navigation. When viewport evidence is unavailable, navigation remains.
   Hidden navigation leaves focus and screen-reader traversal; a nonzero Needs you count remains
   reachable from the header. Draft, selection and reading position survive keyboard dismissal.
-  Inline text controls (Show, fold summaries, the alerts switch, back links) keep their line and
+  Inline text controls (Show, fold summaries, back links) keep their line and
   reach 44px touch targets.
 - Ordinary use never changes page scale: focusing, typing, switching fields, sending and dismissing the
   keyboard keep the zoom level, so touch layouts render fields at 16px. Manual pinch zoom stays
@@ -915,19 +915,40 @@ Re-asking supplies fresh controls, retaining earlier history without carrying ap
 
 #### 3.8.1 Decision alerts
 
-Under the Needs you heading, one switch offers **Alert me about new decisions** and reads **Alerts on**
-once permission is granted. It is set per device, because each browser grants its own permission, and
-its line below states the reach honestly: a device the browser's push service can wake alerts with
-Altitude closed, and says that away from your network the alert names nothing; a device that cannot be
-woken alerts only while Altitude is open, which on a phone means while it is on screen. A subscription
-its push service ended, or made with an old key, renews itself the next time Altitude opens on that
-device, without a word. While a push service refuses Altitude's alerts for another reason, the line on
-that device alone reads "The push service at <host> refused Altitude's last alert (<status> <reason>),
-so this device gets alerts only while Altitude is open." followed by what to do: for a refused sender
-token (401, 403) "Give Altitude a real contact address in ALTITUDE_PUSH_CONTACT on the computer it runs
-on.", otherwise "Altitude keeps trying until one gets through."; the line returns to the reach once a
-push gets through. An unavailable alert control looks disabled and exposes the browser limitation or permission recovery instructions as its accessible description and on press. Every state
-leaves Needs you, its cards and all typing untouched.
+Decision alerts are set per device, because each browser grants its own permission. They live in
+Settings → Notifications (§3.15); the Needs you title row ends with one bordered pill naming this
+device's alerts, a bell, two or three words and a chevron, which links there. The pill shares the title's
+row on phone and desktop down to a 320 px screen, ending at the decision column's edge; the title never
+wraps.
+
+| This device | Pill |
+| --- | --- |
+| cannot show notifications | **Alerts unavailable**, struck-through bell, muted |
+| notifications blocked in the browser | **Alerts blocked**, struck-through bell, muted |
+| alerts off | **Alerts off**, struck-through bell, muted |
+| on, its push service cannot wake it | **Alerts while open** |
+| on, push wakes it | **Alerts on** |
+| on, its push service refuses Altitude's alerts | **Push refused**, red border and text |
+
+Its accessible name is the label followed by ", alert settings". The pill shows with the title,
+independent of the queue (loading, a read error, nothing waiting), and changes in place; a permission
+changed in browser settings shows on the next return. A refusal shows once that device's subscription is
+answered, a moment after Altitude opens there; until then the pill reads **Alerts on**, and the refusal is
+not kept on the device between opens. Pressing the pill opens Settings at Notifications, and Back returns
+to the same Needs you visit, typing included.
+
+The **Decision alerts** switch in Settings reads on once permission is granted, and its line states the
+reach honestly: a device the browser's push service can wake alerts with Altitude closed, and says that
+away from your network the alert names nothing; a device that cannot be woken alerts only while Altitude
+is open, which on a phone means while it is on screen. A subscription its push service ended, or made
+with an old key, renews itself the next time Altitude opens on that device, without a word. While a push
+service refuses Altitude's alerts for another reason, the line on that device alone reads "The push
+service at <host> refused Altitude's last alert (<status> <reason>), so this device gets alerts only
+while Altitude is open." followed by what to do: for a refused sender token (401, 403) "Give Altitude a
+real contact address in ALTITUDE_PUSH_CONTACT on the computer it runs on.", otherwise "Altitude keeps
+trying until one gets through."; the line returns to the reach once a push gets through. An unavailable
+switch looks disabled and exposes the browser limitation or permission recovery instructions as its
+accessible description and on press. Every state leaves Needs you, its cards and all typing untouched.
 
 Each newly published operator question alerts once, titled with the project and carrying the task name
 at most — never question, conversation or incident text. What a banner names, how often alerts come and
@@ -1979,7 +2000,8 @@ phone and desktop widths.
 Settings at `/settings` opens from **All settings…** in the project's three-dot menu on both widths,
 or the desktop rail's operator row; **Project settings…** opens that project's page directly. The row highlights on every Settings route; theme switching
 remains independently accessible. Phone keeps a labelled Back button and the existing four tabs.
-A direct overview visit returns to `/projects`; entry from another view returns there.
+A direct overview visit returns to `/projects`; entry from another view returns to that same visit, so its
+unsent typing and place come back, or opens it afresh when this tab's history no longer holds it.
 
 The overview groups rows by where a setting applies, in two columns on desktop and one on phone.
 **Your name** comes first: the name, or "Not set · screens say “you”", opening `/settings/name`.
@@ -2011,9 +2033,12 @@ is added. **Coding agents** holds Prerequisites, the Validation
 runs switch and Incident reports. **About** holds the Version rows on an installed copy and the Repair rows. Every row
 that opens a page has a chevron; switches save in place.
 
-**Notifications** is set on each device. Its first row, **Decision alerts**, is a switch with the same
-line as the Needs you switch (§3.8.1); where alerts cannot be on, the switch looks disabled and pressing
-it reveals that line. While alerts are on, three rows follow, saving in place:
+**Notifications** is set on each device. Its first row, **Decision alerts**, is the switch with its reach
+or refusal line (§3.8.1); where alerts cannot be on, the switch looks disabled and pressing it reveals that
+line. Opened from the Needs you pill (`/settings#notifications`), Settings scrolls the group into view
+when it is off screen and shows that reason at once, and the phone tab bar keeps Needs you lit. The
+switch is unavailable until Altitude has read what is already waiting, so turning it on never announces
+that. While alerts are on, three rows follow, saving in place:
 
 | Row | Line under the label | Control |
 | --- | --- | --- |

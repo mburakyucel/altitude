@@ -4,7 +4,7 @@ import { scopedProject } from "./projects";
 import { useSelectedProject } from "./scope";
 import { attentionCount } from "../data/decisions";
 
-type Tab = "chat" | "work" | "needs" | "monitor";
+export type Tab = "chat" | "work" | "needs" | "monitor";
 
 const ICONS: Record<Tab, string> = {
   chat: "M3 4.5h14v9H8l-4 3v-3H3z",
@@ -13,8 +13,8 @@ const ICONS: Record<Tab, string> = {
   monitor: "M3 15a7 7 0 1 1 14 0M10 15l3-5",
 };
 
-/** Which tab the current page belongs to; a task or decision page pushed over a tab keeps that tab lit. A repair
- * belongs to no project and lights none. */
+/** Which tab the current page belongs to; a task, decision or Settings page pushed over a tab keeps that tab lit. A
+ * repair belongs to no project and lights none. */
 export function activeTab(pathname: string, state: unknown, search: string): Tab | null {
   if (pathname === "/") return "needs";
   if (pathname.startsWith("/repairs/")) return null;
@@ -26,6 +26,9 @@ export function activeTab(pathname: string, state: unknown, search: string): Tab
   if (/^\/projects\/[^/]+\/decisions\//.test(pathname)) {
     return from === "work" || from === "chat" ? from : "needs";
   }
+  // Settings keeps lit the tab of the page that opened it (settingsOpener), as from Needs you's alert link.
+  const opened = state && typeof state === "object" ? (state as { settingsTab?: unknown }).settingsTab : null;
+  if (pathname.startsWith("/settings") && typeof opened === "string" && opened in ICONS) return opened as Tab;
   return new URLSearchParams(search).get("tab") === "work" ? "work" : "chat";
 }
 

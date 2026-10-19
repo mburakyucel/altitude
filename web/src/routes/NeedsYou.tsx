@@ -5,7 +5,7 @@ import { DecisionCard, StepCard } from "../components/DecisionCard";
 import { ImprovementCard } from "../components/Improvement";
 import type { QuestionOrigin } from "../components/DecisionCard";
 import { useVisitReturn } from "../components/visitMemory";
-import { DecisionAlertToggle } from "../data/alerts";
+import { AlertStatus } from "../data/alerts";
 import { attentionSummary, decisionGroups, isStep, openRepairQuestions } from "../data/decisions";
 import { RepairQuestion } from "../components/Repairs";
 import { useSelectedProject } from "../shell/scope";
@@ -95,14 +95,15 @@ export default function NeedsYou() {
   return (
     <div className="page needs-page">
       <div className="needs-head">
-        <h1 className="text-page-title font-semibold">Needs you</h1>
+        <div className="needs-title">
+          <h1 className="text-page-title font-semibold">Needs you</h1>
+          <AlertStatus />
+        </div>
         {overview.isSuccess && overview.data.queue.length > 0 ? (
           <p className="needs-sub text-muted">{needsSummary(overview.data.queue)}</p>
         ) : overview.isSuccess && openRepairQuestions(overview.data) ? (
           <p className="needs-sub text-muted">{plural(openRepairQuestions(overview.data), "question")} from a repair</p>
         ) : null}
-        {/* The switch waits for the queue: enabling it records what is waiting, not a backlog to announce. */}
-        {overview.data ? <DecisionAlertToggle pending={overview.data.queue} /> : null}
       </div>
       {overview.isError && overview.data ? <p className="text-danger" role="alert">Showing saved questions. Refresh before deciding. <button className="link" onClick={() => overview.refetch()}>Refresh</button></p> : null}
       {overview.isPending ? (
