@@ -690,6 +690,11 @@ class TestMonitor(AgentCase):
         self.assertEqual(self.rows(), {"Dependency check": ("Paused", "paused")})
         self.assertEqual(self.rows(NOW + timedelta(days=7)), {})
 
+    def test_a_skip_never_keeps_an_agent_listed(self):
+        agent = self.agent(schedules=[])
+        self.put(agent, 1, "skipped", "2026-10-13T07:00:00+00:00", ended="2026-10-14T01:00:00+00:00")
+        self.assertEqual(self.rows(), {}, "a run that never started is not a run in the last seven days")
+
     def test_last_is_the_latest_run_that_ran_a_skip_never_replaces_it(self):
         agent = self.agent()
         self.assertIsNone(A.monitor_agents(self.project, now=NOW)[0]["last"])

@@ -2018,7 +2018,8 @@ Altitude runs: each project's coordinator (L3), its live task owners (L2) and it
 after the project's tasks; a repair shows in Work (§3.7). Session rows show their kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
 age such as "3 min ago". An agent's row has the chip **Agent**, the title "<project> / <agent name>" and
 "<engine> · <model> · context 6% · 4 of 20 min"; before its first reading it says "context unknown" with no
-age and no meter, and a reading older than five minutes is stale as a running task's is (meter at half
+age and no meter; its age is that of its session's newest request, so a reading older than five minutes is
+stale as a running task's is (meter at half
 opacity, "Stale" for screen readers). A waiting run is not a session, and the Weekly improvement review's run
 is one engine call, never a session. Session rows are readings, not links. Sessions are the process
 information on this page; there is no raw worker process list.

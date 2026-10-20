@@ -797,18 +797,18 @@ def reconcile(project: str, now: datetime | None = None) -> None:
 
 
 def _observe(project: str, run: dict) -> None:
-    """Keep a running run's context on it, read from its session as a running task's is (`usage.capture`), saving
-    the record only when the reading changed."""
+    """Keep a running run's context on it, read from its session under the project lock as a running task's is
+    (`usage.capture`), saving the record only when the reading changed."""
     shaped = {"l2_engine": run["engine"], "session_id": run.get("session"), "attempt": 1}
-    usage.capture(project, shaped, folder=run_dir(project, run["agent"], run["n"]))
-    context = (shaped.get("token_usage") or {}).get("context") or {}
-    if context.get("percent") is None:
-        return
-    reading = {"percent": context["percent"], "at": context.get("observed_at")}
     with S.project_lock(project):
         record = _load(project)
         current = _run(record, run["agent"], run["n"])
-        if current["state"] == "running" and current.get("context") != reading:
+        if current["state"] != "running":
+            return
+        usage.capture(project, shaped, folder=run_dir(project, run["agent"], run["n"]))
+        context = (shaped.get("token_usage") or {}).get("context") or {}
+        reading = {"percent": context.get("percent"), "at": context.get("observed_at")}
+        if reading["percent"] is not None and current.get("context") != reading:
             current["context"] = reading
             _save(project, record)
 
@@ -1008,7 +1008,7 @@ def monitor_sessions(project: str, *, now: datetime | None = None) -> list[dict]
 
 def monitor_agents(project: str, *, now: datetime | None = None) -> list[dict]:
     """The project's agents as Monitor lists them: each not retired that is on with a schedule, has a run waiting or
-    running, paused itself, or had a run within RECENT. What comes next is the first that applies, in its status
+    running, paused itself, or started a run within RECENT (a skip never ran). What comes next is the first that applies, in its status
     card's order (`_status`); the last run is the latest that ran, so a skip never replaces a result."""
     now = now or datetime.now(timezone.utc)
     record = _load(project)
@@ -1020,7 +1020,7 @@ def monitor_agents(project: str, *, now: datetime | None = None) -> list[dict]:
         times = [t for t in (schedule.upcoming(e["days"], e["time"], now) for e in agent["schedules"]) if t]
         itself = agent["state"] == "paused" and agent["paused"] == "itself"
         if not (run or itself or (agent["state"] == "on" and times)
-                or any(now - _date(r["created"]) < RECENT for r in own)):
+                or any(r.get("started") and now - _date(r["started"]) < RECENT for r in own)):
             continue
         cue = None
         if run:
