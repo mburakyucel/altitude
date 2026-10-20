@@ -378,7 +378,7 @@ test("how a repair ends: Stop, the time limit, its report and Altitude's check, 
   const state = { listing: { running: { id: id("a"), route: "app", title: APP.title }, engine: "Claude", repairs: ROWS } as Json,
     detail: { [id("a")]: running({ timeline: [...STEPS, QUESTION] }) } as Record<string, Json>,
     post: async (_path: string, _body: Json) => ({ status: 200, json: state.detail[id("a")]! }) };
-  await repairs(page, state);
+  const posts = await repairs(page, state);
   const stop = page.getByRole("button", { name: /^Stop/ });
   const composer = page.getByRole("textbox", { name: "Message the repair" });
   const status = statusOf(page, phone);
@@ -430,6 +430,11 @@ test("how a repair ends: Stop, the time limit, its report and Altitude's check, 
   state.detail[id("a")] = running({ stop: { at: ago(0), update: false }, stop_unconfirmed: true });
   await page.reload();
   await walk.state("05-stop-unconfirmed", { visible: [page.getByText("Stop unconfirmed · The repair may still be running."), page.getByRole("button", { name: "Check status" })], hidden: [composer] });
+  // Check status asks the job to stop again.
+  state.post = async () => ({ status: 200, json: state.detail[id("a")]! });
+  const stops = posts.filter((post) => post.path.endsWith("/stop")).length;
+  await page.getByRole("button", { name: "Check status" }).click();
+  await expect.poll(() => posts.filter((post) => post.path.endsWith("/stop")).length).toBe(stops + 1);
 
   // The time ran out: Keep going resumes the same session for an hour, or says why it could not.
   state.detail[id("a")] = ended("time", { status: "checking", keep_going: true });
