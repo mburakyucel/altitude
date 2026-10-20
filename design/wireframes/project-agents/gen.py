@@ -418,35 +418,47 @@ board("DesktopChat", 1440, 900,
 
 
 # ---- monitor ----
-MON_ROWS = [("altitude · Weekly improvement review", "Next Monday at 08:00", "3 suggestions · 2 d ago · 4 min · 1.2M tokens"),
-            ("harbor · Review each merge", PULSE + "Running", "Found something · yesterday · 6 min · 3.9M tokens"),
-            ("harbor · Dependency check", "Next tomorrow at 07:00", "Nothing found · 2 h ago · 6 min · 4.1M tokens"),
-            ("harbor · Upload timing", "Waiting", "Couldn’t finish · 7 d ago · 1 min"),
-            ("harbor · What landed", PAUSE + "Paused", "Found something · 3 d ago · 9 min · 5.2M tokens")]
+MON_ROWS = [("altitude / Weekly improvement review", "Next Monday at 08:00", "Last: 3 suggestions · 2 d ago · 4 min · 1.2M tokens"),
+            ("harbor / Review each merge", PULSE + "Running", "Last: Found something · yesterday · 6 min · 3.9M tokens"),
+            ("harbor / Dependency check", "Next tomorrow at 07:00", "Last: Nothing found · 2 h ago · 6 min · 4.1M tokens"),
+            ("harbor / Upload timing", "Waiting", "Last: Couldn’t finish · 7 d ago · 1 min"),
+            ("harbor / What landed", PAUSE + "Paused", "Last: Found something · 3 d ago · 9 min · 5.2M tokens")]
 
 
 def mon_agents(rows=MON_ROWS, head=True):
-    items = "".join(f'<a class="agl" href="#"><div class="tx"><div class="monitor-row"><b>{a}</b><span class="muted nx">{b}</span></div>'
+    items = "".join(f'<a class="agl" href="#"><div class="tx"><div class="monitor-row"><b>{a}</b><span class="nx">{b}</span></div>'
                     f'<p class="muted" style="margin:0">{c}</p></div>{CHEVR}</a>' for a, b, c in rows)
     return (f'<h2>Agents ({len(rows)})</h2>' if head else '') + f'<div class="card" style="padding:4px 18px">{items}</div>'
 
 
 def session_row(chip, title, meta, ago, meter=None, stale=False):
-    bar = f'<div class="meter"><i style="width:{meter}%"></i></div>' if meter is not None else ''
-    dim = ' style="opacity:.55"' if stale else ''
-    return (f'<div class="sessionrow"{dim}><div class="monitor-row"><span class="chip">{chip}</span><b>{title}</b><span class="muted">{ago}</span></div>'
+    bar = f'<div class="meter"{" style=opacity:.5" if stale else ""}><i style="width:{meter}%"></i></div>' if meter is not None else ''
+    age = f'<span class="muted">{ago}</span>' if ago else ''
+    return (f'<div class="sessionrow"><div class="monitor-row"><span class="chip">{chip}</span><b>{title}</b>{age}</div>'
             f'<p class="muted">{meta}</p>{bar}</div>')
 
 
-SEATS = ('<h2>Seats</h2><div class="card"><div class="monitor-row"><h3 style="margin:0">Claude Code</h3><span class="muted">reading 3m old</span></div>'
-         '<div class="monitor-row" style="margin-top:8px"><span>7-day</span><span>38%</span></div><div class="meter"><i style="width:38%"></i></div></div>')
+def seat(name, week, five):
+    return (f'<div class="card"><div class="monitor-row"><h3 style="margin:0">{name}</h3><span class="muted">reading 3m old</span></div>'
+            f'<div class="monitor-row" style="margin-top:8px"><span>5-hour</span><span>{five}%</span></div><div class="meter"><i style="width:{five}%"></i></div>'
+            f'<div class="monitor-row" style="margin-top:8px"><span>7-day</span><span>{week}%</span></div><div class="meter"><i style="width:{week}%"></i></div></div>')
+
+
+UPDATE = '<h2>Altitude update</h2><p class="muted" style="margin:0 0 4px">No update pending.</p>'
+SEATS = ('<h2>Seats</h2><div class="monseats">' + seat("Claude Code", 38, 12) + seat("Codex", 22, 4) + '</div>'
+         '<p class="muted" style="margin:6px 0 0">The mark on each meter is the 70% reserve line.</p>')
+ROUTING = ('<h2>Routing now</h2><div class="card"><div class="monitor-row"><span>L3 · harbor · Auto</span><b style="flex:none">Claude Code</b></div>'
+           '<p class="muted" style="margin:2px 0 10px">Most weekly headroom</p><div class="monitor-row"><span>L2 · new task</span><b style="flex:none">Claude Code</b></div>'
+           '<p class="muted" style="margin:2px 0 0">Project harbor: most weekly headroom</p></div>')
 AGENT_SESSION = session_row("Agent", "harbor / Review each merge", "Claude Code · Sonnet · context 6% · 4 of 20 min", "just now", 6)
-SESSIONS = ('<h2>Sessions (2)</h2>' + session_row("L3", "harbor", "Claude Code · Fable · context 12%", "1 min ago", 12)
+SESSIONS = ('<h2>Sessions (3)</h2>' + session_row("L3", "harbor", "Claude Code · Fable · context 12%", "1 min ago", 12)
+            + session_row("L2", "harbor / fix-upload-retry", "Claude Code · Opus · context 31% · edits 14", "2 min ago", 31)
             + AGENT_SESSION)
-board("DesktopMonitor", 1440, 900, desk('<h1>Monitor</h1>' + SEATS + SESSIONS + mon_agents(), monitor=True))
-board("PhoneMonitor", 390, 844,
-      '<div class="m"><div></div><header class="mh"><div class="brand" style="margin:0;padding:0 4px;height:40px"><span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-10 4 6 2-3 4 7"/></svg></span>Altitude</div><span class="sp"></span></header>'
-      '<div class="route-content" style="overflow:hidden;padding:4px 16px">' + SESSIONS + mon_agents() + '</div><div></div>' + tabbar("monitor") + '</div>')
+board("DesktopMonitor", 1440, 1640, desk('<h1>Monitor</h1>' + UPDATE + SEATS + ROUTING + SESSIONS + mon_agents(), h=1640, monitor=True))
+board("PhoneMonitor", 390, 1720,
+      '<div class="m" style="height:1720px"><div></div><header class="mh"><div class="brand" style="margin:0;padding:0 4px;height:40px"><span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-10 4 6 2-3 4 7"/></svg></span>Altitude</div><span class="sp"></span></header>'
+      '<div class="route-content" style="overflow:hidden;padding:4px 16px"><h1>Monitor</h1>' + UPDATE + SEATS + ROUTING + SESSIONS + mon_agents()
+      + '</div><div></div>' + tabbar("monitor") + '</div>')
 
 
 # ---- work: the project's task list ----
@@ -603,16 +615,16 @@ CELLS = [
      AGENT_SESSION
      + session_row("Agent", "atlas / Release notes", "Claude Code · Opus · context unknown · 0 of 30 min", "")
      + session_row("Agent", "harbor / Dependency check", "Claude Code · Sonnet · context 41% · 18 of 20 min", "6 min ago", 41, stale=True)),
-    ("54 · Monitor: what comes next", "running, waiting, paused, paused itself, not on yet, budget used, by hand, the zone",
-     mon_agents([("harbor · Review each merge", PULSE + "Running", "No runs yet."),
-                 ("harbor · Upload timing", "Waiting", "Nothing found · 2 h ago · 5 min · 2.8M tokens"),
-                 ("harbor · What landed", PAUSE + "Paused", "Found something · 3 d ago · 9 min · 5.2M tokens"),
-                 ("harbor · Flaky tests", PAUSE + "Paused itself", "Couldn’t finish · yesterday · 1 min"),
-                 ("atlas · Docs drift", "Not on yet", "Found something · 2 d ago · 7 min · 3.1M tokens"),
-                 ("atlas · Release notes", "Waits until Monday", "Skipped · 3 h ago · Only 12 min of this week’s budget was left"),
-                 ("atlas · Licence audit", "Only when you run it", "Nothing found · 6 d ago · 3 min · 0.9M tokens"),
-                 ("altitude · Weekly improvement review", PAUSE + "Paused: its terms changed", "Nothing to suggest · 6 d ago · 3 min"),
-                 ("harbor · Dependency check", "Next tomorrow at 07:00 Istanbul", "Stopped at its limit · 2 h ago · 20 min · 9.4M tokens")],
+    ("54 · Monitor: what comes next", "the first that applies, in the agent page’s order; Last: is the latest run that ran",
+     mon_agents([("harbor / Review each merge", PULSE + "Running", "No runs yet."),
+                 ("harbor / Upload timing", "Waiting", "Last: Nothing found · 2 h ago · 5 min · 2.8M tokens"),
+                 ("atlas / Docs drift", "Not on yet", "Last: Found something · 2 d ago · 7 min · 3.1M tokens"),
+                 ("harbor / Flaky tests", PAUSE + "Paused itself", "Last: Couldn’t finish · yesterday · 1 min"),
+                 ("harbor / What landed", PAUSE + "Paused", "Last: Found something · 3 d ago · 9 min · 5.2M tokens"),
+                 ("altitude / Weekly improvement review", PAUSE + "Paused: its terms changed", "Last: Nothing to suggest · 6 d ago · 3 min"),
+                 ("atlas / Release notes", "Waits until Monday", "Last: Found something · 4 d ago · 12 min · 6.0M tokens"),
+                 ("harbor / Dependency check", "Next tomorrow at 07:00 Istanbul", "Last: Stopped at its limit · 2 h ago · 20 min · 9.4M tokens"),
+                 ("atlas / Licence audit", "Only when you run it", "Last: Nothing found · 6 d ago · 3 min · 0.9M tokens")],
                head=False)),
     ("55 · Monitor: no agents", "no Agents section and no heading; Sessions ends the page",
      '<h2 style="margin-top:0">Sessions (1)</h2>' + session_row("L3", "harbor", "Claude Code · Fable · context 12%", "1 min ago", 12)),
@@ -620,7 +632,7 @@ CELLS = [
 board("States", 1200, 13500, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Every state of the agents page, the agent page, the form, the dialogs and chat, as PROPOSAL.md specifies them.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in CELLS) + '</div>')
-board("PhoneStates", 1720, 9500, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
+board("PhoneStates", 1720, 9800, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: stacked choices, 44px targets, full-width cards.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in CELLS) + '</div>')
 board("PhoneWeeklyTerms", 390, 844, phone(weekly_page(), back="altitude", title="Weekly improvement review",
