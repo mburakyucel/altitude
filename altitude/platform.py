@@ -2760,12 +2760,13 @@ def secret_places() -> tuple[str, ...]:
 #: Where the operator's other programs keep stored sign-ins and keys in the home, on either platform: SSH and GPG keys,
 #: the GitHub, hub and GitLab CLIs, Git's credential store, netrc logins, the AWS, Azure and Google Cloud CLIs,
 #: Kubernetes, Docker's and Podman's registry logins, npm, PyPI, Cargo, RubyGems and Terraform tokens, rclone's
-#: remotes, Vault's token, the 1Password CLI, pass and the GNOME keyring's files.
+#: remotes, Vault's token, the 1Password CLI, pass, and the GNOME keyring's and macOS keychain's files, each at its
+#: default location.
 CREDENTIAL_HOME = (".ssh", ".gnupg", ".config/gh", ".config/hub", ".config/glab-cli", ".git-credentials",
                    ".config/git/credentials", ".netrc", ".aws", ".azure", ".config/gcloud", ".kube",
                    ".docker/config.json", ".config/containers/auth.json", ".npmrc", ".pypirc", ".cargo/credentials",
                    ".cargo/credentials.toml", ".gem/credentials", ".terraform.d/credentials.tfrc.json", ".config/rclone",
-                   ".vault-token", ".config/op", ".password-store", ".local/share/keyrings")
+                   ".vault-token", ".config/op", ".password-store", ".local/share/keyrings", "Library/Keychains")
 
 
 def credential_places() -> tuple[str, ...]:

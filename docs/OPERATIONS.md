@@ -781,16 +781,17 @@ permission for every app on the Mac.
 
 ## Stored sign-ins and agents
 
-The agents Altitude runs never see the sign-ins and keys your other programs keep in your home folder: SSH and GPG
-keys, the GitHub, GitLab, cloud, Kubernetes and container registry logins, package-publishing tokens, Git's saved
-passwords, password stores and the desktop keyring's files. On a Mac they also cannot ask the keychain for anything.
-You, your apps and repairs keep using all of them as before; the
+The agents Altitude runs never see the sign-ins and keys the common command-line tools keep at their usual places
+in your home folder: SSH and GPG keys, the GitHub and GitLab CLIs, the AWS, Azure and Google Cloud CLIs, Kubernetes,
+Docker's and Podman's registry logins, npm, PyPI, Cargo, RubyGems and Terraform tokens, Git's saved passwords,
+password stores, and the desktop keyring's and the Mac keychain's files. On a Mac, agents in Altitude's own sandbox,
+every worker among them, also cannot ask the keychain for anything. You, your apps and repairs keep using all of them as before; the
 [isolation reference](ARCHITECTURE.md#isolation-and-landing) lists every place.
 
-A worker still reaches GitHub: its Git fetches and pushes over HTTPS with your GitHub CLI sign-in, even when a
-project's remote is named over SSH, so keep `gh auth status` signed in. If your Git settings send GitHub's HTTPS
-address to SSH (an `insteadOf` rule for `https://github.com/`), workers cannot push; remove that rule or scope it
-to your own shell. Agents cannot reach other hosts over SSH, sign commits, use cloud or cluster tools, publish
+A worker still reaches GitHub: its Git fetches and pushes over HTTPS with your GitHub CLI sign-in, also when a
+project's remote is named `git@github.com:`, so keep `gh auth status` signed in. If your Git settings send GitHub's
+HTTPS address to SSH (an `insteadOf` or `pushInsteadOf` rule for `https://github.com/`), workers cannot push; remove
+that rule or scope it to your own shell. Agents cannot reach other hosts over SSH, sign commits, use cloud or cluster tools, publish
 packages or read private registries set up in your home. Secrets kept in shell start-up files, Git settings or
 shell histories stay readable to agents; keep secrets out of them.
 

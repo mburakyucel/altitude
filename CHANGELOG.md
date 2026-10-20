@@ -6,8 +6,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 ## Unreleased
 
 - Agents no longer see the sign-ins and keys your other programs keep in your home folder (SSH and GPG keys,
-  GitHub, cloud, cluster and registry logins, publishing tokens, saved Git passwords), and on a Mac they cannot
-  ask the keychain. Workers reach GitHub over HTTPS with your GitHub CLI sign-in, also for remotes named over
+  GitHub, cloud, cluster and registry logins, publishing tokens, saved Git passwords, keyring and keychain files),
+  and on a Mac they cannot ask the keychain. Workers reach GitHub over HTTPS with your GitHub CLI sign-in, also for remotes named over
   SSH; agents can no longer reach other hosts over SSH, sign commits or use cloud tools set up in your home.
 - A Claude task owner uses a skill or custom command you type by name in its conversation
   (`/name arguments`), your own and the project's alike, with what follows as its arguments. The project

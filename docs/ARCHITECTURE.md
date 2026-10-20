@@ -1581,19 +1581,23 @@ The operator's stored credentials are the places in the home where other program
 sign-ins and keys (`platform.credential_places`): `~/.ssh`, `~/.gnupg`, the GitHub, hub and GitLab CLIs' folders,
 Git's credential files, `~/.netrc`, the AWS, Azure and Google Cloud CLIs' folders, `~/.kube`, Docker's and Podman's
 registry logins, the npm, PyPI, Cargo, RubyGems and Terraform token files, rclone's folder, Vault's token, the
-1Password CLI's folder, `pass`'s store and the GNOME keyring's files. Each is hidden from every job in Altitude's
+1Password CLI's folder, `pass`'s store and the GNOME keyring's and macOS keychain's files, each at its default
+location. Each is hidden from every job in Altitude's
 sandbox whether present or not, also where it leads when it is a link, as the engines' places of the operator's own
 are; a Codex coordinator's profile denies the ones present when its turn starts. Only the named files are hidden where
 a folder also holds tools (`~/.docker`, `~/.cargo`). On Linux a place created while a job runs, inside a folder the
 job's home shows read-only, stays readable to that job until it ends. Shell start-up files, Git's settings and shell
 histories stay readable. A confined job therefore has no SSH key, GPG key, cloud or cluster sign-in, or registry
 token of the operator's: it reaches no host over SSH and signs no commit, and the operator's private registries
-named in the home answer it unauthenticated. A task worker reaches GitHub over HTTPS (`engines.GITHUB_GIT`): Git's
-environment rewrites a GitHub remote named over SSH to HTTPS and clears the operator's credential helpers for
-GitHub in favor of the GitHub CLI, which signs in with the worker's `GH_TOKEN` and keeps its settings in the task's
-scratch folder (`GH_CONFIG_DIR`). The worker's fetches and pushes, landing's among them, therefore carry the
-GitHub CLI sign-in's permissions; an operator Git setting that rewrites GitHub's HTTPS address to SSH defeats the
-rewrite. Repairs run outside every sandbox and keep the operator's full access.
+named in the home answer it unauthenticated. On macOS a Codex coordinator runs under Codex's own profile, which
+decides its keychain access; that turn has no network of its own. A task worker reaches GitHub over
+HTTPS (`engines.GITHUB_GIT`): Git's environment rewrites a GitHub remote named `git@github.com:` or
+`ssh://git@github.com/` to HTTPS and clears the operator's credential helpers for GitHub in favor of the GitHub
+CLI, which signs in with the worker's `GH_TOKEN` and keeps its settings in the task's scratch folder
+(`GH_CONFIG_DIR`). The worker's fetches and pushes, landing's among them, therefore carry the GitHub CLI sign-in's
+permissions; an operator Git setting that sends GitHub's HTTPS address to SSH (`insteadOf` or `pushInsteadOf`)
+takes precedence, and the worker's pushes then fail. Repairs run outside every sandbox and keep the operator's full
+access.
 
 Every Claude job Altitude starts has a Claude folder of its own (`CLAUDE_CONFIG_DIR`), so no job writes
 the operator's `~/.claude`, `~/.claude.json` or the GitHub CLI's configuration, which another run or
