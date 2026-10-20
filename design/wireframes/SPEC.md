@@ -2573,13 +2573,16 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
 - **One agent** (`/projects/:name/agents/:id`): the status card and its actions (Run now, Pause, Resume, Turn
   on, Stop, Open), Recent runs with **Show older**, What it does with **Edit**, and **Retire…** with its
   dialog. A retired agent's page is read-only.
-- **One run** (`…/runs/:n`): what fired it, the model and usage; running, the live session read only with
-  **Stop**; ended, the outcome and report with **Brief it ran** and **Session** folded. No composer.
+- **One run** (`…/runs/:n`): what fired it, the model once it starts and usage once it ends; waiting, what it
+  waits for ("Waiting for a free task slot", "Waiting for Review each merge") with **Stop**; running, the live
+  session read only with **Stop**; ended, the outcome and report with **Brief it ran** and **Session** folded. No composer.
 - **The form** (`…/agents/new`, `…/:id/edit`): Name, What it does, Runs when (schedule rows of seven day
   toggles and a time, **+ Add a schedule**, "Only when you run it" with none), Tell me in chat, Model (§3.6.1)
   and Each run stops after. A new agent is saved not on.
 - **Chat**: one system line per ending as Tell me allows, led by the agent's name with **Open**; L3's offer card
-  under its reply with **Create agent** or **Save change** and **Edit first**, created, refused and lapsed.
+  under its reply with **Create agent** or **Save change** and **Edit first**, created, refused and lapsed. A switch L3
+  makes on your word adds one quiet line ("Paused Dependency check", "Resumed …", "Turned on …", "Retired …",
+  "Stopped …'s run") whose **Open** leads to the agent, where Resume is.
 
 Event triggers and their menu, the Weekly review as a built-in agent and Monitor's Agents section are later
 steps of the design and do not appear.

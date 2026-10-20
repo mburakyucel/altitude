@@ -946,7 +946,7 @@ def _run_row(run: dict) -> dict:
 
 def run_view(project: str, agent_id: str, n: int, *, now: datetime | None = None) -> dict:
     """One run's page: its row, the brief version it ran, its report and its session. A running run's minutes are
-    those elapsed so far, as its agent's status says them."""
+    those elapsed so far, and a waiting run's line says what it waits for, as its agent's status says them."""
     now = now or datetime.now(timezone.utc)
     record = _load(project)
     agent, run = _agent(record, agent_id), _run(record, agent_id, n)
@@ -954,6 +954,8 @@ def run_view(project: str, agent_id: str, n: int, *, now: datetime | None = None
     row = _run_row(run)
     if run["state"] == "running":
         row["minutes"] = _elapsed(run, now)
+    elif run["state"] == "waiting":
+        row["line"] = _waiting_for(record, run)
     return {**row, "agent": {"id": agent["id"], "name": agent["name"]},
             "model": config.model_label(run.get("engine_model") or run["model"]) if run.get("engine") else None,
             "limit": run.get("limit", version["definition"]["limit"]), "brief": version["definition"]["brief"],

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useBlocker, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { sendProjectAgent, useProjectAgent, useProjectAgents } from "../data/api";
+import { pressId, sendProjectAgent, useProjectAgent, useProjectAgents } from "../data/api";
 import type { AgentClock, ProjectAgentDefinition } from "../data/api";
 import { DAY_NAMES, LIMITS, NEW_DEFINITION, NEW_SCHEDULE, TELL, refusal } from "../data/projectAgents";
 import { AgentFrame } from "../components/ProjectAgentParts";
@@ -58,8 +58,9 @@ function DiscardDialog({ detail, onKeep, onDiscard }: { detail: string; onKeep: 
   </Overlay>;
 }
 
-function Form({ project, id, read, start, offer, clock }: {
-  project: string; id?: string; read: { version?: number; definition: ProjectAgentDefinition }; start: ProjectAgentDefinition; offer: string | null; clock?: AgentClock;
+function Form({ project, id, read, latest, start, offer, clock }: {
+  project: string; id?: string; read: { version?: number; definition: ProjectAgentDefinition }; latest?: number; start: ProjectAgentDefinition;
+  offer: string | null; clock?: AgentClock;
 }) {
   // The version and definition the form opened on: a save names that version, so a change from another window is refused.
   const [{ version, definition: initial }] = useState(read);
@@ -69,12 +70,14 @@ function Form({ project, id, read, start, offer, clock }: {
   const [incomplete, setIncomplete] = useState(false);
   const form = useRef<HTMLFormElement>(null);
   const saved = useRef(false);
+  // One press until the draft changes: Retry repeats it, so a save whose answer was lost is not made twice.
+  const press = useRef<string | null>(null);
   const navigate = useNavigate();
   const client = useQueryClient();
   const back = id ? `/projects/${project}/agents/${id}` : `/projects/${project}/agents`;
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && !saved.current && currentLocation.pathname !== nextLocation.pathname);
-  const set = (change: Partial<ProjectAgentDefinition>) => { setDraft({ ...draft, ...change }); setIncomplete(false); };
+  const set = (change: Partial<ProjectAgentDefinition>) => { setDraft({ ...draft, ...change }); setIncomplete(false); press.current = null; };
   const missing = !draft.name.trim() || !draft.brief.trim();
   const noDay = draft.schedules.findIndex((schedule) => !schedule.days.length);
   const save = async () => {
@@ -89,15 +92,18 @@ function Form({ project, id, read, start, offer, clock }: {
     }
     setSaving(true);
     setError(null);
+    press.current ??= pressId();
     try {
       const result = await sendProjectAgent<{ agent: string }>(project, id ? "set" : "create",
-        { ...(id ? { agent: id, version } : {}), definition: { ...draft, name: draft.name.trim() }, ...(offer ? { offer } : {}) });
+        { ...(id ? { agent: id, version } : {}), definition: { ...draft, name: draft.name.trim() }, ...(offer ? { offer } : {}) }, press.current);
       saved.current = true;
       void client.invalidateQueries({ queryKey: ["project", project] });
       navigate(`/projects/${project}/agents/${result.agent}`, { replace: true });
     } catch (failure) {
       setError((failure as Error).message);
       setSaving(false);
+      // A refusal may mean the agent moved on; reading it again tells whether Retry can still succeed.
+      if (id) void client.invalidateQueries({ queryKey: ["project", project, "agents", id] });
     }
   };
   const primary = id ? "Save" : "Create agent";
@@ -145,8 +151,9 @@ function Form({ project, id, read, start, offer, clock }: {
       <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => navigate(back)}>Cancel</button>
     </div>
     {incomplete && missing ? <p role="alert" className="text-meta text-danger">Give it a name and a brief.</p> : null}
-    {error ? <p role="alert" className="text-meta text-danger">{refusal("Not saved", error)}{" "}
-      <button type="button" className="link" onClick={() => void save()}>Retry</button></p> : null}
+    {error ? <p role="alert" className="text-meta text-danger">{refusal("Not saved", error)}
+      {/* Once the agent changed in another window, this edit cannot be saved over it; Cancel opens the new version. */}
+      {id && latest !== version ? null : <>{" "}<button type="button" className="link" onClick={() => void save()}>Retry</button></>}</p> : null}
     {blocker.state === "blocked" ? <DiscardDialog detail={id ? `Your edits to ${initial.name} haven’t been saved.` : "Your new agent hasn’t been saved."}
       onKeep={() => blocker.reset()} onDiscard={() => blocker.proceed()} /> : null}
   </form>;
@@ -168,7 +175,7 @@ export default function ProjectAgentForm() {
     {failed ? <div className="settings-card" role="alert"><p>Could not load this agent.</p>
       <button type="button" className="btn agents-retry" onClick={() => void failed.refetch()}>Retry</button></div>
       : !ready || !initial ? <div className="settings-card"><StatusMark label="Loading this agent…" /></div>
-        : <Form key={`${id ?? "new"}:${offerId ?? ""}`} project={name} id={id} read={{ version: agent.data?.version, definition: initial }}
+        : <Form key={`${id ?? "new"}:${offerId ?? ""}`} project={name} id={id} read={{ version: agent.data?.version, definition: initial }} latest={agent.data?.version}
           start={offer?.definition ?? initial} offer={offer ? offer.id : null} clock={agents.data?.clock} />}
   </AgentFrame>;
 }

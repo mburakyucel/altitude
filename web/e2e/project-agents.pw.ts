@@ -288,6 +288,16 @@ test("a run's page shows its report, the brief it ran and its session, or why it
     hidden: [page.getByText("Brief it ran"), page.locator(".agent-report")],
   });
   await fits();
+
+  // A waiting run: why it waits and Stop; no model or session before its worker starts.
+  await walk.open(phone ? `${project}?tab=work` : project);
+  await press(page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Dependency check · Agent run/ }));
+  await walk.state("28-run-waiting", {
+    visible: [page.getByText("Waiting for Flaky test watch", { exact: true }), page.getByRole("button", { name: "Stop", exact: true }),
+      page.locator(".agent-run-meta").getByText("Run now by you", { exact: true })],
+    hidden: [page.getByText("Brief it ran"), page.locator(".agent-report")],
+  });
+  await fits();
 });
 
 test("the form: defaults, what is missing, create, edit and discard", async ({ page }, info) => {
@@ -304,7 +314,7 @@ test("the form: defaults, what is missing, create, edit and discard", async ({ p
 
   await walk.open(`${project}/agents`);
   await press(page.getByRole("link", { name: "New agent", exact: true }));
-  await walk.state("28-new-agent-defaults", {
+  await walk.state("29-new-agent-defaults", {
     visible: [title("New agent"), name, brief, page.getByText("On a schedule", { exact: true }), page.getByLabel("Time"),
       page.getByRole("radio", { name: "When it finds something" }), page.getByLabel("Each run stops after"), create,
       page.getByRole("button", { name: "Cancel", exact: true }), page.getByRole("button", { name: "+ Add a schedule", exact: true })],
@@ -323,25 +333,25 @@ test("the form: defaults, what is missing, create, edit and discard", async ({ p
   await fits();
 
   await press(create, { force: true }); // aria-disabled: the press says what is missing
-  await walk.state("29-incomplete", { visible: [missing], hidden: [noDay] });
+  await walk.state("30-incomplete", { visible: [missing], hidden: [noDay] });
   await expect(name).toBeFocused();
   await name.fill("Docs spelling check");
-  await walk.state("30-typing-clears-it", { visible: [create], hidden: [missing] });
+  await walk.state("31-typing-clears-it", { visible: [create], hidden: [missing] });
   await brief.fill("List misspelled words in docs/ and the file each is in.");
   for (const label of ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]) await press(day(label));
-  await walk.state("31-no-day", { visible: [noDay], hidden: [missing] });
+  await walk.state("32-no-day", { visible: [noDay], hidden: [missing] });
   await expect(create).toHaveAttribute("aria-disabled", "true");
   await press(create, { force: true });
   await expect(day("Monday")).toBeFocused();
   await press(day("Monday"));
   await press(day("Wednesday"));
-  await walk.state("32-days-picked", { visible: [create], hidden: [noDay] });
+  await walk.state("33-days-picked", { visible: [create], hidden: [noDay] });
   await expect(create).not.toHaveAttribute("aria-disabled");
   await fits();
 
   await press(create);
   const status = page.locator(".agent-status");
-  await walk.state("33-created-not-on-yet", {
+  await walk.state("34-created-not-on-yet", {
     visible: [title("Docs spelling check"), status.getByText("Not on yet", { exact: true }),
       status.getByRole("button", { name: "Run now", exact: true }), status.getByRole("button", { name: "Turn on", exact: true }),
       page.getByText("No runs yet.", { exact: true }), page.getByText(/^Mon, Wed at 07:00 · Tells you when it finds something · /)],
@@ -356,22 +366,22 @@ test("the form: defaults, what is missing, create, edit and discard", async ({ p
   await name.fill("Docs spelling sweep");
   const dialog = page.getByRole("dialog", { name: "Discard your changes?" });
   await press(page.getByRole("button", { name: "Cancel", exact: true }));
-  await walk.state("34-discard-question", {
+  await walk.state("35-discard-question", {
     visible: [dialog, dialog.getByText("Your edits to Docs spelling check haven’t been saved.", { exact: true }),
       dialog.getByRole("button", { name: "Keep editing" }), dialog.getByRole("button", { name: "Discard" })],
     hidden: [],
   });
   await expect(dialog.getByRole("button", { name: "Keep editing" })).toBeFocused();
   await press(dialog.getByRole("button", { name: "Keep editing" }));
-  await walk.state("35-kept-editing", { visible: [title("Edit"), name], hidden: [dialog] });
+  await walk.state("36-kept-editing", { visible: [title("Edit"), name], hidden: [dialog] });
   await expect(name).toHaveValue("Docs spelling sweep");
   await press(back);
   await press(dialog.getByRole("button", { name: "Discard" }));
-  await walk.state("36-discarded", { visible: [title("Docs spelling check"), status.getByText("Not on yet", { exact: true })], hidden: [dialog] });
+  await walk.state("37-discarded", { visible: [title("Docs spelling check"), status.getByText("Not on yet", { exact: true })], hidden: [dialog] });
 
   // Turn on answers at once.
   await press(status.getByRole("button", { name: "Turn on", exact: true }));
-  await walk.state("37-turned-on", {
+  await walk.state("38-turned-on", {
     visible: [status.getByText(/^Next: \w+ at 07:00$/), status.getByRole("button", { name: "Pause", exact: true })],
     hidden: [status.getByText("Not on yet"), status.getByRole("button", { name: "Turn on" })],
   });
@@ -386,17 +396,17 @@ test("Retire asks first; a retired agent's page is read only", async ({ page }, 
   const retire = page.getByRole("button", { name: "Retire…", exact: true });
   const dialog = page.getByRole("dialog", { name: "Retire Release notes check?" });
   await press(retire);
-  await walk.state("38-retire-question", {
+  await walk.state("39-retire-question", {
     visible: [dialog, dialog.getByText("It won’t run again, from its triggers or Run now. Its past runs stay readable under Retired.", { exact: true }),
       dialog.getByRole("button", { name: "Cancel" }), dialog.getByRole("button", { name: "Retire", exact: true })],
     hidden: [],
   });
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
   await press(dialog.getByRole("button", { name: "Cancel" }));
-  await walk.state("39-retire-cancelled", { visible: [retire, page.locator(".agent-status")], hidden: [dialog] });
+  await walk.state("40-retire-cancelled", { visible: [retire, page.locator(".agent-status")], hidden: [dialog] });
   await press(retire);
   await press(dialog.getByRole("button", { name: "Retire", exact: true }));
-  await walk.state("40-retired", {
+  await walk.state("41-retired", {
     visible: [title("Release notes check"), page.getByText(/^Retired \w{3} \d+$/), page.getByRole("link", { name: /^Found something/ }),
       page.getByText(/^Weekdays at 07:00 · Tells you every run · /)],
     hidden: [dialog, page.locator(".agent-status"), page.getByRole("link", { name: "Edit", exact: true }), retire,
@@ -409,7 +419,7 @@ test("Retire asks first; a retired agent's page is read only", async ({ page }, 
   await press(back);
   await press(page.getByRole("button", { name: "2 retired", exact: true }));
   await press(page.getByRole("link", { name: /^Old lint sweep/ }));
-  await walk.state("41-retired-page", {
+  await walk.state("42-retired-page", {
     visible: [title("Old lint sweep"), page.getByText(/^Retired \w{3} \d+$/), page.getByText("No runs yet.", { exact: true })],
     hidden: [page.locator(".agent-status"), page.locator(".agents-page").getByRole("button"), page.getByRole("link", { name: "Edit", exact: true })],
   });
@@ -426,7 +436,7 @@ test("chat: a run's result line opens its run, and L3's offer card creates the a
   const createAgent = offer.getByRole("button", { name: "Create agent", exact: true });
 
   await walk.open(project);
-  await walk.state("42-chat-lines-and-offer", {
+  await walk.state("43-chat-lines-and-offer", {
     visible: [found, found.getByRole("link", { name: "Open", exact: true }),
       chat.locator(".agent-line").filter({ hasText: "Release notes check found nothing." }),
       chat.locator(".agent-line").filter({ hasText: "Release notes check couldn't finish: The checkout has no CHANGELOG.md." }),
@@ -440,18 +450,18 @@ test("chat: a run's result line opens its run, and L3's offer card creates the a
   await fits();
 
   await press(createAgent);
-  await walk.state("43-offer-created", {
+  await walk.state("44-offer-created", {
     visible: [offer.getByText(/^Created · Open$/), offer.getByRole("link", { name: "Open", exact: true })],
     hidden: [createAgent, offer.getByRole("link", { name: "Edit first" })],
   });
   await press(offer.getByRole("link", { name: "Open", exact: true }));
-  await walk.state("44-offered-agent", {
+  await walk.state("45-offered-agent", {
     visible: [title("Docs link check"), page.locator(".agent-status").getByText("Not on yet", { exact: true })], hidden: [],
   });
 
   await walk.open(project);
   await press(found.getByRole("link", { name: "Open", exact: true }));
-  await walk.state("45-result-line-opens-run", {
+  await walk.state("46-result-line-opens-run", {
     visible: [title(/^Run · /), page.getByText("Two fixes merged this week have no changelog entry:")], hidden: [],
   });
   await fits();

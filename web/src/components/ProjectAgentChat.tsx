@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { sendProjectAgent, useProjectAgents } from "../data/api";
+import { pressId, sendProjectAgent, useProjectAgents } from "../data/api";
 import type { ChatMessage, ProjectAgentOffer } from "../data/api";
 import { refusal, zoned } from "../data/projectAgents";
 import { ClampedBrief } from "./ProjectAgentParts";
@@ -38,11 +38,13 @@ export function ProjectAgentOfferCard({ project, offer }: { project: string; off
   const clock = useProjectAgents(project).data?.clock;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // One press per card: pressing again after a failure repeats it, so a lost answer does not save twice.
+  const [requestId] = useState(pressId);
   const press = async () => {
     setBusy(true);
     setError(null);
     try {
-      await sendProjectAgent(project, "offer", { offer: offer.id });
+      await sendProjectAgent(project, "offer", { offer: offer.id }, requestId);
     } catch (failure) {
       setError((failure as Error).message);
     }

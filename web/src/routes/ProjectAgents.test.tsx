@@ -304,6 +304,21 @@ describe("One agent", () => {
     expect(presses.map((p) => p.action)).toEqual(["pause", "pause"]);
   });
 
+  it("Pause during a run keeps its line, Open and Stop, held until the server's answer is read", async () => {
+    const hold = deferred();
+    const { state } = serve({ press: () => hold.promise });
+    state.agent = detail({ status: { line: "Running · 4 of 20 min", actions: ["open", "stop", "pause"], run: 3, spinning: true } });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check" });
+    await user.click(await screen.findByRole("button", { name: "Pause" }));
+    expect(screen.getByText(/Running · 4 of 20 min/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+    state.agent = detail({ state: "paused", status: { line: "Running · 4 of 20 min · Paused after this run", actions: ["open", "stop", "resume"], run: 3, spinning: true } });
+    hold.resolve(json({ ok: true, agent: "dependency-check", state: "paused" }));
+    expect(await screen.findByRole("button", { name: "Resume" })).toBeInTheDocument();
+  });
+
   it("paused itself: its reason in the line", async () => {
     const { state } = serve();
     state.agent = detail({ state: "paused", status: { line: "Paused itself after 3 runs in a row couldn't finish", actions: ["resume", "run"], run: null, spinning: false } });
@@ -417,6 +432,17 @@ describe("One run", () => {
     hold.resolve(json({ ok: true, agent: "dependency-check", n: 2 }));
     expect(await screen.findByText("Stopped by you")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
+  });
+
+  it("waiting: its line and Stop with no model before a worker started, and no live session", async () => {
+    const { state } = serve();
+    state.run = runDetail({ state: "waiting", outcome: "Waiting", tone: "muted", started: null, ended: null, minutes: null, tokens: null,
+      line: "Waiting for a free task slot", report: null, model: null, session: null });
+    renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    expect(await screen.findByText("Waiting for a free task slot")).toBeInTheDocument();
+    expect(document.querySelector(".agent-run-meta")).toHaveTextContent(/^On its schedule$/);
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.queryByText("Reading the lock file.")).toBeNull();
   });
 
   it("couldn't finish: the reason in the report's place", async () => {
@@ -538,6 +564,21 @@ describe("The form", () => {
     refuse = false;
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/harbor/agents/dependency-check"));
+    // Retry repeats the same press, so a save whose answer was lost is not made twice.
+    expect(presses[1]!.request_id).toBe(presses[0]!.request_id);
+  });
+
+  it("edit: once the agent changed in another window, the refusal offers no Retry", async () => {
+    const { state, presses } = serve({ press: () => {
+      state.agent = detail({ version: 4 });
+      return json({ error: "Dependency check changed in another window." }, 409);
+    } });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/edit" });
+    await user.type(await screen.findByRole("textbox", { name: "What it does" }), " Name the packages.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not saved: Dependency check changed in another window.");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry" })).toBeNull());
+    expect(presses).toHaveLength(1);
   });
 
   it("unsaved: leaving asks Discard your changes? with Keep editing focused", async () => {

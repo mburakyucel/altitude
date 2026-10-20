@@ -812,7 +812,8 @@ export const ProjectAgentDetailSchema = z.object({
 export type ProjectAgentDetail = z.infer<typeof ProjectAgentDetailSchema>;
 export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
   agent: z.object({ id: z.string(), name: z.string() }),
-  model: z.string(), limit: z.number(),
+  /** None until the run starts and its engine is chosen. */
+  model: z.string().nullable(), limit: z.number(),
   /** The brief as the run read it. */
   brief: z.string(),
   report: z.string().nullable(),
@@ -858,11 +859,15 @@ export function useProjectAgentRun(project: string, id: string, n: number) {
   });
 }
 
-/** One press on agents: a fresh request id each, so a repeat of the same press returns the first receipt. */
-export async function sendProjectAgent<T = Record<string, unknown>>(project: string, action: string, fields: Record<string, unknown> = {}) {
+export const pressId = () => crypto.randomUUID().replaceAll("-", "");
+
+/** One press on agents. A retry of the same press passes its `requestId` again, so a press whose answer was lost
+ * returns its first receipt instead of saving twice. */
+export async function sendProjectAgent<T = Record<string, unknown>>(project: string, action: string, fields: Record<string, unknown> = {},
+  requestId = pressId()) {
   return api<{ ok: true } & T>("/api/agents", {
     method: "POST",
-    body: JSON.stringify({ project, action, request_id: crypto.randomUUID().replaceAll("-", ""), ...fields }),
+    body: JSON.stringify({ project, action, request_id: requestId, ...fields }),
   });
 }
 

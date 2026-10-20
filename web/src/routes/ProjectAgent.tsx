@@ -48,7 +48,9 @@ function StatusCard({ project, agent, clock, onRead }: { project: string; agent:
     }
   };
   // Pause, Resume and Turn on show their result at once; the server's line replaces it once read.
-  const shown = pending?.action === "pause" ? { line: "Paused", actions: ["resume", "run"] as ProjectAgentAction[], mark: <PauseMark /> }
+  // Pausing during a run lets it finish: its line, Open and Stop stay.
+  const shown = pending?.action === "pause" && status.run != null ? { line: zoned(status.line, clock), actions: status.actions.filter((action) => action !== "pause"), mark: status.spinning ? <span className="spinner" aria-hidden /> : null }
+    : pending?.action === "pause" ? { line: "Paused", actions: ["resume", "run"] as ProjectAgentAction[], mark: <PauseMark /> }
     : pending?.action === "resume" || pending?.action === "turn_on" ? { line: pending.action === "resume" ? "Resuming…" : "Turning on…", actions: ["run", "pause"] as ProjectAgentAction[], mark: <span className="spinner" aria-hidden /> }
       : { line: zoned(status.line, clock), actions: status.actions, mark: status.spinning ? <span className="spinner" aria-hidden /> : agent.state === "paused" ? <PauseMark /> : null };
   const busy = (action: ProjectAgentAction) => pending?.action === action && (action === "run" || action === "stop");

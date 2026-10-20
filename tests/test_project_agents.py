@@ -223,6 +223,8 @@ class TestStarting(AgentCase):
         states = {r["agent"]: r["state"] for r in self.runs()}
         self.assertEqual(states, {second: "running", first: "waiting"})
         self.assertEqual(A.agent_view(self.project, first, now=NOW)["status"]["line"], "Waiting for Second")
+        waiting = A.run_view(self.project, first, 1, now=NOW)
+        self.assertEqual((waiting["line"], waiting["model"], waiting["session"]), ("Waiting for Second", None, None))
 
     def test_the_weekly_budget_counts_from_monday_and_a_run_needs_its_whole_limit(self):
         self.launching()
