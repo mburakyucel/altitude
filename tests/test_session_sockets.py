@@ -64,6 +64,11 @@ NO_NEW_PRIVS = ("import ctypes, os, sys; assert ctypes.CDLL(None).prctl(38, 1, 0
                 "os.execv(sys.argv[1], sys.argv[1:])")
 
 
+def macos_only(why: str):
+    """Runs a case only on macOS; `make sandbox-vm` accepts this skip on its Linux guest and fails on any other."""
+    return unittest.skipUnless(NATIVE_PLATFORM == "darwin", f"macOS only: {why}")
+
+
 def listen(address: str) -> socket.socket:
     server = socket.socket(socket.AF_UNIX)
     server.bind(address)
@@ -277,7 +282,7 @@ class TestOperatorsClaudeFolder(HomeSandboxCase):
         self.assertEqual((self.home / ".claude.json").read_text(), "fictional state", "the host's files are unchanged")
         self.assertEqual((self.operator / "settings.json").read_text(), "fictional settings")
 
-    @unittest.skipUnless(NATIVE_PLATFORM == "darwin", "Seatbelt matches resolved paths and names made later")
+    @macos_only("Seatbelt matches resolved paths and names made later")
     def test_a_linked_claude_folder_shows_a_job_its_linked_entries_and_nothing_else_of_the_target(self):
         target = self.home / "dotfiles/claude-folder"
         self.operator.rename(target)
@@ -293,7 +298,7 @@ class TestOperatorsClaudeFolder(HomeSandboxCase):
                                 "linked skill": "fictional skill", "settings, by the target": "fictional settings",
                                 "write": errno.EPERM, "listing": errno.EPERM})
 
-    @unittest.skipUnless(NATIVE_PLATFORM == "darwin", "Seatbelt refuses a name the state file's prefix starts")
+    @macos_only("Seatbelt refuses a name the state file's prefix starts")
     def test_a_state_file_copy_made_after_a_claude_job_starts_is_refused_inside_it(self):
         later = self.home / ".claude.json.backup.1700000000000"
         own = self.work / "claude"
@@ -303,7 +308,7 @@ class TestOperatorsClaudeFolder(HomeSandboxCase):
                         before=lambda: later.write_text("fictional state"))
         self.assertEqual((seen["later copy"], seen["state"], seen["write"]), (errno.EPERM,) * 3)
 
-    @unittest.skipUnless(NATIVE_PLATFORM == "darwin", "Seatbelt hides the folder; bubblewrap's case is TestSandboxedJob")
+    @macos_only("Seatbelt hides the folder; bubblewrap's case is TestSandboxedJob")
     def test_a_job_sees_only_the_entries_its_codex_folder_links_to_of_the_operators_codex_folder(self):
         operator = self.home / ".codex"
         (operator / "sessions").mkdir(parents=True)

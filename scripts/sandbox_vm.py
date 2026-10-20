@@ -8,14 +8,15 @@ Real bubblewrap starts neither inside an Altitude worker, nor in the validation 
 does (scripts/installation_vm.py), from the signature-checked cached image on a copy-on-write overlay. While online it
 installs bubblewrap, Ubuntu's own AppArmor profile that admits bubblewrap to user namespaces as on an Ubuntu desktop,
 the hardware-enablement kernel, which offers Landlock's abstract-socket scope, and Git and the GitHub CLI, which a
-worker reaches GitHub with. It then restarts on that kernel,
-loses its online card and runs the module from the committed source. RESULTS_DIR/sandbox-vm.json records the guest,
-its kernel, bubblewrap and Landlock versions, the module's output and whether every case ran and passed: a skipped
-case fails the run. The VM is deleted afterwards. Requires what the installation lane requires.
+worker reaches GitHub with. It then restarts on that kernel, loses its online card and runs the module from the
+committed source. RESULTS_DIR/sandbox-vm.json records the guest, its kernel, bubblewrap and Landlock versions, the
+module's output and whether every case ran and passed: a case skipped for any reason but being macOS-only, as
+Seatbelt's are, fails the run. The VM is deleted afterwards. Requires what the installation lane requires.
 """
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 from pathlib import Path
 import re
@@ -35,6 +36,18 @@ COMMANDS = ("cp /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/ap
 MODULE = "tests.test_session_sockets"
 LANDLOCK = ("python3 -c 'import ctypes; libc = ctypes.CDLL(None); libc.syscall.restype = ctypes.c_long; "
             "print(libc.syscall(444, None, ctypes.c_size_t(0), ctypes.c_uint32(1)))'")
+#: How a case the Linux guest skips by design says so (tests/test_session_sockets.py's `macos_only`).
+MACOS_ONLY = "macOS only: "
+
+
+def judge(returncode: int, output: str) -> dict:
+    """The module's verbose unittest output summarized: it passes when every case passed and every skip is macOS-only,
+    with at least one case run."""
+    ran, summary = re.search(r"^Ran (\d+) tests?", output, re.M), re.findall(r"^(?:OK|FAILED)\b.*$", output, re.M)
+    ran = int(ran.group(1)) if ran else 0
+    skipped = [ast.literal_eval(reason) for reason in re.findall(r"\.\.\. skipped (.*)$", output, re.M)]
+    return {"returncode": returncode, "ran": ran, "summary": summary[-1] if summary else None, "skipped": skipped,
+            "passed": returncode == 0 and ran > len(skipped) and all(r.startswith(MACOS_ONLY) for r in skipped)}
 
 
 def run(results: Path, commit: str, cache: Path) -> int:
@@ -65,10 +78,7 @@ def run(results: Path, commit: str, cache: Path) -> int:
                            f"python3 -m unittest -v {MODULE}", timeout=600, check=False)
         output = done.stdout + done.stderr
         (results / "sandbox-vm.log").write_text(output)
-        ran, summary = re.search(r"^Ran (\d+) tests?", output, re.M), re.findall(r"^(?:OK|FAILED)\b.*$", output, re.M)
-        record.update(returncode=done.returncode, ran=int(ran.group(1)) if ran else 0,
-                      summary=summary[-1] if summary else None, skipped=re.findall(r"\.\.\. skipped (.*)$", output, re.M))
-        record["passed"] = done.returncode == 0 and record["ran"] > 0 and not record["skipped"]
+        record.update(judge(done.returncode, output))
         vm.note(("passed: " if record["passed"] else "failed: ") + output.strip().splitlines()[-1])
         return 0 if record["passed"] else 1
     except (Exception, SystemExit) as error:
