@@ -649,11 +649,13 @@ class Confinement(DarwinCase):
         self.assertIn('(subpath "/private/var/folders/ab/cd")', text, "the shared folders stay writable as files")
         self.assertLess(text.index("(deny network-outbound (remote unix-socket))"), text.index(platform.private_rule()))
 
-    def test_profile_refuses_the_paths_that_run_programs_outside_it(self):
+    def test_profile_refuses_the_keychain_and_the_paths_that_run_programs_outside_it(self):
         self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
         text = platform.seatbelt_profile(["/private/tmp/work"], temporary="/private/tmp/own")
         for rule in ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator.")'
-                     ' (xpc-service-name-prefix "com.apple.CoreSimulator."))', "(deny lsopen)", "(deny appleevent-send)"):
+                     ' (xpc-service-name-prefix "com.apple.CoreSimulator.")'
+                     ' (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))',
+                     "(deny lsopen)", "(deny appleevent-send)"):
             self.assertIn(rule, text)
         self.assertTrue(text.endswith(platform.SERVICE_ESCAPES), "a later allow would reopen them")
 

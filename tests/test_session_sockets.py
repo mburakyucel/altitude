@@ -354,7 +354,7 @@ class TestOperatorsCredentials(HomeSandboxCase):
         self.assertEqual(seen, {**{name: errno.EPERM if darwin else errno.EACCES if name in self.FILES else errno.ENOENT
                                    for name in files},
                                 "write": errno.EPERM if darwin else "written",
-                                "listing": errno.EPERM if darwin else []})
+                                "listing": errno.EPERM if darwin else ["written"]})
         self.assertFalse((self.home / "dotfiles/ssh/written").exists(), "a write lands in the job's own empty folder")
         for key in self.keys.values():
             self.assertEqual(key.read_text(), "fictional key", "the host's files are unchanged")
