@@ -10,56 +10,54 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   and on a Mac they cannot ask the keychain. Workers reach GitHub over HTTPS with your GitHub CLI sign-in, also
   for remotes named over SSH; agents can no longer reach other hosts over SSH, sign commits or use cloud tools set
   up in your home.
-- The Linux sandbox VM lane (`make sandbox-vm`) passes when the only cases it skips are the macOS-only
-  Seatbelt ones; any other skip fails it.
-- A Claude task owner uses a skill or custom command you type by name in its conversation
-  (`/name arguments`), your own and the project's alike, with what follows as its arguments. The project
-  conversation's Claude coordinator does not load skills or commands, and Codex is not yet confirmed.
+
+## v0.11.0 — 2026-10-20
+
+Feature release of the early preview.
+
 - When something does not work, a repair agent finds out why and fixes it: **Repair** on a failed
-  update's notice or **Repair…** in Settings → About starts one with your full access for two hours,
-  and its page shows each step it takes, asks you before it deletes, installs or changes anything
-  outside Altitude, and ends with its report and Altitude's own check. Stop ends it and everything it
-  started; Keep going adds an hour. When Altitude or its page is down, `alt repair` starts one in a
-  terminal on this computer.
-- A failed update says why it did not finish and leads with Repair, or with Try again when the cause
-  usually passes on its own.
-- Needs you gives its space to decisions: one small pill at the end of its title names this device's
-  alerts (on, off, only while open, push refused, blocked or unavailable) and opens Settings →
-  Notifications, where the alert switch and its explanation now live. Back from Settings returns to the
-  same visit, with any unsent answer still typed.
-- The phone terminal keeps its prompt on screen as the keyboard opens, closes or the phone turns, and its
-  key row stays above the keyboard on a short screen. The keyboard opens only when you tap the screen or
-  press Ctrl; the other keys, Paste and an opened chat command leave it as it was. Coming back to the app
-  after the background reads on from where it was, even when the phone dropped the connection quietly,
-  instead of leaving the screen still.
-- The terminal says who can read it in one quiet line above the screen instead of a box, giving the
-  phone screen back about two rows.
-- Answering a question or approving a merge shows at once: the card leaves Needs you and your answer
-  appears in the chat, Waiting, the moment you press, then settles in place when Altitude saves it. If
-  Altitude refuses, the card comes back with your picks and **Not sent** with Retry; if the connection
-  drops, the answer stays Waiting until Altitude shows whether it was saved, and Retry never sends it twice.
-- A sent image stays on screen from Send to saved: the message no longer blinks to "Loading image…"
-  when Altitude saves it, and its picture is named beneath while it is on its way, as it is once saved.
-- Settings change the moment you press: the Terminal, Validation runs, update and Weekly suggestions
-  switches, project routing, the coordinator and New tasks model picks, and removing a device. If
-  Altitude refuses, the setting goes back and says why, with Retry.
-- Choosing how voice is transcribed, dismissing an improvement suggestion or undoing that, and skipping a
-  review show their result the moment you press, in chat and Needs you alike. If Altitude refuses, it goes
-  back and says why, with Retry.
-- Presses that Altitude carries out say so in their own words from the press until the result shows:
-  Cancelling… on Cancel switch and on a sign-in's Cancel, Rejecting… on Reject task, Stopping the reviewer…
-  on a review's Stop, a spinning × on a queued choice, and Turning on… as Decision alerts switch on. Resume,
-  Start L3 and Create task no longer flick back to their button before the task or conversation shows
-  what happened.
-- A device whose alert subscription stopped working, such as one made before Altitude's alert key
-  changed, now subscribes again by itself the next time Altitude opens there, and Altitude forgets the
-  old subscription. The warning about it shows only on the device it concerns, and only
-  when there is something left to do.
-- No job Altitude confines can read your own Claude folder or Claude state file any more, on Linux or macOS:
-  a Claude job sees only your settings, instructions, skills, agents, commands, plugins and output styles,
-  read-only, and a task worker also your project notes. Your Claude sign-in and conversations stay out of reach.
-  On Linux, a Codex coordinator can still read your Claude state file once your own Claude rewrites it during
-  the coordinator's turn.
+  update's notice or **Repair…** in Settings → About starts one with your full access for two hours. Its
+  page shows each step it takes, asks you before it deletes, installs or changes anything outside
+  Altitude, and ends with its report and Altitude's own check; Stop ends it and everything it started,
+  Keep going adds an hour. When Altitude or its page is down, `alt repair` starts one in a terminal on
+  this computer. A failed update says why it did not finish and leads with Repair, or with Try again
+  when the cause usually passes on its own.
+- What you press shows at once: an answer or merge approval leaves Needs you and appears in the chat as
+  Waiting, settings and model picks change, and voice choices, dismissing or restoring a suggestion and
+  skipping a review take effect. Presses Altitude carries out say so in their own words, such as
+  Cancelling… or Stopping the reviewer…, until the result shows, and a sent image stays on screen from
+  Send to saved. If Altitude refuses, the change goes back and says why, with Retry, and a dropped
+  connection never sends an answer twice.
+- A held PR's merge card shows the pictures it adds, replaces or removes, with Before / After for a
+  replaced one, so a visual change is approved with its pictures in view.
+- Needs you gives its space to decisions: one small pill on its title row names this device's alerts and
+  opens Settings → Notifications, where the alert switch now lives. A device whose alert subscription
+  stopped working subscribes again by itself the next time Altitude opens there.
+- The phone terminal keeps its prompt in view as the keyboard opens or closes and the phone turns, opens
+  the keyboard only when you tap the screen or press Ctrl, and reads on from where it was when you come
+  back to the app. Who can read a terminal is one quiet line above its screen, and **Open in terminal**
+  types a chat command once, never onto an unrun copy of it.
+- A Claude task owner uses a skill or custom command you type by name in its conversation
+  (`/name arguments`), your own and the project's alike.
+- Confined agents reach less: Codex task workers run inside Altitude's own sandbox, as Claude's do, and
+  no job in it can read your own Claude or Codex folder, your Claude state file or the common browsers'
+  profiles, or reach the desktop session's sockets. Altitude's own agents can no longer act with a paired
+  device's sign-in. Workers therefore no longer use your desktop's SSH or keyring agents, so a worker's
+  own SSH fetch needs a key file; landing is unaffected.
+- On macOS, logging out stops every job Altitude started instead of leaving it running. A task whose
+  check against GitHub goes unanswered is checked again instead of blocking, and a malformed task report
+  goes back to its owner.
+
+Updating from v0.10.0 needs nothing, except that a Codex-only installation on Linux now needs bubblewrap,
+as setup and `alt doctor` say. From v0.8.0 or older, take the steps in the v0.10.0 notes first.
+
+Known limits: a Codex coordinator keeps Codex's own sandbox and runs on your Codex folder, and on Linux it
+can still read your Claude state file once your own Claude rewrites it during its turn. On Linux older
+than 6.12, agents can still reach the desktop's abstract sockets, as setup and `alt doctor` say. The
+project conversation's Claude coordinator does not load typed skills or commands, and Codex is not yet
+confirmed to. Repairs on the native Mac service, Codex workers under the Mac sandbox, the paired-device
+refusal on a Mac and the phone terminal on a real iPhone still await confirmation on a real installation.
+Live providers are not part of release testing.
 
 ## v0.10.0 — 2026-10-19
 
