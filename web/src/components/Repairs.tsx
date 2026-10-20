@@ -36,11 +36,13 @@ export function repairDot(status: RepairStatus) {
 
 function rowMeta(row: RepairRow) {
   const terminal = row.route === "terminal";
+  // A record whose end is not yet settled says when it started, never an end it has not recorded.
+  const age = row.ended ? `ended ${agoText(row.ended)}` : `started ${agoText(row.started)}`;
   if (!row.ended && row.status !== "checking") {
     const doing = row.status === "waiting" ? "Repair waiting" : terminal ? "Repair working in a terminal" : "Repair working";
-    return `${doing} · started ${agoText(row.started)}`;
+    return `${doing} · ${age}`;
   }
-  return [REPAIR_STATUS[row.status], terminal ? "from a terminal" : "", `ended ${agoText(row.ended ?? row.started)}`].filter(Boolean).join(" · ");
+  return [REPAIR_STATUS[row.status], terminal ? "from a terminal" : "", age].filter(Boolean).join(" · ");
 }
 
 /** One repair as a task row: its dot, title, "Your turn" while it asks, and what it is doing or how it ended. */

@@ -835,8 +835,8 @@ from the app, `alt repair ask --reason … --command …` asks the operator on i
 deletes, installs or changes something outside Altitude, and `alt repair ask --step … --command …` hands
 them a step of their own, such as one needing their password; the agent then ends its turn and the
 answer arrives as its next message. `python3.12 install.py --repair [--prefix PATH]` starts the
-installed release's own repair from its verified files when `alt` cannot start. Settings → About and
-`GET /api/repairs` lists repairs and their outcomes; a paired browser reads one repair's page with
+installed release's own repair from its verified files when `alt` cannot start. Work's Altitude
+repairs section, Settings → About's All repairs and `GET /api/repairs` list repairs and their outcomes; a paired browser reads one repair's page with
 `GET /api/repairs/<id>`, and starts and steers repairs from the app with `POST /api/repairs` and
 `/api/repairs/<id>/{message,answer,keep-going,stop}`; these refuse the machine key.
 

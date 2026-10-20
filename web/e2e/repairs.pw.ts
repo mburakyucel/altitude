@@ -186,15 +186,19 @@ test("Work's Altitude repairs: hidden with none, running, waiting and finished r
   await repairs(page, state);
   let fail = false;
   let failed = 0;
+  let reads = 0;
   await page.route("**/api/repairs", (route) => {
+    if (route.request().method() === "GET") reads += 1;
     if (!fail || route.request().method() !== "GET") return route.fallback();
     failed += 1;
     return route.fulfill({ status: 500, json: { error: "fixture" } });
   });
 
   const openWork = async () => {
+    const before = reads;
     await walk.open(phone ? "/projects/atlas?tab=work" : "/projects/atlas");
     await expect(work.getByText(/current · \d+ done this week/)).toBeVisible();
+    await expect.poll(() => reads, "Work read the repairs listing").toBeGreaterThan(before);
   };
   await openWork();
   await walk.state("01-no-repairs", { visible: [work], hidden: [section, work.getByText("Altitude repairs")] });
@@ -212,7 +216,7 @@ test("Work's Altitude repairs: hidden with none, running, waiting and finished r
   const title = section.getByRole("heading", { name: "Altitude repairs (3)" });
   await walk.state("03-running-and-finished", {
     action: () => section.scrollIntoViewIfNeeded(),
-    visible: [title, row(/^The page does not load on my phone · Repair working · started 12 min ago$/),
+    visible: [title, row(/^The page does not load on my phone · Repair working · started 1\d min ago$/),
       row(/^Failed update to 0\.9\.0 · ✓ Repaired · ended 2d ago$/), row(/^Tasks stopped starting .* · Confirm yourself · from a terminal · ended 2h ago$/)],
     hidden: [row(/^Repair · /), section.getByText("Your turn · the repair asks")],
   });
@@ -222,19 +226,29 @@ test("Work's Altitude repairs: hidden with none, running, waiting and finished r
   expect(order.indexOf("Altitude repairs"), "repairs follow Current").toBeGreaterThan(Math.max(order.indexOf("Current"), order.indexOf("text-muted")));
   if (order.includes("wp-fold")) expect(order.indexOf("Altitude repairs")).toBeLessThan(order.indexOf("wp-fold"));
 
+  // A failed refresh keeps the rows it has: the running repair's listing is read again while it runs.
+  fail = true;
+  const seen = failed;
+  await expect.poll(() => failed, { timeout: 20_000 }).toBeGreaterThan(seen);
+  await walk.state("04-refresh-failed", { action: () => section.scrollIntoViewIfNeeded(), visible: [title, row(/^Failed update to 0\.9\.0/)], hidden: [work.getByText("Could not load repairs")] });
+  fail = false;
+
   // Waiting: Your turn, as on a task's row.
   state.listing = { running: { id: id("a"), route: "app", title: APP.title }, engine: "Claude", repairs: [{ ...APP, status: "waiting" }, ...ROWS.slice(1)] };
   await openWork();
-  const waiting = row(/^The page does not load on my phone · Your turn · the repair asks · Repair waiting · started 12 min ago$/);
-  await walk.state("04-waiting", { action: () => section.scrollIntoViewIfNeeded(), visible: [waiting, waiting.getByText("Your turn · the repair asks")], hidden: [] });
+  const waiting = row(/^The page does not load on my phone · Your turn · the repair asks · Repair waiting · started 1\d min ago$/);
+  await walk.state("05-waiting", { action: () => section.scrollIntoViewIfNeeded(), visible: [waiting, waiting.getByText("Your turn · the repair asks")], hidden: [] });
 
   // Only finished repairs, and one in a terminal still running.
   state.listing = { running: { id: null, route: "terminal" }, engine: "Claude",
-    repairs: [{ ...ROWS[2]!, id: id("f"), ended: null, outcome: null, status: "working" }, ROWS[1], ROWS[3]] };
+    repairs: [{ ...ROWS[2]!, id: id("f"), ended: null, outcome: null, status: "working" }, ROWS[1], ROWS[3],
+      { ...ROWS[2]!, id: id("g"), title: "Voice input stopped working", started: ago(300), ended: null, outcome: null, status: "checking" }] };
   await openWork();
-  await walk.state("05-terminal-running", {
+  await walk.state("06-terminal-running", {
     action: () => section.scrollIntoViewIfNeeded(),
-    visible: [section.getByRole("heading", { name: "Altitude repairs (2)" }), row(/ · Repair working in a terminal · started 2h ago$/)],
+    // A terminal record whose end is not settled yet says when it started.
+    visible: [section.getByRole("heading", { name: "Altitude repairs (3)" }), row(/ · Repair working in a terminal · started 2h ago$/),
+      row(/^Voice input stopped working · Checking the result · from a terminal · started 5h ago$/)],
     hidden: [row(/^Repair · /)],
   });
 
@@ -245,12 +259,12 @@ test("Work's Altitude repairs: hidden with none, running, waiting and finished r
   await expect(page).toHaveURL(new RegExp(`/repairs/${id("a")}$`));
   await expect(page.getByRole("heading", { level: 1, name: APP.title })).toBeVisible();
   if (phone) {
-    await walk.state("06-opened-from-work", {
+    await walk.state("07-opened-from-work", {
       visible: [page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Work", exact: true })], hidden: [] });
     await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Work", exact: true })).toHaveAttribute("aria-current", "page");
     await page.getByRole("button", { name: "Back", exact: true }).click();
   } else {
-    await walk.state("06-opened-from-work", { visible: [page.getByRole("button", { name: "‹ Work" })], hidden: [] });
+    await walk.state("07-opened-from-work", { visible: [page.getByRole("button", { name: "‹ Work" })], hidden: [] });
     await page.getByRole("button", { name: "‹ Work" }).click();
   }
   await expect(page).toHaveURL(/\/projects\/atlas/);
