@@ -125,18 +125,3 @@ button.settings-row:disabled { cursor: default; opacity: .7; }
 .repair-start { flex-wrap: wrap; }
 .repair-start .onboarding-command { margin-top: 0; }
 .repair-start:hover { border-color: var(--border); background: var(--surface); }
-.repair-busy, .settings-row .repair-busy { flex: none; display: inline-flex; align-items: center; gap: 6px; }
-.repair-busy .spinner { width: 12px; height: 12px; }
-@media (prefers-reduced-motion: reduce) { .repair-busy .spinner { animation: none; } }
-.repair-row-text { flex: 1; min-width: 0; }
-.repair-row-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.repair-row .chip { flex: none; }
-.chip.repair-confirm { background: var(--border); color: var(--text-primary); }
-.repair-page { display: flex; flex-direction: column; gap: 12px; }
-.repair-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.repair-meta small { color: var(--text-muted); }
-.repair-report { display: flex; flex-direction: column; gap: 6px; }
-.repair-report h2 { font-size: var(--text-meta); font-weight: 600; color: var(--text-secondary); margin-top: 6px; }
-.repair-report p { white-space: pre-wrap; overflow-wrap: anywhere; }
-.repair-brief summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--accent-text); }
-.repair-brief pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-meta); padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); }

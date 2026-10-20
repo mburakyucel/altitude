@@ -146,13 +146,14 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("button", { name: /^Use / })).toHaveCount(0);
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
     } else if (route === "/settings/repairs") {
-      await expect(main.getByRole("heading", { name: "Repairs", exact: true })).toBeVisible();
+      await expect(main.getByRole("heading", { name: "All repairs", exact: true })).toBeVisible();
       await expect(main.getByText(/^No repairs yet\./)).toBeVisible();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
     } else if (route === "/repairs/:id") {
-      await expect(page.getByRole("heading", { level: 1, name: "Repair · Voice input stopped working.", exact: true })).toBeVisible();
+      // A repair's page in a task's form: its title, the report, and the way back to Work (SPEC §3.15).
+      await expect(page.getByRole("heading", { level: 1, name: "Voice input stopped working.", exact: true })).toBeVisible();
       await expect(main.getByRole("region", { name: "Report", exact: true }).getByText("Set voice input up again.", { exact: true })).toBeVisible();
-      await expect(main.getByRole("link", { name: "All repairs", exact: true })).toHaveAttribute("href", "/settings/repairs");
+      await expect(info.project.name === "phone" ? page.getByRole("button", { name: "Back", exact: true }) : main.getByRole("button", { name: "‹ Work", exact: true })).toBeVisible();
     } else if (route === "/settings/voice") {
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
       await expect(main.getByRole("heading", { level: 3 })).toHaveText(["This computer", "Browser recognition", "Your speech service"]);

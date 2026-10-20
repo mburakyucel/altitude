@@ -2,9 +2,9 @@
 
 Status: the operator approved this design on 2026-10-19, after their direction that a repair has
 broad privileges and its independent review. Steps 1 and 2 of the rollout, the terminal route and
-repairs from the app, are built; [repairs](../../../docs/OPERATIONS.md#repairs) describes them, and
-step 3 follows. The revision below, where repairs show and how their page looks, waits for the operator's
-choice.
+repairs from the app, are built; [repairs](../../../docs/OPERATIONS.md#repairs) describes them. The
+operator chose the revision below on 2026-10-19 (one column, an **All repairs** link, three days), and
+step 3 builds it.
 
 ## This revision: repairs in Work
 
