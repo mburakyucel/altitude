@@ -117,3 +117,7 @@ a.agentsrow{display:flex;align-items:center;justify-content:space-between;color:
 .ncard .nt{font-weight:600;font-size:15px;color:var(--text-primary);text-decoration:none}
 .ncard p{margin:0;font-size:14px;line-height:1.5;color:var(--text-secondary)}
 .ncard .nb{display:flex;align-items:center;gap:12px;margin-top:6px;flex-wrap:wrap}
+.status .tx small{display:block;color:var(--text-muted);font-size:13px;margin-top:3px}
+.m .status,.phonesheet .status{flex-direction:column;align-items:flex-start}
+.ncard .nt{display:inline-flex;align-items:center;gap:4px}.ncard .nt .chev{color:var(--text-muted)}
+.phonesheet .menu-mock div,.m .menu-mock div{min-height:44px;display:flex;align-items:center}

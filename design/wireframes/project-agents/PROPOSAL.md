@@ -616,16 +616,23 @@ A run receives this text quoted as data after its brief, as with every event. Ea
 a title to 200 characters, a report summary to 2,000 and an incident's text to 4,000. Merges made
 on GitHub by hand, outside Altitude, do not fire; that is step 5's GitHub reader. Events fire only
 agents that were on when the event happened. A paused agent ignores them, and so does a new one not
-yet on; resuming never replays what happened while it was paused.
+yet on; resuming never replays what happened while it was paused. While the project's weekly budget
+cannot fit an agent's run limit, its events are passed over the same way, so a spent week never
+fills Recent runs with skips; the status and Monitor already say "Waits until Monday".
 
-**No loops.** Runs cannot merge, finish tasks or file incidents, so none of these events can come
-from a run. The one remaining path is Altitude's own machinery for agents: when starting or ending a
-run fails, the fault is filed as an incident like any other. Such an incident is marked as coming
-from agents and never fires one.
+**No loops.** Every event records where it came from, and one that comes from an agent run never
+fires an agent or counts as the latest for Run now. In this step runs cannot merge, finish tasks or
+file incidents. The remaining path is Altitude's own work for a run: when starting, stopping or
+ending a run fails anywhere, in the launch, its copy, its sign-in or the agents' tick, the fault is
+filed as an incident like any other and is recorded as coming from that run. Steps 6 and 7 mark the
+tasks and pull requests a run proposes or opens the same way. Event runs count toward pausing
+itself, so even a fault outside this rule stops after three runs.
 
 **Together.** An event finds the agent in one of three states:
 
 - With no run waiting or running, the event starts a waiting run.
+  Such runs count toward pausing itself as scheduled runs do, so three event runs in a row that
+  couldn't finish pause the agent.
 - With a run waiting, the event joins that run.
 - With a run running, the event waits for the next run.
 
@@ -640,7 +647,8 @@ up. Its run page says "Run now by you · For PR #812, the latest", and its line 
 "For PR #812: ". With none yet, the run starts without an event and says so in its input and on its
 run page: "Run now by you · No pull request has merged yet", "… No task has finished yet", "… No
 incident has been filed yet". An agent with several event triggers replays the latest of any of
-them.
+them. For an agent whose triggers are all events, before any has happened, the status card says
+so under its line, muted: "No pull request has merged yet, so Run now runs without one."
 
 **The form.** **+ Add a trigger** replaces + Add a schedule. It opens a menu under the button:
 
@@ -650,7 +658,8 @@ them.
 
 An event already in the list is left out of the menu. Choosing one adds its row after the schedules,
 in the menu's order, and focus moves to that row's Remove button. Escape or a press outside closes
-the menu and returns focus to + Add a trigger. The menu's "On GitHub" group arrives with step 5;
+the menu and returns focus to + Add a trigger. It is a menu under the button at both widths, as the
+project menu is, its items at least 44px tall on the phone. The menu's "On GitHub" group arrives with step 5;
 until then it is absent, not greyed out. Each event row has the bolt icon, its words, one muted line
 beneath, and Remove (44px on the phone):
 
@@ -683,8 +692,9 @@ merges".
 merges" (or "Runs when a pull request merges or a task finishes", or "Runs when a pull request
 merges, a task finishes or an incident is filed") with Run now and Pause. With a schedule too, it
 keeps "Next: tomorrow at 07:00", since the definition below names the events. While a run is
-running and events wait, a muted second line names them: "PR #813 waits for the next run.", "PR
-#813 and #814 wait for the next run.", "4 events wait for the next run."
+running and events wait, a muted line under the status line, before the buttons, names them: "PR
+#813 waits for the next run.", "PR #813 and #814 wait for the next run.", "4 events wait for the next
+run." On the phone the buttons sit beneath, as the status card already stacks there.
 
 **Naming the events.** One rule names a run's events everywhere:
 
@@ -711,16 +721,19 @@ A schedule run that events joined reads "On its weekday schedule · For PR #812"
 project's questions. The card reads:
 
 - the kind label "Agent paused itself", in the danger tone, with its age;
-- the agent's name, linked to its page;
+- the agent's name as the card's title, a link to its page with a chevron after it, so it reads
+  as the way in;
 - "3 runs in a row couldn't finish. The last: `make audit` is not a target." The last reason is
   taken from that run's line, with "stopped at its 20-minute limit" for a limit stop;
-- a bordered **Resume**, and "Open agent".
+- a bordered **Resume**, and the underlined link "Open the last run", so you can read what broke
+  before resuming.
 
 The card counts in the Needs you summary ("1 question · 1 paused agent in harbor") and in the badge.
 Like a stopped task or a fault, it never alerts a device.
 
 Pressing Resume shows a spinner in the button until the agent reads as on; the card then leaves.
-Refused, the button returns with "Not resumed: <reason>" beneath. The card also leaves when the agent
+Refused (the agent was retired in another window meanwhile), the button returns with "Not resumed:
+Flaky tests is retired." beneath, and the card leaves on the next read. The card also leaves when the agent
 is edited (saving a change makes it paused by you, so the status reads "Paused") or retired. Run now
 on its page does not clear it.
 
@@ -730,43 +743,60 @@ on its page does not clear it.
   source. `land` writes `merged` (number, title, link, task) when it records a task's merged head,
   and only when that head is new. This happens in Altitude for an owner's landing and in your own
   command for yours. `tasks` writes `task-done` (slug, title) when a task enters done. `incidents`
-  already writes `incident` (id, title, tags).
+  already writes `incident` (id, title, tags), now right after the incident file, before its index
+  rows. Each line is appended before the record that says it happened is saved, so a retry after a
+  crash writes it again and the reader drops the duplicate by its key; nothing is lost between the
+  two writes. Each line carries `origin` when a run caused it: `incidents.system_fault` reads it
+  from the context `project_agents` sets around its own work for a run (start, stop, end, the
+  agents' tick), so a fault filed by any shared code underneath is marked too.
 - **Reading.** The project tick reads the log's new complete lines from an offset kept in
-  `project-agents.json`. A project with no offset starts at the log's end, so history never fires.
+  `project-agents.json`, with the log's file identity. A project with no offset starts at the log's
+  end, so history never fires; a log that shrank or is another file (restored, re-added) starts again
+  at its end, and the daemon log says so.
   For each event and each agent on since before it, the tick does one of three things: it creates a
   waiting run, adds the event to the agent's waiting run, or adds it to the agent's `pending`. It
   saves the offset and those changes in one write under the project lock. So a restart re-reads only
   what was not saved, and each event reaches each agent once, keyed by the agent and the event (PR
-  number and head, task slug, incident id). While Altitude waits to activate a change, the tick does
-  not read, as with claims. Incidents tagged as faults of the agents' own machinery are passed over:
-  the agents' tick gets its own fault kind for this.
+  number and head, task slug, incident id), checked against the keys on its runs and `pending`.
+  While Altitude waits to activate a change, the tick does not read, as with claims. Lines with an
+  `origin` are passed over, and so are events for an agent whose limit the week's budget cannot
+  fit.
 - **Definition.** It gains `events`, a list from `merged`, `done` and `incident`, each at most once.
   Agents saved before this step have none. `definition()`, `triggers()`, `_changes()`, offers and
   `alt agent offer` accept and say it; the built-in agents keep their schedules.
 - **Runs.** A run gains `events`, each event's quoted fields as recorded. When a run ends, `reconcile`
   starts the agent's next run with its `pending` events if the agent is still on; Pause and Retire
-  clear `pending`. Run now finds the latest matching event by reading the log back from its end. The run
+  clear `pending`. `_end` counts event runs, and schedule runs events joined, toward pausing itself;
+  Run now and skips still do not count. Run now finds the latest matching event without an `origin`
+  by reading the log back from its end. The run
   template quotes the events as data after the brief; a task's report summary and an incident's text
   are read when the run is created and kept on it, bounded.
-- **Needs you.** `T.decisions`' queue gains a row of kind `agent` for each agent paused itself (no
-  slug, no `alert_key`, so it never alerts). `attentionSummary` counts "paused agent", and the card
-  is drawn as an operator step's is, with Resume pressing the existing `resume` change. Saving a
+- **Needs you.** `T.decisions`' queue gains a row of kind `agent` for each agent paused itself, with
+  the agent's id and name and the last run's number and reason, and no `alert_key`, so it never
+  alerts. Rows without a slug are no longer taken for operator steps: `isStep` and its callers check
+  `kind === "step"`. The card is its own component beside `StepCard`, grouped by `agent:<id>`, its
+  title opening the agent page; `attentionSummary` counts "paused agent". Resume presses the
+  existing `resume` change. Saving a
   definition on an agent paused itself marks it paused by you.
 - **Removed.** The step-1 **+ Add a schedule** button and its branch in the form and the boards.
 - **Docs.** SPEC (the form's triggers, the agent and run pages, Needs you), ARCHITECTURE's project
   agents (events, the offset, no loops), CLI (`events` in a definition), the changelog.
 - **Tests.**
-  - Each source writes its line once: a merge, including a retried record of the same head, a task
-    done by each route, an incident, and none for a rejected task.
-  - The tick reads from the offset, does not fire history after the upgrade, and loses nothing and
-    repeats nothing when the save fails and the tick runs again.
+  - Each source writes its line: a merge, a task done by each route, an incident, and none for a
+    rejected task; a crash between the line and its record, then the retry, reaches each agent once.
+  - The tick reads from the offset, does not fire history after the upgrade, starts again at the end
+    of a shrunk or replaced log, and loses nothing and repeats nothing when the save fails and the
+    tick runs again.
   - Paused, new and retired agents ignore events, and an agent turned on later ignores earlier ones.
   - Joining a waiting run, pending events during a run and the next run starting with them, a
     schedule run joined, and skips carrying their events.
-  - An incident from the agents' machinery never fires.
+  - An incident filed during a run's start, stop or end, from shared code too, never fires and is
+    never Run now's latest; three failing event runs pause the agent; a spent budget passes events
+    over.
   - Run now with and without a latest event.
   - The input quoted and bounded, and every words rule and name form.
-  - The Needs you row, its count, no alert, Resume, edit and retire clearing it.
+  - The Needs you row, its count beside an operator step's in the same project, no alert, Resume,
+    edit and retire clearing it.
   - The API and the offer.
   - Phone and desktop walkthroughs of the states below with fictional fixtures.
   - No native behavior changes, so the Mac owes nothing new.
@@ -787,10 +817,10 @@ on its page does not clear it.
 | Form | Saving / refused / unsaved / incomplete / no day | Save shows a spinner; refused keeps the edit with "Not saved: <reason>" and Retry; the Discard dialog; "Give it a name and a brief."; "Pick at least one day." |
 | Triggers | Add / none | The trigger menu (from step 4; before it, + Add a schedule); "Only when you run it" |
 | Triggers | Menu / event rows / every event added | On a schedule, then In Altitude's three events, Escape returning focus; each event row with its line and the hint after the list; the menu holds only On a schedule |
-| Status | Events only / events waiting | "Runs when a pull request merges"; "PR #813 waits for the next run." under Running |
+| Status | Events only / none yet / events waiting | "Runs when a pull request merges"; "No pull request has merged yet, so Run now runs without one."; "PR #813 waits for the next run." under Running |
 | Runs | Several events / Run now replay / none yet / skipped with events | "For PR #810, #811 and #812: …"; the run page's "Run now by you · For PR #812, the latest" and "… No pull request has merged yet"; "For PR #812 · No free slot for 6 hours" |
 | Run page | Several events | One muted line per event under what fired it |
-| Needs you | Paused itself / resuming / refused / cleared | The card with Resume and Open agent, counted, no alert; a spinner in Resume; "Not resumed: <reason>"; gone after Resume, a saved edit or Retire |
+| Needs you | Paused itself / resuming / refused / cleared | The card with its title link, Resume and Open the last run, counted, no alert; a spinner in Resume; "Not resumed: Flaky tests is retired."; gone after Resume, a saved edit or Retire |
 | Offer | Shown / saving / created / refused / lapsed | The card; a spinner in the button; "Created · Open"; "Not saved: …"; "This offer lapsed." |
 | Retire | Pending / refused | "Retiring…" with Cancel unavailable; refused: the reason under the buttons, Cancel works |
 | Page | Retired | Title, "Retired Oct 19", runs, definition as text |

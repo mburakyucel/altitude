@@ -134,8 +134,10 @@ def status(state="idle"):
         "waiting": ("Waiting for a free task slot", '<span class="btn">Stop</span>', ""),
         "waiting-agent": ("Waiting for Review each merge", '<span class="btn">Stop</span>', ""),
         "events": ("Runs when a pull request merges", run_now + pause, ""),
-        "running-pending": ('<span class="spin"></span>Running · 4 of 20 min · <a ' + U + '>Open</a>', '<span class="btn">Stop</span>' + pause,
-                            '<p class="muted" style="margin:6px 0 0;font-size:13px">PR #813 and #814 wait for the next run.</p>'),
+        "events-none": ('<span>Runs when a pull request merges<small>No pull request has merged yet, so Run now runs without one.</small></span>',
+                        run_now + pause, ""),
+        "running-pending": ('<span class="spin"></span><span>Running · 4 of 20 min · <a ' + U + '>Open</a><small>PR #813 and #814 wait for the next run.</small></span>',
+                            '<span class="btn">Stop</span>' + pause, ""),
         "new": ("Not on yet", run_now + '<span class="btn">Turn on</span>', ""),
         "starting": ("Next: tomorrow at 07:00", '<span class="btn" style="min-width:86px" aria-label="Run now, starting"><span class="spin"></span>Starting…</span>'
                      '<span class="btn" aria-disabled="true">Pause</span>', ""),
@@ -542,11 +544,11 @@ board("PhoneRetire", 390, 844, phone(agent_page(), back=P, title="Dependency che
 def needs_card(state="shown"):
     """Counted with the project's questions, never alerting a device; Resume presses the agent's resume change."""
     resume = {"resuming": '<span class="btn" style="min-width:86px" aria-label="Resume, saving"><span class="spin"></span></span>'}.get(state, '<span class="btn">Resume</span>')
-    err = '<div class="err">Not resumed: Flaky tests changed in another window.</div>' if state == "refused" else ""
+    err = '<div class="err">Not resumed: Flaky tests is retired.</div>' if state == "refused" else ""
     return ('<div class="card ncard"><div class="nk"><span class="bad">Agent paused itself</span><span class="muted">2 h ago</span></div>'
-            '<a class="nt" href="#">Flaky tests</a>'
+            f'<a class="nt" href="#">Flaky tests{CHEVR}</a>'
             '<p>3 runs in a row couldn’t finish. The last: <code>make test-e2e</code> is not a target.</p>'
-            f'<div class="nb">{resume}<a {U}>Open agent</a></div>{err}</div>')
+            f'<div class="nb">{resume}<a {U}>Open the last run</a></div>{err}</div>')
 
 
 QUESTION = ('<div class="card ncard"><div class="nk"><span style="color:var(--accent-text)">The L2 asks</span><span class="muted">20 min ago</span></div>'
@@ -694,8 +696,8 @@ CELLS = [
     ("57 · Every event added", "the menu holds only On a schedule",
      triggers("events", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">'
      + trigger_menu(added=[w for w, _ in EVENTS], github=False) + '</div>'),
-    ("58 · Events only; events waiting", "the status names the trigger; events during a run wait for the next one",
-     status("events") + '<div style="height:10px"></div>' + status("running-pending")),
+    ("58 · Events only; none yet; events waiting", "the status names the trigger; events during a run wait for the next one",
+     status("events") + '<div style="height:10px"></div>' + status("events-none") + '<div style="height:10px"></div>' + status("running-pending")),
     ("59 · Event runs", "a replay of the latest event; a skip names its events",
      runs(rows=[("", "Today 11:02", "Nothing found", "3 min · 1.1M tokens", "For PR #812: every change has a test."),
                 ("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For PR #810, #811 and #812: #811 changed the retry limit without a test."),
