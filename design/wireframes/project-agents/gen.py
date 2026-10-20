@@ -55,7 +55,7 @@ def phone(inner, back=P, title="Agents", h=844, overlay="", tab="work"):
 # ---- the agents page ----
 AGENTS = [
     ("Dependency check", "Weekdays at 07:00 · Found something 2 h ago"),
-    ("Review each merge", PULSE + "When a pull request merges · Running, 2 of 20 min"),
+    ("Review each merge", PULSE + "When it’s sent an event · Running, 2 of 20 min"),
     ("Upload timing", "Mondays at 08:00 · Waiting for Review each merge"),
     ("What landed", PAUSE + "Fridays at 17:00 · Paused"),
 ]
@@ -133,10 +133,10 @@ def status(state="idle"):
                      '<span class="btn" aria-disabled="true"><span class="spin"></span>Stopping…</span>' + pause, ""),
         "waiting": ("Waiting for a free task slot", '<span class="btn">Stop</span>', ""),
         "waiting-agent": ("Waiting for Review each merge", '<span class="btn">Stop</span>', ""),
-        "events": ("Runs when a pull request merges", run_now + pause, ""),
-        "events-none": ('<span>Runs when a pull request merges<small>No pull request has merged yet, so Run now runs without one.</small></span>',
+        "events": ("Runs when it’s sent an event", run_now + pause, ""),
+        "events-none": ('<span>Runs when it’s sent an event<small>No event yet, so Run now runs without one.</small></span>',
                         run_now + pause, ""),
-        "running-pending": ('<span class="spin"></span><span>Running · 4 of 20 min · <a ' + U + '>Open</a><small>PR #813 and #814 wait for the next run.</small></span>',
+        "running-pending": ('<span class="spin"></span><span>Running · 4 of 20 min · <a ' + U + '>Open</a><small>3 events wait for the next run.</small></span>',
                             '<span class="btn">Stop</span>' + pause, ""),
         "new": ("Not on yet", run_now + '<span class="btn">Turn on</span>', ""),
         "starting": ("Next: tomorrow at 07:00", '<span class="btn" style="min-width:86px" aria-label="Run now, starting"><span class="spin"></span>Starting…</span>'
@@ -207,25 +207,25 @@ SESSION = ('<div class="tl" style="gap:8px">'
 FOLDS = ''.join(f'<div class="fold" style="margin-top:4px">{CHEVR.replace("chev", "")}{t}</div>' for t in ("Brief it ran", "Session"))
 
 
-EVENT_LINES = ('<div class="evl"><p>PR #810 merged · Move the upload limit to settings</p><p>PR #811 merged · Raise the retry limit</p>'
-               '<p>PR #812 merged · Show upload progress on the phone</p></div>')
+EVENT_LINES = ('<div class="evl"><p>10:02 · PR #810 merged: Move the upload limit to settings</p><p>10:02 · PR #811 merged: Raise the retry limit</p>'
+               '<p>10:04 · PR #812 merged: Show upload progress on the phone</p></div>')
 
 
 def run_page(state="ended"):
     meta = '<p class="muted" style="margin:0 0 16px;font-size:13.5px">On its weekday schedule · Sonnet{}</p>'
     if state == "events":
-        return ('<p class="muted" style="margin:0 0 4px;font-size:13.5px">For PR #810, #811 and #812 · Sonnet · 7 min · 4.4M tokens</p>'
+        return ('<p class="muted" style="margin:0 0 4px;font-size:13.5px">For “PR #810 merged” and 2 more · Sonnet · 7 min · 4.4M tokens</p>'
                 + EVENT_LINES + '<div class="card"><div class="runhead"><span class="d found"></span><b>Found something</b></div>'
                   '<p style="margin:6px 0 0">#811 raised the retry limit in <code>uploader.py</code> without a test; the test would go in '
                   '<code>tests/test_uploader.py</code> beside the other retry cases.</p></div>' + FOLDS)
     if state == "replay":
-        return ('<p class="muted" style="margin:0 0 16px;font-size:13.5px">Run now by you · For PR #812, the latest · Sonnet · 3 min · 1.1M tokens</p>'
+        return ('<p class="muted" style="margin:0 0 16px;font-size:13.5px">Run now by you · For “PR #812 merged”, the latest · Sonnet · 3 min · 1.1M tokens</p>'
                 '<div class="card"><div class="runhead"><span class="d"></span><b>Nothing found</b></div>'
                 '<p style="margin:6px 0 0">Every change in PR #812 has a test.</p></div>' + FOLDS)
     if state == "no-event":
-        return ('<p class="muted" style="margin:0 0 16px;font-size:13.5px">Run now by you · No pull request has merged yet · Sonnet · 1 min · 0.4M tokens</p>'
+        return ('<p class="muted" style="margin:0 0 16px;font-size:13.5px">Run now by you · No event yet · Sonnet · 1 min · 0.4M tokens</p>'
                 '<div class="card"><div class="runhead"><span class="d"></span><b>Nothing found</b></div>'
-                '<p style="margin:6px 0 0">No pull request to read yet; the brief needs one.</p></div>' + FOLDS)
+                '<p style="margin:6px 0 0">No merged pull request was named, so there was nothing to check.</p></div>' + FOLDS)
     if state == "running":
         return (meta.format("")
                 + '<div class="card"><div class="status"><span class="tx"><span class="spin"></span>Running · 4 of 20 min</span>'
@@ -326,8 +326,7 @@ ZAP = '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5
 XM = '<span class="x" role="button" aria-label="Remove this trigger"><svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></span>'
 
 
-EVENTS = [("A pull request merges", "Its run reads that pull request."), ("A task finishes", "Its run reads that task’s report."),
-          ("An incident is filed", "Its run reads that incident.")]
+EVENT = ("When it’s sent an event", "You send it from this computer; its page shows how.")
 
 
 def event_row(words, line):
@@ -342,19 +341,15 @@ def triggers(kind="schedule", open_schedule=True, empty=False, noday=False):
         none = '<div class="err" style="margin-top:8px">Pick at least one day.</div>' if noday else ""
         sched = (f'<div class="tr open"><div class="row1">{CLOCK}<span class="tx">On a schedule</span>{XM}</div>{days(on=() if noday else (0, 1, 2, 3, 4))}{none}</div>' if open_schedule
                  else f'<div class="tr">{CLOCK}<span class="tx">Weekdays at 07:00</span>{XM}</div>')
-        merge = event_row(*EVENTS[0])
-        rows = {"schedule": sched, "event": merge, "both": sched + merge,
-                "events": sched + "".join(event_row(*e) for e in EVENTS)}[kind]
+        merge = event_row(*EVENT)
+        rows = {"schedule": sched, "event": merge, "both": sched + merge}[kind]
     return f'<div class="trig">{rows}<div class="add"><span class="btn">+ Add a trigger</span></div></div>'
 
 
-def trigger_menu(added=(), github=True):
-    """+ Add a trigger's menu: an event already in the list is left out; the On GitHub group arrives with step 5."""
-    events = "".join(f'<div>{w}</div>' for w, _ in EVENTS if w not in added)
-    group = f'<hr><div class="gh">In Altitude</div>{events}' if events else ""
-    gh = ('<hr><div class="gh">On GitHub</div><div>An issue is opened</div><div>Checks fail on the main branch</div>'
-          '<div>A release is published</div>') if github else ""
-    return f'<div class="menu-mock" role="menu"><div class="hi">On a schedule</div>{group}{gh}</div>'
+def trigger_menu(added=False):
+    """+ Add a trigger's menu: the event trigger is left out once the list has it."""
+    event = "" if added else f'<div>{EVENT[0]}</div>'
+    return f'<div class="menu-mock" role="menu"><div class="hi">On a schedule</div>{event}</div>'
 
 
 EVHINT = '<span class="hint">Events that arrive during a run go to its next run together.</span>'
@@ -430,7 +425,7 @@ CHAT = ('<div class="day">Today</div>'
         '<div class="l3"><p>Here it is. Say if you’d like it on a smaller model.</p>' + offer() + '</div>'
         + '<div class="day">Tomorrow</div>'
         + sysa("Dependency check", "found something: 2 packages have security fixes.", "found")
-        + sysa("Review each merge", "found something on PR #809: the upload limit moved without its test.", "found")
+        + sysa("Review each merge", "found something for “PR #809 merged”: the upload limit moved without its test.", "found")
         + '<div class="me">Pause the dependency one for now.</div>'
         + '<div class="l3"><p>Done.</p></div>'
         + sysa("Paused Dependency check", "·", link="Resume"))
@@ -506,7 +501,7 @@ def work_rows():
     fold = f'<div class="fold">{CHEVR.replace("chev", "")}Done this week · 2</div>'
     agents = f'<a class="fold agentsrow" href="#">Agents · 4{CHEVR}</a>'
     return ('<div><div class="sh">Current <span>3</span></div>'
-            + trow("Review each merge", "Agent run · PR #812 · 2 of 20 min")
+            + trow("Review each merge", "Agent run · “PR #812 merged” · 2 of 20 min")
             + trow("Speed up the upload test", "Running · PR #811 green")
             + trow("Upload timing", "Agent run · waiting for Review each merge", "dot q")
             + '</div>' + fold + agents)
@@ -519,7 +514,7 @@ board("DesktopWork", 1440, 900,
       '<div style="overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:0 28px">'
       '<div style="max-width:760px;width:100%;margin:0 auto;display:flex;flex-direction:column;gap:16px;padding-bottom:16px">'
       + sysa("Dependency check", "found something: 2 packages have security fixes.", "found")
-      + sysa("Review each merge", "found something on PR #809: the upload limit moved without its test.", "found")
+      + sysa("Review each merge", "found something for “PR #809 merged”: the upload limit moved without its test.", "found")
       + '</div></div><div style="padding:12px 28px 20px"><div class="composer" style="max-width:760px;margin:0 auto"><div class="ph2">Message L3</div></div></div></main>'
       '<aside class="work"><div class="wh"><h2>Work</h2><span>3 current · 2 done this week</span></div>' + work_rows() + '</aside></div>')
 board("PhoneWork", 390, 844,
@@ -538,6 +533,33 @@ RETIRE_TEXT = "It won’t run again, from its triggers or Run now. Its past runs
 board("PhoneRetire", 390, 844, phone(agent_page(), back=P, title="Dependency check",
       overlay='<div class="scrim"></div>' + dialog("Retire Dependency check?", RETIRE_TEXT,
                                                    f'<span class="btn"{FOCUS}>Cancel</span><span class="btn redfill">Retire</span>')))
+
+
+# ---- sending an agent events (step 4) ----
+AGENT_ID = "3f9a2c1b0e4d"
+SEND = f'alt --project {P} agent send {AGENT_ID} "what happened"'
+RECIPES = [
+    ("Each merged pull request, checked every 10 minutes",
+     f"""*/10 * * * * gh pr list -R acme/{P} --state merged -L 5 --json number,title -q '.[] | "\\(.number) \\(.title)"' | while read -r n t; do alt --project {P} agent send {AGENT_ID} "PR #$n merged: $t" --key "pr-$n"; done"""),
+    ("Each new issue, checked every 15 minutes",
+     f"""*/15 * * * * gh issue list -R acme/{P} --state open -L 5 --json number,title -q '.[] | "\\(.number) \\(.title)"' | while read -r n t; do alt --project {P} agent send {AGENT_ID} "Issue #$n opened: $t" --key "issue-$n"; done"""),
+    ("When a command of yours fails",
+     f'make bench || alt --project {P} agent send {AGENT_ID} "Benchmarks failed on $(git rev-parse --short HEAD)"'),
+]
+
+
+def code(text):
+    import html
+    return f'<div class="codeb"><code>{html.escape(text)}</code><span class="btn sm">Copy</span></div>'
+
+
+def send_section(examples=False):
+    fold = f'<div class="fold" style="margin-top:8px">{(DOWN if examples else CHEVR.replace("chev", ""))}Examples</div>'
+    body = "".join(f'<p class="muted" style="margin:10px 0 4px;font-size:13px">{what}</p>{code(cmd)}' for what, cmd in RECIPES) if examples else ""
+    return ('<div class="card"><p style="margin:0 0 2px;font-weight:600;font-size:14px">Send it an event</p>'
+            '<p class="muted" style="margin:0 0 6px;font-size:13px">From a script or your terminal on this computer:</p>'
+            f'{code(SEND)}{fold}{body}'
+            '<p class="muted" style="margin:10px 0 0;font-size:12.5px">Send titles and numbers rather than text other people wrote: a run has your code and the network.</p></div>')
 
 
 # ---- needs you: an agent that paused itself (step 4) ----
@@ -614,12 +636,12 @@ CELLS = [
      + sysa("Dependency check", "stopped at its 20-minute limit.", "fail")
      + sysa("Dependency check", "stopped by you.")
      + sysa("Retired Dependency check", "", link="") + '</div>'),
-    ("24 · Add a trigger", "the menu as step 4 ships it; On GitHub joins in step 5; Escape returns focus to the button",
-     triggers("schedule", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">' + trigger_menu(github=False) + '</div>'),
+    ("24 · Add a trigger", "the menu under the button; Escape returns focus to it",
+     triggers("schedule", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">' + trigger_menu() + '</div>'),
     ("25 · No trigger", "the agent runs only when you press Run now", triggers(empty=True)),
     ("26 · One run for several events", "events during a run wait and go together",
-     runs(rows=[("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For PR #810, #811 and #812: #811 changed the retry limit without a test."),
-                ("", "Today 09:40", "Nothing found", "4 min · 2.1M tokens", "For PR #809: every change has a test.")], more=False)),
+     runs(rows=[("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For “PR #810 merged” and 2 more: #811 changed the retry limit without a test."),
+                ("", "Today 09:40", "Nothing found", "4 min · 2.1M tokens", "For “PR #809 merged”: every change has a test.")], more=False)),
     ("27 · Paused after repeated failures", "three runs in a row couldn’t finish",
      status("self-paused") + '<div style="height:12px"></div>'
      + sysa("Dependency check", "paused itself: 3 runs in a row couldn’t finish.", "fail", link="Open")),
@@ -686,26 +708,26 @@ CELLS = [
                  ("altitude / Weekly improvement review", PAUSE + "Paused: its terms changed", "Last: Nothing to suggest · 6 d ago · 3 min"),
                  ("atlas / Release notes", "Waits until Monday", "Last: Found something · 4 d ago · 12 min · 6.0M tokens"),
                  ("harbor / Dependency check", "Next tomorrow at 07:00 Istanbul", "Last: Stopped at its limit · 2 h ago · 20 min · 9.4M tokens"),
-                 ("harbor / Incident causes", "When an incident is filed", "Last: Found something · 1 d ago · 8 min · 3.0M tokens"),
+                 ("harbor / Issue triage", "When it’s sent an event", "Last: Found something · 1 d ago · 8 min · 3.0M tokens"),
                  ("atlas / Licence audit", "Only when you run it", "Last: Nothing found · 6 d ago · 3 min · 0.9M tokens")],
                head=False)),
     ("55 · Monitor: no agents", "no Agents section and no heading; Sessions ends the page",
      '<h2 style="margin-top:0">Sessions (1)</h2>' + session_row("L3", "harbor", "Claude Code · Fable · context 12%", "1 min ago", 12)),
-    ("56 · Event triggers", "each event row says what its run reads; the hint follows the list (step 4)",
-     '<div>' + triggers("events", open_schedule=False) + EVHINT + '</div>'),
-    ("57 · Every event added", "the menu holds only On a schedule",
-     triggers("events", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">'
-     + trigger_menu(added=[w for w, _ in EVENTS], github=False) + '</div>'),
+    ("56 · The event trigger", "its row says where events come from; the hint follows the list (step 4)",
+     '<div>' + triggers("both", open_schedule=False) + EVHINT + '</div>'),
+    ("57 · Event trigger added", "the menu holds only On a schedule",
+     triggers("both", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">' + trigger_menu(added=True) + '</div>'),
     ("58 · Events only; none yet; events waiting", "the status names the trigger; events during a run wait for the next one",
      status("events") + '<div style="height:10px"></div>' + status("events-none") + '<div style="height:10px"></div>' + status("running-pending")),
     ("59 · Event runs", "a replay of the latest event; a skip names its events",
-     runs(rows=[("", "Today 11:02", "Nothing found", "3 min · 1.1M tokens", "For PR #812: every change has a test."),
-                ("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For PR #810, #811 and #812: #811 changed the retry limit without a test."),
-                ("found", "Yesterday 16:40", "Found something", "6 min · 2.9M tokens", "For “Fix the login timeout” and 2 more: two of them left a TODO in the session code."),
-                ("skip", "Oct 18, 09:30", "Skipped", "", "For PR #806 · No free slot for 6 hours.")], more=False)),
+     runs(rows=[("", "Today 11:02", "Nothing found", "3 min · 1.1M tokens", "For “PR #812 merged”: every change has a test."),
+                ("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For “PR #810 merged” and 2 more: #811 changed the retry limit without a test."),
+                ("skip", "Oct 18, 09:30", "Skipped", "", "For “PR #806 merged” · No free slot for 6 hours.")], more=False)),
     ("60 · A run for several events", "each event on its own muted line under what fired it", run_page("events")),
     ("61 · Run now on an event agent", "it replays the latest event; with none yet it runs without one",
      run_page("replay") + '<div style="height:12px"></div>' + run_page("no-event")),
+    ("64 · Send it an event", "on the agent page, in What it does; Examples folded", send_section()),
+    ("65 · Send it an event: examples", "three recipes to copy; the agent’s id and repository filled in", send_section(examples=True)),
     ("62 · Needs you: paused itself", "counted with the questions, never alerting a device", needs_card()),
     ("63 · Needs you: resuming, refused", "the card leaves once the agent reads as on", needs_card("resuming") + '<div style="height:12px"></div>' + needs_card("refused")),
 ]
