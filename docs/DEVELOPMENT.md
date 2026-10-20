@@ -1523,8 +1523,9 @@ of the run as `captures/installation-vm.gif` ([validation captures](#validation-
 AppArmor profile that admits it to user namespaces as on an Ubuntu desktop, and the hardware-enablement kernel, which
 offers Landlock's abstract-socket scope. It then restarts on that kernel, loses its online card and runs the module from
 the committed `SOURCE`. `sandbox-vm.json` records the guest and kernel, the bubblewrap and Landlock versions and the
-module's summary; a skipped case fails the run. Inside a task it runs through the validation runner with KVM, like
-`make installation-vm`:
+module's summary and every skip reason. Every case runs there except the Seatbelt-only ones, which skip as `macOS only`;
+a case skipped for any other reason fails the run, as does a run where no case ran. Inside a task it runs through the
+validation runner with KVM, like `make installation-vm`:
 
 ```sh
 make sandbox-vm RESULTS=/tmp/altitude-sandbox-vm
