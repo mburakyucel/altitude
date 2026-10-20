@@ -1730,9 +1730,9 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         if offer_turn and (existing := offered_task(project, offer_turn)):
             raise TransitionError(f"this reply already created task {existing}; one Create task press makes one task")
         if improvement:
-            from . import improve
+            from . import suggestions
             try:
-                improve.require_accepted_locked(project, improvement)
+                suggestions.require_accepted_locked(project, improvement)
             except ValueError as exc:
                 raise TransitionError(str(exc)) from exc
         refs = image_store.lookup(project, image_ids) if image_ids else []

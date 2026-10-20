@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import uuid
 
 from service_support import configure, serve
-from altitude import config, engines, improve, improve_eval, l3, route, server
+from altitude import config, engines, improve, improve_eval, l3, route, server, suggestions
 from altitude import state as S, tasks as T
 
 NOW = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=5)
@@ -96,7 +96,7 @@ def main():
 
     def press(ref: str, action: str, at: datetime) -> dict:
         clock(at)
-        improve.decide("alpha", ref, action, uuid.uuid4().hex, now=at)
+        suggestions.decide("alpha", ref, action, uuid.uuid4().hex, now=at)
         run_id, n = ref.split("/")
         return next(d for d in improve._find(improve._load("alpha"), run_id)["decisions"] if d["n"] == int(n))
 

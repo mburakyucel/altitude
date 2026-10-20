@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-from . import config, engines, github_intake, l3, route, schedule, state as S, tasks as T
+from . import config, engines, github_intake, l3, route, schedule, state as S, suggestions, tasks as T
 
 SIGNALS_VERSION = 3
 CUTOFF = datetime(2026, 9, 22, 7, tzinfo=timezone.utc)
@@ -426,7 +426,7 @@ def earlier(project: str, now: datetime | None = None) -> list[dict]:
         for s in run["suggestions"]:
             n = str(s["n"])
             state = (f"dropped by L3: {post['drops'][n]}" if n in post["drops"]
-                     else suggestion_state(run, s["n"], now))
+                     else suggestions.state(run, s["n"], now))
             out.append({"title": s["title"], "state": state})
     return out
 
@@ -531,10 +531,8 @@ def review(built: dict, *, model: str, timeout: int = 900) -> dict:
 # ---- runs: started by the operator's chat message, checked by L3, posted by Altitude --------------------------
 
 RUN_LIMIT = timedelta(hours=2)
-LAPSE = timedelta(days=7)
 ACTIVE = ("reading", "checking")
 REASON = 200
-REF = re.compile(r"([0-9a-f]{12})/([1-9])")
 ENDED = {"reading": "is still reading", "nothing": "ended with nothing to suggest", "stopped": "was stopped",
          "failed": "failed"}
 
@@ -928,9 +926,9 @@ def _past(project: str, record: dict, now: datetime) -> dict | None:
     made = {t["improvement"] for t in S.list_tasks(project, include_archive=True) if t.get("improvement")}
     shown = [(r, n) for r in ended for n in (r.get("post") or {}).get("shown", [])]
     tasks = sum(f"{r['id']}/{n}" in made for r, n in shown)
-    dismissed = sum(suggestion_state(r, n, now) == "dismissed" for r, n in shown)
-    runs, suggestions = len(ended), len(shown)
-    return {"line": f"{runs} run{'' if runs == 1 else 's'} · {suggestions} suggestion{'' if suggestions == 1 else 's'} · "
+    dismissed = sum(suggestions.state(r, n, now) == "dismissed" for r, n in shown)
+    runs, count = len(ended), len(shown)
+    return {"line": f"{runs} run{'' if runs == 1 else 's'} · {count} suggestion{'' if count == 1 else 's'} · "
                     f"{tasks} became {'a task' if tasks == 1 else 'tasks'} · {dismissed} dismissed",
             "latest": next((r["id"] for r in reversed(ended) if r["state"] == "posted"), None)}
 
@@ -1034,7 +1032,7 @@ def stop(project: str, source: str, run_id: str | None = None) -> dict:
     names the run its line showed, so it never stops a review that started after it."""
     with S.project_lock(project):
         record = _load(project)
-        if run_id is not None and _pressed(record, source, "stop", run_id):
+        if run_id is not None and suggestions._pressed(record, source, "stop", run_id):
             return _receipt(_find(record, run_id))
         same = next((r for r in record["runs"] if r.get("stop") == source), None)
         if same:
@@ -1052,28 +1050,15 @@ def stop(project: str, source: str, run_id: str | None = None) -> dict:
     return _receipt(run)
 
 
-def _pressed(record: dict, request_id: str, action: str, ref: str) -> bool:
-    """Whether web press `request_id` was already saved: the receipts are project-wide, so an id made one press on
-    one run or suggestion, and reusing it for any other is refused."""
-    done = record.setdefault("presses", {}).get(request_id)
-    if done and done != [action, ref]:
-        raise ValueError("this press was already saved for another change")
-    return bool(done)
-
-
 def post(project: str, run_id: str, keep: list[int], drop: list[tuple[int, str]], *,
          now: datetime | None = None) -> dict:
     """Post the checked suggestions: Altitude writes the message from the reviewer's validated wording. The posted
     row is the run's receipt; the same post again returns it, a different one is refused."""
     now = now or datetime.now(timezone.utc)
-    named = [*keep, *(n for n, _ in drop)]
-    if len(named) != len(set(named)):
-        raise ValueError("Keep or drop each suggestion exactly once.")
-    drops = {str(n): " ".join(why.split()) for n, why in drop}
-    shown = sorted(keep)
     with S.project_lock(project):
         record = _load(project)
         run = _find(record, run_id)
+        shown, drops = suggestions.choose(run, keep, drop)
         done = run.get("post")
         if done:
             if (done["shown"], done["drops"]) != (shown, drops):
@@ -1085,11 +1070,6 @@ def post(project: str, run_id: str, keep: list[int], drop: list[tuple[int, str]]
             raise ValueError(f"The review of {_day(run['started'])} {ENDED[run['state']]}; nothing can be posted.")
         if now > _date(run["deadline"]):
             raise ValueError(f"The review of {_day(run['started'])} is past its deadline; nothing can be posted.")
-        numbers = {s["n"] for s in run["suggestions"]}
-        if set(named) != numbers:
-            raise ValueError(f"Keep or drop each of {', '.join(map(str, sorted(numbers)))} exactly once.")
-        if any(not why or len(why) > REASON for why in drops.values()):
-            raise ValueError(f"Each drop needs a reason of 1–{REASON} characters.")
         run["post"] = {"shown": shown, "drops": drops, "at": now.replace(microsecond=0).isoformat()}
         l3.unqueue_locked(project, run["check"])
         if not shown:
@@ -1136,116 +1116,6 @@ def _seen(project: str, anchors: list[str]) -> list[str]:
     return out
 
 
-def suggestion_state(run: dict, n: int, now: datetime) -> str:
-    """Undecided, accepted, dismissed, or not decided once a week passed without a decision (or after an Undo)."""
-    decided = [d for d in run["decisions"] if d["n"] == n]
-    if decided and decided[-1]["to"] != "undecided":
-        return decided[-1]["to"]
-    return "not decided" if _lapsed(run, now) else "undecided"
-
-
-def _lapsed(run: dict, now: datetime) -> bool:
-    return now - _date(run["post"]["at"]) >= LAPSE
-
-
-ALLOWED = {("undecided", "accepted"), ("undecided", "dismissed"), ("dismissed", "accepted"),
-           ("not decided", "accepted")}
-#: The card's buttons: Make a task and Dismiss on an undecided suggestion, Undo on a dismissed one until it lapses.
-BUTTONS = {"accept": ("undecided", "accepted"), "dismiss": ("undecided", "dismissed"),
-           "undo": ("dismissed", "undecided")}
-
-
-def resolve(project: str, ref: str, outcome: str, message_id: str, reason: str, *,
-            now: datetime | None = None) -> dict:
-    """Record the operator's typed answer on suggestion `ref` ("<run>/<n>"), citing their message."""
-    now = now or datetime.now(timezone.utc)
-    run_id, n = _ref(ref)
-    reason = " ".join(str(reason or "").split())
-    if outcome not in ("accepted", "dismissed"):
-        raise ValueError("the outcome is accepted or dismissed")
-    if not reason or len(reason) > REASON:
-        raise ValueError(f"give the scope you read from the operator's message, 1–{REASON} characters")
-    said = next((m for m in T._decision_messages(project, "", "project") if m["id"] == message_id), None)
-    with S.project_lock(project):
-        record = _load(project)
-        run = _find(record, run_id)
-        if not run.get("post") or n not in run["post"]["shown"]:
-            raise ValueError(f"suggestion {n} of that review was not shown to the operator")
-        if not said or _date(said["at"]) <= _date(run["post"]["at"]):
-            raise ValueError("the answer must be the operator's own project-chat message after the suggestions")
-        last = next((d for d in reversed(run["decisions"]) if d["n"] == n and d.get("message")), None)
-        if last and (last["message"], last["to"]) == (message_id, outcome):
-            return _decision(project, run, n, now)
-        if last and _date(said["at"]) <= _date(last["said"]):
-            raise ValueError(f"suggestion {n} was decided on that message or a later one; a change needs the "
-                             "operator's newer message")
-        current = suggestion_state(run, n, now)
-        if (current, outcome) not in ALLOWED:
-            raise ValueError(f"suggestion {n} of the {_day(run['started'])} review is {current}; it cannot become {outcome}")
-        # A typed acceptance is carried out in the turn answering it: that turn is the one opening its task.
-        run["decisions"].append({"n": n, "from": current, "to": outcome, "at": now.replace(microsecond=0).isoformat(),
-                                 "by": "l3", "message": message_id, "said": said["at"], "reason": reason,
-                                 **({"turn": message_id} if outcome == "accepted" else {})})
-        _save(project, record)
-    return _decision(project, run, n, now)
-
-
-def decide(project: str, ref: str, action: str, request_id: str, *, now: datetime | None = None) -> dict:
-    """The operator's press on suggestion `ref`: Make a task, Dismiss or Undo. Make a task queues the one L3 turn
-    that opens its task. The same request again returns its receipt; a press the card no longer allows is refused."""
-    now = now or datetime.now(timezone.utc)
-    run_id, n = _ref(ref)
-    if action not in BUTTONS:
-        raise ValueError("the action is accept, dismiss or undo")
-    start, to = BUTTONS[action]
-    with S.project_lock(project):
-        record = _load(project)
-        run = _find(record, run_id)
-        if not run.get("post") or n not in run["post"]["shown"]:
-            raise ValueError(f"suggestion {n} of that review was not shown to the operator")
-        if _pressed(record, request_id, action, ref):
-            return _decision(project, run, n, now)
-        current = suggestion_state(run, n, now)
-        if current != start or action == "undo" and _lapsed(run, now):
-            raise ValueError(f"This suggestion is {current} now.")
-        decision = {"n": n, "from": current, "to": to, "at": now.replace(microsecond=0).isoformat(),
-                    "by": "operator"}
-        if to == "accepted":
-            decision["turn"] = l3.queue_locked(project, task_turn(run, n), trigger="improvement-task")["id"]
-        run["decisions"].append(decision)
-        record["presses"][request_id] = [action, ref]
-        _save(project, record)
-    return _decision(project, run, n, now)
-
-
-def retry(project: str, ref: str, request_id: str, *, now: datetime | None = None) -> dict:
-    """Try again on an accepted suggestion whose task turn ended without a task: queue that same single turn.
-    One task per suggestion still holds in `alt task new`, so no retry makes a second."""
-    now = now or datetime.now(timezone.utc)
-    run_id, n = _ref(ref)
-    accepted = next((d for d in _find(_load(project), run_id)["decisions"] if d["n"] == n and d["to"] == "accepted"), None)
-    # Read before the lock: a turn leaves the queue under L3's own guards, which are never taken inside it. Under the
-    # lock the turn must still be the one read, or another Try again has queued a newer one.
-    seen = accepted and accepted.get("turn")
-    opening = bool(seen and l3.pending(project, seen))
-    with S.project_lock(project):
-        record = _load(project)
-        run = _find(record, run_id)
-        if _pressed(record, request_id, "retry", ref):
-            return _decision(project, run, n, now)
-        accepted = next((d for d in run["decisions"] if d["n"] == n and d["to"] == "accepted"), None)
-        if not accepted:
-            raise ValueError(f"suggestion {ref} is not accepted")
-        if suggestion_task(project, ref):
-            raise ValueError(f"suggestion {ref} already has its task")
-        if opening or accepted.get("turn") != seen:
-            raise ValueError("L3 is still opening its task.")
-        accepted["turn"] = l3.queue_locked(project, task_turn(run, n), trigger="improvement-task")["id"]
-        record["presses"][request_id] = ["retry", ref]
-        _save(project, record)
-    return _decision(project, run, n, now)
-
-
 def task_turn(run: dict, n: int) -> str:
     """L3's turn after the operator pressed Make a task. Like the check, it names the suggestion only."""
     ref = f"{run['id']}/{n}"
@@ -1256,33 +1126,13 @@ def task_turn(run: dict, n: int) -> str:
             "the problem, the change it suggests and the evidence you checked, then reply in one line naming the task.")
 
 
-def _ref(ref: str) -> tuple[str, int]:
-    match = REF.fullmatch(str(ref or ""))
-    if not match:
-        raise ValueError("a suggestion is named <run>/<number>, as alt improve status shows it")
-    return match.group(1), int(match.group(2))
+def suggested_run(record: dict, run_id: str) -> dict:
+    """The run a suggestion ref names (`suggestions.parse`)."""
+    return _find(record, run_id)
 
 
-def _decision(project: str, run: dict, n: int, now: datetime) -> dict:
-    title = next(s["title"] for s in run["suggestions"] if s["n"] == n)
-    return {"suggestion": f"{run['id']}/{n}", "title": title, "state": suggestion_state(run, n, now),
-            "task": suggestion_task(project, f"{run['id']}/{n}")}
-
-
-def suggestion_task(project: str, ref: str) -> str | None:
-    """The task made for suggestion `ref`, active or archived."""
-    return next((t["slug"] for t in S.list_tasks(project, include_archive=True) if t.get("improvement") == ref), None)
-
-
-def require_accepted_locked(project: str, ref: str) -> None:
-    """`alt task new --improvement`, under the caller's project lock: one task per accepted suggestion."""
-    run_id, n = _ref(ref)
-    run = _find(_load(project), run_id)
-    if not run.get("post") or n not in run["post"]["shown"] \
-            or suggestion_state(run, n, datetime.now(timezone.utc)) != "accepted":
-        raise ValueError(f"suggestion {ref} is not accepted")
-    if existing := suggestion_task(project, ref):
-        raise ValueError(f"suggestion {ref} already has task {existing}")
+def origin(project: str, run_id: str) -> str:
+    return NAME
 
 
 def reconcile(project: str, now: datetime | None = None) -> None:
@@ -1329,8 +1179,8 @@ def status(project: str, run_id: str | None = None, *, now: datetime | None = No
             item["suggestions"] = [
                 {"suggestion": f"{run['id']}/{s['n']}", "title": s["title"], "target": s["target"],
                  "state": (f"dropped by L3: {post['drops'][str(s['n'])]}" if str(s["n"]) in post.get("drops", {})
-                           else suggestion_state(run, s["n"], now) if post else "not shown"),
-                 "task": suggestion_task(project, f"{run['id']}/{s['n']}")} for s in run["suggestions"]]
+                           else suggestions.state(run, s["n"], now) if post else "not shown"),
+                 "task": suggestions.task(project, f"{run['id']}/{s['n']}")} for s in run["suggestions"]]
         out.append(item)
     return {"project": project, "runs": out}
 
@@ -1341,7 +1191,7 @@ def view(project: str, *, now: datetime | None = None) -> list[dict]:
     if not _path(project).exists():
         return []
     now = now or datetime.now(timezone.utc)
-    made = {t["improvement"]: t["slug"] for t in S.list_tasks(project, include_archive=True) if t.get("improvement")}
+    made = suggestions.made(project)
     return [_run_view(project, run, made, now) for run in _load(project)["runs"]]
 
 
@@ -1365,16 +1215,12 @@ def _run_view(project: str, run: dict, made: dict[str, str], now: datetime) -> d
     for s in run["suggestions"]:
         if s["n"] not in post.get("shown", []):
             continue
-        ref, state = f"{run['id']}/{s['n']}", suggestion_state(run, s["n"], now)
-        accepted = next((d for d in run["decisions"] if d["n"] == s["n"] and d["to"] == "accepted"), None)
         item["suggestions"].append({
-            "ref": ref, "n": s["n"], "target": "How agents work" if s["target"] == "agents" else project,
-            "title": s["title"], "explanation": s["explanation"], "seen": _seen_view(project, s["anchors"]),
+            **suggestions.item(project, run, s, made, now),
+            "target": "How agents work" if s["target"] == "agents" else project,
+            "seen": _seen_view(project, s["anchors"]),
             "count": (f"{SIGNALS[s['signal']]} in {counts[s['signal']]} of {run['tasks']} tasks"
-                      if s.get("signal") in counts else None),
-            "state": state, "task": made.get(ref), "undo": state == "dismissed" and not _lapsed(run, now),
-            "opening": bool(state == "accepted" and ref not in made and accepted and accepted.get("turn")
-                            and l3.pending(project, accepted["turn"]))})
+                      if s.get("signal") in counts else None)})
     return item
 
 

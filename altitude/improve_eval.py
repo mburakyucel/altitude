@@ -149,7 +149,7 @@ def load(scenario: dict) -> dict[str, str]:
                       "created": scenario["now"], "updated": scenario["now"], "attempt": 1, "prs": [], "questions": [],
                       "reviews": []})
     if scenario.get("earlier"):
-        # One posted review three weeks back whose suggestions the operator decided, as improve.resolve records them.
+        # One posted review three weeks back whose suggestions the operator decided, as suggestions.resolve records them.
         at = (datetime.fromisoformat(scenario["now"]) - timedelta(days=21)).isoformat()
         numbered = list(enumerate(scenario["earlier"], 1))
         S.write_json(base / "improvements.json", {"runs": [{

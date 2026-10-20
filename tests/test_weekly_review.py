@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 from tests.test_improvement_runs import NOW, RunCase, suggestion
-from altitude import access, config, improve, l3, schedule, server, state as S
+from altitude import access, config, improve, l3, schedule, server, state as S, suggestions
 
 
 class TestAgreement(RunCase):

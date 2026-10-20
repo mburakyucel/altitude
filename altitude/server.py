@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_agents, project_setup, push, qr, repair, reviews, route, schedule, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_agents, project_setup, push, qr, repair, reviews, route, schedule, speech, state as S, storage, suggestions, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -466,14 +466,14 @@ def improvement_verb(project: str, options: argparse.Namespace) -> dict:
     if options.action == "status":
         return improve.status(project, options.run)
     if options.action == "post":
-        return improve.post(project, options.run, options.keep, options.drop)
+        return suggestions.post(project, options.run, options.keep, options.drop)
     message = l3.chat_turn(project)
     if not any(row["id"] == message for row in T._decision_messages(project, "", "project")):
         raise ValueError("this applies only to the operator's own chat message")
     if options.action == "stop":
         return improve.stop(project, message)
     if options.action == "resolve":
-        return improve.resolve(project, options.ref, options.outcome, message, options.reason)
+        return suggestions.resolve(project, options.ref, options.outcome, message, options.reason)
     receipt = improve.start(project, message)
     if not receipt.get("replayed"):
         spawn(f"improve:{project}", improve.execute, project, receipt["run"])
@@ -2311,9 +2311,9 @@ class Handler(BaseHTTPRequestHandler):
             if action == "stop":
                 result = improve.stop(project, request_id, ref)
             elif action == "retry":
-                result = improve.retry(project, ref, request_id)
+                result = suggestions.retry(project, ref, request_id)
             else:
-                result = improve.decide(project, ref, action, request_id)
+                result = suggestions.decide(project, ref, action, request_id)
         except KeyError as exc:
             return self._json({"error": exc.args[0]}, 404)
         except ValueError as exc:
