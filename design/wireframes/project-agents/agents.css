@@ -111,3 +111,9 @@ a.agentsrow{display:flex;align-items:center;justify-content:space-between;color:
 .m .agl .nx,.phonesheet .agl .nx{color:var(--text-secondary);white-space:normal}
 .monseats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .m .monseats{grid-template-columns:1fr}
+.evl{margin:0 0 14px}.evl p{margin:0;font-size:13px;line-height:1.6;color:var(--text-muted)}
+.ncard{display:flex;flex-direction:column;gap:6px}
+.ncard .nk{display:flex;justify-content:space-between;font-size:12.5px;font-weight:600}.ncard .nk .muted{font-weight:400}
+.ncard .nt{font-weight:600;font-size:15px;color:var(--text-primary);text-decoration:none}
+.ncard p{margin:0;font-size:14px;line-height:1.5;color:var(--text-secondary)}
+.ncard .nb{display:flex;align-items:center;gap:12px;margin-top:6px;flex-wrap:wrap}

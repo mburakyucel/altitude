@@ -22,21 +22,22 @@ def board(name, w, h, body):
     (out / f"{name}.html").write_text(HEAD.format(title=name, w=w, h=h) + body + TAIL)
 
 
-def rail(monitor=False, on=P):
+def rail(monitor=False, on=P, needs=False):
     def item(name, dot):
         style = ' style="background:var(--bubble);font-weight:600"' if name == on and not monitor else ""
         return f'<div class="ri"{style}><span class="dot {dot}"></span>{name}</div>'
     mon = ' style="height:36px;background:var(--bubble);font-weight:600"' if monitor else ' style="height:36px"'
     return ('<aside class="rail"><div class="brand"><span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-10 4 6 2-3 4 7"/></svg></span>Altitude</div>'
-            '<div class="ri">Needs you<span class="badge">1</span></div><div class="rsec"><span>Projects</span></div>'
+            + ('<div class="ri" style="background:var(--bubble);font-weight:600">Needs you<span class="badge">2</span></div>' if needs
+               else '<div class="ri">Needs you<span class="badge">1</span></div>') + '<div class="rsec"><span>Projects</span></div>'
             + item("altitude", "idle") + item(P, "held") +
             '<div class="engines"><div class="erow"><div class="t"><b>Claude</b><span>38% of week</span></div><div class="meter"><i style="width:38%"></i></div></div>'
             '<div class="erow"><div class="t"><b>Codex</b><span>22% of week</span></div><div class="meter"><i style="width:22%"></i></div></div></div>'
             f'<div class="ri"{mon}>Monitor</div><div class="who"><span class="avatar">O</span>Operator</div></aside>')
 
 
-def desk(inner, h=900, monitor=False, on=P):
-    return (f'<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:{h}px">' + rail(monitor, on)
+def desk(inner, h=900, monitor=False, on=P, needs=False):
+    return (f'<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:{h}px">' + rail(monitor, on, needs)
             + f'<main class="pane" style="overflow:hidden"><div class="route-content" style="max-width:760px;width:100%;overflow:visible">{inner}</div></main></div>')
 
 
@@ -45,10 +46,10 @@ def tabbar(on=None):
     return '<nav class="tabbar">' + "".join(f'<div class="tab{" on" if k == on else ""}">{t}</div>' for k, t in tabs) + '</nav>'
 
 
-def phone(inner, back=P, title="Agents", h=844, overlay=""):
+def phone(inner, back=P, title="Agents", h=844, overlay="", tab="work"):
     return (f'<div class="m" style="height:{h}px;position:relative"><div></div><header class="mh"><a class="btn" href="#" style="padding:0 8px">{CHEVL}{back}</a>'
             f'<h1 style="font-size:17px;margin:0 0 0 8px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{title}</h1></header>'
-            f'<div class="route-content" style="overflow:hidden;padding:4px 16px 20px">{inner}</div><div></div>{tabbar("work")}{overlay}</div>')
+            f'<div class="route-content" style="overflow:hidden;padding:4px 16px 20px">{inner}</div><div></div>{tabbar(tab)}{overlay}</div>')
 
 
 # ---- the agents page ----
@@ -132,6 +133,9 @@ def status(state="idle"):
                      '<span class="btn" aria-disabled="true"><span class="spin"></span>Stopping…</span>' + pause, ""),
         "waiting": ("Waiting for a free task slot", '<span class="btn">Stop</span>', ""),
         "waiting-agent": ("Waiting for Review each merge", '<span class="btn">Stop</span>', ""),
+        "events": ("Runs when a pull request merges", run_now + pause, ""),
+        "running-pending": ('<span class="spin"></span>Running · 4 of 20 min · <a ' + U + '>Open</a>', '<span class="btn">Stop</span>' + pause,
+                            '<p class="muted" style="margin:6px 0 0;font-size:13px">PR #813 and #814 wait for the next run.</p>'),
         "new": ("Not on yet", run_now + '<span class="btn">Turn on</span>', ""),
         "starting": ("Next: tomorrow at 07:00", '<span class="btn" style="min-width:86px" aria-label="Run now, starting"><span class="spin"></span>Starting…</span>'
                      '<span class="btn" aria-disabled="true">Pause</span>', ""),
@@ -201,8 +205,25 @@ SESSION = ('<div class="tl" style="gap:8px">'
 FOLDS = ''.join(f'<div class="fold" style="margin-top:4px">{CHEVR.replace("chev", "")}{t}</div>' for t in ("Brief it ran", "Session"))
 
 
+EVENT_LINES = ('<div class="evl"><p>PR #810 merged · Move the upload limit to settings</p><p>PR #811 merged · Raise the retry limit</p>'
+               '<p>PR #812 merged · Show upload progress on the phone</p></div>')
+
+
 def run_page(state="ended"):
     meta = '<p class="muted" style="margin:0 0 16px;font-size:13.5px">On its weekday schedule · Sonnet{}</p>'
+    if state == "events":
+        return ('<p class="muted" style="margin:0 0 4px;font-size:13.5px">For PR #810, #811 and #812 · Sonnet · 7 min · 4.4M tokens</p>'
+                + EVENT_LINES + '<div class="card"><div class="runhead"><span class="d found"></span><b>Found something</b></div>'
+                  '<p style="margin:6px 0 0">#811 raised the retry limit in <code>uploader.py</code> without a test; the test would go in '
+                  '<code>tests/test_uploader.py</code> beside the other retry cases.</p></div>' + FOLDS)
+    if state == "replay":
+        return ('<p class="muted" style="margin:0 0 16px;font-size:13.5px">Run now by you · For PR #812, the latest · Sonnet · 3 min · 1.1M tokens</p>'
+                '<div class="card"><div class="runhead"><span class="d"></span><b>Nothing found</b></div>'
+                '<p style="margin:6px 0 0">Every change in PR #812 has a test.</p></div>' + FOLDS)
+    if state == "no-event":
+        return ('<p class="muted" style="margin:0 0 16px;font-size:13.5px">Run now by you · No pull request has merged yet · Sonnet · 1 min · 0.4M tokens</p>'
+                '<div class="card"><div class="runhead"><span class="d"></span><b>Nothing found</b></div>'
+                '<p style="margin:6px 0 0">No pull request to read yet; the brief needs one.</p></div>' + FOLDS)
     if state == "running":
         return (meta.format("")
                 + '<div class="card"><div class="status"><span class="tx"><span class="spin"></span>Running · 4 of 20 min</span>'
@@ -303,7 +324,15 @@ ZAP = '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5
 XM = '<span class="x" role="button" aria-label="Remove this trigger"><svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></span>'
 
 
-def triggers(kind="schedule", open_schedule=True, empty=False, step1=False, noday=False):
+EVENTS = [("A pull request merges", "Its run reads that pull request."), ("A task finishes", "Its run reads that task’s report."),
+          ("An incident is filed", "Its run reads that incident.")]
+
+
+def event_row(words, line):
+    return f'<div class="tr">{ZAP}<span class="tx">{words}<small>{line}</small></span>{XM}</div>'
+
+
+def triggers(kind="schedule", open_schedule=True, empty=False, noday=False):
     """The Runs when list: each trigger one row with Remove; a schedule row opens its days and time."""
     if empty:
         rows = '<div class="tr"><span class="tx muted">Only when you run it</span></div>'
@@ -311,15 +340,19 @@ def triggers(kind="schedule", open_schedule=True, empty=False, step1=False, noda
         none = '<div class="err" style="margin-top:8px">Pick at least one day.</div>' if noday else ""
         sched = (f'<div class="tr open"><div class="row1">{CLOCK}<span class="tx">On a schedule</span>{XM}</div>{days(on=() if noday else (0, 1, 2, 3, 4))}{none}</div>' if open_schedule
                  else f'<div class="tr">{CLOCK}<span class="tx">Weekdays at 07:00</span>{XM}</div>')
-        merge = f'<div class="tr">{ZAP}<span class="tx">A pull request merges<small>Its run reads that pull request.</small></span>{XM}</div>'
-        rows = {"schedule": sched, "event": merge, "both": sched + merge}[kind]
-    add = "+ Add a schedule" if step1 else "+ Add a trigger"
-    return f'<div class="trig">{rows}<div class="add"><span class="btn">{add}</span></div></div>'
+        merge = event_row(*EVENTS[0])
+        rows = {"schedule": sched, "event": merge, "both": sched + merge,
+                "events": sched + "".join(event_row(*e) for e in EVENTS)}[kind]
+    return f'<div class="trig">{rows}<div class="add"><span class="btn">+ Add a trigger</span></div></div>'
 
 
-TRIGGER_MENU = ('<div class="menu-mock" role="menu"><div class="hi">On a schedule</div><hr><div class="gh">In Altitude</div>'
-                '<div>A pull request merges</div><div>A task finishes</div><div>An incident is filed</div>'
-                '<hr><div class="gh">On GitHub</div><div>An issue is opened</div><div>Checks fail on the main branch</div><div>A release is published</div></div>')
+def trigger_menu(added=(), github=True):
+    """+ Add a trigger's menu: an event already in the list is left out; the On GitHub group arrives with step 5."""
+    events = "".join(f'<div>{w}</div>' for w, _ in EVENTS if w not in added)
+    group = f'<hr><div class="gh">In Altitude</div>{events}' if events else ""
+    gh = ('<hr><div class="gh">On GitHub</div><div>An issue is opened</div><div>Checks fail on the main branch</div>'
+          '<div>A release is published</div>') if github else ""
+    return f'<div class="menu-mock" role="menu"><div class="hi">On a schedule</div>{group}{gh}</div>'
 
 
 EVHINT = '<span class="hint">Events that arrive during a run go to its next run together.</span>'
@@ -505,6 +538,34 @@ board("PhoneRetire", 390, 844, phone(agent_page(), back=P, title="Dependency che
                                                    f'<span class="btn"{FOCUS}>Cancel</span><span class="btn redfill">Retire</span>')))
 
 
+# ---- needs you: an agent that paused itself (step 4) ----
+def needs_card(state="shown"):
+    """Counted with the project's questions, never alerting a device; Resume presses the agent's resume change."""
+    resume = {"resuming": '<span class="btn" style="min-width:86px" aria-label="Resume, saving"><span class="spin"></span></span>'}.get(state, '<span class="btn">Resume</span>')
+    err = '<div class="err">Not resumed: Flaky tests changed in another window.</div>' if state == "refused" else ""
+    return ('<div class="card ncard"><div class="nk"><span class="bad">Agent paused itself</span><span class="muted">2 h ago</span></div>'
+            '<a class="nt" href="#">Flaky tests</a>'
+            '<p>3 runs in a row couldn’t finish. The last: <code>make test-e2e</code> is not a target.</p>'
+            f'<div class="nb">{resume}<a {U}>Open agent</a></div>{err}</div>')
+
+
+QUESTION = ('<div class="card ncard"><div class="nk"><span style="color:var(--accent-text)">The L2 asks</span><span class="muted">20 min ago</span></div>'
+            '<a class="nt" href="#">Move uploads to the new bucket</a>'
+            '<p>Keep the old bucket readable for a week after the move?</p>'
+            '<div class="nb"><span class="btn primary">Keep it a week</span><span class="btn">Remove it at once</span></div></div>')
+
+
+def needs_page():
+    return ('<h1 style="margin-bottom:2px">Needs you</h1><p class="muted" style="margin:0 0 18px">1 question · 1 paused agent in harbor</p>'
+            f'<h2 style="margin:0 0 10px">{P}</h2><div style="display:flex;flex-direction:column;gap:12px">{QUESTION}{needs_card()}</div>')
+
+
+board("DesktopNeeds", 1440, 900, desk(needs_page(), needs=True, on=None))
+board("PhoneNeeds", 390, 844, '<div class="m"><div></div><header class="mh"><div class="brand" style="margin:0;padding:0 4px;height:40px"><span class="mark">'
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-10 4 6 2-3 4 7"/></svg></span>Altitude</div><span class="sp"></span></header>'
+      f'<div class="route-content" style="overflow:hidden;padding:4px 16px">{needs_page()}</div><div></div>' + tabbar("needs") + '</div>')
+
+
 # ---- states ----
 def st(label, note, body):
     return f'<div class="st"><div class="lab">{label}<span>{note}</span></div>{body}</div>'
@@ -551,9 +612,8 @@ CELLS = [
      + sysa("Dependency check", "stopped at its 20-minute limit.", "fail")
      + sysa("Dependency check", "stopped by you.")
      + sysa("Retired Dependency check", "", link="") + '</div>'),
-    ("24 · Add a trigger", "step 1 adds schedules only; from step 3 a menu, Escape returns focus to the button",
-     triggers("schedule", open_schedule=False, step1=True) + '<div style="height:12px"></div>'
-     + triggers("schedule", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">' + TRIGGER_MENU + '</div>'),
+    ("24 · Add a trigger", "the menu as step 4 ships it; On GitHub joins in step 5; Escape returns focus to the button",
+     triggers("schedule", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">' + trigger_menu(github=False) + '</div>'),
     ("25 · No trigger", "the agent runs only when you press Run now", triggers(empty=True)),
     ("26 · One run for several events", "events during a run wait and go together",
      runs(rows=[("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For PR #810, #811 and #812: #811 changed the retry limit without a test."),
@@ -624,15 +684,33 @@ CELLS = [
                  ("altitude / Weekly improvement review", PAUSE + "Paused: its terms changed", "Last: Nothing to suggest · 6 d ago · 3 min"),
                  ("atlas / Release notes", "Waits until Monday", "Last: Found something · 4 d ago · 12 min · 6.0M tokens"),
                  ("harbor / Dependency check", "Next tomorrow at 07:00 Istanbul", "Last: Stopped at its limit · 2 h ago · 20 min · 9.4M tokens"),
+                 ("harbor / Incident causes", "When an incident is filed", "Last: Found something · 1 d ago · 8 min · 3.0M tokens"),
                  ("atlas / Licence audit", "Only when you run it", "Last: Nothing found · 6 d ago · 3 min · 0.9M tokens")],
                head=False)),
     ("55 · Monitor: no agents", "no Agents section and no heading; Sessions ends the page",
      '<h2 style="margin-top:0">Sessions (1)</h2>' + session_row("L3", "harbor", "Claude Code · Fable · context 12%", "1 min ago", 12)),
+    ("56 · Event triggers", "each event row says what its run reads; the hint follows the list (step 4)",
+     '<div>' + triggers("events", open_schedule=False) + EVHINT + '</div>'),
+    ("57 · Every event added", "the menu holds only On a schedule",
+     triggers("events", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">'
+     + trigger_menu(added=[w for w, _ in EVENTS], github=False) + '</div>'),
+    ("58 · Events only; events waiting", "the status names the trigger; events during a run wait for the next one",
+     status("events") + '<div style="height:10px"></div>' + status("running-pending")),
+    ("59 · Event runs", "a replay of the latest event; a skip names its events",
+     runs(rows=[("", "Today 11:02", "Nothing found", "3 min · 1.1M tokens", "For PR #812: every change has a test."),
+                ("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For PR #810, #811 and #812: #811 changed the retry limit without a test."),
+                ("found", "Yesterday 16:40", "Found something", "6 min · 2.9M tokens", "For “Fix the login timeout” and 2 more: two of them left a TODO in the session code."),
+                ("skip", "Oct 18, 09:30", "Skipped", "", "For PR #806 · No free slot for 6 hours.")], more=False)),
+    ("60 · A run for several events", "each event on its own muted line under what fired it", run_page("events")),
+    ("61 · Run now on an event agent", "it replays the latest event; with none yet it runs without one",
+     run_page("replay") + '<div style="height:12px"></div>' + run_page("no-event")),
+    ("62 · Needs you: paused itself", "counted with the questions, never alerting a device", needs_card()),
+    ("63 · Needs you: resuming, refused", "the card leaves once the agent reads as on", needs_card("resuming") + '<div style="height:12px"></div>' + needs_card("refused")),
 ]
-board("States", 1200, 13500, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
+board("States", 1200, 16200, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Every state of the agents page, the agent page, the form, the dialogs and chat, as PROPOSAL.md specifies them.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in CELLS) + '</div>')
-board("PhoneStates", 1720, 9800, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
+board("PhoneStates", 1720, 11800, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: stacked choices, 44px targets, full-width cards.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in CELLS) + '</div>')
 board("PhoneWeeklyTerms", 390, 844, phone(weekly_page(), back="altitude", title="Weekly improvement review",
