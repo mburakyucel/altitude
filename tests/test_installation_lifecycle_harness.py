@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import types
+import unittest
 from unittest import mock
 
 from tests.support import AltitudeCase, REPO
@@ -1508,6 +1509,33 @@ class TestSandboxVm(AltitudeCase):
         self.assertEqual(commands, list(sandbox_vm.COMMANDS))
         self.assertTrue(all("bwrap-userns-restrict" in command for command in commands), "Ubuntu's own profile")
         self.assertNotIn("runcmd:", vm.user_data("ssh-ed25519 AAAA fixture"), "the installation lane runs no commands")
+
+    def test_the_run_passes_when_every_case_ran_or_is_macos_only(self):
+        from scripts import sandbox_vm
+        from tests import test_session_sockets as sockets
+
+        def outcome(*cases) -> dict:
+            """The lane's judgment of real verbose unittest output for fictional cases, as the guest runs the module."""
+            fixture = type("Fixture", (unittest.TestCase,), {f"test_{i}": case for i, case in enumerate(cases)})
+            stream = io.StringIO()
+            done = unittest.TextTestRunner(stream=stream, verbosity=2).run(
+                unittest.defaultTestLoader.loadTestsFromTestCase(fixture))
+            return sandbox_vm.judge(0 if done.wasSuccessful() else 1, stream.getvalue())
+
+        def ran(self):
+            pass
+
+        with mock.patch.object(sockets, "NATIVE_PLATFORM", "linux"):
+            seatbelt = sockets.macos_only("Seatbelt's case")(lambda self: None)
+        self.assertEqual(outcome(ran, ran), {"returncode": 0, "ran": 2, "summary": "OK", "skipped": [], "passed": True})
+        self.assertEqual(outcome(ran, seatbelt), {"returncode": 0, "ran": 2, "summary": "OK (skipped=1)",
+                                                  "skipped": ["macOS only: Seatbelt's case"], "passed": True})
+        for skip in (unittest.skip("bubblewrap does not start here: not installed")(lambda self: None),
+                     lambda self: self.skipTest("this kernel offers no Landlock abstract-socket scope")):
+            self.assertFalse(outcome(ran, seatbelt, skip)["passed"])
+        self.assertFalse(outcome(seatbelt)["passed"], "no case ran")
+        self.assertFalse(outcome(ran, seatbelt, lambda self: self.fail("fictional"))["passed"])
+        self.assertFalse(sandbox_vm.judge(0, "")["passed"], "no output is no run")
 
 
 class TestLinuxVmMac(AltitudeCase):

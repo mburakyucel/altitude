@@ -5,6 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The Linux sandbox VM lane (`make sandbox-vm`) passes when the only cases it skips are the macOS-only
+  Seatbelt ones; any other skip fails it.
 - A Claude task owner uses a skill or custom command you type by name in its conversation
   (`/name arguments`), your own and the project's alike, with what follows as its arguments. The project
   conversation's Claude coordinator does not load skills or commands, and Codex is not yet confirmed.
