@@ -370,7 +370,7 @@ def form(new=False, nameless=False, saving=False, refused=False, trig="schedule"
     body = (f'<label class="flab" style="margin-top:6px">Name</label>{nm}'
             f'<label class="flab">What it does</label>{br}<span class="hint">Write it as you would brief a task. It can use anything in the repository.</span>'
             f'<label class="flab">Runs when</label>{triggers(trig, open_schedule=new)}{EVHINT if trig != "schedule" else ""}'
-            f'<label class="flab">Tell me in chat</label>{seg()}'
+            f'<label class="flab">Tell me in chat</label>{seg()}<span class="hint">Suggested tasks wait in Needs you whatever you choose.</span>'
             f'<div style="display:flex;gap:0 24px;flex-wrap:wrap;align-items:flex-end"><div><label class="flab">Model</label><span class="newtasks"><span><b>Default</b> · Default effort</span>{DOWN}</span></div>'
             f'<div><label class="flab">Each run stops after</label><span class="field" style="min-width:8rem;flex:none;color:var(--text-primary)">20 min&nbsp;{DOWN}</span></div></div>')
     primary = "Create agent" if new else "Save"
@@ -395,10 +395,10 @@ board("PhoneEdit", 390, 1150, phone(form(trig="event", name="Review each merge",
 # ---- suggestions (step 5) ----
 CHECK = '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>'
 SUGS = [("Add a test for the uploader’s retry limit",
-         "#811 raised the retry limit from 3 to 5 in uploader.py, and no test checks the new value. A case beside the "
-         "other retry tests in tests/test_uploader.py would catch the next change."),
+         "A case beside the other retry tests in tests/test_uploader.py that checks the limit of 5, so the next change "
+         "to it fails a test."),
         ("Say the new retry limit in the upload docs",
-         "docs/uploads.md still says uploads retry three times. One sentence would match it to #811.")]
+         "One sentence in docs/uploads.md, which still says three, so the docs match what uploads do.")]
 
 
 def sug(n, state="open"):
@@ -410,12 +410,26 @@ def sug(n, state="open"):
                     '<span class="btn ghost" style="opacity:.45">Dismiss</span></div>'),
         "accepted": f'<div class="ok">{CHECK}Accepted · L3 is opening a task</div>',
         "notask": f'<div class="ok">{CHECK}Accepted · no task yet · <a {U}>Try again</a></div>',
+        "retrying": f'<div class="ok">{CHECK}Accepted · no task yet · <span class="spin" aria-label="Try again, saving"></span></div>',
+        "retry-refused": (f'<div class="ok">{CHECK}Accepted · no task yet · <a {U}>Try again</a></div>'
+                          '<div class="err">Not saved: L3 is still opening its task.</div>'),
+        "covered": (f'<div class="ok">{CHECK}Accepted · covered by</div><div class="tcard"><span class="dot"></span><div>'
+                    '<div class="tt">Cover the uploader’s limits with tests</div><div class="tm">Running · PR #809 open</div></div>'
+                    '<span class="go"><svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span></div>'),
+        "covered-issue": f'<div class="ok">{CHECK}Accepted · covered by <a {U}>#214 Document upload retries</a></div>',
+        "undoing": ('<div class="acts"><span class="btn acc" aria-disabled="true" style="opacity:.45">Make a task</span>'
+                    '<span class="btn ghost" aria-disabled="true" style="opacity:.45">Dismiss</span><span class="spin" aria-label="Undo, saving"></span></div>'),
         "task": ('<div class="tcard"><span class="dot"></span><div><div class="tt">Add a test for the uploader’s retry limit</div>'
                  '<div class="tm">Running · Opus on Claude · 2 min · from Review each merge</div></div>'
                  '<span class="go"><svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span></div>'),
         "refused": ('<div class="acts"><span class="btn acc">Make a task</span><span class="btn ghost">Dismiss</span></div>'
                     '<div class="err">Not saved. Try again.</div>'),
     }
+    if state == "dismissing":
+        return f'<div class="sg dim"><span class="t">{n}. {title}</span><span class="meta">Dismissed · <span class="spin" aria-label="Dismiss, saving"></span></span></div>'
+    if state == "dismiss-refused":
+        return (f'<div class="sg">{head}<div class="acts"><span class="btn acc">Make a task</span><span class="btn ghost">Dismiss</span></div>'
+                f'<div class="err">Not saved: the agent’s suggestions changed in another window. <a {U}>Retry</a></div></div>')
     if state == "dismissed":
         return f'<div class="sg dim"><span class="t">{n}. {title}</span><span class="meta">Dismissed · <a href="#">Undo</a></span></div>'
     if state == "lapsed":
@@ -423,7 +437,7 @@ def sug(n, state="open"):
     return f'<div class="sg">{head}{acts[state]}</div>'
 
 
-LINE5 = "For “PR #810 merged” and 2 more: #811 changed the retry limit without a test."
+LINE5 = "For “PR #810 merged” and 2 more"
 
 
 def scard(states=("open", "open"), time="Today 10:19", footer=True):
@@ -478,7 +492,7 @@ CHAT = ('<div class="day">Today</div>'
         '<div class="l3"><p>Here it is. Say if you’d like it on a smaller model.</p>' + offer() + '</div>'
         + '<div class="day">Tomorrow</div>'
         + sysa("Dependency check", "found something: 2 packages have security fixes.", "found")
-        + scard()
+        + sysa("Review each merge", "found something for “PR #810 merged” and 2 more: #811 changed the retry limit without a test. · 2 suggested tasks", "found")
         + '<div class="me">Pause the dependency one for now.</div>'
         + '<div class="l3"><p>Done.</p></div>'
         + sysa("Paused Dependency check", "·", link="Resume"))
@@ -801,26 +815,35 @@ CELLS = [
     ("65 · Send it an event: examples", "three recipes to copy; the agent’s id and repository filled in", send_section(examples=True)),
     ("62 · Needs you: paused itself", "counted with the questions, never alerting a device", needs_card()),
     ("63 · Needs you: resuming, refused", "the card leaves once the agent reads as on", needs_card("resuming") + '<div style="height:12px"></div>' + needs_card("refused")),
-    ("66 · Suggestions in chat", "in place of the run’s found line, when Tell me shows it; Open the run opens the report",
-     scard()),
-    ("67 · Make a task pressed, then accepted", "a spinner in place, same width; then who acts next",
-     scard(("pressed", "open")) + '<div style="height:12px"></div>' + scard(("accepted", "open"))),
-    ("68 · Task opened; no task yet", "the line becomes the task’s card; Try again queues the same turn once more",
-     scard(("task", "open")) + '<div style="height:12px"></div>' + scard(("notask", "open"))),
-    ("69 · Dismissed, Undo; not decided", "folds at the press; Undo until it lapses seven days after the run",
-     scard(("dismissed", "open")) + '<div style="height:12px"></div>' + scard(("lapsed", "lapsed"))),
-    ("70 · Make a task not saved", "the buttons return with the line under them", scard(("refused", "open"))),
-    ("71 · The run page", "Suggested tasks under the report; the same buttons and states", run_with_suggestions()),
-    ("72 · Needs you: Suggestions", "after what needs you, uncounted, never alerting; shown whatever Tell me says",
+    ("66 · A run that suggested tasks, in chat", "one quiet line; Open goes to the run page, where they can be decided",
+     '<div style="display:flex;flex-direction:column;gap:14px;padding:6px 0">'
+     + sysa("Review each merge", "found something for “PR #810 merged” and 2 more: #811 changed the retry limit without a test. · 2 suggested tasks", "found")
+     + '</div>'),
+    ("67 · Needs you: Suggestions", "after what needs you, uncounted, never alerting; shown whatever Tell me says; at most three waiting per agent",
      f'<div class="nsec" style="margin-top:0">Suggestions</div><h2 style="margin:0 0 10px">{P}</h2>' + scard()),
-    ("73 · Work: a task from a suggestion", "its card’s muted line names the agent; the Weekly review’s read “from Weekly improvement review”",
+    ("68 · Make a task pressed, then accepted", "a spinner in place, same width; then the words hold until L3’s outcome is read",
+     scard(("pressed", "open")) + '<div style="height:12px"></div>' + scard(("accepted", "open"))),
+    ("69 · Task opened; covered by existing work", "the line becomes the task’s card; or what already covers it, a task or an issue",
+     scard(("task", "open")) + '<div style="height:12px"></div>' + scard(("covered", "covered-issue"))),
+    ("70 · No task yet: Try again, pressed, refused", "the same single turn once more",
+     scard(("notask", "open")) + '<div style="height:12px"></div>' + scard(("retrying", "open"))
+     + '<div style="height:12px"></div>' + scard(("retry-refused", "open"))),
+    ("71 · Dismiss pressed, dismissed, refused", "folds at the press; a refusal puts it back with Retry",
+     scard(("dismissing", "open")) + '<div style="height:12px"></div>' + scard(("dismissed", "open"))
+     + '<div style="height:12px"></div>' + scard(("dismiss-refused", "open"))),
+    ("72 · Undo pressed; not decided; Make a task not saved", "Undo until it lapses seven days after the run",
+     scard(("undoing", "open")) + '<div style="height:12px"></div>' + scard(("lapsed", "lapsed"))
+     + '<div style="height:12px"></div>' + scard(("refused", "open"))),
+    ("73 · The run page", "Suggested tasks under the report; the same buttons and states", run_with_suggestions()),
+    ("74 · The form’s Tell me", "one muted line under the choices", f'<label class="flab" style="margin-top:0">Tell me in chat</label>{seg()}<span class="hint">Suggested tasks wait in Needs you whatever you choose.</span>'),
+    ("75 · Work: a task from a suggestion", "its card’s muted line names the agent; the Weekly review’s read “from Weekly improvement review”",
      '<div class="work" style="position:static;padding:0">' + trow("Add a test for the uploader’s retry limit", "Running · PR #811 green · from Review each merge")
      + trow("Stop re-asking merge approval after a rebase", "Done · from Weekly improvement review", "dot ok") + '</div>'),
 ]
-board("States", 1200, 18860, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
+board("States", 1200, 20590, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Every state of the agents page, the agent page, the form, the dialogs and chat, as PROPOSAL.md specifies them.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in CELLS) + '</div>')
-board("PhoneStates", 1720, 13750, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
+board("PhoneStates", 1720, 14890, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: stacked choices, 44px targets, full-width cards.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in CELLS) + '</div>')
 board("PhoneWeeklyTerms", 390, 844, phone(weekly_page(), back="altitude", title="Weekly improvement review",
