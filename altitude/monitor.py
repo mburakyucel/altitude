@@ -2,11 +2,11 @@
 from __future__ import annotations
 import time
 
-from . import engines, config, route, state as S
+from . import engines, config, improve, project_agents, route, state as S
 
 
 def sessions() -> list[dict]:
-    """The sessions Altitude runs: each project's L3 and its live task owners (L2)."""
+    """The sessions Altitude runs: each project's L3, its live task owners (L2) and its running agents."""
     out = []
     for name in config.load_projects():
         inf = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
@@ -30,10 +30,17 @@ def sessions() -> list[dict]:
                             "context_percent": cp, "engine": engine,
                             "model": t.get("engine_model"), "engine_reasoning_effort": t.get("engine_reasoning_effort"),
                             "context_state": engines.context_state(cp, engine)})
+        out.extend(project_agents.monitor_sessions(name))
     for row in out:
         if not row.get("model"):
             row.pop("model", None)
     return out
+
+
+def agents() -> list[dict]:
+    """Monitor's Agents section across projects, in project order and each project's Agents page order."""
+    return [row for name in config.load_projects()
+            for row in [improve.monitor(name), *project_agents.monitor_agents(name)] if row]
 
 
 def quota() -> dict:

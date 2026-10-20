@@ -2001,7 +2001,7 @@ their existing recovery, answer and navigation controls remain visible.
 
 Anatomy: **Monitor** title; on phone the **New tasks** control (§3.6.1) beside the same quota;
 **Altitude update** (§3.13); **Seats**, one card per configured engine in the API's order and under
-its label; **Routing now**; **Sessions (N)**. Each seat shows the windows it reports, their
+its label; **Routing now**; **Sessions (N)**; **Agents (N)**. Each seat shows the windows it reports, their
 percentages and reset times in relative and clock terms, a meter with the 70% reserve line, the
 plan when supplied, and "reading 3m old". Exact reading times appear on hover.
 Below a hairline, **Model allowances** lists each model the seat's routing can launch, as
@@ -2014,10 +2014,29 @@ a reading with model rows but no account windows says "No account windows report
 Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
 <project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"
 in `--danger`, with the router's reason below. Rows wrap within the card. Sessions are only the ones
-Altitude runs: each project's coordinator (L3) and its live task owners (L2); a repair shows in
-Work (§3.7). Session rows show their kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
-age such as "3 min ago". Sessions are the process information on this page; there is no raw worker
-process list.
+Altitude runs: each project's coordinator (L3), its live task owners (L2) and its running project agents,
+after the project's tasks; a repair shows in Work (§3.7). Session rows show their kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
+age such as "3 min ago". An agent's row has the chip **Agent**, the title "<project> / <agent name>" and
+"<engine> · <model> · context 6% · 4 of 20 min"; before its first reading it says "context unknown" with no
+age and no meter; its age is that of its session's newest request, so a reading older than five minutes is
+stale as a running task's is (meter at half
+opacity, "Stale" for screen readers). A waiting run is not a session, and the Weekly improvement review's run
+is one engine call, never a session. Session rows are readings, not links. Sessions are the process
+information on this page; there is no raw worker process list.
+
+**Agents (N)** comes last and lists, across projects, every agent that is not retired and is on with a
+schedule, has a run waiting or running, paused itself, or had a run in the last seven days; in Altitude's own
+project the Weekly improvement review once it is the operator's, on the same terms. Projects come in Monitor's
+order, each project's agents in its Agents page's order. No such agent: no section and no heading. One card
+holds whole-row links to each agent's page, separated by hairlines, each with a chevron: the title
+"<project> / <agent name>" in semibold; what comes next, the first that applies: a pulsing dot and "Running",
+"Waiting", "Not on yet", a pause mark and "Paused itself", "Paused" or "Paused: its terms changed", "Waits
+until Monday" (the project's weekly budget is used), "Next tomorrow at 07:00" (the computer's zone after the
+time when the browser is in another), "Only when you run it"; then, muted, "Last: <outcome> · <when> ·
+<minutes> min · <tokens> tokens" for the latest run that ran, its missing parts left out and skips never
+shown, or "No runs yet.". On desktop what comes next sits right-aligned on the title's line and never wraps;
+on the phone each row stacks the title, what comes next in the secondary tone, and Last.
+[The project agents proposal](project-agents/PROPOSAL.md#monitor-step-3) holds its boards.
 
 Each L2 session adds one **L2 usage details** disclosure. Collapsed, it shows only the control;
 helper counts, token totals and audit rows are absent. Expansion shows the shared task token readout
@@ -2039,10 +2058,11 @@ States: loading (seat, routing and session skeletons); error ("Could not read th
 Retry); no reading ("No reading." with the seat's sentence explaining what produces one); stale
 (reading kept, amber Stale chip using `--chip-claimed-*`, meter at 50% opacity); one configured
 engine (one seat card, no empty column); no routing ("No roles to route."); no sessions ("No live
-sessions.").
+sessions."); no agents (no Agents section). Agents share the page's loading and error.
 
 Data: `GET /api/monitor` `seats[]` identifies each seat by its configured engine and supplies its
-label, windows, plan and reading metadata, and `models[]` with each routed model's own reading and rejection; `routing[]` and `sessions[]` supply their rows.
+label, windows, plan and reading metadata, and `models[]` with each routed model's own reading and rejection; `routing[]` and `sessions[]` supply their rows; `agents[]` supplies each Agents row (project, id, name,
+`next`, `cue`, `last`) and `clock` the computer's zone and offset.
 L2 `sessions[].token_usage` is the same persisted accounting snapshot as task/status/report reads,
 including `helpers`; opening Monitor starts no provider collection. Archived tasks retain the
 breakdown on their task/report pages rather than appearing as live Monitor sessions.

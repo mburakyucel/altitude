@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, engines, git_policy, improve, l3, route, schedule, state as S
+from . import config, engines, git_policy, improve, l3, route, schedule, state as S, usage
 
 KIND = "project-agent-run"
 BUDGETS = (30, 60, 120, 300, 600)
@@ -37,6 +37,8 @@ LATE = timedelta(minutes=10)
 FAILURES = 3
 KEEP, KEEP_RUNS = timedelta(days=90), 10
 OFFER_LAPSE = timedelta(days=7)
+#: Monitor lists an agent that had a run this recently, whatever its state.
+RECENT = timedelta(days=7)
 ACTIVE = ("waiting", "running")
 OUTCOMES = {"waiting": "Waiting", "running": "Running", "found": "Found something", "nothing": "Nothing found",
             "failed": "Couldn't finish", "stopped": "Stopped by you", "limit": "Stopped at its limit", "skipped": "Skipped"}
@@ -774,6 +776,7 @@ def reconcile(project: str, now: datetime | None = None) -> None:
                     tokens=engines.usage_tokens(run["engine"], (row or {}).get("usage") or {}))
             continue
         if row and row["state"] == "working":
+            _observe(project, run)
             continue
         tokens = engines.usage_tokens(run["engine"], (row or {}).get("usage") or {})
         if not row:
@@ -791,6 +794,23 @@ def reconcile(project: str, now: datetime | None = None) -> None:
         else:
             _finish(project, run["agent"], run["n"], "failed", _line(row.get("detail")) or "Its worker failed",
                     now=now, tokens=tokens)
+
+
+def _observe(project: str, run: dict) -> None:
+    """Keep a running run's context on it, read from its session under the project lock as a running task's is
+    (`usage.capture`), saving the record only when the reading changed."""
+    shaped = {"l2_engine": run["engine"], "session_id": run.get("session"), "attempt": 1}
+    with S.project_lock(project):
+        record = _load(project)
+        current = _run(record, run["agent"], run["n"])
+        if current["state"] != "running":
+            return
+        usage.capture(project, shaped, folder=run_dir(project, run["agent"], run["n"]))
+        context = (shaped.get("token_usage") or {}).get("context") or {}
+        reading = {"percent": context.get("percent"), "at": context.get("observed_at")}
+        if reading["percent"] is not None and current.get("context") != reading:
+            current["context"] = reading
+            _save(project, record)
 
 
 def _finish(project: str, agent_id: str, n: int, state: str, reason: str | None, *, now: datetime | None = None,
@@ -969,6 +989,55 @@ def session(project: str, agent_id: str, n: int) -> dict:
     run = _run(_load(project), agent_id, n)
     return {"l2_engine": run.get("engine"), "session_id": run.get("session"), "attempt": 1, "agent_id": run.get("worker"),
             "worktree": str(_worktree(project, agent_id, n))}
+
+
+def monitor_sessions(project: str, *, now: datetime | None = None) -> list[dict]:
+    """Each running run as a Monitor session row: its engine, model, the context the tick last read and its minutes
+    so far against its limit."""
+    now = now or datetime.now(timezone.utc)
+    record = _load(project)
+    rows = []
+    for run in (r for r in record["runs"] if r["state"] == "running"):
+        context = run.get("context") or {}
+        rows.append({"kind": "agent", "project": project, "agent_id": run["agent"],
+                     "name": _agent(record, run["agent"])["name"], "run": run["n"], "session_id": run.get("session"),
+                     "state": "running", "engine": run["engine"], "model": run.get("engine_model") or run.get("model"),
+                     "context_percent": context.get("percent"), "at": context.get("at"), "limit": run["limit"], "minutes": _elapsed(run, now)})
+    return rows
+
+
+def monitor_agents(project: str, *, now: datetime | None = None) -> list[dict]:
+    """The project's agents as Monitor lists them: each not retired that is on with a schedule, has a run waiting or
+    running, paused itself, or started a run within RECENT (a skip never ran). What comes next is the first that applies, in its status
+    card's order (`_status`); the last run is the latest that ran, so a skip never replaces a result."""
+    now = now or datetime.now(timezone.utc)
+    record = _load(project)
+    spent = _used(record, now) >= _budget(record)
+    rows = []
+    for agent in (a for a in record["agents"] if a["state"] != "retired"):
+        own = [r for r in record["runs"] if r["agent"] == agent["id"]]
+        run = _active(record, agent["id"])
+        times = [t for t in (schedule.upcoming(e["days"], e["time"], now) for e in agent["schedules"]) if t]
+        itself = agent["state"] == "paused" and agent["paused"] == "itself"
+        if not (run or itself or (agent["state"] == "on" and times)
+                or any(r.get("started") and now - _date(r["started"]) < RECENT for r in own)):
+            continue
+        cue = None
+        if run:
+            line, cue = ("Running", "running") if run["state"] == "running" else ("Waiting", None)
+        elif agent["state"] == "new":
+            line = "Not on yet"
+        elif agent["state"] == "paused":
+            line, cue = "Paused itself" if itself else "Paused", "paused"
+        elif times:
+            line = "Waits until Monday" if spent else f"Next {schedule.when(min(times), now)}"
+        else:
+            line = "Only when you run it"
+        ran = next((_run_row(r) for r in reversed(own) if r.get("ended") and r["state"] != "skipped"), None)
+        rows.append({"project": project, "id": agent["id"], "name": agent["name"], "next": line, "cue": cue,
+                     "last": ran and {"outcome": ran["outcome"], "at": ran["ended"], "minutes": ran["minutes"],
+                                      "tokens": ran["tokens"]}})
+    return rows
 
 
 def offers(project: str, *, record: dict | None = None, now: datetime | None = None) -> list[dict]:

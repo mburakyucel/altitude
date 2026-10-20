@@ -1,6 +1,9 @@
+import { Link } from "react-router";
 import { StatusMark } from "../components/StatusMark";
 import { useMonitor, useOverview } from "../data/api";
-import type { EngineReadout, MonitorSeat, RoutingRow, Session } from "../data/api";
+import type { AgentClock, EngineReadout, MonitorAgent, MonitorSeat, RoutingRow, Session } from "../data/api";
+import { Chevron, PauseMark } from "../components/ProjectAgentParts";
+import { newsAgo, tokensText, zoned } from "../data/projectAgents";
 import { TokenUsage } from "../components/TokenUsage";
 import { RestartDetails } from "../shell/RestartBanner";
 import { RoleModelButton } from "../components/ModelMenu";
@@ -24,8 +27,12 @@ import { age, agoText, exactTime, localTimes, modelName, older, RESERVE_PERCENT,
  *
  * Age is the point of the page. A figure with no data at all says "No reading" and what produces one;
  * a figure whose snapshot has aged past what the router itself trusts is stale: shown, dimmed,
- * labelled. `/api/monitor` lists only the sessions Altitude runs (L3 and L2). Its rows are passthrough, so
- * the fields only some kinds carry (edits, agent, model, rotate_next) arrive typed `unknown` and are narrowed here rather than in api.ts.
+ * labelled. `/api/monitor` lists only the sessions Altitude runs (L3, L2 and running project agents). Its rows are
+ * passthrough, so the fields only some kinds carry (edits, agent, model, rotate_next, an agent run's name, limit and
+ * minutes) arrive typed `unknown` and are narrowed here rather than in api.ts.
+ *
+ * Agents come last: every project agent Monitor lists, each a link to its page with what it does next and the latest
+ * run that ran. With none, the section and its heading are absent.
  */
 
 function str(value: unknown): string {
@@ -266,7 +273,8 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
   const agent = dict(session["agent"]);
   // A worker that is running should report every few minutes; anything else is as old as it says.
   const stale = str(session.state) === "running" && older(session.at, SESSION_STALE_MS);
-  const title = slug ? `${project} / ${slug}` : project;
+  const run = session.kind === "agent";
+  const title = run ? `${project} / ${str(session["name"])}` : slug ? `${project} / ${slug}` : project;
 
   const meta: string[] = [];
   if (session.engine) meta.push(label(session.engine));
@@ -277,12 +285,13 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
   if (status) meta.push(status);
   if (str(session.context_state)) meta.push(str(session.context_state));
   if (session["rotate_next"]) meta.push("rotating");
+  if (run) meta.push(`${num(session["minutes"]) ?? 0} of ${num(session["limit"]) ?? 0} min`);
   const observed = agoText(session.at);
 
   return (
     <li className="card monitor-card monitor-session" data-stale={stale || undefined}>
       <div className="monitor-row">
-        <span className="chip">{session.kind.toUpperCase()}</span>
+        <span className="chip">{run ? "Agent" : session.kind.toUpperCase()}</span>
         <b className="monitor-session-title" title={title}>
           {title}
         </b>
@@ -297,6 +306,39 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
       {context == null ? null : <Meter percent={context} stale={stale} />}
       {session.kind === "l2" ? <TokenUsage usage={session.token_usage} running={session.state === "running"} engines={engines} disclosureLabel="L2 usage details" /> : null}
     </li>
+  );
+}
+
+/** "Last: Found something · 2 h ago · 6 min · 3.9M tokens", leaving out what the run lacks; "No runs yet." */
+function lastText(last: MonitorAgent["last"]): string {
+  if (!last) return "No runs yet.";
+  return ["Last: " + last.outcome, last.at ? newsAgo(last.at) : "", last.minutes != null ? `${last.minutes} min` : "",
+    last.tokens != null ? `${tokensText(last.tokens)} tokens` : ""].filter(Boolean).join(" · ");
+}
+
+function AgentsSection({ agents, clock }: { agents: MonitorAgent[]; clock: AgentClock }) {
+  if (!agents.length) return null;
+  return (
+    <section className="monitor-section" aria-labelledby="monitor-agents">
+      <h2 id="monitor-agents" className="monitor-head">Agents ({agents.length})</h2>
+      <div className="settings-group">
+        {agents.map((agent) => (
+          <Link key={`${agent.project}/${agent.id}`} className="settings-row monitor-agent" to={`/projects/${agent.project}/agents/${agent.id}`}>
+            <span className="monitor-agent-body">
+              <span className="monitor-agent-head">
+                <strong>{agent.project} / {agent.name}</strong>
+                <small className="monitor-agent-next">
+                  {agent.cue === "running" ? <span className="dot" data-state="running" data-pulse aria-hidden /> : agent.cue === "paused" ? <PauseMark /> : null}
+                  {zoned(agent.next, clock)}
+                </small>
+              </span>
+              <small>{lastText(agent.last)}</small>
+            </span>
+            <Chevron />
+          </Link>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -370,6 +412,7 @@ export default function Monitor() {
               </ul>
             )}
           </section>
+          <AgentsSection agents={monitor.data.agents} clock={monitor.data.clock} />
         </div>
       )}
     </div>

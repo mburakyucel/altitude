@@ -91,10 +91,26 @@ const monitor = {
       at: ago(80),
     },
   ],
-  agents: [
-    { id: "aaaaaaaabbbb", name: "worker-one", status: "active", state: "tool", cwd: "/home/b/alt" },
-  ],
+  agents: [],
+  // This browser's own clock unless a test says otherwise: schedule times then carry no zone.
+  clock: { zone: "Istanbul", offset: -new Date().getTimezoneOffset() },
 };
+
+// A running project agent's session row and Monitor's Agents rows, as the server sends them (fictional projects).
+const agentSession = {
+  kind: "agent", project: "harbor", agent_id: "a1b2c3d4e5f6", name: "Dependency check", run: 3,
+  session_id: "run-session", state: "running", engine: "claude", model: "fixture-model",
+  context_percent: 6, at: ago(1), limit: 20, minutes: 4,
+};
+const agentRows = [
+  { project: "altitude", id: "weekly", name: "Weekly improvement review", next: "Next Monday at 08:00", cue: null,
+    last: { outcome: "3 suggestions", at: ago(2 * 24 * 60), minutes: 4, tokens: 1_200_000 } },
+  { project: "harbor", id: "a1b2c3d4e5f6", name: "Dependency check", next: "Running", cue: "running",
+    last: { outcome: "Found something", at: ago(120), minutes: 6, tokens: 3_900_000 } },
+  { project: "harbor", id: "b2c3d4e5f6a1", name: "Upload timing", next: "Waiting", cue: null,
+    last: { outcome: "Couldn't finish", at: ago(7 * 24 * 60), minutes: 1, tokens: null } },
+  { project: "harbor", id: "c3d4e5f6a1b2", name: "What landed", next: "Paused itself", cue: "paused", last: null },
+];
 
 function mockFetch(monitorBody: unknown = monitor, overviewBody: unknown = overviewWith()) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
@@ -269,6 +285,59 @@ describe("Monitor", () => {
     expect(screen.getByText("altitude")).toBeInTheDocument();
   });
 
+  it("lists a running agent among the sessions with its context and minutes, as a reading, not a link", async () => {
+    mockFetch({ ...monitor, sessions: [...monitor.sessions, agentSession,
+      { ...agentSession, agent_id: "b2c3d4e5f6a1", name: "Upload timing", context_percent: null, at: null },
+      { ...agentSession, agent_id: "c3d4e5f6a1b2", name: "What landed", context_percent: 30, at: ago(12) }] });
+    renderApp({ route: "/monitor" });
+
+    expect(await screen.findByRole("heading", { name: "Sessions (5)" })).toBeInTheDocument();
+    expect(screen.getAllByText("Agent")).toHaveLength(3);
+    const row = screen.getByText("harbor / Dependency check").closest("li")!;
+    expect(within(row).getByText("Claude · fixture-model · context 6% · 4 of 20 min")).toBeInTheDocument();
+    expect(within(row).getByText("1 min ago")).toBeInTheDocument();
+    expect(row.querySelector(".monitor-meter:not([data-stale])")).not.toBeNull();
+    expect(within(row).queryByRole("link")).not.toBeInTheDocument();
+    // Before its first reading: no age and no meter.
+    const unread = screen.getByText("harbor / Upload timing").closest("li")!;
+    expect(within(unread).getByText("Claude · fixture-model · context unknown · 4 of 20 min")).toBeInTheDocument();
+    expect(unread.querySelector(".monitor-age, .monitor-meter")).toBeNull();
+    // A reading past five minutes is stale, as a running task's is.
+    const stale = screen.getByText("harbor / What landed").closest("li")!;
+    expect(within(stale).getByText("Stale")).toBeInTheDocument();
+    expect(stale.querySelector(".monitor-meter[data-stale]")).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: /^Agents/ })).not.toBeInTheDocument();
+  });
+
+  it("lists agents last, each a link with what comes next and its last run", async () => {
+    mockFetch({ ...monitor, agents: agentRows });
+    renderApp({ route: "/monitor" });
+
+    const heading = await screen.findByRole("heading", { name: "Agents (4)" });
+    const section = within(heading.closest("section")!);
+    const links = section.getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/projects/altitude/agents/weekly", "/projects/harbor/agents/a1b2c3d4e5f6",
+      "/projects/harbor/agents/b2c3d4e5f6a1", "/projects/harbor/agents/c3d4e5f6a1b2"]);
+    expect(links[0]).toHaveTextContent("altitude / Weekly improvement reviewNext Monday at 08:00Last: 3 suggestions · 2 d ago · 4 min · 1.2M tokens");
+    expect(links[1]).toHaveTextContent("harbor / Dependency checkRunningLast: Found something · 2 h ago · 6 min · 3.9M tokens");
+    expect(links[1]!.querySelector(".dot[data-pulse]")).not.toBeNull();
+    expect(links[2]).toHaveTextContent("Last: Couldn't finish · 7 d ago · 1 min");
+    expect(links[2]).not.toHaveTextContent("tokens");
+    expect(links[3]).toHaveTextContent("harbor / What landedPaused itselfNo runs yet.");
+    expect(links[3]!.querySelector(".agents-pause")).not.toBeNull();
+    // Agents follow Sessions on the page.
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings.slice(-2)).toEqual(["Sessions (2)", "Agents (4)"]);
+  });
+
+  it("names the computer's zone after a schedule's time when this browser is in another", async () => {
+    mockFetch({ ...monitor, agents: agentRows.slice(0, 1), clock: { zone: "Istanbul", offset: -new Date().getTimezoneOffset() + 180 } });
+    renderApp({ route: "/monitor" });
+
+    expect(await screen.findByText("Next Monday at 08:00 Istanbul")).toBeInTheDocument();
+  });
+
   it("keeps task accounting behind each L2 disclosure, parses helper evidence, and removes it on collapse", async () => {
     const fetch = mockFetch({ ...monitor, sessions: monitor.sessions.map((session) => ({ ...session, token_usage: {
       total_tokens: 500, status: "partial", helpers: { status: "partial", observed_count: 1, direct_count: 1, descendant_count: 0, total_tokens: 100,
@@ -336,6 +405,7 @@ describe("Monitor", () => {
       ],
       sessions: [],
       agents: [],
+      clock: monitor.clock,
     });
     renderApp({ route: "/monitor" });
 

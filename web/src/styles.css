@@ -1493,6 +1493,44 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Monitor's Agents: what comes next stays on the title's line on desktop; the phone stacks every row the same way. */
+.monitor-agent-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.monitor-agent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.settings-row.monitor-agent small {
+  font-size: var(--text-meta);
+}
+.monitor-agent-head > strong {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.settings-row .monitor-agent-next {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: 0;
+  white-space: nowrap;
+}
+.shell[data-phone] .monitor-agent-head {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.shell[data-phone] .settings-row .monitor-agent-next {
+  color: var(--text-secondary);
+  white-space: normal;
+}
 .chip-stale {
   border: 1px solid var(--chip-claimed-border);
   background: var(--chip-claimed-bg);

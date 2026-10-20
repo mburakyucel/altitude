@@ -824,6 +824,29 @@ def agent(project: str) -> dict | None:
     return out
 
 
+def monitor(project: str, *, now: datetime | None = None) -> dict | None:
+    """The review's row in Monitor's Agents, as `project_agents.monitor_agents` draws the others: once it is the
+    operator's and runs on Mondays, is running, or ran in the last seven days. Read only where its record exists, so
+    no other project asks git for its origin."""
+    if not _path(project).exists():
+        return None
+    now = now or datetime.now(timezone.utc)
+    record = _load(project)
+    if not _yours(record) or not _altitude(project):
+        return None
+    run, paused = _running(record), _paused(record)
+    if not run and paused and not any(now - _date(r["started"]) < timedelta(days=7) for r in record["runs"]):
+        return None
+    ended = next((r for r in reversed(record["runs"]) if r["state"] not in ACTIVE), None)
+    upcoming = schedule.upcoming(WEEKLY_DAYS, WEEKLY_TIME, now)
+    return {"project": project, "id": "weekly", "name": NAME,
+            "next": "Running" if run else paused or f"Next {schedule.when(upcoming, now)}",
+            "cue": "running" if run else "paused" if paused else None,
+            "last": ended and {"outcome": _outcome(ended), "at": ended["ended"],
+                               "minutes": math.ceil((_date(ended["ended"]) - _date(ended["started"])).total_seconds() / 60),
+                               "tokens": (ended.get("call") or {}).get("tokens")}}
+
+
 def yours(project: str) -> bool:
     """Whether the review counts among the project's agents (Work's Agents row). Only Altitude's own project keeps
     a record, so other projects' views never ask git for their origin."""

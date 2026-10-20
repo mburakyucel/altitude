@@ -2,6 +2,7 @@
 sheet's terms, the Weekly switch and its Monday run, skipped weeks, a change of terms pausing it, Run now, its row on
 the Agents page and its own page. Projects are fictional records; the reviewer is scripted at the engine seam."""
 import http.client
+import math
 import json
 import threading
 import time
@@ -239,6 +240,30 @@ class TestAgentsRow(RunCase):
         self.assertEqual(self.news(), ("Paused", "paused"))
         with mock.patch.object(config, "IMPROVEMENT_MODEL", "claude-haiku-5-5"):
             self.assertEqual(self.news(), ("Paused: its terms changed", "paused"))
+
+    def test_its_monitor_row_once_yours_on_the_agents_terms(self):
+        self.load(agree=False)
+        self.assertIsNone(improve.monitor(self.project, now=NOW), "built in, not yet the operator's")
+        self.agree()
+        self.assertIsNone(improve.monitor(self.project, now=NOW), "paused, never run")
+        improve.set_weekly(self.project, True, now=NOW)
+        row = improve.monitor(self.project, now=NOW)
+        monday = schedule.when(schedule.upcoming((0,), "08:00", NOW), NOW)
+        self.assertEqual((row["id"], row["name"], row["next"], row["cue"], row["last"]),
+                         ("weekly", "Weekly improvement review", f"Next {monday}", None, None))
+        receipt = improve.run_now(self.project, "a" * 32, now=NOW)
+        self.assertEqual((improve.monitor(self.project, now=NOW)["next"], improve.monitor(self.project, now=NOW)["cue"]),
+                         ("Running", "running"))
+        improve.execute(self.project, receipt["run"])
+        run = improve._find(improve._load(self.project), receipt["run"])
+        self.assertEqual(improve.monitor(self.project, now=NOW)["last"],
+                         {"outcome": "Nothing to suggest", "at": run["ended"], "tokens": 900, "minutes": math.ceil(
+                             (improve._date(run["ended"]) - improve._date(run["started"])).total_seconds() / 60)})
+        improve.set_weekly(self.project, False, now=NOW)
+        self.assertEqual(improve.monitor(self.project, now=NOW)["next"], "Paused", "paused, ran this week")
+        with mock.patch.object(config, "IMPROVEMENT_MODEL", "claude-haiku-5-5"):
+            self.assertEqual(improve.monitor(self.project, now=NOW)["next"], "Paused: its terms changed")
+        self.assertIsNone(improve.monitor(self.project, now=NOW + timedelta(days=8)), "paused, no run this week")
 
     def test_the_agents_view_and_works_count_carry_it(self):
         from altitude import project_agents

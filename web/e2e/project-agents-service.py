@@ -2,7 +2,7 @@
 from its built-in, waiting behind Flaky test watch's running run; Release notes check, the operator's own, with runs
 that found something, found nothing, were skipped and couldn't finish; Test timing paused; Old lint sweep retired;
 and L3's offer of a new agent under its chat reply. Only the engine seam is replaced: workers are fictional records,
-so nothing launches a provider and the running run keeps running until Stop."""
+so nothing launches a provider and the running run keeps running until Stop; its session's context reads 6%."""
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import json
@@ -46,6 +46,13 @@ def stop_l2_worker(_engine, worker, *, job_root):
     return "stopped"
 
 
+def observe_token_usage(_engine, session, _cursor, *, job_root):
+    """The running run's session as the engine's usage reader reports it: its newest request filled 6% of its window."""
+    context = {"tokens": 12_000, "window": 200_000, "percent": 6.0, "observed_at": NOW.isoformat()}
+    return {"cursor": {}, "status": "observed",
+            "sessions": [{"session_id": session, "parent_session_id": None, "context": context, "observed_at": NOW.isoformat()}]}
+
+
 def run(agent: str, at: datetime, minutes: int, state: str, *, answer: str = "", detail: str = "") -> None:
     """A run the operator started at `at` that ended `minutes` later as its fictional worker did."""
     receipt = A.change(PROJECT, "run", {"agent": agent}, by="operator", source="fixture", now=at)
@@ -70,6 +77,7 @@ def main():
     engines.start_project_agent_run = start_project_agent_run
     engines.owned_worker = owned_worker
     engines.stop_l2_worker = stop_l2_worker
+    engines.observe_token_usage = observe_token_usage
     engines.worker_answer = lambda worker, *, job_root: workers[worker]["answer"]
     # The engine's allowance is read from its provider; Altitude's reserve is unit-tested and fixed here.
     route.reserve = lambda _engine: None
@@ -123,6 +131,7 @@ def main():
     flaky = make("Flaky test watch", "Find tests that failed and then passed on a retry this week.", schedules=[], at=week)
     A.change(PROJECT, "run", {"agent": flaky}, by="operator", source="fixture", now=NOW - timedelta(minutes=4))
     A.start_next(PROJECT, now=NOW - timedelta(minutes=4))
+    A.reconcile(PROJECT, now=NOW)  # the tick's reading of its context
     A.change(PROJECT, "run", {"agent": dependency}, by="operator", source="fixture", now=NOW - timedelta(minutes=1))
 
     # L3 answers the operator's question with an offer of a new agent under its reply.

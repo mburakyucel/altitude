@@ -466,3 +466,78 @@ test("chat: a run's result line opens its run, and L3's offer card creates the a
   });
   await fits();
 });
+
+test("Monitor lists the running agent among Sessions and every listed agent under Agents", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const phone = info.project.name === "phone";
+  const { press } = setup(page, phone);
+  const sessionRow = page.locator(".monitor-session").filter({ hasText: "harbor / Flaky test watch" });
+  const meta = sessionRow.getByText(/^\S.* · context 6% · \d+ of 20 min$/);
+  const agents = page.getByRole("heading", { name: "Agents (3)", exact: true });
+  const section = page.locator("section").filter({ has: agents });
+  const row = (name: string) => section.getByRole("link", { name: new RegExp(`^harbor / ${name}`) });
+  const fits = async () => {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow").toBe(true);
+  };
+  /** The page scrolls inside the shell: bring Sessions to the top so each capture shows both sections. */
+  const toSessions = () => page.getByRole("heading", { name: /^Sessions \(\d+\)$/ }).evaluate((el) => el.scrollIntoView({ block: "start" }));
+
+  await walk.open("/monitor");
+  await walk.state("01-monitor-agents", {
+    action: toSessions,
+    visible: [sessionRow.getByText("Agent", { exact: true }), meta, sessionRow.locator(".monitor-meter"), agents,
+      row("Dependency check").getByText("Waiting", { exact: true }),
+      row("Release notes check").getByText(/^Next (today|tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday) at 07:00$/),
+      row("Release notes check").getByText(/^Last: Couldn't finish · (yesterday|\d+ d ago) · 3 min · \S+ tokens$/),
+      row("Flaky test watch").getByText("Running", { exact: true }), row("Flaky test watch").getByText("No runs yet.", { exact: true })],
+    // Paused by you with no runs this week, and retired: not listed.
+    hidden: [row("Test timing"), row("Old lint sweep"), sessionRow.getByRole("link"), sessionRow.getByText("Stale", { exact: true })],
+  });
+  await expect(row("Flaky test watch").locator(".dot[data-pulse]")).toHaveCount(1);
+  // Agents come last on the page.
+  await expect(page.getByRole("heading", { level: 2 }).last()).toHaveText("Agents (3)");
+  // Desktop keeps what comes next on the title's line; the phone stacks it under the title, every row alike.
+  for (const name of ["Dependency check", "Release notes check", "Flaky test watch"]) {
+    const [title, next] = await Promise.all([row(name).locator("strong").boundingBox(), row(name).locator(".monitor-agent-next").boundingBox()]);
+    if (phone) expect(next!.y, `${name}: below its title`).toBeGreaterThanOrEqual(title!.y + title!.height - 1);
+    else expect(Math.abs(next!.y - title!.y), `${name}: on its title's line`).toBeLessThan(6);
+  }
+  await fits();
+
+  // A row opens its agent's page.
+  await press(row("Release notes check"));
+  await expect(page).toHaveURL(/\/projects\/harbor\/agents\/[0-9a-f]+$/);
+  await walk.state("02-agent-row-opens-its-page", {
+    visible: [page.getByRole("heading", { level: 1, name: "Release notes check", exact: true })], hidden: [agents],
+  });
+
+  // Before its first reading, then a reading past five minutes; and the computer's zone when the browser is elsewhere.
+  const real = await (await page.request.get("/api/monitor")).json();
+  let body = { ...real, sessions: real.sessions.map((s: Record<string, unknown>) => s.kind === "agent" ? { ...s, context_percent: null, at: null } : s) };
+  await page.route("**/api/monitor*", (route) => route.fulfill({ json: body }));
+  await walk.open("/monitor");
+  await walk.state("03-session-no-reading-overlay", {
+    action: toSessions,
+    visible: [sessionRow.getByText(/^\S.* · context unknown · \d+ of 20 min$/)],
+    hidden: [sessionRow.locator(".monitor-meter"), sessionRow.locator(".monitor-age")],
+  });
+  const old = new Date(Date.now() - 12 * 60_000).toISOString();
+  body = { ...real, clock: { zone: "Istanbul", offset: real.clock.offset + 180 },
+    sessions: real.sessions.map((s: Record<string, unknown>) => s.kind === "agent" ? { ...s, at: old } : s) };
+  await walk.open("/monitor");
+  await walk.state("04-session-stale-and-zone-overlay", {
+    action: toSessions,
+    visible: [sessionRow.getByText("Stale", { exact: true }), sessionRow.locator(".monitor-meter[data-stale]"),
+      row("Release notes check").getByText(/^Next .* at 07:00 Istanbul$/)],
+    hidden: [],
+  });
+  await fits();
+
+  // No agent to list: no section and no heading.
+  body = { ...real, agents: [], sessions: real.sessions.filter((s: Record<string, unknown>) => s.kind !== "agent") };
+  await walk.open("/monitor");
+  await walk.state("05-no-agents-overlay", {
+    action: toSessions,
+    visible: [page.getByRole("heading", { name: /^Sessions \(\d+\)$/ })], hidden: [page.getByRole("heading", { name: /^Agents/ }), sessionRow],
+  });
+});

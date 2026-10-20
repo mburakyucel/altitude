@@ -7,7 +7,7 @@ import time
 import unittest
 
 from tests.support import AltitudeCase
-from altitude import config, engines, monitor, route, server, state as S, tasks as T
+from altitude import config, engines, monitor, project_agents, route, schedule, server, state as S, tasks as T
 
 
 def write_snapshot(path, at, five=10, seven=20):
@@ -211,7 +211,7 @@ class TestMonitorApi(AltitudeCase):
 
     def test_the_payload_names_the_seats_by_engine_and_the_routing_view(self):
         body = self.get("/api/monitor")
-        self.assertEqual(set(body), {"seats", "routing", "sessions"})
+        self.assertEqual(set(body), {"seats", "routing", "sessions", "agents", "clock"})
         self.assertEqual([row["engine"] for row in body["seats"]], list(config.ENGINES))
         seat = next(row for row in body["seats"] if row["engine"] == "codex")
         self.assertEqual((seat["label"], seat["quota"]["why"]), ("Codex", "Codex binary not found"))
@@ -230,6 +230,18 @@ class TestMonitorApi(AltitudeCase):
         task["engine_model"] = None
         S.save_task(self.project, task)
         self.assertNotIn("model", next(row for row in self.get("/api/monitor")["sessions"] if row["kind"] == "l2"))
+
+    def test_the_agents_section_lists_each_projects_agents_with_this_computers_clock(self):
+        project_agents.change(self.project, "create", {"definition": {
+            "name": "Dependency check", "brief": "Check the fictional dependencies.", "schedules": [], "tell": "found",
+            "model": None, "limit": 20}}, by="operator", source="test", request_id="a" * 32)
+        self.assertEqual(self.get("/api/monitor")["agents"], [], "an agent not on, with no runs, is not listed")
+        agent = project_agents._load(self.project)["agents"][0]["id"]
+        project_agents.change(self.project, "run", {"agent": agent}, by="operator", source="test", request_id="b" * 32)
+        body = self.get("/api/monitor")
+        self.assertEqual([(row["project"], row["name"], row["next"]) for row in body["agents"]],
+                         [(self.project, "Dependency check", "Waiting")])
+        self.assertEqual(body["clock"], schedule.zone())
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ function mockFetch(...restarts: unknown[]) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/restart")) return jsonResponse({ ok: true, unit: "altitude-restart-1" });
-    if (url.includes("/api/monitor")) return jsonResponse({ seats: [], routing: [], sessions: [] });
+    if (url.includes("/api/monitor")) return jsonResponse({ seats: [], routing: [], sessions: [], agents: [], clock: { zone: "UTC", offset: 0 } });
     if (url.includes("/api/overview")) {
       const restart = restarts[Math.min(reads, restarts.length - 1)];
       reads += 1;
