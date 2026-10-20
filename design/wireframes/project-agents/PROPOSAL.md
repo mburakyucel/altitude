@@ -509,12 +509,72 @@ line from the record: "Paused Dependency check · Resume", "Retired Dependency c
 
 ### Monitor (step 3)
 
-A running run is a **Sessions** row like any session: "<project> / <name>" with the chip **Agent**,
-engine, model and context. After Sessions, **Agents (N)** lists every agent that is on or ran in the
-last seven days, across projects, one row each with a chevron: "<project> · <name>", what comes next
-right-aligned ("Next tomorrow 07:00", "On merges", "Paused", "Running"), and the latest finished
-result muted beneath ("Found something on PR #809 · yesterday · 6 min · 3.9M tokens"). The section
-shares Monitor's loading and failed read; no agents, no section.
+Monitor answers "what is Altitude doing, and what will it do next?" across projects. Agents join it
+in two places and change nothing else on the page.
+
+**Sessions.** A running run is a row among the L3 and L2 sessions, after its project's tasks, drawn
+as they are: the chip **Agent**, the title "<project> / <agent name>" (one line, truncated with an
+ellipsis, the full title on hover), the age of its latest reading right-aligned ("just now", "2 min
+ago"), then one muted line "<engine> · <model> · context 6% · 4 of 20 min" and the context meter.
+Before the first reading of its context the line says "context unknown" and no meter is drawn, as a
+session's does. A reading older than a session's stale age dims the row, as a running task's does.
+The row is a reading, like the other session rows, not a link; its agent's row below opens the
+agent. The Sessions count includes it. A waiting run is not a session: it shows only in Agents. The
+Weekly improvement review's run is one engine call rather than a session, so it never appears
+here; its row below says Running.
+
+**Agents (N).** After Sessions, a section with the heading "Agents (N)" lists, across projects, every
+agent that is not retired and is on, has a run waiting or running, or had a run in the last seven
+days; in Altitude's own project the Weekly improvement review once it is yours. Projects come in
+Monitor's project order, each project's agents in its Agents page's order (the Weekly review first).
+No such agent, no section and no heading. One card holds the rows, separated by hairlines; each row
+is a whole-row link to the agent's page with a chevron at the right:
+
+- the title "<project> · <agent name>" in semibold, wrapping when long;
+- right-aligned on the title's first line, never wrapping, what comes next, in the muted tone:
+  - "Running", after the pulsing dot, while a run runs;
+  - "Waiting" while a run waits for a slot or its project's other run;
+  - "Paused", after the pause mark, when you paused it; "Paused itself", after the pause mark, when
+    three runs in a row couldn't finish; "Paused: its terms changed" for the Weekly review;
+  - "Not on yet" for an agent you ran by hand before turning it on;
+  - "Waits until Monday" when its project's weekly budget is used and it has a schedule;
+  - "Next tomorrow at 07:00", "Next today at 17:00", "Next Friday at 07:00": its next scheduled time,
+    with the computer's zone after the time when the browser is in another ("07:00 Istanbul");
+  - "Only when you run it" for an agent with no schedule;
+- beneath, muted and wrapping, its latest ended run: "<outcome> · <when> · <minutes> min · <tokens>
+  tokens", parts the run lacks left out ("Found something · 2 h ago · 6 min · 3.9M tokens", "Couldn't
+  finish · yesterday · 1 min", "3 suggestions · 2 d ago · 4 min · 1.2M tokens"). A skipped run is a
+  run: "Skipped · 3 h ago · Only 12 min of this week's budget was left". With none: "No runs yet."
+
+Monitor reads both sections in its one read, so they share its skeleton while loading and its
+"Could not read the monitor." with Retry; there is no separate loading or error for agents. The page
+keeps its refresh, so a run that starts or ends moves between Sessions and Agents on the next read.
+Phone and desktop draw the same rows. The title keeps at least twelve characters' width beside what
+comes next; when both do not fit, what comes next moves to its own line under the title, still
+right-aligned, so a long name never squeezes into a narrow column. The latest line takes the full
+width.
+
+### How step 3 is built
+
+- **Readings.** The project tick already looks at each running run's worker; it also reads the run's
+  session usage through the same passive reader a running task's uses (`usage.capture`, at most every
+  ten seconds, its cursor in the run's folder) and keeps the run's context percent and when it was
+  read on the run. Its final tokens stay as recorded at its end.
+- **Views.** `monitor.sessions()` adds a row of kind `agent` per running run (project, agent id and
+  name, run, engine, model, context, its state and limit, minutes so far, reading time).
+  `monitor.agents()` returns the Agents rows: project, id, name, what comes next and its cue, and the
+  latest ended run's outcome, end time, minutes, tokens and skip reason. Both are built from
+  `project_agents` and `improve` helpers the Agents page already uses, so the two pages say the same
+  thing. `GET /api/monitor` gains `agents` and the computer's clock. Nothing new is written by a read.
+- **Removed.** The unused `agents` placeholder in the web's Monitor schema.
+- **Docs.** SPEC §3.14 (the Agent session row and the Agents section), ARCHITECTURE's Monitor and
+  project agents, the changelog.
+- **Tests.** Which agents are listed (on, waiting, running, ran within and beyond seven days,
+  retired, the Weekly review yours or not, its terms changed); every "what comes next" line including
+  the budget and the zone; the latest line for each outcome, a skip, missing minutes or tokens and no
+  runs; the session row with and without a context reading, stale; the reading kept on the run and
+  read again only after ten seconds; the API; and phone and desktop walkthroughs of the Monitor states
+  below with fictional fixtures. No native behavior changes, so the Mac owes nothing new.
 
 ### States
 
@@ -536,6 +596,10 @@ shares Monitor's loading and failed read; no agents, no section.
 | Page | Retired | Title, "Retired Oct 19", runs, definition as text |
 | Work | Run waiting / running / no agents | Rows in Current; the Agents row absent, Agents… in the menu |
 | Chat | Each ending | The lines above |
+| Monitor | Loading / read failed | Monitor's skeleton; "Could not read the monitor." and Retry, for both sections |
+| Monitor | Run running / no reading yet / stale | The Agent session row with its meter; "context unknown" and no meter; the row dimmed |
+| Monitor | No agents / only retired or quiet ones | No Agents section and no heading |
+| Monitor | Each next / each latest | The lines [above](#monitor-step-3), with "No runs yet." when none ended |
 
 ## Steps
 
