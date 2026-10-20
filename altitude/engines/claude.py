@@ -181,7 +181,7 @@ class _ClaudeDriver(common._Driver):
     and Claude then finishes what it has accepted and exits."""
 
     def __init__(self, spec: dict, env: dict):
-        _own_folder(Path(env["CLAUDE_CONFIG_DIR"]), spec.get("copies") or ())
+        _own_folder(Path(env["CLAUDE_CONFIG_DIR"]), spec.get("copies") or (), linked=spec.get("linked", True))
         super().__init__(spec, env)
         self.waiting: dict[str, str | None] = {}
         self.ended_at: float | None = None
@@ -313,13 +313,14 @@ def _first_resume(home: Path, resume: str | None) -> list[Path]:
             if path == found or path.is_dir()]
 
 
-def _own_folder(home: Path, copies) -> None:
+def _own_folder(home: Path, copies, *, linked: bool = True) -> None:
     """Prepare a job's own Claude folder from inside the job, so Altitude never writes where the job can.
 
-    It links the operator's customisation and copies in the records of a session it resumes for the first time
-    (`_first_resume`), which the job reads where the operator's folder is otherwise hidden."""
+    It links the operator's customisation, unless `linked` is false, and copies in the records of a session it
+    resumes for the first time (`_first_resume`), which the job reads where the operator's folder is otherwise
+    hidden."""
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for name in LINKED:
+    for name in LINKED if linked else ():
         if os.path.lexists(OPERATOR_HOME / name) and not os.path.lexists(home / name):
             os.symlink(OPERATOR_HOME / name, home / name)
     for name in map(Path, copies):
@@ -736,14 +737,23 @@ def review_result_facts(records: list[dict]) -> dict:
     return facts
 
 
-def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images):
+#: The tools a restricted worker keeps: restricted mode removes those that run code, and WebFetch, unless named.
+RESTRICTED_TOOLS = "Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch"
+
+
+def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images,
+                   restricted=False):
     """A Claude worker in Altitude's sandbox: its worktree, Git directories, scratch folder and own Claude folder
     (`l2-engine/claude`) writable, and the operator's Claude folder hidden from it except the entries its folder
-    links to, the project's notes its settings name and a session it resumes for the first time."""
+    links to, the project's notes its settings name and a session it resumes for the first time. A `restricted`
+    worker links nothing of the operator's and runs in restricted mode, which ignores every settings file but
+    Altitude's own and confines its file tools to its working directories."""
     cmd = [config.CLAUDE_BIN, "-p", "--input-format", "stream-json", "--replay-user-messages",
            "--output-format", "stream-json", "--verbose", "--name", name,
            "--permission-mode", "auto", "--allowedTools", "Bash(alt *)",
            "--settings", str(settings or claude_settings())]
+    if restricted:
+        cmd += ["--restricted", "--tools", RESTRICTED_TOOLS]
     if persona:
         cmd += ["--append-system-prompt-file", str(persona)]
     if model:
@@ -762,9 +772,9 @@ def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, sett
     home = Path(job_root) / "claude"
     copies = _first_resume(home, resume)
     notes = S.read_json(settings, {}).get("autoMemoryDirectory") if settings else None
-    reopened = (*_linked(), *([Path(notes)] if notes and os.path.lexists(notes) else []), *copies)
+    reopened = (*(() if restricted else _linked()), *([Path(notes)] if notes and os.path.lexists(notes) else []), *copies)
     return (cmd, content, (Path(cwd), *git_writable, scratch, home), (*read_only, *reopened), job_env(home),
-            {"copies": list(map(str, copies))})
+            {"copies": list(map(str, copies)), "linked": not restricted})
 
 
 worker_unit_name = _claude_unit
@@ -954,6 +964,11 @@ def worker_events(path):
             {"type": "turn.failed" if e.get("is_error") else "turn.completed",
              "message": e.get("errors") or e.get("result") or e.get("subtype"), "usage": e.get("usage")}
             if e.get("type") == "result" else e for e in events]
+
+
+def final_answer(events):
+    """The worker's final answer: its last completed turn's result."""
+    return next((str(e.get("message") or "") for e in reversed(events) if e.get("type") == "turn.completed"), "")
 
 
 INSTALL_COMMAND = 'curl -fsSL https://claude.ai/install.sh | bash'

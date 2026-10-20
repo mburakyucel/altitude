@@ -59,6 +59,31 @@ def _require_task_access(project: str, slug: str) -> None:
         raise TranscriptAccessError("task path escaped its project")
 
 
+def _folder(run: tuple[str, int] | None) -> tuple[str, ...] | None:
+    """A project agent run's folder in its project's (`project_agents.run_dir`); None for a task."""
+    return ("project-agents", run[0], str(run[1])) if run else None
+
+
+def _subject(project: str, slug: str, run: tuple[str, int] | None) -> dict:
+    """The record a transcript selects its session by, checked first: the task's, or a project agent run's in the
+    task's shape (`project_agents.session`)."""
+    if not run:
+        _require_task_access(project, slug)
+        return S.load_task(project, slug)
+    from . import project_agents
+    try:
+        config.require_project_name(project)
+        if project not in config.load_projects() or not project_agents.ID.fullmatch(run[0]) or type(run[1]) is not int:
+            raise ValueError
+        return project_agents.session(project, *run)
+    except (ValueError, KeyError):
+        raise TranscriptAccessError("invalid run identity") from None
+
+
+def _directory(project: str, slug: str, run: tuple[str, int] | None) -> Path:
+    return config.project_dir(project).joinpath(*_folder(run)) if run else S.task_dir(project, slug)
+
+
 def require_generation(task: dict, *, engine: str, session_id: str, attempt: int) -> None:
     expected = (engines.transcript_engine(task), str(task.get("session_id") or ""), int(task.get("attempt") or 0))
     supplied = (str(engine), str(session_id), attempt)
@@ -138,9 +163,15 @@ def _platform_row(event: dict) -> dict:
                 at=event.get("at"), session_id=event.get("session_id"))
 
 
-def _turn_prompt(project: str, slug: str, task: dict, turn: dict) -> str:
+def _turn_prompt(project: str, slug: str, task: dict, turn: dict, *, run: tuple[str, int] | None = None) -> str:
     """When the engine does not echo its prompt, the task's own records stand in: the brief
-    for the first turn, the task messages a resume delivered for a later one."""
+    for the first turn, the task messages a resume delivered for a later one. A project agent run has one turn,
+    whose prompt its folder keeps."""
+    if run:
+        try:
+            return (_directory(project, slug, run) / "brief.md").read_text()
+        except OSError:
+            return ""
     if not turn.get("resume"):
         try:
             project, slug = config.require_project_name(project), S.require_task_slug(slug)
@@ -269,8 +300,8 @@ def _stat(path: Path) -> tuple:
         return ()
 
 
-def _inputs(project: str, slug: str, task: dict, sources: list) -> str:
-    directory = S.task_dir(project, slug)
+def _inputs(project: str, slug: str, task: dict, sources: list, *, run: tuple[str, int] | None = None) -> str:
+    directory = _directory(project, slug, run)
     files = [(name, _stat(directory / name)) for name in ("events.log", "brief.md", "conversation.jsonl")]
     fields = {key: task.get(key) for key in ("l2_engine", "session_id", "attempt", "agent_id", "worktree", "message_deliveries")}
     return _digest([files, fields, config.operator_label(),
@@ -362,7 +393,7 @@ def _index(key: tuple) -> _Index:
 
 
 def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sources: list,
-                previous_sources: dict) -> tuple[dict, dict, dict, bool, bool]:
+                previous_sources: dict, *, run: tuple[str, int] | None = None) -> tuple[dict, dict, dict, bool, bool]:
     """Materialize one canonical read, returning bodies only to this request, never to the index."""
     timeline: list[dict] = []
     records: dict[str, dict] = {}
@@ -386,9 +417,9 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
         timeline.append(row)
         return row
 
-    event_path = S.task_dir(project, slug) / "events.log"
+    event_path = _directory(project, slug, run) / "events.log"
     event_source = f"platform:{_stat(event_path)[:2]}"
-    for offset, event in enumerate(S.read_events(project, slug)):
+    for offset, event in enumerate(S.read_events(project, slug) if not run else ()):
         safe = _redact(event)
         add(_platform_row(event), safe, event_source, _when(event.get("at")) or 0.0, 0, 0.0, offset)
     for source_order, (file, turn) in enumerate(sources):
@@ -398,7 +429,7 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
         when = turn_time
         if turn:
             try:
-                prompt = _turn_prompt(project, slug, task, turn)
+                prompt = _turn_prompt(project, slug, task, turn, run=run)
             except ValueError as exc:
                 prompt = ""
                 add(_row("platform", "error", "system", str(exc), type="record-error"), {"error": str(exc)},
@@ -519,9 +550,10 @@ def view(*args, **kwargs) -> dict:
 
 def _view(project: str, slug: str, *, engine: str, session_id: str, attempt: int, raw: bool = False,
          mode: str = "initial", cursor: str = "", before: str = "", lower: str = "", after: str = "",
-         record: str = "", offset: int = 0) -> dict:
-    """Recent first, demand-loaded history and coalesced deltas over a metadata-only change index."""
-    _require_task_access(project, slug)
+         record: str = "", offset: int = 0, run: tuple[str, int] | None = None) -> dict:
+    """Recent first, demand-loaded history and coalesced deltas over a metadata-only change index. With `run`
+    (an agent id and run number) it reads that project agent run's session, `slug` naming it for the index."""
+    _subject(project, slug, run)
     if mode not in {"initial", "history", "delta", "reconcile", "record"}:
         raise ValueError("invalid transcript mode")
     if offset < 0:
@@ -530,9 +562,9 @@ def _view(project: str, slug: str, *, engine: str, session_id: str, attempt: int
         raise ValueError("invalid transcript boundary")
     if len(cursor) > 64 or record and not re.fullmatch(r"[0-9a-f]{64}", record):
         raise ValueError("invalid transcript cursor or record")
-    task = S.load_task(project, slug)
+    task = _subject(project, slug, run)
     require_generation(task, engine=engine, session_id=session_id, attempt=attempt)
-    key = (str(config.project_dir(project)), slug, engine, session_id, attempt, raw)
+    key = (str(config.project_dir(project)), "/".join(_folder(run)) if run else slug, engine, session_id, attempt, raw)
     index = _index(key)
     with index.lock:
         epoch, since = "", 0
@@ -542,8 +574,8 @@ def _view(project: str, slug: str, *, engine: str, session_id: str, attempt: int
                 since = int(value)
             except (ValueError, AttributeError):
                 epoch, since = "", -1
-        with engines.transcript_sources(project, slug, task) as sources:
-            fingerprint = _inputs(project, slug, task, sources)
+        with engines.transcript_sources(project, slug, task, folder=_folder(run)) as sources:
+            fingerprint = _inputs(project, slug, task, sources, run=run)
             rows = records = None
             # A continuation needs bodies for still-undelivered upserts even when sources are unchanged.
             # Materialize and publish once, before selecting changes, so metadata always describes
@@ -552,19 +584,17 @@ def _view(project: str, slug: str, *, engine: str, session_id: str, attempt: int
                           and any(meta.version > since and meta.order >= lower for meta in index.rows.values()))
             if fingerprint != index.fingerprint or mode != "delta" or needs_body:
                 rows, records, source_state, has_engine, replacement = _projection(
-                    project, slug, task, engine, raw, sources, index.sources)
-                current = S.load_task(project, slug)
-                _require_task_access(project, slug)
+                    project, slug, task, engine, raw, sources, index.sources, run=run)
+                current = _subject(project, slug, run)
                 require_generation(current, engine=engine, session_id=session_id, attempt=attempt)
-                with engines.transcript_sources(project, slug, current) as fresh_sources:
-                    fresh = _inputs(project, slug, current, fresh_sources)
+                with engines.transcript_sources(project, slug, current, folder=_folder(run)) as fresh_sources:
+                    fresh = _inputs(project, slug, current, fresh_sources, run=run)
                     if engines.replaced_after_projection(sources, fresh_sources):
                         raise engines.InvocationRefused("invocation source replaced before publication")
                 # Live writers must not starve readers. Return this coherent projection while forcing
                 # the next request to re-read when inputs changed during materialization.
                 _publish(index, rows, source_state, has_engine, fingerprint if fresh == fingerprint else "", replacement)
-        _require_task_access(project, slug)
-        require_generation(S.load_task(project, slug), engine=engine, session_id=session_id, attempt=attempt)
+        require_generation(_subject(project, slug, run), engine=engine, session_id=session_id, attempt=attempt)
         result = {"project": project, "slug": slug, "engine": engine, "session_id": session_id, "attempt": attempt,
                   "cursor": f"{index.epoch}:{index.version}", "events": [], "deleted": [], "redaction": _REDACTION,
                   "has_earlier": bool(lower and any(meta.order < lower for meta in index.rows.values())),

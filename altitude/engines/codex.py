@@ -72,7 +72,8 @@ class _CodexDriver(common._Driver):
     arrive; once the server refuses one, the rest wait for the next turn with it."""
 
     def __init__(self, spec: dict, env: dict):
-        _own_folder(Path(env["CODEX_HOME"]), Path(spec["operator"]), spec.get("copies") or ())
+        _own_folder(Path(env["CODEX_HOME"]), Path(spec["operator"]), spec.get("copies") or (),
+                    linked=spec.get("linked", True))
         super().__init__(spec, env)
         self.replies: dict[int, dict] = {}
         self.arrived = threading.Condition(self.lock)
@@ -526,17 +527,17 @@ def _first_resume(home: Path, operator: Path, resume: str | None) -> list[Path]:
     return sorted(Path(name) for name, meta in index.items() if meta["session_id"] in wanted)
 
 
-def _own_folder(home: Path, operator: Path, copies) -> None:
+def _own_folder(home: Path, operator: Path, copies, *, linked: bool = True) -> None:
     """Prepare a job's own Codex folder from inside the job, as Claude's, so Altitude never writes where the job can.
 
-    It links the operator's settings, instructions, rules, prompts and skills, and copies in the records of a
-    conversation it resumes for the first time (`_first_resume`), which the job reads where the operator's folder
-    is otherwise hidden."""
+    It links the operator's settings, instructions, rules, prompts and skills, unless `linked` is false, and copies in
+    the records of a conversation it resumes for the first time (`_first_resume`), which the job reads where the
+    operator's folder is otherwise hidden."""
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for name in LINKED:
+    for name in LINKED if linked else ():
         if os.path.lexists(operator / name) and not os.path.lexists(home / name):
             os.symlink(operator / name, home / name)
-    if (operator / SKILLS).is_dir():
+    if linked and (operator / SKILLS).is_dir():
         (home / SKILLS).mkdir(exist_ok=True)
         for entry in os.scandir(operator / SKILLS):
             if not entry.name.startswith(".") and not os.path.lexists(home / SKILLS / entry.name):
@@ -783,11 +784,12 @@ def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, t
     return result
 
 
-def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images):
+def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images,
+                   restricted=False):
     """A Codex worker in Altitude's sandbox, as a Claude worker, with Codex's own sandbox off and approvals never: its
     own Codex folder (`l2-engine/codex`) beside the same roots, and the operator's Codex folder hidden from it except
-    the installed program, the entries its folder links to and a conversation it resumes for the first time. Its
-    launch input carries the sign-in (`worker_sign_in`)."""
+    the installed program, the entries its folder links to (none when `restricted`) and a conversation it resumes for
+    the first time. Its launch input carries the sign-in (`worker_sign_in`)."""
     cmd = [config.CODEX_BIN, "app-server", "--strict-config", "-c", 'default_permissions=":danger-full-access"',
            "-c", 'approval_policy="never"']
     if effort is not None:
@@ -795,12 +797,12 @@ def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, sett
     git_writable, read_only = git_policy.worker_git_access(cwd)
     home, operator = Path(job_root) / "codex", operator_home()
     copies = _first_resume(home, operator, resume)
-    reopened = (*_program(operator), *(operator / name for name in (*LINKED, SKILLS) if os.path.lexists(operator / name)),
-                *copies)
+    reopened = (*_program(operator), *(operator / name for name in (() if restricted else (*LINKED, SKILLS))
+                                       if os.path.lexists(operator / name)), *copies)
     text = (Path(persona).read_text() + "\n\n" if persona and not resume else "") + prompt
     content = common._engine_input("codex", text, images)
     return (cmd, content, (Path(cwd), *git_writable, scratch, home), (*read_only, *reopened), {"CODEX_HOME": str(home)},
-            {"operator": str(operator), "copies": list(map(str, copies)), "sign_in": worker_sign_in()})
+            {"operator": str(operator), "copies": list(map(str, copies)), "sign_in": worker_sign_in(), "linked": not restricted})
 
 
 worker_unit_name = _codex_unit
@@ -1041,6 +1043,11 @@ def read_quota(timeout: float = 20.0) -> dict:
         "plan_type": limits.get("planType"),
         "read_at": S.now(),
     }
+
+
+def final_answer(events):
+    """The worker's final answer: the last message its turn wrote."""
+    return next((m for m in reversed(common._agent_messages(events)) if m.strip()), "")
 
 
 def token_numbers(usage):

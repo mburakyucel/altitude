@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import threading
 
 from service_support import configure, serve
-from altitude import config, engines, improve, improve_eval, l3, route, state as S
+from altitude import config, engines, improve, improve_eval, l3, route, schedule, state as S
 
 NOW = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=5)
 
@@ -46,8 +46,7 @@ def main():
     project("cove", ["Index the mooring list", "Fix the beacon clock", "Split the wharf notes", "Rename the tug roster",
                      "Check the ferry times", "Sort the cargo tags"])
     # beacon: agreed and switched on before this week's Monday, whose run found too few finished tasks.
-    monday = improve._monday(NOW)
-    monday = monday if NOW >= monday else improve._monday(NOW, -1)
+    monday = schedule.latest(improve.WEEKLY_DAYS, improve.WEEKLY_TIME, NOW)
     project("beacon", ["Pin the buoy schema", "Merge the pier docs", "Fix the lock gauge"], monday)
     version = improve.terms("beacon")["version"]
     improve.set_weekly("beacon", True, agree=version, now=monday - timedelta(days=1))

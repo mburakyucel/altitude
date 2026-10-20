@@ -1776,11 +1776,11 @@ def launch_lock(*, wait: bool = True):
 
 
 def wip_hold(project: str, task: dict | None = None) -> str | None:
-    from . import reviews
+    from . import project_agents, reviews
     if task and occupies_slot(task):
         return None
     tasks = [(p, t) for p in config.load_projects() for t in S.list_tasks(p)]
-    total = sum(occupies_slot(t) for _, t in tasks) + reviews.active_count()
+    total = sum(occupies_slot(t) for _, t in tasks) + reviews.active_count() + project_agents.running_count()
     if total >= config.machine_wip():
         return f"WIP limit: {total} running on this machine"
     if task and task["state"] == "queued" and any(resume_ready(p, t) for p, t in tasks):

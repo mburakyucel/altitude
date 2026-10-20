@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-from . import config, engines, github_intake, l3, route, state as S, tasks as T
+from . import config, engines, github_intake, l3, route, schedule, state as S, tasks as T
 
 SIGNALS_VERSION = 3
 CUTOFF = datetime(2026, 9, 22, 7, tzinfo=timezone.utc)
@@ -669,8 +669,8 @@ def _tasks(count: int) -> str:
 
 # ---- agreement, Weekly and the Monday run ---------------------------------------------------------------------
 
-#: The Weekly run's time on Monday, in the machine's local time zone: the morning check that writes the digest.
-WEEKLY_HOUR = 8
+#: The Weekly run's schedule, in the machine's local time zone: Monday morning, after the check that writes the digest.
+WEEKLY_DAYS, WEEKLY_TIME = (0,), "08:00"
 
 
 def terms(project: str) -> dict:
@@ -710,7 +710,7 @@ def _agree_locked(record: dict, version: str | None, at: str) -> None:
 
 def set_weekly(project: str, on: bool, *, agree: str | None = None, now: datetime | None = None) -> dict:
     """The operator's Weekly switch. Turning it on needs their agreement to the current terms, given with `agree`
-    (the version the sheet showed) or earlier. Turned on, its first run is the next Monday at WEEKLY_HOUR."""
+    (the version the sheet showed) or earlier. Turned on, its first run is the next Monday at WEEKLY_TIME."""
     now = now or datetime.now(timezone.utc)
     if not _altitude(project):
         raise ValueError("Improvement suggestions cover only the Altitude project for now.")
@@ -739,26 +739,19 @@ def run_now(project: str, request_id: str, *, agree: str | None = None, now: dat
     return start(project, request_id, now=now)
 
 
-def _monday(now: datetime, weeks: int = 0) -> datetime:
-    """WEEKLY_HOUR on the Monday of `now`'s week, `weeks` later, in the machine's local time."""
-    local = now.astimezone().replace(tzinfo=None)
-    day = local.date() - timedelta(days=local.weekday() - 7 * weeks)
-    return datetime(day.year, day.month, day.day, WEEKLY_HOUR).astimezone()
-
-
 def _due(record: dict, now: datetime) -> str | None:
-    """The week whose Weekly run is due now: WEEKLY_HOUR on its Monday has passed, Weekly was on by then, and the week
-    is unclaimed. A pending activation waits for a later check."""
-    switch, monday = record.get("weekly") or {}, _monday(now)
+    """The week whose Weekly run is due now: the schedule's latest time has passed (`schedule.latest`), Weekly was on
+    by then, and its week is unclaimed. A pending activation waits for a later check."""
+    switch, monday = record.get("weekly") or {}, schedule.latest(WEEKLY_DAYS, WEEKLY_TIME, now)
     week = monday.date().isoformat()
-    if not switch.get("on") or now < monday or _date(switch["at"]) > monday or week in record.get("weeks", {}) \
+    if not switch.get("on") or _date(switch["at"]) > monday or week in record.get("weeks", {}) \
             or config.activation_pending():
         return None
     return week
 
 
 def weekly(project: str, now: datetime | None = None) -> dict | None:
-    """The tick's Weekly run: once WEEKLY_HOUR on Monday has passed, the week's one run is claimed, or recorded as
+    """The tick's Weekly run: once Monday's WEEKLY_TIME has passed, the week's one run is claimed, or recorded as
     skipped, by the first check that finds it unclaimed. A week Altitude missed entirely is not caught up, and a switch
     turned on after this week's Monday run waits for the next. Returns the receipt of a run it started."""
     now = now or datetime.now(timezone.utc)
@@ -777,11 +770,11 @@ def settings(project: str, *, now: datetime | None = None) -> dict:
     begin = _window_start(record, now)
     count = len(finished(project, now, begin)[0])
     since = _day(begin.isoformat())
-    switch, monday = record.get("weekly") or {}, _monday(now)
+    switch = record.get("weekly") or {}
     if switch.get("on"):
-        last = monday if now >= monday else _monday(now, -1)
+        last = schedule.latest(WEEKLY_DAYS, WEEKLY_TIME, now)
         week = record.get("weeks", {}).get(last.date().isoformat())
-        upcoming = monday if now < monday and _date(switch["at"]) <= monday else _monday(now, 1)
+        upcoming = schedule.upcoming(WEEKLY_DAYS, WEEKLY_TIME, now)
         line = (f"Skipped {_day(last.isoformat())}: {week['skipped']}. " if week and "skipped" in week else "") \
             + f"Next: {upcoming:%A}, {_day(upcoming.isoformat())}" \
             + (f", if {MIN_TASKS - count} more {'task finishes' if MIN_TASKS - count == 1 else 'tasks finish'}"

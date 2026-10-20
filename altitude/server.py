@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, repair, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_agents, project_setup, push, qr, repair, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -351,6 +351,18 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             if stdin:
                 raise ValueError("alt task offer takes its title as one argument, not stdin")
             result = l3.note_offer(project, l3.offer_parser().parse_args(args[2:]).title)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
+        if args[:1] == ["agent"]:
+            options = project_agents.parser().parse_args(args[1:])
+            source = "l3"
+            if options.action not in ("list", "show"):
+                source = l3.chat_turn(project)  # an offer is drawn under this reply; a change is the operator's say
+                if options.action != "offer" and not any(
+                        row["id"] == source for row in T._decision_messages(project, "", "project")):
+                    raise ValueError("this applies only to the operator's own chat message")
+            result = project_agents.verb(project, options, stdin, by="l3", source=source)
+            if options.action == "run":
+                spawn(f"project-agents:{project}", project_agents.start_next, project)
             return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         if args[:1] == ["improve"]:
             if stdin:
@@ -1338,6 +1350,8 @@ def tick_project(project: str) -> None:
         for slug in dispatch.resume_due(project):
             request_task_resume(project, slug)
         dispatch_waiting(project)
+        if project_agents.tick(project):
+            spawn(f"project-agents:{project}", project_agents.start_next, project)
         for t in S.list_tasks(project, include_archive=True):
             if t["state"] not in S.OPEN_STATES and not t.get("cleaned"):
                 notes = dispatch.cleanup_task(project, t)
@@ -1971,6 +1985,11 @@ class Handler(BaseHTTPRequestHandler):
         A record change is admitted after the task left running, as when the worker's stop checkpoint follows its
         block, while that attempt's worker job lasts."""
         try:
+            if "run" in o:
+                config.project(o["project"])
+                run = project_agents.door_run(o["project"], o["run"])
+                return terminal.owner_connection(self.client_address, self.connection.getsockname(),
+                                                 project_agents.door_unit(o["project"], run))
             project, slug, attempt = o["project"], o["slug"], o["attempt"]
             if type(attempt) not in (str, int):
                 return False
@@ -2302,6 +2321,59 @@ class Handler(BaseHTTPRequestHandler):
             request_l3_drain(project)
         return self._json({"ok": True, **result})
 
+    def _agents_get(self, parts: list[str], q: dict) -> None:
+        """The Agents page, an agent's page, a run's page and a run's session (`project_agents`)."""
+        project = parts[0]
+        try:
+            config.project(project)
+            if len(parts) == 1:
+                return self._json(project_agents.view(project))
+            agent = parts[1]
+            if len(parts) == 2:
+                return self._json(project_agents.agent_view(project, agent, runs=max(1, int(q.get("runs", ["10"])[0]))))
+            if len(parts) in (4, 5) and parts[2] == "runs" and parts[3].isdigit():
+                n = int(parts[3])
+                if len(parts) == 4:
+                    return self._json(project_agents.run_view(project, agent, n))
+                if parts[4] == "transcript":
+                    return self._json(transcript.view(
+                        project, f"project-agent-{agent}-{n}", run=(agent, n),
+                        engine=q.get("engine", [""])[0], session_id=q.get("session_id", [""])[0],
+                        attempt=int(q.get("attempt", ["0"])[0]), raw=q.get("raw", ["0"])[0] == "1",
+                        mode=q.get("mode", ["initial"])[0], cursor=q.get("cursor", [""])[0],
+                        before=q.get("before", [""])[0], lower=q.get("lower", [""])[0],
+                        after=q.get("after", [""])[0], record=q.get("record", [""])[0],
+                        offset=int(q.get("offset", ["0"])[0])), compress=True)
+        except transcript.TranscriptAccessError:
+            return self._json({"error": "transcript unavailable for this run"}, 404)
+        except KeyError as exc:
+            return self._json({"error": str(exc) if isinstance(exc, project_agents.Missing)
+                               else "Project is not managed."}, 404)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        return self._json({"error": "unknown api"}, 404)
+
+    def _agents_post(self, body: dict) -> None:
+        """The operator's presses on project agents, from a paired device only: each saves one change
+        (`project_agents.change`) and carries a request id, so a repeated press returns its first receipt."""
+        if self._device is None:
+            return self._json({"error": "Agents are changed only from a paired device."}, 403)
+        try:
+            project, action = str(body.get("project")), body.get("action")
+            config.project(project)
+            request_id = uuid.UUID(str(body.get("request_id"))).hex
+            fields = {key: value for key, value in body.items() if key not in ("project", "action", "request_id")}
+            result = project_agents.change(project, str(action), fields, by="operator", source=f"press:{request_id}",
+                                           request_id=request_id)
+        except KeyError as exc:
+            return self._json({"error": str(exc) if isinstance(exc, project_agents.Missing)
+                               else "Project is not managed."}, 404)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 409)
+        if action == "run":
+            spawn(f"project-agents:{project}", project_agents.start_next, project)
+        return self._json({"ok": True, **result})
+
     def _validation_post(self, body: dict) -> None:
         """The validation switch, behind the terminal's request checks: an agent cannot turn its own runner back on."""
         denied = self._terminal_denied(json_body=True, subject="Validation")
@@ -2514,6 +2586,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(improve.settings(parts[2]))
                 except KeyError:
                     return self._json({"error": "Project is not managed."}, 404)
+            if api == "agents" and len(parts) > 2:
+                return self._agents_get(parts[2:], q)
             if parts == ["api", "project-model-settings"]:
                 return self._json({"rows": config.project_model_settings()})
             if api == "defaults" and len(parts) == 3:
@@ -2561,8 +2635,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "Image temporarily unavailable." if len(parts) > 1 and parts[1] == "images" else self._detail(e)}, 500)
 
     def _task_door(self, o: dict):
-        """A record change from a task worker's own processes (`door`), applied as the admitted task's L2."""
+        """A record change from a task worker's own processes (`door`), applied as the admitted task's L2, or a
+        project agent run's sign-in."""
         try:
+            if "run" in o:
+                return self._json(project_agents.door(o["project"], o["run"], o))
             return self._json(door.handle(o["project"], o["slug"], int(o["attempt"]), o))
         except (T.TransitionError, ValueError, KeyError, TypeError) as exc:
             return self._json({"error": str(exc)}, 409)
@@ -2821,6 +2898,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if api == "improve":
                 return self._improve_post(o)
+            if api == "agents":
+                return self._agents_post(o)
             if api == "decide":
                 project, slug = o["project"], o["slug"]
                 try:
@@ -3894,7 +3973,7 @@ def project_view(name: str) -> dict:
             "decisions": T.decisions(name), "log": [event for event in S.read_project_log(name, 40)
                                                   if event.get("kind") != "project-message-received"],
             "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
-            "improvements": improve.view(name),
+            "improvements": improve.view(name), "project_agents": project_agents.project_summary(name),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
 
 

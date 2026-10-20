@@ -1039,8 +1039,8 @@ faulted tasks only after verifying that their actual cause is gone. Operator-dec
 work waits as a planned task; GitHub issues hold the long-term backlog.
 
 The aggregate gate reads `config.machine_wip()`, the persistent machine override or
-`config.WIP_PER_MACHINE` (80). Fresh and resumed launches share this cap; blocked tasks consume no
-capacity. One machine launch lock serializes admission through worker binding so simultaneous launches
+`config.WIP_PER_MACHINE` (80). Fresh and resumed launches share this cap with running adversarial reviews
+and [project agent runs](#project-agents); blocked tasks consume no capacity. One machine launch lock serializes admission through worker binding so simultaneous launches
 cannot overfill it. Eligible ready resumes across all registered projects precede fresh dispatch. Operator waits,
 faults without verified recovery, future due times and unavailable engines reserve no slots and do not
 hold eligible work. A resumed worker already launched and recorded in its recovery claim counts toward
@@ -1787,6 +1787,9 @@ connecting process.
   worker go on, saying so on its own output; messages wait in the inbox for the next checkpoint. Once altd has a
   checkpoint, the hook waits for its answer for nearly its own time limit. A change that fails inside altd is a
   `hook` system fault.
+- **Project agent runs.** A [project agent run](#project-agents)'s driver names its run (`ALTITUDE_AGENT_RUN`)
+  instead of a task, and altd admits it from a process in that running run's worker job. Its door answers only
+  the engine's sign-in (`project_agents.door`); a run has no `alt` verbs, records or Send now.
 - **Driver.** The driver asks altd to take a Send now message from the worker's sends folder, to settle its
   outcome, and on an engine without hook checkpoints to claim the owner's waiting messages (`tasks.steer_waiting`).
   altd takes and settles only the message it handed that worker, in the sends folder its layout names, without
@@ -2291,7 +2294,7 @@ missed entirely is not caught up, and Weekly turned on after that Monday's 08:00
 Monday. Every start covers only the project whose origin is Altitude's repository, and is refused
 without the agreement, while another run of the project is active, with fewer than five tasks
 finished since the last review's window, while Claude's weekly or short window is at
-`config.IMPROVEMENT_RESERVE` (90%) or more or is unknown (`route.improvement_reserve`), and while
+`config.RESERVE` (90%) or more or is unknown (`route.reserve`), and while
 Altitude waits to activate a change. A Monday that meets one of these is recorded as skipped with its
 reason ("3 tasks had finished") and posts nothing; a pending activation instead waits for a later
 tick. The claim is durable in `<project>/improvements.json` before the reviewer runs on a daemon thread
@@ -2362,6 +2365,75 @@ check`, checks without a model that each signal fires on exactly its planted pla
 ordinary and that what fired reaches the prompt; its live part matches suggestions to planted patterns
 by shared places and writes a blind grading sheet. [The eval](DEVELOPMENT.md#improvement-review-eval)
 describes both.
+
+### Project agents
+
+The approved [project agents design](../design/wireframes/project-agents/PROPOSAL.md) lets the operator give a
+project briefs that Altitude runs on a schedule or when asked, reporting only (`altitude/project_agents.py`). An
+agent is a definition (name, brief of at most 8,000 characters, up to four schedules of weekdays and a time, Tell
+me, an optional model choice and a limit of 10, 20 or 60 minutes per run) with its state: new, on, paused or retired.
+`<project>/project-agents.json` holds the project's agents, every saved definition as a numbered version, every state
+change with who made it and its source, the runs, L3's offers, the presses' receipts and the weekly budget. A run's
+prompt, report and worker job live in `<project>/project-agents/<agent>/<n>/`. A run is never a task: nothing that
+lists, counts or reports tasks sees it.
+
+**Definitions.** Altitude ships built-in agents as `templates/project-agents/<key>.md`: a header of name, days,
+time, Tell me and a one-line summary, then the brief. Turning one on copies it as an agent that is on, marked with
+its key, and the Agents page lists only the built-ins without one. An agent the operator creates is saved new, not
+on: it runs only with Run now until they turn it on. Every saved change is a new version; a save names the version
+it edited and one made from an older version is refused, and each run records the version it ran.
+
+**Schedules.** Schedules use this computer's clock (`altitude/schedule.py`, which the Weekly improvement review
+shares). On each tick (`project_agents.tick`), an agent that is on claims each schedule's latest time
+(`schedule.latest`) that is after the moment it was turned on or resumed and after its previous claim, so a time
+missed while Altitude was off runs once when it returns, marked late after ten minutes, and older ones are not
+caught up. A claim becomes a waiting run, or a skip ("Its last run was still going") while the agent's previous run
+waits or runs: an agent has at most one. While Altitude waits to activate a change, nothing is claimed.
+
+**Starting.** A project starts one run at a time, its oldest waiting run first (`project_agents.start_next`, spawned
+by the tick and by Run now), under the provider admission, the machine launch lock and the restart lock that task
+launches take. A run starts only when the machine's running work (task slots held, adversarial reviews and
+running agent runs) plus the queued tasks and ready resumes waiting for a slot is below `config.machine_wip()`, so
+tasks always go first; a run that has waited six hours is skipped ("No free slot for 6 hours"). At its start a run
+is skipped when its engine is inside Altitude's reserve (`route.reserve`: the engine's weekly or short window at
+`config.RESERVE` or more, or unknown) or its whole limit does not fit the project's weekly budget (30 minutes to ten
+hours, two hours by default), counted from Monday 00:00 on this computer's clock with a running run holding its whole
+limit. Run now is refused with the same budget reason.
+
+**The run.** The run's engine, model and effort come from the agent's model choice or else the New tasks choice
+(`route.pick_engine`). It runs in its own detached checkout of the fetched main branch
+(`.claude/worktrees/project-agent-<agent>-<n>`) as a worker job of its own kind (`engines.start_project_agent_run`):
+the helper role, the repository's rules and the run template (`templates/project-agent-run.md`: the brief, what
+fired it, the previous report quoted as data, what the run may do, the limit and the report's shape). Unlike a task
+worker it links nothing of the operator's engine folder (their settings, instructions, skills, plugins or rules),
+runs in the engine's restricted mode where it has one (only Altitude's own settings apply, and its file tools stay
+in its working directories), receives no GitHub sign-in and no Send now, and its environment names actor `project-agent-run`, for which `alt`
+refuses every verb. Its job ends at its limit (`platform.job_command` `runtime_max`), and the tick stops a run that
+reaches its limit while Altitude is watching. Stop ends a waiting run at once and stops a running one's job.
+
+**Reports.** The run's final answer (`engines.worker_answer`) is its report: a first line of `Found:`, `Nothing:`
+or `Couldn't finish:` with one sentence of at most 200 characters, then the full report, at most 20,000 characters.
+An answer in another shape couldn't finish ("Its answer was not in the report's shape"). A run ends found
+something, nothing found, couldn't finish, stopped by the operator, stopped at its limit, or skipped, and its copy
+and scratch folder are removed. Its record keeps the outcome, minutes used, tokens and session. Each ending
+writes at most one assistant chat row (trigger `project-agent`) after the record is saved, once, as Tell me allows:
+found and couldn't finish unless Tell me is never, nothing found and stopped only with every run. Three runs in a
+row on the agent's schedule that couldn't finish or stopped at their limit pause the agent, with its own line;
+Run now, Stop and skips do not count, and turning it back on starts again from zero. Runs older than 90 days
+beyond an agent's newest ten are removed.
+
+**Authority.** The operator changes agents with presses on `POST /api/agents` from a paired device only, each
+carrying a request id whose repeat returns the first receipt, and with `alt agent new|set|on|pause|resume|retire|run|stop`
+on their CLI. L3 reads them with `alt agent list|show`, and on the operator's own chat message can pause, resume,
+turn on, retire, run or stop one. It never writes a definition: `alt agent offer` drafts a new agent or a change as
+a card under its reply, which only the operator's press saves (Create agent, Save change, or Edit first through the
+form). An offer lapses after seven days, and a change offer is refused once the agent changed since it was drafted.
+
+**Pages.** `GET /api/agents/<project>` is the Agents page (budget, agents, retired agents, built-ins not on,
+offers); `/<agent>` an agent's status, actions, definition and recent runs; `/<agent>/runs/<n>` a run's outcome,
+the version it ran and its report; `/<agent>/runs/<n>/transcript` its session through the transcript reader, read
+only. The project view carries `project_agents`: the runs waiting or running, shown in Work under Current; the
+number of agents not retired; and the offers.
 
 ### Image input
 

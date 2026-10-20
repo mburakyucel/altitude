@@ -430,6 +430,30 @@ operator message than the one it was recorded from. When the operator presses Ma
 records the acceptance and queues a turn (trigger `improvement-task`) naming the suggestion; L3 creates
 its task with `alt task new --improvement`, and the press is the task's authority.
 
+## Project agents
+
+```text
+alt agent list
+alt agent show AGENT [--run N]
+alt agent new --name NAME --brief - [--schedules 'weekdays 07:00; fri 17:00'|none] [--tell found|every|never]
+              [--limit 10|20|60] [--engine ENGINE --model MODEL --effort EFFORT] [--on]
+alt agent set AGENT [the same flags] [--default-model]
+alt agent on|pause|resume|retire|run|stop AGENT
+alt agent offer [AGENT] [the same flags]
+```
+
+These read and change a project's [agents](ARCHITECTURE.md#project-agents). `AGENT` is an agent's id
+or the name of exactly one agent that is not retired. On the operator's CLI, `new` saves an agent that
+runs only with Run now until it is turned on (`--on` turns it on at once), `set` saves a new version
+from the flags it names, `run` asks for a run now and `stop` ends a waiting or running run. Refusals
+read as the page says them after "Not saved: ", such as a Run now that does not fit the week's budget.
+
+L3 reaches the same grammar through its coordinator socket. `list` and `show` are read-only;
+`on`, `pause`, `resume`, `retire`, `run` and `stop` are admitted only during the chat turn that
+answers the operator's own message, which becomes the change's recorded source. L3 never writes a
+definition: `offer` drafts a new agent, or a change to `AGENT` from the flags it names, as a card
+under its reply, and only the operator's press saves it. A run has no `alt` verbs.
+
 ## GitHub issues
 
 ### Coordinator GitHub reads

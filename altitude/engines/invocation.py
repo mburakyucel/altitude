@@ -42,8 +42,13 @@ def _linked(directory: int, name: str) -> bool:
 
 
 @contextmanager
-def job_directory(project: str, slug: str):
-    """Select the logical live or archive invocation, holding its task and job directories."""
+def job_directory(project: str, slug: str, *, folder: tuple[str, ...] | None = None):
+    """Select the logical live or archive invocation, holding its task and job directories; with `folder`, the job
+    in that folder of the project's (a project agent run's)."""
+    if folder is not None:
+        with _folder_job(project, folder) as found:
+            yield found
+        return
     _name(slug)
     with ExitStack() as stack:
         try:
@@ -95,6 +100,23 @@ def job_directory(project: str, slug: str):
             job = stack.enter_context(storage.directory(task, ["l2-engine"], search=False))
         except OSError as exc:
             if _linked(task, "l2-engine") or exc.errno not in (errno.ENOENT, errno.ENOTDIR):
+                raise InvocationRefused("invocation directory refused") from exc
+            yield None, display
+            return
+        yield job, display
+
+
+@contextmanager
+def _folder_job(project: str, folder: tuple[str, ...]):
+    for part in folder:
+        _name(part)
+    display = config.project_dir(project).joinpath(*folder, "l2-engine")
+    with ExitStack() as stack:
+        try:
+            root = stack.enter_context(storage.runtime_directory([project], search=False))
+            job = stack.enter_context(storage.directory(root, [*folder, "l2-engine"], search=False))
+        except OSError as exc:
+            if exc.errno not in (errno.ENOENT, errno.ENOTDIR):
                 raise InvocationRefused("invocation directory refused") from exc
             yield None, display
             return

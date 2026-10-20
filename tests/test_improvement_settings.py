@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 from tests.test_improvement_runs import NOW, RunCase
-from altitude import access, config, improve, l3, server, state as S
+from altitude import access, config, improve, l3, schedule, server, state as S
 
 
 class TestAgreement(RunCase):
@@ -88,13 +88,14 @@ class TestWeekly(RunCase):
         super().setUp()
         if self.hour:
             days, hour, minute = self.hour
-            day = improve._monday(NOW).date() + timedelta(days=days)
+            local = NOW.astimezone()
+            day = local.date() + timedelta(days=days - local.weekday())
             self.now = datetime(day.year, day.month, day.day, hour, minute).astimezone()
         # The first Monday run after the switch is turned on at self.now, at most a week away, so the fixture's six
         # tasks stay inside its first window; and the run a week later.
-        this = improve._monday(self.now)
-        self.monday = this if self.now <= this else improve._monday(self.now, 1)
-        self.following = improve._monday(self.monday, 1)
+        weekly = (improve.WEEKLY_DAYS, improve.WEEKLY_TIME)
+        self.monday = schedule.upcoming(*weekly, self.now - timedelta(microseconds=1))
+        self.following = schedule.upcoming(*weekly, self.monday)
 
     def switched(self, at=None, count=6):
         self.load(count)

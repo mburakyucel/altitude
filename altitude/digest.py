@@ -34,9 +34,11 @@ def queue() -> list[dict]:
 def wip() -> dict:
     """The running counts and every task waiting for a slot, each with its hold (the queued task card names
     it, SPEC.md §3.5): the WIP limit, engine availability, a pending activation, or a resume checkpoint."""
+    from . import project_agents
     per = {p: sum(dispatch.occupies_slot(t) for t in S.list_tasks(p)) for p in config.load_projects()}
     restart = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
-    return {"per_project": per, "machine": sum(per.values()),
+    runs = project_agents.running_count()
+    return {"per_project": per, "agent_runs": runs, "machine": sum(per.values()) + runs,
             "limit_machine": config.machine_wip(),
             "waiting": [{"project": p, "slug": t["slug"], "why": "planned" if t.get("planned_wait") else "dispatch" if t["state"] == "queued" else "resume",
                          "hold": _waiting(p, t, restart)["reason"]}

@@ -1,0 +1,107 @@
+/* Project agents (design/wireframes/project-agents/PROPOSAL.md): the settings page frame and groups, plus these. */
+.agents-intro { margin-top: -14px; }
+/* The phone header holds the title, so the line under it keeps its own space. */
+.shell[data-phone] .agents-intro, .shell[data-phone] .agent-retired-line, .shell[data-phone] .agent-run-meta { margin-top: 0; }
+.agents-chevron { flex: none; color: var(--text-muted); }
+/* A long agent name in the phone header's back link shortens instead of wrapping over the title. */
+.shell[data-phone] .agents-back { flex: 0 1 auto; min-width: 0; max-width: 45%; white-space: nowrap; }
+.agents-pause { flex: none; color: var(--text-muted); }
+.settings-row .agents-row-line { display: flex; align-items: center; gap: 6px; }
+.settings-row .agents-saving { display: flex; align-items: center; gap: 6px; }
+.agents-saving .spinner, .agent-status-line .spinner, .agent-status .btn .spinner, .remove-dialog .btn .spinner { width: 12px; height: 12px; }
+.settings-row small.agents-spent { color: var(--chip-claimed-text); }
+.agents-budget:hover, .agents-new:hover, .agents-builtin-row:hover, .agent-retire:hover, div.agent-run:hover { border-color: var(--hairline); background: var(--surface); }
+.settings-group > .agents-new { justify-content: flex-start; }
+.settings-group > .agents-note { padding: 0 16px 12px; border-top: 0; }
+.agents-builtin-row .text-danger { color: var(--danger); }
+/* The page scrolls as a flex column: a group (overflow hidden) must keep its height rather than clip its rows. */
+.agents-page > .settings-group { flex: none; }
+.agents-builtin-row > .btn { flex: none; }
+.agents-link, .agents-retry { align-self: flex-start; }
+.shell[data-phone] .agents-link { display: inline-flex; align-items: center; min-height: 44px; }
+.agents-page .settings-card > p + .btn { margin-top: 10px; }
+
+/* One agent: the status card, runs, what it does. */
+.agent-status { display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; }
+.agent-status-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; }
+.agent-status-line { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-secondary); }
+.agent-status-actions { display: flex; gap: 8px; flex: none; }
+.agent-retired-line { margin-top: -14px; }
+.settings-group > .agent-run { align-items: flex-start; gap: 12px; }
+.agent-run > .dot { margin-top: 7px; }
+.agent-run > .agents-chevron { align-self: center; }
+.agent-run-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.agent-run-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.agent-run-head > span { font-size: var(--text-meta); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.agent-run-line { overflow-wrap: anywhere; }
+.agent-what { display: flex; flex-direction: column; gap: 10px; }
+.agent-edit { align-self: flex-start; }
+.agent-brief-wrap { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.agent-brief { line-height: 1.5; overflow-wrap: anywhere; }
+.agent-brief[data-clamped] { max-height: 4.5em; overflow: hidden; }
+.agent-brief p + p { margin-top: 0.5em; }
+
+/* One run. */
+.agent-run-meta { margin-top: -14px; }
+.agent-report { display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+.agent-report-head { display: flex; align-items: center; gap: 8px; }
+.agent-fold > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none; color: var(--text-secondary); }
+.agent-fold > summary::-webkit-details-marker { display: none; }
+.agent-fold > summary::before { content: "›"; display: inline-block; width: 12px; transition: transform 120ms; }
+.agent-fold[open] > summary::before { transform: rotate(90deg); }
+.agent-fold-body { padding: 4px 0 8px 20px; overflow-wrap: anywhere; }
+.agent-run-session .live-panel { width: auto; height: min(70vh, 640px); border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; }
+
+/* The form. */
+.agent-form { display: flex; flex-direction: column; gap: 6px; }
+.agent-label { display: block; margin-top: 14px; font-weight: 600; }
+.agent-form > .agent-label:first-child { margin-top: 0; }
+.agent-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.agent-fieldset > legend { margin-bottom: 6px; padding: 0; }
+.agent-brief-field { min-height: 7rem; resize: vertical; line-height: 1.5; }
+.agent-triggers { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
+.agent-trigger { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+.agent-trigger + .agent-trigger { border-top: 1px solid var(--hairline); }
+.agent-trigger-head { display: flex; align-items: center; gap: 8px; color: var(--text-primary); }
+.agent-trigger-head > svg { color: var(--text-muted); }
+.agent-trigger-remove { margin-left: auto; }
+.agent-trigger-none { padding-block: 14px; }
+.agent-trigger-add { align-items: flex-start; }
+.agent-days { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.agent-day { width: 36px; height: 36px; flex: none; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); font-weight: 500; cursor: pointer; }
+.agent-day[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+/* Seven 40px days on one line down to a 375px phone, the time on the line below. */
+.shell[data-phone] .agent-days { display: grid; grid-template-columns: repeat(7, 40px); justify-content: space-between; gap: 8px 0; }
+.shell[data-phone] .agent-day { width: 40px; height: 40px; }
+.agent-time { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+.shell[data-phone] .agent-time { margin-left: 0; grid-column: 1 / -1; }
+.agent-time > input { width: 7.5rem; }
+.agent-tell { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--hairline); }
+.shell[data-phone] .agent-tell { grid-template-columns: 1fr; }
+.agent-tell-option { display: flex; align-items: center; min-height: 40px; padding: 0 12px; border-radius: calc(var(--radius-control) - 2px); color: var(--text-secondary); cursor: pointer; }
+.shell[data-phone] .agent-tell-option { min-height: 44px; }
+.agent-tell-option > input { position: absolute; opacity: 0; pointer-events: none; }
+.agent-tell-option:has(input:checked) { background: var(--surface); color: var(--text-primary); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+.agent-tell-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.agent-form-pair { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 24px; }
+.agent-form-pair .agent-label { margin-bottom: 6px; }
+.agent-limit { min-width: 8rem; }
+.agent-form-actions { display: flex; gap: 8px; margin-top: 18px; }
+.agent-form-actions .btn-primary[aria-disabled="true"] { opacity: 0.45; }
+
+/* In chat: the result line's dot sits inline before the agent's name; the offer card sits under L3's reply. */
+.agent-line .sys-text > .sys-dot { display: inline-block; margin-right: 6px; vertical-align: middle; }
+.sys-dot[data-tone="accent"] { background: var(--accent); }
+.agent-offer { display: flex; flex-direction: column; gap: 4px; max-width: 560px; margin-top: 10px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
+.agent-offer > small { font-size: var(--text-meta); }
+.agent-offer > .agent-brief-wrap, .agent-offer > .agent-offer-changes { margin-top: 6px; }
+.agent-offer-changes { padding-left: 20px; list-style: disc; }
+.agent-offer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.agent-offer-actions .btn[aria-disabled="true"] { opacity: 0.6; pointer-events: none; }
+.agent-offer-done { margin-top: 8px; color: var(--success-text); }
+
+/* Work: the row after Done this week that opens the Agents page. */
+.wp-agents { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 4px; color: var(--text-primary); font-size: 14px; text-decoration: none; }
+.wp-agents:hover { background: var(--hairline); }
+.wp-agents > svg { flex: none; color: var(--text-muted); }
+.shell[data-phone] .wp-agents { min-height: 44px; }
