@@ -988,7 +988,10 @@ Unknown, malformed, incomplete and truncated stdout remain explicit evidence sta
 The [failure-evidence contract](SESSION_LIFECYCLE.md#adversarial-review) describes bounds and privacy.
 Review records retain original findings and separate owner dispositions for each subject. Exact
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
-candidate and evidence for every finding; code, base or conversation changes require reassessment.
+candidate and evidence for every finding; code, base, proposal, request, brief, operator or L3 message
+and decision changes require reassessment. The owner's own messages and the questions it asks or
+withdraws carry no authority, so explaining an assessment never makes it stale; an answer it records
+is the operator's or L3's decision and does.
 A finding the owner leaves `open` stays visibly unresolved, blocks merge and prevents replacing its
 review; only evidence-backed fixed/dismissed outcomes clear an assessment. An additional review of the
 same subject replaces nothing, so earlier reviews stay in the merge gate with their original authority.
@@ -1200,7 +1203,7 @@ bound ends the landing. A Git command that reaches origin and fails on the netwo
 silent head's turn, so a flaky connection neither ends a landing nor costs its place; refusals are not
 retried. Polls hold the task review lock only for local review reads; network reads and sleeps leave
 review requests available. A notice names every stale review and subject with the assessed/current values of its
-changed evidence, so the owner posts explanations together before assessing each request.
+changed evidence, so the owner assesses each request once; its own explanations keep them current.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
 Final candidate, checks, ownership and hold validation repeats after assessment.
 Missing or unfinished review, head or PR identity movement or ownership loss refuses.
