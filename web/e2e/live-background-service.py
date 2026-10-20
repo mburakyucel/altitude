@@ -75,7 +75,7 @@ def main():
         yield FixtureSource(*selected) if selected else None
 
     @contextmanager
-    def transcript_sources(_project, _slug, task):
+    def transcript_sources(_project, _slug, task, *, folder=None):
         selected = outputs.get(task.get("agent_id"))
         yield [(FixtureSource(selected[0], {}), {})] if selected else []
 

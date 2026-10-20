@@ -34,7 +34,7 @@ def main():
         return {"timestamp": at, "row": row}
 
     @contextmanager
-    def transcript_sources(_project, slug, _task):
+    def transcript_sources(_project, slug, _task, *, folder=None):
         path, record = sources[slug]
         yield [(FixtureSource(path, record), record)]
 

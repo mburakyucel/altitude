@@ -59,7 +59,7 @@ def main():
         yield FixtureSource(*selected) if selected else None
 
     @contextmanager
-    def transcript_sources(_project, _slug, task):
+    def transcript_sources(_project, _slug, task, *, folder=None):
         yield [(FixtureSource(path, record), record) for path, record in history.get(task.get("session_id"), [])]
 
     engines.activity_source = activity_source
