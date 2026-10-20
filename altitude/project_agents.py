@@ -29,6 +29,8 @@ NAME, BRIEF, SCHEDULES = 60, 8000, 4
 SUMMARY, REPORT, PREVIOUS, LINE = 200, 20000, 4000, 120
 #: A waiting run is skipped after this long, so a morning check never starts at midnight.
 WAIT = timedelta(hours=6)
+#: A run still without its worker this long after it started was interrupted while starting.
+START = timedelta(minutes=10)
 #: A schedule claimed this long after its time ran late, and its run says when it ran.
 LATE = timedelta(minutes=10)
 #: Triggered runs in a row that couldn't finish or stopped at their limit before the agent pauses itself.
@@ -265,7 +267,11 @@ def _note(record: dict, agent: dict, state: str, by: str, source: str, at: str) 
 
 
 def _version(record: dict, agent: dict, d: dict, by: str, source: str, at: str) -> None:
+    """Save a definition as the agent's next version. A schedule it adds starts from now, as turning on does, so a
+    time that already passed today does not fire on the save."""
     agent.update(d)
+    for entry in d["schedules"]:
+        agent.setdefault("claimed", {}).setdefault(_key(entry), at)
     agent["version"] = agent.get("version", 0) + 1
     record["versions"].append({"agent": agent["id"], "version": agent["version"], "at": at, "by": by,
                                "source": source, "definition": dict(d)})
@@ -353,7 +359,8 @@ def _stop(record, fields, *, by, source, now):
         raise Refused("That run already ended.")
     if by == "l3":
         _say(agent, f"{agent['id']}-stop-{run['n']}", f"Stopped {agent['name']}'s run", "muted")
-    if run["state"] == "waiting":
+    if run["state"] == "waiting" or not run.get("worker"):  # waiting, or still starting: its start stops the worker
+
         _end(record, run, "stopped", None, now)
         return {"agent": agent["id"], "n": run["n"]}
     run["stop"] = {"by": by, "source": source, "at": _at(now)}
@@ -639,13 +646,19 @@ def start_next(project: str, now: datetime | None = None) -> dict | None:
             launched = _launch(project, run, agent, choice)
         except Exception as exc:
             _finish(project, run["agent"], run["n"], "failed", f"It could not start: {exc}", now=now)
+            _remove_copy(project, run["agent"], run["n"])
             raise
     with S.project_lock(project):
         record = _load(project)
         current = _run(record, run["agent"], run["n"])
         current.update(launched)
         _save(project, record)
-    if not launched.get("worker"):
+    if launched.get("worker") and current["state"] != "running":
+        # Stopped, or given up by the tick, while it was starting: its worker ends with it.
+        engines.stop_l2_worker(current["engine"], launched["worker"],
+                               job_root=run_dir(project, run["agent"], run["n"]) / "l2-engine")
+        _remove_copy(project, run["agent"], run["n"])
+    elif not launched.get("worker"):
         _finish(project, run["agent"], run["n"], "failed", launched.pop("error"))
     return current
 
@@ -743,6 +756,10 @@ def reconcile(project: str, now: datetime | None = None) -> None:
     """The tick: a running run whose worker ended is finished, from its report or Stop, and one at its time limit is
     stopped. The job's own limit (`platform.job_command` runtime_max) ends it when Altitude is not running."""
     now = now or datetime.now(timezone.utc)
+    for run in [r for r in _load(project)["runs"] if r["state"] == "running" and not r.get("worker")]:
+        if now - _date(run["started"]) >= START:
+            # Altitude stopped between marking it running and recording its worker; a start never takes this long.
+            _finish(project, run["agent"], run["n"], "failed", "Altitude stopped while starting it", now=now)
     for run in [r for r in _load(project)["runs"] if r["state"] == "running" and r.get("worker")]:
         root = run_dir(project, run["agent"], run["n"]) / "l2-engine"
         try:
@@ -960,12 +977,15 @@ def offers(project: str, *, record: dict | None = None, now: datetime | None = N
     for item in record["offers"]:
         state = "lapsed" if item["state"] == "open" and now - _date(item["at"]) >= OFFER_LAPSE else item["state"]
         agent = next((a for a in record["agents"] if a["id"] == item["agent"]), None)
+        reason = item["reason"]
+        if state == "open" and agent and (agent["state"] == "retired" or agent["version"] != item["base"]):
+            state, reason = "refused", f"{agent['name']} changed since this offer."
         d = item["definition"]
         out.append({"id": item["id"], "turn_id": item["turn"], "kind": item["kind"], "agent": item["agent"],
                     "agent_name": agent["name"] if agent else None, "definition": d,
                     "line": f"{triggers(d['schedules'])} · {TELLS[d['tell']]}",
                     "changes": _changes(_base(record, item), d) if item["kind"] == "change" else [],
-                    "on": item["on"], "state": state, "reason": item["reason"], "result_agent": item["result"]})
+                    "on": item["on"], "state": state, "reason": reason, "result_agent": item["result"]})
     return out
 
 

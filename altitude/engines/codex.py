@@ -794,7 +794,7 @@ def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, sett
            "-c", 'approval_policy="never"']
     if effort is not None:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
-    git_writable, read_only = git_policy.worker_git_access(cwd)
+    git_writable, read_only = git_policy.worker_git_access(cwd, shared=not restricted)
     home, operator = Path(job_root) / "codex", operator_home()
     copies = _first_resume(home, operator, resume)
     reopened = (*_program(operator), *(operator / name for name in (() if restricted else (*LINKED, SKILLS))

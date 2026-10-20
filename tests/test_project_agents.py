@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import REPO, AltitudeCase, make_repo
-from altitude import (access, config, dispatch, door, engines, l3, platform, project_agents as A, route, schedule,
+from altitude import (access, config, dispatch, door, engines, git_policy, l3, platform, project_agents as A, route, schedule,
                       server, state as S, tasks as T, transcript)
 
 # A Wednesday morning in the case's zone (UTC): the week's budget counts from Monday the 12th.
@@ -265,6 +265,43 @@ class TestStarting(AgentCase):
         self.assertFalse(config.task_worktree(self.project, f"project-agent-{agent}-1").exists())
 
 
+    def test_a_run_interrupted_while_starting_ends_and_stop_reaches_one_still_starting(self):
+        agent = self.agent()
+        self.launching()
+        n = self.change("run", agent=agent)["n"]
+        with S.project_lock(self.project):  # Altitude stopped between marking it running and recording its worker
+            record = self.record()
+            A._run(record, agent, n).update(state="running", started=A._at(NOW), limit=20, engine="claude")
+            S.write_json(A._path(self.project), record)
+        A.reconcile(self.project, now=NOW + timedelta(minutes=5))
+        self.assertEqual(self.runs()[0]["state"], "running", "a start in progress is left alone")
+        A.reconcile(self.project, now=NOW + A.START)
+        self.assertEqual((self.runs()[0]["state"], self.runs()[0]["reason"]),
+                         ("failed", "Altitude stopped while starting it"))
+        self.assertEqual(A.running_count(), 0, "it gives its task slot back")
+
+        n = self.change("run", agent=agent, now=NOW + timedelta(hours=1))["n"]
+        self.patch(engines, "stop_l2_worker", return_value="stopped")
+
+        def launch(project, run, agent_row, choice):
+            self.change("stop", agent=agent, n=run["n"])  # pressed while its copy is being made
+            return {"worker": "worker-late", "session": "session-late", "engine_model": None, "sha": "0" * 40}
+        self.patch(A, "_launch", side_effect=launch)
+        A.start_next(self.project, now=NOW + timedelta(hours=1))
+        self.assertEqual(A._run(self.record(), agent, n)["state"], "stopped")
+        engines.stop_l2_worker.assert_called_once()
+        self.assertEqual(engines.stop_l2_worker.call_args.args[1], "worker-late", "its worker ends with it")
+
+    def test_a_saved_schedule_starts_from_the_save(self):
+        agent = self.agent()
+        later = [{"days": [0, 1, 2, 3, 4], "time": "08:00"}, {"days": [1], "time": "07:00"}]
+        self.change("set", agent=agent, version=1, definition=definition(schedules=later))
+        A.claim(self.project, now=NOW)
+        self.assertEqual(self.runs(), [], "today's 08:00 and Tuesday's 07:00 had passed when it was saved")
+        A.claim(self.project, now=NOW + timedelta(days=1))
+        self.assertEqual([r["trigger"]["due"] for r in self.runs()], ["2026-10-15T08:00:00+00:00"])
+
+
 class TestReports(AgentCase):
     def started(self, tell="found", trigger="run", limit=20):
         self.launching()
@@ -381,8 +418,12 @@ class TestLaunch(AgentCase):
                 kw = dict(cwd=worktree, scratch=self.tmp / "scratch", job_root=self.tmp / engine, persona=None,
                           model=None, settings=None, effort=None, resume=None, images=())
                 self.patch(native, "worker_sign_in", return_value={}) if hasattr(native, "worker_sign_in") else None
-                command, _, _, read_only, _, launch = native.prepare_worker("p/x", "brief", **kw, restricted=True)
+                command, _, writable, read_only, _, launch = native.prepare_worker("p/x", "brief", **kw,
+                                                                                    restricted=True)
                 self.assertFalse(launch["linked"])
+                _, common, own = git_policy._task_layout(worktree)
+                self.assertIn(own, writable)
+                self.assertNotIn(common, writable, "a run writes no objects or branches of the shared repository")
                 if engine == "claude":
                     self.assertIn("--restricted", command, "Claude ignores every settings file but Altitude's own")
                     self.assertEqual(command[command.index("--tools") + 1], engines.claude.RESTRICTED_TOOLS)
@@ -503,6 +544,9 @@ class TestAuthority(AgentCase):
         self.patch(l3, "chat_turn", return_value=self.operator("Make it tell me every run"))
         offered = json.loads(self.l3("offer", agent, "--tell", "every")["stdout"])
         self.change("set", agent=agent, version=1, definition=definition(name="Renamed"))
+        card = A.offers(self.project)[0]
+        self.assertEqual((card["state"], card["reason"]), ("refused", "Renamed changed since this offer."),
+                         "the card says so before a press")
         with self.assertRaisesRegex(A.Refused, "Renamed changed since this offer."):
             self.change("offer", offer=offered["offer"])
         card = A.offers(self.project)[0]

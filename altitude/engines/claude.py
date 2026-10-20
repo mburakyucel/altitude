@@ -768,7 +768,7 @@ def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, sett
     for row in claude_agents():
         if row.get("name") == name and row.get("state") not in ("done", "failed", "stopped"):
             claude_stop(row["id"])
-    git_writable, read_only = git_policy.worker_git_access(cwd)
+    git_writable, read_only = git_policy.worker_git_access(cwd, shared=not restricted)
     home = Path(job_root) / "claude"
     copies = _first_resume(home, resume)
     notes = S.read_json(settings, {}).get("autoMemoryDirectory") if settings else None

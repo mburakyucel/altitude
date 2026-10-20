@@ -2387,7 +2387,8 @@ it edited and one made from an older version is refused, and each run records th
 shares). On each tick (`project_agents.tick`), an agent that is on claims each schedule's latest time
 (`schedule.latest`) that is after the moment it was turned on or resumed and after its previous claim, so a time
 missed while Altitude was off runs once when it returns, marked late after ten minutes, and older ones are not
-caught up. A claim becomes a waiting run, or a skip ("Its last run was still going") while the agent's previous run
+caught up. A schedule a saved version adds or changes starts from the save, so a time already passed that day does
+not fire. A claim becomes a waiting run, or a skip ("Its last run was still going") while the agent's previous run
 waits or runs: an agent has at most one. While Altitude waits to activate a change, nothing is claimed.
 
 **Starting.** A project starts one run at a time, its oldest waiting run first (`project_agents.start_next`, spawned
@@ -2407,9 +2408,12 @@ the helper role, the repository's rules and the run template (`templates/project
 fired it, the previous report quoted as data, what the run may do, the limit and the report's shape). Unlike a task
 worker it links nothing of the operator's engine folder (their settings, instructions, skills, plugins or rules),
 runs in the engine's restricted mode where it has one (only Altitude's own settings apply, and its file tools stay
-in its working directories), receives no GitHub sign-in and no Send now, and its environment names actor `project-agent-run`, for which `alt`
+in its working directories), writes only its own checkout's Git state (no objects or branches of the shared
+repository, `git_policy.worker_git_access(shared=False)`), receives no GitHub sign-in and no Send now, and its environment names actor `project-agent-run`, for which `alt`
 refuses every verb. Its job ends at its limit (`platform.job_command` `runtime_max`), and the tick stops a run that
-reaches its limit while Altitude is watching. Stop ends a waiting run at once and stops a running one's job.
+reaches its limit while Altitude is watching. Stop ends a waiting run at once and stops a running one's job; a run stopped while it
+is starting ends at once, and its start stops the worker it made. A run still without a recorded worker ten minutes
+after it started was interrupted by Altitude stopping, and the tick ends it as couldn't finish.
 
 **Reports.** The run's final answer (`engines.worker_answer`) is its report: a first line of `Found:`, `Nothing:`
 or `Couldn't finish:` with one sentence of at most 200 characters, then the full report, at most 20,000 characters.
