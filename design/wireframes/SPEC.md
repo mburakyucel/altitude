@@ -2590,7 +2590,8 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
 `web/e2e/weekly-review.pw.ts` walks Built in, the sheet with Cancel, Escape and a refused and a saving Turn on,
 the page's loading, failed read, ready, Run now refused and Starting…, running, Stop failed and Stopping…,
 stopped, Pause refused and Paused, too few tasks with the reason on press and a skipped week, the chat's terms
-line with Open and the page's changed terms, and every kind of run with the totals, at both widths.
+line with Open and the page's changed terms, every kind of run with the totals, and an older run opening its
+line in chat back past the conversation the chat loads at first, at both widths.
 
 Event triggers and their menu and Monitor's Agents section are later steps of the design and do not appear.
 

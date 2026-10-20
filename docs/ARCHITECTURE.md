@@ -2991,6 +2991,9 @@ operator's next message follows directly under the stopped one.
 The conversation reads `/api/chat/<project>?limit=60`. The limit counts human chat rows and system
 rows (server-triggered turns and FYIs) separately, so a burst of system events never pushes the latest
 operator messages out of view; `chat.jsonl` keeps every row and `alt l3 search` reaches older ones.
+A link to an improvement review's card or line (`#improvement-<run>`, from its page's Recent runs, Latest
+or Needs you) adds `&reach=<run>` while that run is one the project lists, and the history reads every
+row back to that review's line, so the card comes into view however old it is.
 The conversation groups `chat.jsonl` rows by `turn_id` (rows without one, from before the id, by
 adjacency). The operator's rows are bubbles on the right, L3's prose on the left, under day
 dividers, with a row's time in the gutter on hover or a long press. A server-triggered turn (report

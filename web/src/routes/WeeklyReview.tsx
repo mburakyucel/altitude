@@ -49,7 +49,8 @@ function StatusCard({ project, review, onRead }: { project: string; review: Week
       const done = {
         run: (read: WeeklyReview) => read.status.run === started || read.runs.some((row) => row.id === started),
         stop: (read: WeeklyReview) => read.status.run !== run,
-        pause: (read: WeeklyReview) => read.status.paused,
+        // A run the Monday claim or L3 started meanwhile shows instead of the switch; Pause lets it finish.
+        pause: (read: WeeklyReview) => read.status.paused || read.status.run !== null,
         resume: (read: WeeklyReview) => read.agreed && !read.status.paused,
         turn_on: (read: WeeklyReview) => read.agreed && !read.status.paused,
       }[action];
@@ -58,6 +59,8 @@ function StatusCard({ project, review, onRead }: { project: string; review: Week
     } catch (failure) {
       setPending(null);
       setError({ action, message: (failure as Error).message });
+      // A refusal can mean the terms or the run moved on: the next sheet or Retry works from a fresh read.
+      onRead();
     }
   };
   const ask = (action: WeeklyAction) => {
@@ -89,7 +92,7 @@ function StatusCard({ project, review, onRead }: { project: string; review: Week
       : idle && status.now?.line && !error ? <p className="text-meta text-muted">{status.now.line}</p> : null}
     {error ? <p role="alert" className="text-meta text-danger">
       {error.action === "run" ? error.message : error.action === "stop" ? "Not stopped. Try again." : <>{refusal("Not saved", error.message)}{" "}
-        <button type="button" className="link" onClick={() => void press(error.action)}>Retry</button></>}
+        <button type="button" className="link" onClick={() => ask(error.action)}>Retry</button></>}
     </p> : null}
     {sheet ? <WeeklyTermsSheet terms={sheet.terms} onAgree={() => void press(sheet.action, sheet.terms.version)} onClose={() => setSheet(null)} /> : null}
   </div>;

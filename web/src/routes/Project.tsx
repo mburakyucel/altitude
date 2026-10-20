@@ -427,7 +427,16 @@ export default function ProjectPage() {
   const overview = useOverview();
   const managed = !overview.isSuccess || managedProjects(overview.data).some((row) => row.name === name);
   const project = useProject(name, managed);
-  const chat = useChat(name, 60, managed);
+  const location = useLocation();
+  // A link to an improvement review's card or line (#improvement-<run>) reads the conversation back to it, so an
+  // older run opened from its page or Latest still comes into view; only a run the project lists is reached.
+  const named = location.hash.startsWith("#improvement-") ? location.hash.slice("#improvement-".length) : null;
+  const reach = named && project.data?.improvements?.some((run) => run.id === named) ? named : undefined;
+  const chat = useChat(name, 60, managed, reach);
+  const refetchChat = chat.refetch;
+  useEffect(() => {
+    if (reach) void refetchChat();
+  }, [reach, refetchChat]);
   const { phone, panelInline } = useViewport();
   const [search] = useSearchParams();
   const tab = search.get("tab") === "work" ? "work" : "chat";
@@ -435,7 +444,6 @@ export default function ProjectPage() {
   const closePanel = useCallback(() => setPanelOpen(false), []);
   const decisions = decisionsFor(overview.data, name);
   const navigate = useNavigate();
-  const location = useLocation();
   // `/terminal`: the project folder's terminal, in the desktop panel or full screen on phone.
   const terminalRoute = Boolean(useMatch("/projects/:name/terminal"));
   const home = `/projects/${name}`;

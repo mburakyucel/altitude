@@ -233,6 +233,42 @@ describe("Weekly improvement review", () => {
     expect(presses).toEqual([{ project: "harbor", action: "weekly", on: true, terms: terms.version }]);
   });
 
+  it("terms changed while the sheet was open: the refusal reads the new terms, and Retry shows them before turning on", async () => {
+    const newer = { ...terms, version: "fedcba987654", title: "Turn on the Weekly improvement review for harbor? (revised)" };
+    let refuse = true;
+    const { state, presses } = serve({ press: async () => {
+      if (refuse) {
+        refuse = false;
+        state.page = page({ terms: newer, agreed: false, status: { ...idle, line: "Paused: its terms changed", actions: ["resume", "run"], paused: true } });
+        return json({ error: "The terms changed while the sheet was open; read them again." }, 409);
+      }
+      state.page = page({ terms: newer });
+      return json({ ok: true, weekly: true });
+    } });
+    state.page = page({ agreed: false, status: { ...idle, line: "Paused: its terms changed", actions: ["resume", "run"], paused: true } });
+    const { user } = renderApp({ route: "/projects/harbor/agents/weekly" });
+    await user.click(await screen.findByRole("button", { name: "Resume" }));
+    await user.click(within(await screen.findByRole("dialog", { name: terms.title })).getByRole("button", { name: "Turn on" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not saved: The terms changed while the sheet was open; read them again. Retry");
+    await waitFor(() => expect(presses).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(within(await screen.findByRole("dialog", { name: newer.title })).getByRole("button", { name: "Turn on" }));
+    expect(await screen.findByText("Next: Monday, Oct 26")).toBeInTheDocument();
+    expect(presses).toEqual([{ project: "harbor", action: "weekly", on: true, terms: terms.version },
+      { project: "harbor", action: "weekly", on: true, terms: newer.version }]);
+  });
+
+  it("Pause settles on a run that started meanwhile: its line with Stop only, letting it finish", async () => {
+    const { state } = serve({ press: async () => {
+      state.page = page({ status: { line: "Reading 6 tasks", actions: ["stop"], run: "cccccccccccc", spinning: true, paused: false, now: null } });
+      return json({ ok: true, weekly: false });
+    } });
+    const { user } = renderApp({ route: "/projects/harbor/agents/weekly" });
+    await user.click(await screen.findByRole("button", { name: "Pause" }));
+    expect(await screen.findByText("Reading 6 tasks")).toBeInTheDocument();
+    expect(actions()).toEqual(["Stop"]);
+  });
+
   it("no runs: No runs yet., and no totals before a run ends", async () => {
     const { state } = serve();
     state.page = page({ runs: [], what: { ...page().what, past: null } });

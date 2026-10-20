@@ -1924,10 +1924,12 @@ export function useDigest() {
   });
 }
 
-export function useChat(project: string, limit = 60, enabled = true) {
+/** The project's conversation; `reach` names an improvement review whose line the history reads back to. */
+export function useChat(project: string, limit = 60, enabled = true, reach?: string) {
   return useQuery({
     queryKey: ["chat", project],
-    queryFn: async () => ChatViewSchema.parse(await api(`/api/chat/${project}?limit=${limit}`)),
+    queryFn: async () => ChatViewSchema.parse(await api(`/api/chat/${project}?${new URLSearchParams({
+      limit: String(limit), ...(reach ? { reach } : {}) })}`)),
     refetchInterval: (query) => {
       const view = query.state.data;
       return view?.active || view?.busy || view?.queued?.length ? 2_000 : 20_000;

@@ -1,7 +1,8 @@
 """The Weekly improvement review as a built-in agent of fictional projects, through the real handlers and records:
 "altitude" has six finished tasks and no agreement yet, so the review waits under Built in; "beacon" has it on, three
 tasks, and this week's Monday run skipped; "cove" had it on until its terms changed, which paused it and said so in
-its chat. The reviewer waits until the service stops, so a started review stays reading."""
+its chat; "delta" has one review the operator stopped a week ago, followed by more conversation than the chat loads at
+first. The reviewer waits until the service stops, so a started review stays reading."""
 from datetime import datetime, timedelta, timezone
 import threading
 
@@ -58,6 +59,21 @@ def main():
         record["agreement"]["terms"] = "0123456789ab"
         S.write_json(improve._path("cove"), record)
     improve.reconcile("cove")
+    # delta: a review stopped a week ago, then 35 exchanges, so its line is older than the latest 60 conversation rows.
+    project("delta", ["Pin the slip map", "Merge the dock notes", "Fix the hoist gauge", "Sort the bollard tags",
+                      "Check the pilot times", "Trim the berth log"], NOW - timedelta(days=7))
+    week = NOW - timedelta(days=7)
+    improve.set_weekly("delta", True, agree=improve.terms("delta")["version"], now=week - timedelta(days=1))
+    real_now = S.now
+    S.now = lambda: week.isoformat()  # records written while seeding carry the seeded time
+    l3.chat_log("delta", "user", "Get improvement suggestions", trigger="chat", turn_id="d" * 12)
+    stopped = improve.start("delta", "d" * 12, now=week)["run"]
+    improve.stop("delta", "e" * 32, stopped)
+    for n in range(35):
+        S.now = lambda n=n: (week + timedelta(hours=1 + n)).isoformat()
+        l3.chat_log("delta", "user", f"How is dock task {n + 1}?", trigger="chat", turn_id=f"{n:012x}")
+        l3.chat_log("delta", "assistant", f"Dock task {n + 1} is on track.", trigger="chat", turn_id=f"{n:012x}")
+    S.now = real_now
     serve(release=stopping.set)
 
 

@@ -295,7 +295,7 @@ otherwise unchanged; ending lines gain the anchor Recent runs opens.
 - **Views.** `improve.settings` is replaced by the review's list row (or Built in row) and its page,
   read from the same record. The page reuses the step-1 agent page's parts (status card, run rows,
   loading and failure) with the terms sheet as one gate on Turn on, Resume and Run now. `GET /api/agents/<project>` carries the row for Altitude's own project,
-  `GET /api/agents/<project>/weekly` the page. Presses keep `POST /api/improve/<project>` (the switch with
+  `GET /api/agents/<project>/weekly` the page. Presses keep `POST /api/improve` (the switch with
   the terms version, Run now with it, Stop) from a paired device.
 - **Removed.** The settings section (`ImprovementSettings.tsx`, its SPEC §3.15 bullet, the `#improvement`
   settings anchor and their tests); the sheet moves to the agent page.

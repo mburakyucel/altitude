@@ -203,6 +203,22 @@ test.describe(() => {
     await press(resume);
     await expect(page.getByRole("dialog", { name: "Turn on the Weekly improvement review for cove?" })).toBeVisible();
   });
+
+  test("an older run opens its line in chat, back past the conversation the chat loads at first", async ({ page }, info) => {
+    const walk = walkthrough(page, info);
+    const press = (target: Locator) => (info.project.name === "phone" ? target.tap() : target.click());
+    const chat = page.getByRole("region", { name: "Conversation", exact: true });
+    const ending = chat.locator(".irc-ending").filter({ hasText: "stopped by you" });
+
+    await walk.open("/projects/delta");
+    await expect(chat.getByText("Dock task 35 is on track.", { exact: true })).toBeVisible();
+    await expect(ending).toHaveCount(0);
+    await walk.open("/projects/delta/agents/weekly");
+    await press(page.getByRole("main").locator(".agent-run").filter({ hasText: "Stopped by you" }));
+    await expect(page).toHaveURL(/\/projects\/delta#improvement-[0-9a-f]{12}$/);
+    await walk.state("50-older-run-in-chat", { visible: [ending], hidden: [] });
+    await expect(ending).toBeInViewport();
+  });
 });
 
 test.describe(() => {

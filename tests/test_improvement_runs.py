@@ -538,6 +538,28 @@ class TestCard(RunCase):
         self.assertEqual([(row["project"], row["id"]) for row in overview["suggestions"]], [(self.project, run["id"])])
         self.assertEqual(server.project_view(self.project)["improvements"][0]["id"], run["id"])
 
+    def test_a_link_to_an_older_review_reads_the_conversation_back_to_its_line(self):
+        run = self.started()
+        for n in range(4):
+            self.operator(f"Later message {n}", 1 + n)
+            l3.chat_log(self.project, "assistant", f"Later FYI {n}", trigger="report", turn_id=f"{n:012x}")
+        texts = lambda rows: [r["text"] for r in rows]
+        self.assertNotIn(run["id"], [r.get("improvement") for r in l3.chat_history(self.project, 2)])
+        reached = l3.chat_history(self.project, 2, run["id"])
+        self.assertEqual(reached[0]["improvement"], run["id"])
+        self.assertEqual(texts(reached[1:]), texts(l3.chat_history(self.project, None))[-8:])
+        self.assertEqual(texts(l3.chat_history(self.project, 2, "0" * 12)), texts(l3.chat_history(self.project, None)))
+        httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        connection = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+        connection.request("GET", f"/api/chat/{self.project}?limit=2&reach={run['id']}")
+        response = connection.getresponse()
+        history = json.loads(response.read())["history"]
+        connection.close()
+        self.assertEqual((response.status, texts(history)), (200, texts(reached)))
+
 
 class TestCoordinatorVerbs(RunCase):
     def verb(self, *args: str) -> dict:
