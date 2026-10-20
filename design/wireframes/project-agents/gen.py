@@ -85,11 +85,11 @@ BUILTIN_ALL = [("Dependency check", "Weekdays at 07:00 · Looks for security fix
 WEEKLY_ROW = ("Weekly improvement review", "Mondays at 08:00 · Suggests fixes for friction that keeps coming back in this project’s tasks")
 
 
-def brow(name, line, state=None):
+def brow(name, line, state=None, refused="the agents changed in another window."):
     btn = '<span class="btn">Turn on</span>'
     if state == "saving":
         btn = '<span class="btn" style="min-width:76px" aria-label="Turn on, saving"><span class="spin"></span></span>'
-    err = '<div class="err" style="margin-top:6px">Not turned on: the agents changed in another window.</div>' if state == "refused" else ""
+    err = f'<div class="err" style="margin-top:6px">Not turned on: {refused}</div>' if state == "refused" else ""
     return f'<div class="arow brow"><span class="tx"><b>{name}</b><small>{line}</small>{err}</span>{btn}</div>'
 
 
@@ -236,24 +236,31 @@ WEEKLY_RUNS = [
 
 
 def weekly_status(state="few"):
-    """The Weekly review's status card: its line, Run now's line or reason under it, and its buttons."""
+    """The Weekly review's status card: its line, its buttons and the one line under them, if any."""
     off = '<span class="btn" aria-disabled="true" style="opacity:.45">Run now</span>'
     run_now, pause, resume = '<span class="btn">Run now</span>', '<span class="btn">Pause</span>', '<span class="btn">Resume</span>'
-    reads = "Reads the 6 tasks finished since Oct 19."
+    reads = '<p class="muted" style="margin:8px 0 0;font-size:13px">Reads the 6 tasks finished since Oct 19.</p>'
+    err = lambda text: f'<div class="err">{text}</div>'
+    stop = '<span class="btn">Stop</span>'
     rows = {
-        "few": ("Next: Monday, Oct 26, if 2 more tasks finish", off + pause, "Run now needs 5 finished tasks since Oct 19; 3 so far."),
+        "few": ("Next: Monday, Oct 26, if 2 more tasks finish", off + pause, ""),
+        "few-pressed": ("Next: Monday, Oct 26, if 2 more tasks finish", off + pause,
+                        '<p class="muted" style="margin:8px 0 0;font-size:13px">Run now needs 5 finished tasks since Oct 19; 3 so far.</p>'),
         "ready": ("Next: Monday, Oct 26", run_now + pause, reads),
         "starting": ("Next: Monday, Oct 26", '<span class="btn" style="min-width:86px" aria-label="Run now, starting"><span class="spin"></span>Starting…</span>'
-                     '<span class="btn" aria-disabled="true">Pause</span>', reads),
-        "reading": ('<span class="spin"></span>Reading 6 tasks', '<span class="btn">Stop</span>' + pause, ""),
-        "checking": ('<span class="spin"></span>L3 is checking 3', '<span class="btn">Stop</span>' + pause, ""),
-        "stopping": ('<span class="spin"></span>Reading 6 tasks', '<span class="btn" aria-disabled="true"><span class="spin"></span>Stopping…</span>' + pause, ""),
+                     '<span class="btn" aria-disabled="true" style="opacity:.45">Pause</span>', reads),
+        "reserve": ("Next: Monday, Oct 26", off + pause,
+                    '<p class="muted" style="margin:8px 0 0;font-size:13px">Claude’s allowance is inside Altitude’s reserve.</p>'),
+        "run-refused": ("Next: Monday, Oct 26", run_now + pause, err("Another review just ended; ask again.")),
+        "pause-refused": ("Next: Monday, Oct 26", run_now + pause, err('Not saved: the terms changed while the sheet was open; read them again. <a class="u" href="#">Retry</a>')),
+        "reading": ('<span class="spin"></span>Reading 6 tasks', stop, ""),
+        "checking": ('<span class="spin"></span>L3 is checking 3', stop, ""),
+        "stopping": ('<span class="spin"></span>Reading 6 tasks', '<span class="btn" aria-disabled="true"><span class="spin"></span>Stopping…</span>', ""),
+        "stop-failed": ('<span class="spin"></span>Reading 6 tasks', stop, err("Not stopped. Try again.")),
         "paused": (PAUSE + "Paused", resume + run_now, reads),
-        "terms": (PAUSE + "Paused: its terms changed", resume + run_now, reads),
-        "reserve": ("Next: Monday, Oct 26", off + pause, "Claude’s allowance is inside Altitude’s reserve."),
+        "terms": (PAUSE + "Paused: its terms changed", resume + run_now, ""),
     }
     line, btns, under = rows[state]
-    under = f'<p class="muted" style="margin:8px 0 0;font-size:13px">{under}</p>' if under else ""
     return f'<div class="card"><div class="status"><span class="tx">{line}</span><span class="btns">{btns}</span></div>{under}</div>'
 
 
@@ -278,10 +285,9 @@ def weekly_page():
     return card + runs(rows=WEEKLY_RUNS, more=False) + what
 
 
-WEEKLY_HEAD = (f'<a class="btn setting-back" href="#">{CHEVL}altitude</a><h1 style="margin-bottom:2px">Weekly improvement review</h1>'
-               '<p class="muted" style="margin:0 0 16px">Built in</p>')
+WEEKLY_HEAD = f'<a class="btn setting-back" href="#">{CHEVL}altitude</a><h1 style="margin-bottom:16px">Weekly improvement review</h1>'
 board("DesktopWeekly", 1440, 900, desk(WEEKLY_HEAD + weekly_page(), on="altitude"))
-board("PhoneWeekly", 390, 1000, phone('<p class="muted" style="margin:0 0 12px">Built in</p>' + weekly_page(), back="altitude", title="Weekly improvement review", h=1000))
+board("PhoneWeekly", 390, 1000, phone(weekly_page(), back="altitude", title="Weekly improvement review", h=1000))
 
 
 # ---- the form: new and edit ----
@@ -551,31 +557,45 @@ CELLS = [
     ("38 · Turn on refused", "the button returns with the reason", builtin(state="refused")),
     ("39 · Altitude’s own project", "the Weekly review is built in there (step 2); its Turn on opens its terms first",
      builtin(rows=[WEEKLY_ROW] + BUILTIN_ALL[:2])),
-    ("40 · Weekly: its terms", "Cancel has focus; Turn on agrees and turns it on; at 390 a bottom sheet",
+    ("40 · Weekly: its terms", "centered at 1440, Cancel focused; at 390 the bottom sheet of PhoneWeeklyTerms",
      dialog("Turn on the Weekly improvement review for altitude?", SHEET_TEXT,
             f'<span class="btn"{FOCUS}>Cancel</span><span class="btn primary">Turn on</span>', static=True)),
-    ("41 · Weekly: yours", "first among your agents; its runs don’t count toward the budget",
+    ("41 · Weekly: turning on, refused", "the spinner until the list reads it as yours; stale terms return the button",
+     '<div class="card alist">' + brow(*WEEKLY_ROW, state="saving") + '</div><div style="height:10px"></div>'
+     + '<div class="card alist">' + brow(*WEEKLY_ROW, state="refused", refused="the terms changed while the sheet was open; read them again.") + '</div>'),
+    ("42 · Weekly: yours", "first among your agents; its runs don’t count toward the budget",
      '<div class="card alist">' + arow("Weekly improvement review", "Mondays at 08:00 · 3 suggestions 2 d ago")
      + arow("Weekly improvement review", PULSE + "Mondays at 08:00 · Reading 6 tasks")
      + arow("Weekly improvement review", PAUSE + "Mondays at 08:00 · Paused: its terms changed") + '</div>'),
-    ("42 · Weekly: ready, starting, reserve", "Run now’s line or its reason under the status",
+    ("43 · Weekly page: loading, read failed", "",
+     '<div class="card"><span class="spin" role="status" aria-label="Loading Weekly improvement review…"></span></div><div style="height:10px"></div>'
+     '<div class="card"><p style="margin:0 0 10px">Could not load the Weekly improvement review.</p><span class="btn">Retry</span></div>'),
+    ("44 · Weekly: too few tasks, then Run now pressed", "the reason shows under the card on press; it is also Run now’s description",
+     weekly_status("few") + '<div style="height:10px"></div>' + weekly_status("few-pressed")),
+    ("45 · Weekly: ready, starting, reserve", "Run now’s line, or its reason when it can’t run",
      weekly_status("ready") + '<div style="height:10px"></div>' + weekly_status("starting")
      + '<div style="height:10px"></div>' + weekly_status("reserve")),
-    ("43 · Weekly: running, then Stop", "reading, then L3 checking; Stop holds until the end is read",
+    ("46 · Weekly: Run now refused, Pause refused", "the buttons return; the reason in red",
+     weekly_status("run-refused") + '<div style="height:10px"></div>' + weekly_status("pause-refused")),
+    ("47 · Weekly: running, Stop pressed, Stop failed", "only Stop while it runs; Pause returns when it ends",
      weekly_status("reading") + '<div style="height:10px"></div>' + weekly_status("checking")
-     + '<div style="height:10px"></div>' + weekly_status("stopping")),
-    ("44 · Weekly: paused", "by you, or by a change of its terms: Resume and Run now open the terms first",
+     + '<div style="height:10px"></div>' + weekly_status("stopping") + '<div style="height:10px"></div>' + weekly_status("stop-failed")),
+    ("48 · Weekly: paused, terms out of date", "whenever its agreement is out of date, Resume and Run now open the terms first",
      weekly_status("paused") + '<div style="height:10px"></div>' + weekly_status("terms")),
-    ("45 · Weekly: every kind of run", "each opens its card or line in chat; a skip has none",
+    ("49 · Weekly: every kind of run", "each opens its card or line in chat; a skip has none",
      runs(rows=WEEKLY_ALL, more=False)),
-    ("46 · Weekly: no runs yet", "the totals line appears after the first ended run", runs(rows=[], more=False)),
-    ("47 · Weekly: terms changed, in chat", "a quiet line; Open goes to its page",
+    ("50 · Weekly: no runs yet", "the totals line appears after the first ended run", runs(rows=[], more=False)),
+    ("51 · Weekly: terms changed, in chat", "a quiet line; Open goes to its page",
      sysa("Weekly improvement review", "paused: its terms changed.")),
 ]
-board("States", 1200, 11520, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
+board("States", 1200, 12300, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Every state of the agents page, the agent page, the form, the dialogs and chat, as PROPOSAL.md specifies them.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in CELLS) + '</div>')
-board("PhoneStates", 1720, 8060, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
+board("PhoneStates", 1720, 8600, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: stacked choices, 44px targets, full-width cards.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in CELLS) + '</div>')
+board("PhoneWeeklyTerms", 390, 844, phone(weekly_page(), back="altitude", title="Weekly improvement review",
+      overlay='<div class="scrim"></div><div class="dlg" role="dialog" style="top:auto;bottom:0;left:0;right:0;border-radius:16px 16px 0 0;padding-bottom:28px">'
+              f'<h2>Turn on the Weekly improvement review for altitude?</h2><p>{SHEET_TEXT}</p>'
+              f'<div class="bt"><span class="btn primary">Turn on</span><span class="btn"{FOCUS}>Cancel</span></div></div>'))
 print("written")
