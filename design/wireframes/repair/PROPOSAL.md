@@ -21,7 +21,7 @@ repair does, who starts it and its limits do not change.
 | --- | --- | --- |
 | How long a finished repair stays in Work | Three days after it ends; a running one always shows | Seven days, as Work's **Done this week** keeps tasks |
 | Older repairs | An **All repairs** link in About, the one way back to a repair that has left Work, and to every repair before any project exists | Nothing: About keeps only **Repair…**, and an older repair is reachable only by its address. **On Monitor:** Work keeps only the repair running, and Monitor gains the section of ended ones |
-| The page's layout | One column, a task's header and rows: steps sit in the conversation as Live session's rows, since a repair has one session whose steps are its conversation, and on a phone they are what you follow | Two panes, exactly a task's: the conversation beside a **Steps** panel, a tab on the phone (review captures: [desktop](captures/AltDesktop.png), [phone](captures/AltPhone.png)). **Both:** two panes on desktop, one column on the phone |
+| The page's layout | One column, a task's header and rows: steps sit in the conversation as Live session's rows, since a repair has one session whose steps are its conversation, and on a phone they are what you follow | Two panes, exactly a task's: the conversation beside a **Steps** panel, a tab on the phone. **Both:** two panes on desktop, one column on the phone |
 
 ## What it is for
 
