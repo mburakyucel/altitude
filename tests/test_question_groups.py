@@ -134,6 +134,29 @@ class QuestionGroups(AltitudeCase):
             T.accept_questions(self.project, self.slug, group["id"], group["revision"], answers)
         self.assertEqual([q["status"] for q in self.group()["questions"]], ["open", "open", "resolved"])
 
+    def test_plain_message_discusses_the_group_only_while_a_member_is_open(self):
+        group = self.ask({"questions": [{"question": "Which team owns the rollout?"},
+                                        {"question": "When should cleanup run?"}]})
+        first, second = group["questions"]
+        answer = T.message(self.project, self.slug, "burak", "The search team, at night.")
+        self.resolve(first, answer)
+        note = T.message(self.project, self.slug, "l2", "Cleanup timing still open.")
+        self.assertEqual(note["question_refs"], [{"id": first["id"], "revision": 1},
+                                                 {"id": second["id"], "revision": 1}])
+        self.assertEqual(note["group_id"], group["id"])
+        self.resolve(second, answer, reason="Run cleanup at night.")
+        for role in ("l2", "l3", "burak"):
+            with self.subTest(role=role):
+                row = T.message(self.project, self.slug, role, "Delivery note.")
+                self.assertFalse({"question_refs", "question_id", "question_revision", "group_id",
+                                  "group_revision"} & row.keys())
+        current = self.group()
+        named = T.message(self.project, self.slug, "l2", "About the settled rollout.",
+                          group_id=current["id"], group_revision=current["revision"])
+        self.assertEqual(named["group_id"], current["id"])
+        self.assertEqual(T.message(self.project, self.slug, "l2", "About cleanup.", question_id=second["id"],
+                                   revision=second["revision"])["question_id"], second["id"])
+
     def test_custom_and_preset_responses_share_attributed_message_without_resolving(self):
         group = self.ask()
         first, second, plain = group["questions"]

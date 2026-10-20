@@ -1580,6 +1580,9 @@ still lands, the review stays shown and stderr says the state was unavailable. T
 classifies the answer as approval nor changes the quick-option requirement for a changes review.
 One typed reply can answer several members. Its saved question references name what the operator
 was viewing; cite the same message in a separate `resolve` call for each answered or obsolete member.
+A message that names no question or group, such as a plain `alt task reply` or `alt task message`, refers
+to the current group only while one of its members is open; once every member is resolved, it is a plain
+message with no question references.
 Only questions still awaiting an operator response remain in Needs you. Quick selections can also be sent
 together as one batch; a stale member prevents the whole batch from writing.
 After a harmless follow-up, checkpoint and park with the still-valid `block --reason` text. Omitted
