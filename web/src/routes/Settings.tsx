@@ -721,7 +721,7 @@ function VersionRows({ update }: { update: Update }) {
 const titles = {
   voice: "Voice input", projects: "Projects", "projects-folder": "Projects folder", name: "Your name",
   prerequisites: "Prerequisites", "incident-reports": "Incident reports", devices: "Devices", network: "Network",
-  repairs: "Repairs",
+  repairs: "All repairs",
 } as const;
 
 /** A machine setting the onboarding flow also sets: its form, saving in place with a Saved confirmation. */

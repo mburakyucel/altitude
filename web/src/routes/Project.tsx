@@ -8,6 +8,7 @@ import type { Attention, ChatView, Decision, EngineReadout, Overview, ProjectVie
 import { agoText } from "../data/observed";
 import { attentionSummary, isStep } from "../data/decisions";
 import { TaskCard } from "../components/TaskCard";
+import { WorkRepairs } from "../components/Repairs";
 import { RoleModelButton } from "../components/ModelMenu";
 import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
@@ -115,6 +116,7 @@ export function WorkPanel({
           {current.length === 0 ? (
             <p className="text-muted">No current tasks. Ask L3 to start something.</p>
           ) : null}
+          <WorkRepairs project={name} />
           {doneThisWeek.length > 0 ? (
             <details className="wp-fold">
               <summary className="wp-fold-summary">Done this week ({doneThisWeek.length})</summary>

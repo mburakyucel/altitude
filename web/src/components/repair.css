@@ -16,44 +16,39 @@
 .shell[data-phone] .repair-sheet-buttons .btn { flex: 1; min-height: 44px; }
 .repair-sheet-error code, .repair-question code { overflow-wrap: anywhere; }
 
-/* The page: header with the status and Stop, then what happened in order. */
-.repair-header { gap: 8px; padding: 4px 8px; }
-.repair-header .settings-back { min-width: 44px; min-height: 44px; font-size: 22px; }
-.repair-head { display: flex; align-items: flex-start; gap: 12px; }
-.repair-head-text { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
-.repair-head-text h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.repair-header h1 { font-size: var(--text-card-title); }
-.repair-head-meta { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: var(--text-meta); color: var(--text-muted); }
-.repair-head-meta > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.repair-stop { flex: none; min-height: 44px; }
-.repair-page { gap: 14px; }
-.repair-access { font-size: var(--text-meta); color: var(--text-secondary); }
-.repair-access[data-low] { color: var(--chip-claimed-text); font-weight: 500; }
-.repair-access .link { min-height: 44px; }
-.repair-timeline { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.repair-sys { padding: 4px 0; }
+/* The page, in a task's form: its header, chips and conversation come from the task page's own styles. */
+.repair-busy { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.repair-busy .spinner { width: 12px; height: 12px; }
+.repair-sys-time { font-family: var(--font-mono); font-size: var(--text-label); }
 .repair-center { display: flex; justify-content: center; text-align: center; }
 .repair-you { white-space: pre-wrap; }
 .repair-say { min-width: 0; overflow-wrap: anywhere; }
+.conversation-status.repair-keep { align-items: center; color: var(--chip-claimed-text); }
+.conversation-status.repair-keep > .dot { margin-top: 0; }
+.repair-keep .link { min-height: 44px; }
 
-/* One step per line, cut with an ellipsis; Show has a 44px tap area. */
-.repair-step { min-width: 0; font-size: var(--text-meta); }
-.repair-step-line { display: flex; min-width: 0; align-items: center; gap: 8px; }
-.repair-step-line .spinner { width: 12px; height: 12px; flex: none; }
-.repair-step-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--text-muted); }
-.repair-step-dot[data-bad] { background: var(--danger); }
-.repair-step-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
-.repair-show { flex: none; min-width: 44px; min-height: 44px; margin: -12px 0; }
-.repair-step-detail { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 0 14px; }
-.repair-step-detail pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (prefers-reduced-motion: reduce) { .repair-step-line .spinner, .repair-head-meta .spinner { animation: none; } }
+/* The brief, folded at the top: its whole row opens it. */
+.repair-brief { border: 1px solid var(--accent-tint-border); border-radius: var(--radius-control); background: var(--accent-tint); font-size: var(--text-meta); }
+.repair-brief > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px; cursor: pointer; list-style: none; }
+.repair-brief > summary::-webkit-details-marker { display: none; }
+.repair-brief > summary > span { flex: 1; min-width: 0; }
+.repair-brief > summary b { margin-right: 4px; color: var(--accent-text); }
+.repair-brief > summary svg { flex: none; color: var(--text-muted); transition: transform 0.15s; }
+.repair-brief[open] > summary svg { transform: rotate(90deg); }
+.repair-brief pre { margin: 0 12px 12px; max-height: 50dvh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Steps as Live session's rows, consecutive ones together; the phone leaves out their times. */
+.repair-steps { display: flex; flex-direction: column; gap: 6px; }
+.repair-step .session-hint .spinner { width: 10px; height: 10px; vertical-align: -1px; }
+.repair-step[data-error="true"] { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.shell[data-phone] .repair-step .session-time { display: none; }
+@media (prefers-reduced-motion: reduce) { .repair-busy .spinner, .repair-step .spinner { animation: none; } .repair-brief > summary svg { transition: none; } }
 
 /* Question cards, on the page and in Needs you. */
 .repair-question h3 { font-size: var(--text-card-title); font-weight: 600; }
 .repair-command { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--bubble); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-meta); }
 .repair-question-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .shell[data-phone] .repair-question-buttons .btn { min-height: 44px; }
-.chip.repair-waiting { background: var(--accent-tint); color: var(--accent-text); }
 
 /* The report: its outcome, Altitude's check and what was left running. */
 .repair-outcome { display: flex; flex-direction: column; gap: 6px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
@@ -65,4 +60,3 @@
 .repair-check { margin-top: 6px; font-size: var(--text-meta); color: var(--text-secondary); }
 .repair-left { margin: 0; padding-left: 18px; font-size: var(--text-meta); }
 .repair-left code { overflow-wrap: anywhere; }
-.repair-composer { padding-top: 8px; }

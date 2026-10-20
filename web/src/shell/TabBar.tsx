@@ -13,11 +13,11 @@ const ICONS: Record<Tab, string> = {
   monitor: "M3 15a7 7 0 1 1 14 0M10 15l3-5",
 };
 
-/** Which tab the current page belongs to; a task, decision or Settings page pushed over a tab keeps that tab lit. A
- * repair belongs to no project and lights none. */
+/** Which tab the current page belongs to; a task, decision or Settings page pushed over a tab keeps that tab lit, and a
+ * repair's page keeps Work lit, where repairs are listed. */
 export function activeTab(pathname: string, state: unknown, search: string): Tab | null {
   if (pathname === "/") return "needs";
-  if (pathname.startsWith("/repairs/")) return null;
+  if (pathname.startsWith("/repairs/")) return "work";
   if (pathname.startsWith("/monitor")) return "monitor";
   const from = state && typeof state === "object" ? (state as { tab?: unknown }).tab : null;
   if (/^\/projects\/[^/]+\/tasks\//.test(pathname)) {
@@ -40,7 +40,8 @@ export function TabBar({ overview, stale = false }: { overview: Overview | undef
   const project = scopedProject(overview, projectMatch?.params.name ?? selected);
   const projectPath = project ? `/projects/${project}` : "/projects";
   const attention = attentionCount(overview, stale);
-  const current = activeTab(location.pathname, location.state, location.search);
+  // Before any project exists there is no Work, so a repair's page lights no tab.
+  const current = project || !location.pathname.startsWith("/repairs/") ? activeTab(location.pathname, location.state, location.search) : null;
 
   const tabs: Array<{ tab: Tab; label: string; to: string }> = [
     { tab: "chat", label: "Chat", to: projectPath },

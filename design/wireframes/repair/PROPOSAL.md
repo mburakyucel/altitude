@@ -2,8 +2,26 @@
 
 Status: the operator approved this design on 2026-10-19, after their direction that a repair has
 broad privileges and its independent review. Steps 1 and 2 of the rollout, the terminal route and
-repairs from the app, are built; [repairs](../../../docs/OPERATIONS.md#repairs) describes them, and
-step 3 follows.
+repairs from the app, are built; [repairs](../../../docs/OPERATIONS.md#repairs) describes them. The
+operator chose the revision below on 2026-10-19 (one column, an **All repairs** link, three days), and
+step 3 builds it.
+
+## This revision: repairs in Work
+
+Repairs had a surface of their own: a page, a Needs you section, a Monitor row and a history in
+Settings → About. This revision lets them ride on what Altitude already has. **Work** gains an
+**Altitude repairs** section below its current tasks, shown only while there is a repair to show: the
+one running and those that ended in the last three days, each a row like a task's. A repair's page
+reads like a task's conversation, with the task page's header, chips, rows and composer. Monitor's
+repair row and About's list of recent repairs go; About keeps **Repair…** and an **All repairs**
+link, the failed-update notice keeps **Repair**, and Needs you keeps a repair's questions. What a
+repair does, who starts it and its limits do not change.
+
+| Decision | Recommendation | Alternatives |
+| --- | --- | --- |
+| How long a finished repair stays in Work | Three days after it ends; a running one always shows | Seven days, as Work's **Done this week** keeps tasks |
+| Older repairs | An **All repairs** link in About, the one way back to a repair that has left Work, and to every repair before any project exists | Nothing: About keeps only **Repair…**, and an older repair is reachable only by its address. **On Monitor:** Work keeps only the repair running, and Monitor gains the section of ended ones |
+| The page's layout | One column, a task's header and rows: steps sit in the conversation as Live session's rows, since a repair has one session whose steps are its conversation, and on a phone they are what you follow | Two panes, exactly a task's: the conversation beside a **Steps** panel, a tab on the phone. **Both:** two panes on desktop, one column on the phone |
 
 ## What it is for
 
@@ -141,7 +159,7 @@ Settings show "A repair is running in a terminal on this computer" with no link.
 
 - The failed-update notice: **Try again** leads when the cause passes on its own, such as a cut-off
   download; **Repair** leads for any other cause and after a retry fails.
-- Settings → About: a **Repair** row with **Repair…** and the repairs already run.
+- Settings → About: a **Repair** row with **Repair…**.
 - Later steps: a project's Setup when a step failed, a task stopped by a system fault, and Monitor's
   **Activation failed** on a source deployment, each opening the same sheet with the problem filled
   in.
@@ -157,13 +175,24 @@ the coding agent's interactive session in that terminal, in a repair folder, as 
 normal mode: it asks you before each step unless your own settings allow it. You are at the
 keyboard, so no time limit applies. When it writes its report (`alt repair report`) or ends, the
 service runs `alt doctor` itself, at once or at its next start, and sets the outcome under the same
-rule as the app. The repair appears in Settings → About marked **From a terminal · steps in the
-terminal's history**. When `alt` itself cannot start, the release's standalone installer starts it:
+rule as the app. The repair appears in Work's **Altitude repairs** marked "from a terminal", and its page says its
+steps are in the terminal's history. When `alt` itself cannot start, the release's standalone installer starts it:
 `python3.12 install.py --repair`. It cannot start without a signed-in coding agent or Python 3.12,
 or repair a deleted installation; those go back to Setup.
 
 Ordinary tasks keep running beside any repair. On Linux the repair's job, like task workers, runs
 while the user service manager runs; on the Mac it stops at logout, like the service.
+
+## Where repairs show
+
+Work, on the phone's Work tab and in the desktop's work panel, has an **Altitude repairs** section
+between **Current** and **Done this week**: the repair running now and every repair that ended in the
+last three days, newest first, each one row opening its page. A repair belongs to Altitude rather
+than a project, so the section is the same in every project's Work, and its heading says whose it is;
+Work's own counts stay the project's. It is absent when there is nothing to show. Needs you keeps a
+repair's questions in its **Altitude** section, the failed-update notice links the running repair,
+and Settings → About's **All repairs** lists every repair, including those that left Work and those
+started before any project exists, when there is no Work.
 
 ## Engines
 
@@ -212,10 +241,12 @@ worker-termination question; each step comments its delivered scope there.
    record with the service's own doctor outcome, terminal repairs listed in Settings → About, and
    the terminal route's rule text and never-granted entries. Small, and works with the service down.
 2. **Repairs from the app**, once every operator route refuses agents. The repair job and its
-   recorder outside the service, its page, Needs you section and Monitor row, the sheet from the
-   failed-update notice and Settings, the time limit with **Keep going**, Stop, **Left running**,
+   recorder outside the service, its page and Needs you section, the sheet from the failed-update
+   notice and Settings, the time limit with **Keep going**, Stop, **Left running**,
    the report with Altitude's check, and the app route's rule text.
-3. **More places to start.** Project Setup failures, tasks stopped by a system fault, source
+3. **Repairs in Work.** The **Altitude repairs** section, the page in a task's form, and About with
+   **All repairs** in place of its recent list; Monitor's repair row goes.
+4. **More places to start.** Project Setup failures, tasks stopped by a system fault, source
    activation failure.
 
 Deterministic tests cover: every repair route refuses Altitude's agents, L3, the machine key and
@@ -237,13 +268,15 @@ native Mac service; those stay listed on each step's issue for the Mac installat
 
 Fictional data. Phone 390×844, desktop 1440×900. Boards, written by `gen.py` beside this file:
 
+- [Work with its Altitude repairs section, phone](PhoneWork.html)
+- [Work with a repair waiting for you, desktop](DesktopWork.html)
 - [Failed-update notice, phone](PhoneNotice.html)
 - [Start a repair, phone](PhoneSheet.html)
 - [A repair at work, phone](PhoneRunning.html)
 - [A repair asks before a big change, phone](PhoneAsk.html)
 - [Repair reports, phone](PhoneReport.html)
-- [Settings → About with Repair, phone](PhoneAbout.html)
-- [A repair on desktop](Desktop.html)
+- [Settings → About with Repair… and All repairs, phone](PhoneAbout.html)
+- [A repair asks, desktop](Desktop.html)
 - [All states](States.html)
 - [The terminal route](Terminal.html)
 
@@ -268,28 +301,59 @@ the buttons: "A repair is already running. **Open it**", "A repair is running in
 computer.", "No coding agent can run now: Claude's weekly allowance is used. Run `alt repair` in a
 terminal instead.", or "Repairs start only from your own browser or terminal."
 
-**Repair page** header: "Repair · <title>", status chip (Working, Waiting for you, Repaired, Confirm
-yourself, Not repaired, Stopped), engine and age, **Stop**. **Stop** asks first: "Stop the repair? A
-command running now is cut off." with **Stop repair** (danger) and **Keep running**; then Stopping…
-with a spinner; "Stop unconfirmed · The repair may still be running." with **Check status**. No tab
-is highlighted: a repair belongs to no project. Under the header: "Full access · 1 h 48 min left";
-from fifteen minutes before the end "Full access · 14 min left · **Keep going**"; after the time
-limit "Time's up · the session ended · **Keep going**"; after the report or Stop "Session ended". A
-failed **Keep going** shows its reason in red beside it.
+**Work's Altitude repairs section**: "Altitude repairs" with its count, after **Current** and
+before **Done this week**; rows in the task row's anatomy (state dot, title, meta, chevron), the
+title "Failed update to 0.9.0", the first line of what you wrote, or "Repair", on one line with an
+ellipsis; the meta wraps as a task row's. Meta: "Repair working · started 12 min ago" (running dot);
+"Repair working in a terminal · started 5 min ago"; while it asks, the amber "Your turn · the repair
+asks" line over "Repair waiting · started 7 min ago" (amber dot); "Checking the result · ended just
+now"; then "✓ Repaired · ended yesterday", "Confirm yourself · ended 2d ago", "Stopped · ended 3h
+ago" (muted dot) and "✕ Not repaired · ended 2d ago" (red dot, also for an end without a report). A
+terminal repair says "from a terminal" in its meta. The rows come from the repairs listing Settings
+already reads (`GET /api/repairs`, whose status says when a repair waits for you); Work keeps those
+not ended or ended less than 72 hours ago, with no cap, since one repair runs at a time. Every change
+Altitude reports refreshes the listing, so a finished row leaves at the first refresh past its 72
+hours. A record a terminal repair left unended reads "Checking the result" until the service's check
+settles it at its next tick. The section appears only with a row to show: it is absent when there
+is no repair to show, while its read loads (so the fold below it moves down once) and when the read
+fails, since an empty or failing section would only puzzle someone with no repair; a failed refresh
+keeps the rows it has, and Needs you and the failed-update notice still carry anything urgent. With
+no current task, Work's empty line comes first.
 
-Step lines, one line each, the text truncating with an ellipsis and **Show** at the end with a 44px
-tap area: "Ran: `systemctl --user status altitude`"; "Failed (exit 1): `ls …`" in red; "Changed:
-`~/.config/…/altitude.env`"; "Fetched: github.com/…"; a spinner and "Running: `…`"; "Cut off by the
-end of the session: `…`". System lines: "Started by you · full access for 2 hours", "Altitude is
-restarting · the repair continues", "Altitude is back". While Altitude does not answer, a banner
-says "Altitude is not answering · the repair continues and this page catches up when it is back".
-Composer while the session runs: "Message the repair".
+**Repair page**, a task's page: on desktop the header row has the **‹ Work** crumb, back to the Work it
+came from or the selected project's, and **‹ Settings** when no project exists, the state dot and
+title, and Stop in the task's 104px header button (**Stopping…**, then **Check status** when a stop
+is unconfirmed); the chip row holds the status ("Repair working", "Repair waiting for you",
+"Checking the result", "✓ Repaired", "Confirm yourself", "✕ Not repaired", "Stopped"), the model
+on its engine ("Opus on Claude") and, while the session runs, "Full access · 1 h 48 min left", amber
+from fifteen minutes before the end. A terminal repair's chips are its status and "From a
+terminal". On phone the task's header: back, the title on one line, the status line ("● Repair
+working · 1 h 48 min left", the dot standing for the state without the chip's ✓ or ✕) and Stop; the
+tab bar stays with **Work** lit, and with no project, unlit. Like a task, the desktop page gives the
+conversation the width beside the rail and closes the work panel; Stop's Esc hint is the task's. **Stop** asks first: "Stop
+the repair? A command running now is cut off." with **Stop repair** (danger) and **Keep running**;
+"Stop unconfirmed · The repair may still be running." is a red system line.
 
-**Question card**: a muted "Asked by the repair", title "Go ahead?", the repair's reason, the
-command in a code block, **Go ahead** (filled) and **Don't** (bordered); then "Went ahead · by you" or
-"Not done · declined by you"; "Expired · the session ended" without buttons when the session ends,
-also in Needs you. A step needing your password: title "Your step: <what>", the command, **Open in
-terminal**, **Copy** and **I ran it**.
+The conversation column: the **Brief** folded at the top, a full-width row whose whole height (at
+least 44px) opens it, with a chevron;
+day dividers; system lines with their time, as in a task's chat: "Started by you · full access for 2
+hours", "Altitude is restarting · the repair continues", "Altitude is back", "Kept going · one more
+hour". Your words are your bubbles; the agent's words are prose, as the L2's. Steps are Live
+session's rows, consecutive ones together, each opening its command and output: "$ alt doctor ·
+24 lines", "$ ls … · exit 1" (red), "Edit ~/.config/…/altitude.env · changed", "Fetch github.com/…
+· fetched", "$ brew info openssl@3 · running · 1 min", "$ brew upgrade · cut off" (red). While
+Altitude does not answer, the notice above the conversation says "Altitude is not answering · the
+repair continues and this page catches up when it is back". From fifteen minutes before the end the
+conversation closes with the amber status line "14 min of full access left · **Keep going**"; after
+the time limit "Time's up · the session ended · **Keep going**"; a failed Keep going shows its reason
+in red beside it. Composer while the session runs: "Message the repair".
+
+**Question card**, under the amber "Your turn · the repair asks", as a task's question: title "Go
+ahead?", the repair's reason, the command in a code block, **Go ahead** (filled) and **Don't**
+(bordered); then "Went ahead · by you" or "Not done · declined by you"; "Expired · the session
+ended" without buttons when the session ends, also in Needs you, where the card's first line reads
+"Asked by the repair · <title>". A step needing your password, under "Your turn · a step for your
+terminal": title "Your step: <what>", the command, **Copy** and **I ran it**.
 
 **Report**: chip and heading **Repaired** (green check), **Confirm yourself** (neutral, filled grey
 chip) or **Not repaired** (red mark); "What was wrong", "What changed", "What remains", for **Confirm
@@ -299,20 +363,18 @@ line per service or scheduled job created during the session. In place of the co
 report: **Continue repair…**, which opens the sheet. Stopped: "Stopped by you · the agent and its
 processes were stopped", or during an update "Stopped by you · the update it started continues; its
 result appears here". Ended without a report: "The repair ended without a report" with **Repair
-again**.
+again**. A terminal repair's page shows the brief, "Started from a terminal · <date, time>", "Its
+steps are in that terminal's history.", its end, the report and Altitude's check.
 
 **Settings → About**: a **Repair** row, "Something not working? A repair agent finds out why and
-fixes it, with full access while it works." with **Repair…**, then up to three recent repairs, each
-"Oct 19 · Failed update to 0.9.0" with its outcome chip and, for terminal repairs, "From a terminal";
-**All repairs** opens the full list, newest first, in the same row format. A running repair shows
-"Running · **Open**" in place of **Repair…**, or "Running in a terminal" without a link. A terminal
-repair's page shows the brief, start and end, the report and Altitude's check, and "Its steps are in
-that terminal's history."
+fixes it, with full access while it works." with **Repair…**; while one runs, "Running · **Open**",
+or "Running in a terminal" without a link; then **All repairs ›**, opening the list of every repair,
+newest first, in the same rows as Work's section.
 
 **Terminal**: `alt repair` prints, before handing over: what it found ("Altitude 0.8.0 · service
 running · the update to 0.9.0 failed 2 hours ago" or "Altitude's service is not answering"),
 "Starting a repair with Claude in this terminal. It acts as you and asks before each step, as your
-settings allow." and "Its record appears in Settings → About once Altitude runs." Without a usable
+settings allow." and "Its record appears in Work once Altitude runs." Without a usable
 coding agent: "Sign in to Claude first: run claude in this terminal." (status 1); beside a running
 repair: "A repair is already running. Stop it there first." (status 1); under an operator grant or
 from Altitude's own agents: "Only you can start a repair, from your own terminal." (status 1).

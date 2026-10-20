@@ -172,7 +172,7 @@ def status(row: dict, now: dict | None = None) -> str:
 
 
 def listing() -> dict:
-    """What Settings and the start sheet show: the repair running now, every repair, newest first, without their
+    """What Work, Settings and the start sheet show: the repair running now, every repair, newest first, without their
     briefs, and the coding agent a new repair would use, which the sheet names."""
     now = running()
     try:
@@ -404,7 +404,7 @@ def start(problem: str | None, engine: str | None = None) -> int:
         print(_found(row))
         print(f"Starting a repair with {config.ENGINE_LABELS[engine]} in this terminal. It acts as you and asks before "
               "each step, as your settings allow.")
-        print("Its record appears in Settings → About once Altitude runs.", flush=True)
+        print("Its record appears in Work once Altitude runs.", flush=True)
         prompt = (f"You are a repair agent for this Altitude installation. Read {folder / 'brief.md'} first and follow "
                   "its rules.")
         # The session takes Ctrl-C itself; this process waits for it either way. A handler, unlike ignoring the
@@ -418,7 +418,7 @@ def start(problem: str | None, engine: str | None = None) -> int:
             signal.signal(signal.SIGINT, previous)
         with _changing(ident) as current:
             current["ended"] = S.now()
-    print("The repair ended. Altitude checks the result and shows it in Settings → About.")
+    print("The repair ended. Altitude checks the result and shows it in Work.")
     return code
 
 

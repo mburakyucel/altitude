@@ -137,7 +137,7 @@ distinct from the fictional local UI harness.
 | `/projects/:name/terminal` | the project with its folder's terminal in the right panel; full screen on phone | new |
 | `/projects/:name/tasks/:slug/report` | the task's full report, with its digest at `#digest` | new |
 | `/monitor` | Monitor | unchanged |
-| `/repairs/:id` | one repair's page (§3.15); no tab is lit, since a repair belongs to no project | new |
+| `/repairs/:id` | one repair's page in a task's form (§3.15); Work is lit, or no tab before any project exists | new |
 | `/projects`, `/chat/:name` | redirect to the first managed project, or to `/projects/:name` | the Projects list |
 
 With no managed project every project route shows First run (§3.12). A task owns its question or
@@ -821,7 +821,24 @@ folded to a count, expanding to rows. On phone it is the selected project's Work
 same sections, under one **New tasks** line (§3.6.1). Task totals are labelled text, not attention badges. Work contains no question
 body, recommendation or answer control.
 
-Data: `GET /api/project/<name>` for the tasks, `GET /api/overview` `queue` filtered to the project.
+Data: `GET /api/project/<name>` for the tasks, `GET /api/overview` `queue` filtered to the project,
+`GET /api/repairs` for **Altitude repairs**.
+
+**Altitude repairs** sits between **Current** (or Work's empty line) and **Done this week**: the
+repair running and every repair that ended less than 72 hours ago, newest first, uncapped, since one
+repair runs at a time. A repair belongs to Altitude, so every project's Work shows the same rows and
+Work's counts stay the project's. The heading is "Altitude repairs (N)"; rows use the task row's
+anatomy and open the repair's page (§3.15). The title is "Failed update to 0.9.0", the first line of
+what the operator wrote, or "Repair", on one line with an ellipsis. Meta: "Repair working · started
+12 min ago" (running dot), "Repair working in a terminal · started 5 min ago", the amber "Your turn ·
+the repair asks" over "Repair waiting · started 7 min ago" (amber dot), "Checking the result · ended
+just now", then "✓ Repaired · ended yesterday", "Confirm yourself · ended 2d ago", "Stopped · ended 3h
+ago" (muted dot) and "✕ Not repaired · ended 2d ago" (red dot, also for an end without a report); a
+terminal repair adds "from a terminal". Every change Altitude reports refreshes the listing, so a
+finished row leaves at the first refresh past its 72 hours. The section is absent with nothing to
+show, while its read loads and when the read fails: an empty or failing section would only puzzle
+someone with no repair, and Needs you and the failed-update notice carry anything urgent. A failed
+refresh keeps the rows it has.
 
 Each row is one link with a chevron and an accessible name including its status. An open operator
 question shows **Needs you · N questions** and opens the first current question's stable group
@@ -1987,10 +2004,8 @@ a reading with model rows but no account windows says "No account windows report
 Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
 <project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"
 in `--danger`, with the router's reason below. Rows wrap within the card. Sessions are only the ones
-Altitude runs: a repair from the app while its session runs, each project's coordinator (L3) and its
-live task owners (L2). A repair's row reads **REPAIR**, its title linking its page, then "<engine> ·
-<model> · full access · working" (or "waiting for you") and its age. Other session rows show their
-kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
+Altitude runs: each project's coordinator (L3) and its live task owners (L2); a repair shows in
+Work (§3.7). Session rows show their kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
 age such as "3 min ago". Sessions are the process information on this page; there is no raw worker
 process list.
 
@@ -2167,15 +2182,11 @@ version without update switches.
 The **Repair** rows follow in About on every deployment ([repairs](../../docs/OPERATIONS.md#repairs)).
 The first says "Something not working? A repair agent finds out why and fixes it, with full access
 while it works." with **Repair…**, which opens the start sheet; while a repair runs, "Running ·
-**Open**" with a spinner, or "Running in a terminal" without a link. Up to three recent repairs
-follow, newest first, each one row opening its page: "Oct 19 · <title>" (truncated to one line) over
-"From a terminal" for a terminal repair, its status chip and a chevron. The title is "Failed update
-to 0.9.0", the first line of what the operator wrote, or "Repair". Chips: **Working** or **Checking**
-with a spinner, **Waiting for you** (accent tint), **Stopped**, **✓ Repaired** (green), **Confirm
-yourself** (filled grey) and **✕ Not repaired** (red, also for a repair that ended without a report).
-With more than three, **All repairs** (with the count) opens `/settings/repairs`, the full list in the
-same rows, whose empty state reads "No repairs yet. Start one with Repair… in Settings → About."
-Loading shows "Loading repairs…" and a failure "Could not load repairs. Retry".
+**Open**" with a spinner, or "Running in a terminal" without a link. Once there is a repair,
+**All repairs ›** follows and opens `/settings/repairs`, "All repairs": every repair newest first in
+Work's repair rows (§3.7), the one way back to a repair that has left Work or ran before any project
+existed. Its empty state reads "No repairs yet. Start one with Repair… in Settings → About.";
+loading shows "Loading repairs…" and a failure "Could not load repairs. Retry".
 
 The **start sheet** is a bottom sheet on phone and a 480px dialog on desktop: "Start a repair?"; "A
 repair agent gets **full access to this computer as you** to find out what’s wrong and fix it. It
@@ -2191,29 +2202,40 @@ Run `alt repair` in a terminal instead." or "Repairs start only from your own br
 Starting opens the repair's page. **Continue repair…** on a page opens the same sheet to continue
 that session.
 
-A **repair's page** (`/repairs/<id>`, no tab lit) has a header with "Repair · <title>", its chip,
-"<engine> <model> · <age>" and **Stop**; on phone a back chevron leads it. **Stop** asks first, as a
-sheet: "Stop the repair?" "A command running now is cut off." with **Stop repair** (danger) and **Keep
-running**; then **Stopping…** with a spinner; a job that does not stop reads "Stop unconfirmed · The
-repair may still be running." with **Check status**. Under the header: "Full access · 1 h 48 min
-left"; from fifteen minutes before the end "Full access · 14 min left · **Keep going**" (amber);
-after the time limit "Time’s up · the session ended · **Keep going**"; after the report or Stop
-"Session ended". A failed Keep going shows its reason in red beside it ("Couldn’t resume: …"). While
-reads fail, "Altitude is not answering · the repair continues and this page catches up when it is
-back".
+A **repair's page** (`/repairs/<id>`) is a task's page with one column. On desktop the header row
+has the **‹ Work** crumb, back to the Work it came from or the selected project's (**‹ Settings**
+before any project exists), the state dot and title, and **Stop** in the task's 104px header button
+with its Esc hint; the chip row holds the status ("Repair working", "Repair waiting for you",
+"Checking the result", "✓ Repaired", "Confirm yourself", "✕ Not repaired", "Stopped"), the model on
+its engine ("Opus 5 on Claude") and, while the session runs, "Full access · 1 h 48 min left", amber
+from fifteen minutes before the end. A terminal repair's chips are its status and "From a terminal".
+On phone the task's header: back, the title on one line, the status line ("● Repair working · 1 h 48
+min left", the dot standing for the state without the chip's ✓ or ✕) and Stop; the tab bar keeps
+**Work** lit, or none before any project exists. **Stop** asks first, as a sheet on phone and a dialog
+on desktop: "Stop the repair?" "A command running now is cut off." with **Stop repair** (danger) and
+**Keep running**; then **Stopping…** with a spinner; a job that does not stop reads "Stop unconfirmed
+· The repair may still be running." as a red system line, and the button becomes **Check status**.
+While reads fail, the notice above the conversation reads "Altitude is not answering · the repair
+continues and this page catches up when it is back".
 
-What happened follows in order. System lines: "Started by you · full access for 2 hours", "Altitude
-is restarting · the repair continues", "Altitude is back", "Kept going · one more hour", and, with a
-red dot, "The agent stopped: <why>". What the operator wrote shows as their bubble; the agent's words
-as prose. Step lines, one line each, truncating with an ellipsis and **Show** (44px tap area, then
-**Hide**) when there is more: "Ran: `…`"; "Failed (exit 1): `…`" in red (without the number when the
-engine gives none); "Changed: `~/…`"; "Fetched: …"; a spinner and "Running: `…`"; "Cut off by the end of
-the session: `…`" in red. A **question card** reads muted "Asked by the repair", "Go ahead?", the
-repair's reason, the command in a code block, **Go ahead** (filled) and **Don’t** (bordered); then
-"Went ahead · by you" or "Not done · declined by you"; "Expired · the session ended" without buttons
-once the session ends. A step needing the operator's password reads "Your step: <what>", the command,
-**Copy** and **I ran it**, then "Done · you ran it". In Needs you the card's first line adds the
-repair's title as a link. The composer "Message the repair" stays while the session runs.
+The conversation: the **Brief** folded at the top, a full-width row (at least 44px, with a chevron)
+that opens what the agent was given; day dividers; system lines with their time: "Started by you ·
+full access for 2 hours", "Altitude is restarting · the repair continues", "Altitude is back", "Kept
+going · one more hour", and, with a red dot, "The agent stopped: <why>". What the operator wrote
+shows as their bubble; the agent's words as prose. Steps are Live session's rows, consecutive ones
+together, each opening its command and output: "$ alt doctor · 24 lines", "$ ls … · exit 1" (red),
+"Edit ~/.config/…/altitude.env · changed", "Fetch github.com/… · fetched", "$ … · running" with a
+spinner, "$ … · cut off" (red), each with its time on desktop. A question waits under the amber
+"Your turn · the repair asks", as a task's: "Go ahead?", the repair's reason, the command in a code
+block, **Go ahead** (filled) and **Don’t** (bordered); then "Went ahead · by you" or "Not done ·
+declined by you"; "Expired · the session ended" without buttons once the session ends. A step needing
+the operator's password waits under "Your turn · a step for your terminal": "Your step: <what>", the
+command, **Copy** and **I ran it**, then "Done · you ran it". In Needs you the card's first line
+reads "Asked by the repair · <title>", the title a link. From fifteen minutes before the end the
+conversation closes with the amber status line "14 min of full access left · **Keep going**"; after
+the time limit "Time’s up · the session ended · **Keep going**"; a failed Keep going shows its reason
+in red beside it ("Couldn’t resume: …"). The composer "Message the repair" stays while the session
+runs.
 
 The **report** is a card: **✓ Repaired** (green), **Confirm yourself** (neutral; "Confirm yourself ·
 the installation was changed by hand" when its files differ) or **✕ Not repaired** (red); **What was
@@ -2225,10 +2247,10 @@ user service, timer, launch agent or scheduled job that appeared during the sess
 repair…** replaces the composer. Stopped: "Stopped by you · the agent and its processes were stopped",
 or during an update "Stopped by you · the update it started continues; its result appears here", with
 Left running when something was. Ended without a report: "The repair ended without a report" with
-**Repair again**. A terminal repair's page shows "Started from a terminal · <date, time>", "Its steps
-are in that terminal’s history.", "Ended · <date, time>", its report and check, a collapsed **Brief**
-and **All repairs**. A repair that is not there reads "That repair is not on this computer."
-`web/e2e/repairs.pw.ts` walks these states, Needs you's section and Monitor's row at both widths;
+**Repair again**. A terminal repair's page shows the **Brief**, "Started from a terminal · <date,
+time>", "Its steps are in that terminal’s history.", "Ended · <date, time>", its report and check.
+A repair that is not there reads "That repair is not on this computer."
+`web/e2e/repairs.pw.ts` walks these states, Work's section, About and Needs you's section at both widths;
 `web/e2e/update-notice.pw.ts` walks the notice's.
 Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays

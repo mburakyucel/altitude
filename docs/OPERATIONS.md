@@ -311,7 +311,8 @@ It is chosen and paid like a small task, with your plan's sign-in that Altitude'
 repair runs at a time, outside the running-task limit. When no coding agent can run now, the sheet
 says why and points to `alt repair`.
 
-The repair's page shows each step as the engine reports it (commands run and their exit status,
+The repair's page reads like a task's: its header with Stop and chips for its status, model and time
+left, then one conversation that shows each step as the engine reports it (commands run and their exit status,
 files changed, pages fetched), what the agent says, and Altitude restarting and coming back while
 it works, since the job and its recorder run outside the service and survive its restart and a
 reinstall. Write to the repair in its composer; it reads your message at its next turn. Before it
@@ -377,9 +378,11 @@ manifest, at its next tick or its next start, and sets the outcome:
 - **The repair ended without a report** when the session ended, failed or its terminal closed before
   it reported; it never reads Repaired.
 
-Settings → About lists the three most recent repairs with their status, and **All repairs** lists
-every one; each opens its page, with its report, Altitude's check and its brief. Monitor lists a
-repair from the app while it runs. One repair runs at a time across the app and terminals: a second
+Work shows an **Altitude repairs** section under its current tasks while there is a repair to show:
+the one running and those that ended in the last three days, the same in every project's Work. Each
+row opens the repair's page, with its report, Altitude's check and its brief. Settings → About's
+**All repairs** lists every repair, including those that left Work or ran before any project
+existed. One repair runs at a time across the app and terminals: a second
 start says "A repair is already running." with a link to it, or "A repair is running in a terminal on
 this computer." The lock belongs to the repair's recorder or `alt repair` and its session, so a crash,
 closed terminal or restart never leaves one behind.

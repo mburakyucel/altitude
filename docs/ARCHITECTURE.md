@@ -2565,11 +2565,12 @@ gets `installation.doctor()`, `installation.installed_release()` (the active ver
 manifest check) and the version the service runs, and `repair.outcome` sets `repaired`, `changed_by_hand`, `confirm`, `not_repaired` or
 `no_report`; a repair whose recorder or process died before recording its end gets its end time then.
 `GET /api/repairs` returns the running repair, the coding agent a new repair would use, and every
-record without briefs with its status; `GET /api/repairs/<id>` one record with its brief and, for a
+record without briefs with its status, which Work filters to the running repair and those ended
+within 72 hours and Settings' All repairs lists whole; `GET /api/repairs/<id>` one record with its brief and, for a
 repair from the app, its timeline (events, the operator's words, the agent's steps and words, its
 questions and earlier rounds' reports), time left and whether Keep going applies. The overview
 carries the running repair and the newest app repair's questions, open or expired within a day, for
-the update notice and Needs you; `/api/monitor` lists a running app repair as a session. Reads go
+the update notice and Needs you. Reads go
 through `storage`, so a link planted in a repair's folder reads as no record or no brief. A change to a
 repair publishes the change stream's repairs key, which refreshes the shell's repair reads.
 

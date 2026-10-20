@@ -10,6 +10,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   and on a Mac they cannot ask the keychain. Workers reach GitHub over HTTPS with your GitHub CLI sign-in, also
   for remotes named over SSH; agents can no longer reach other hosts over SSH, sign commits or use cloud tools set
   up in your home.
+- Repairs show in Work: an Altitude repairs section under your current tasks holds the repair running and those
+  that ended in the last three days, and a repair's page reads like a task's, its steps in one conversation.
+  Settings → About keeps Repair… and links All repairs; Monitor no longer lists a repair.
 
 ## v0.11.0 — 2026-10-20
 

@@ -1,22 +1,25 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 import Composer from "../components/Composer";
 import { Prose } from "../components/Prose";
 import { BusyLabel, StatusMark } from "../components/StatusMark";
-import { RepairChip, RepairQuestion, moment } from "../components/Repairs";
+import { REPAIR_STATUS, RepairQuestion, moment, repairDot } from "../components/Repairs";
 import { RepairButton } from "../components/RepairSheet";
 import { ApiError, newRequest, repairRequest, useOverview, useRepair, useRepairAction } from "../data/api";
 import type { Overview, Repair, RepairItem } from "../data/api";
-import { modelName, when } from "../data/observed";
+import { clockText, dayText, modelName } from "../data/observed";
 import { Overlay } from "../shell/Overlay";
 import { useViewport } from "../shell/breakpoints";
+import { scopedProject } from "../shell/projects";
+import { useSelectedProject } from "../shell/scope";
 import "../components/repair.css";
 
 /*
- * One repair's page (SPEC.md §3.15, design/wireframes/repair/PROPOSAL.md): header with its status and Stop, the
- * full-access line, what happened in order, the report with Altitude's own check, and the composer while the session
- * runs. A repair belongs to no project, so no tab is lit. A terminal repair's steps stay in that terminal.
+ * One repair's page in a task's form (SPEC.md §3.15, design/wireframes/repair/PROPOSAL.md): the task header with the
+ * Work crumb, state dot, title, Stop and chips for its status, model and time left; then one conversation, the brief
+ * folded at its top, its steps as Live session's rows, its questions under "Your turn", the report with Altitude's
+ * own check, and the composer while the session runs. A terminal repair's steps stay in that terminal.
  */
 
 const KEEP_GOING_SECONDS = 15 * 60;
@@ -29,7 +32,7 @@ function span(seconds: number) {
   return hours ? `${hours} h${minutes % 60 ? ` ${minutes % 60} min` : ""}` : `${minutes} min`;
 }
 
-/** Ticks every 15 seconds, so ages and time left move between reads. */
+/** Ticks every 15 seconds, so time left moves between reads. */
 function useNow() {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -39,32 +42,40 @@ function useNow() {
   return now;
 }
 
-function SysLine({ children, fault = false }: { children: ReactNode; fault?: boolean }) {
+function SysLine({ children, at, fault = false }: { children: ReactNode; at?: string | null; fault?: boolean }) {
   return <div className="sys-line repair-sys">
     <span className="sys-dot" data-tone={fault ? "danger" : undefined} aria-hidden />
+    {at ? <span className="repair-sys-time">{clockText(at)}</span> : null}
     <span className="sys-text">{children}</span>
   </div>;
 }
 
-const LEADS = { ran: "Ran:", failed: "Failed", changed: "Changed:", fetched: "Fetched:", running: "Running:", cut: "Cut off by the end of the session:" } as const;
+type Step = Extract<RepairItem, { kind: "step" }>;
 
-/** One step on one line, cut with an ellipsis; Show opens the whole command and what it printed. */
-function Step({ item }: { item: Extract<RepairItem, { kind: "step" }> }) {
-  const [open, setOpen] = useState(false);
+function stepHint(item: Step): ReactNode {
+  if (item.verb === "running") return <><span className="spinner" aria-hidden /> running</>;
+  if (item.verb === "failed") return item.exit != null ? `exit ${item.exit}` : "error";
+  if (item.verb === "cut") return "cut off";
+  if (item.verb === "changed" || item.verb === "fetched") return item.verb;
+  const lines = item.output.split("\n").filter(Boolean).length;
+  return lines ? `${lines} line${lines === 1 ? "" : "s"}` : "no output";
+}
+
+/** One step as a Live session row: what ran on one line, opening its whole command and what it printed. */
+function StepRow({ item }: { item: Step }) {
+  const name = item.verb === "changed" ? "Edit" : item.verb === "fetched" ? "Fetch" : "$";
   const bad = item.verb === "failed" || item.verb === "cut";
-  const lead = item.verb === "failed" ? `Failed${item.exit != null ? ` (exit ${item.exit})` : ""}:` : LEADS[item.verb];
-  const more = item.detail && item.detail !== item.text || item.output;
-  return <div className="repair-step" data-verb={item.verb}>
-    <div className="repair-step-line">
-      {item.verb === "running" ? <span className="spinner" aria-hidden /> : <span className="repair-step-dot" data-bad={bad || undefined} aria-hidden />}
-      <span className="repair-step-text"><span className={bad ? "text-danger" : undefined}>{lead}</span> <code>{item.text}</code></span>
-      {more ? <button type="button" className="link repair-show" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Hide" : "Show"}</button> : null}
-    </div>
-    {open ? <div className="repair-step-detail">
-      {item.detail && item.detail !== item.text ? <pre className="session-code">{item.detail}</pre> : null}
-      {item.output ? <pre className="session-code">{item.output}</pre> : null}
-    </div> : null}
-  </div>;
+  return <details className="session-tool repair-step" data-kind={name === "$" ? "command" : "file"} data-error={bad ? "true" : undefined}>
+    <summary>
+      <b className="session-tool-name">{name}</b>
+      <code className="session-call">{item.text}</code>
+      <span className="session-hint">{stepHint(item)}</span>
+      {item.at ? <span className="session-time">{clockText(item.at)}</span> : null}
+    </summary>
+    {item.detail && item.detail !== item.text ? <pre className="session-out">{item.detail}</pre> : null}
+    {item.output ? <pre className="session-out" data-output="true">{item.output}</pre>
+      : <p className="session-notice">{item.verb === "running" ? <StatusMark label="Waiting for output…" /> : "No output."}</p>}
+  </details>;
 }
 
 function checkLine(repair: Pick<Repair, "check" | "update" | "report">) {
@@ -115,43 +126,101 @@ const EVENTS: Record<string, string> = {
   back: "Altitude is back", kept_going: "Kept going · one more hour",
 };
 
+/** A question: under "Your turn" while it waits for you, then as its answer left it. */
+function Question({ item, repair }: { item: Extract<RepairItem, { kind: "question" }>; repair: Repair }) {
+  const ended = Boolean(repair.ended);
+  const open = item.answer == null && !ended;
+  return <div className="conversation-question" data-turn={open ? "operator" : undefined} data-historical={open ? undefined : true}>
+    {open ? <p className="conversation-turn">{item.type === "step" ? "Your turn · a step for your terminal" : "Your turn · the repair asks"}</p> : null}
+    <RepairQuestion repair={repair.id} question={{ ...item, kind: item.type }} ended={ended} />
+  </div>;
+}
+
 function Item({ item, repair }: { item: RepairItem; repair: Repair }) {
   if (item.kind === "event") {
-    if (item.event === "failed") return <SysLine fault>The agent stopped: {item.text}</SysLine>;
-    return <SysLine>{EVENTS[item.event]}</SysLine>;
+    if (item.event === "failed") return <SysLine at={item.at} fault>The agent stopped: {item.text}</SysLine>;
+    return <SysLine at={item.at}>{EVENTS[item.event]}</SysLine>;
   }
   if (item.kind === "you") return <div className="msg-row" data-mine><div className="bubble repair-you">{item.text}</div></div>;
   if (item.kind === "say") return <div className="repair-say"><Prose text={item.text} /></div>;
-  if (item.kind === "step") return <Step item={item} />;
-  if (item.kind === "question") return <RepairQuestion repair={repair.id} question={{ ...item, kind: item.type }} ended={Boolean(repair.ended)} />;
+  if (item.kind === "step") return <StepRow item={item} />;
+  if (item.kind === "question") return <Question item={item} repair={repair} />;
   return <Report repair={{ ...item, update: repair.update, left_running: null }} />;
 }
 
-/** "Full access · 1 h 48 min left", Keep going from fifteen minutes before the end and after the time ran out. */
-function AccessLine({ repair, left }: { repair: Repair; left: number | null }) {
+/** What happened in order, with a day divider whenever the day changes and consecutive steps kept together. */
+function Timeline({ repair }: { repair: Repair }) {
+  const rows: ReactNode[] = [];
+  let day = "";
+  let steps: ReactNode[] = [];
+  const flush = () => {
+    if (steps.length) rows.push(<div key={`steps-${rows.length}`} className="repair-steps">{steps}</div>);
+    steps = [];
+  };
+  (repair.timeline ?? []).forEach((item, i) => {
+    const today = item.at ? dayText(item.at) : "";
+    if (today && today !== day) {
+      flush();
+      day = today;
+      rows.push(<p key={`day-${i}`} className="day-divider">{today}</p>);
+    }
+    const node = <Item key={`${item.kind}:${"id" in item ? item.id : i}`} item={item} repair={repair} />;
+    if (item.kind === "step") steps.push(node);
+    else {
+      flush();
+      rows.push(node);
+    }
+  });
+  flush();
+  return <>{rows}</>;
+}
+
+/** The conversation's closing line from fifteen minutes before the end: time left or up, with Keep going. */
+function KeepGoing({ repair, left }: { repair: Repair; left: number | null }) {
   const keep = useRepairAction(() => repairRequest(`/api/repairs/${repair.id}/keep-going`, {}, newRequest()));
-  const button = <button type="button" className="link" disabled={keep.isPending} onClick={() => keep.mutate(undefined)}>
-    <BusyLabel busy={keep.isPending} label="Keep going" working="Keeping going…" /></button>;
   const ended = Boolean(repair.ended);
-  const low = !ended && left != null && left <= KEEP_GOING_SECONDS;
   const timeUp = ended && repair.end === "time";
-  return <p className="repair-access" data-low={low || timeUp || undefined}>
-    {timeUp ? <>Time’s up · the session ended · {button}</>
-      : ended ? "Session ended"
-        : <>Full access · {span(left ?? 0)} left{low ? <> · {button}</> : null}</>}
-    {keep.isError ? <span className="text-danger"> {keep.error.message}</span> : null}
+  if (!timeUp && (ended || left == null || left > KEEP_GOING_SECONDS)) return null;
+  return <p className="conversation-status repair-keep" role="status">
+    <span className="dot" data-state="waiting" aria-hidden />
+    <span>{timeUp ? "Time’s up · the session ended" : `${span(left ?? 0)} of full access left`}{" · "}
+      <button type="button" className="link" disabled={keep.isPending} onClick={() => keep.mutate(undefined)}>
+        <BusyLabel busy={keep.isPending} label="Keep going" working="Keeping going…" /></button>
+      {keep.isError ? <span className="text-danger"> {keep.error.message}</span> : null}</span>
   </p>;
 }
 
-function StopButton({ repair, onStopping }: { repair: Repair; onStopping: (stopping: boolean) => void }) {
+/** Stop in the task's header button, asking first; Escape asks too on desktop. A stop the job did not confirm turns it
+ * into Check status, which asks the job again. */
+function StopButton({ repair, escape, onStopping, voiceOwnsEscape }: {
+  repair: Repair; escape: boolean; onStopping: (stopping: boolean) => void; voiceOwnsEscape: boolean;
+}) {
   const { phone } = useViewport();
   const [asking, setAsking] = useState(false);
   const stop = useRepairAction(() => repairRequest(`/api/repairs/${repair.id}/stop`, {}, newRequest()));
   useEffect(() => onStopping(stop.isPending), [stop.isPending, onStopping]);
   const stopping = stop.isPending || Boolean(repair.stopping);
+  const unconfirmed = Boolean(repair.stop_unconfirmed);
+  const keys = escape && !unconfirmed && !stopping;
+  useEffect(() => {
+    if (!keys || asking || voiceOwnsEscape) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (event.key !== "Escape" || event.repeat || event.isComposing || event.defaultPrevented ||
+          target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])") ||
+          document.querySelector('[role="dialog"], [role="menu"], [aria-haspopup][aria-expanded="true"], .overlay')) return;
+      event.preventDefault();
+      setAsking(true);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [keys, asking, voiceOwnsEscape]);
   return <>
-    <button type="button" className="btn repair-stop" disabled={stopping} onClick={() => setAsking(true)}>
-      <BusyLabel busy={stopping} label="Stop" working="Stopping…" />
+    <button type="button" className="btn task-steering" disabled={stopping && !unconfirmed}
+      onClick={() => unconfirmed ? stop.mutate(undefined) : setAsking(true)} aria-keyshortcuts={keys ? "Escape" : undefined}>
+      {unconfirmed ? <BusyLabel busy={stop.isPending} label="Check status" working="Checking…" />
+        : <BusyLabel busy={stopping} label="Stop" working="Stopping…" />}
+      {keys ? <kbd aria-hidden>Esc</kbd> : null}
     </button>
     {stop.isError ? <span className="text-danger text-meta">{stop.error.message}</span> : null}
     {asking ? <Overlay label="Stop the repair?" side={phone ? "bottom" : "center"} onClose={() => setAsking(false)}>
@@ -167,44 +236,32 @@ function StopButton({ repair, onStopping }: { repair: Repair; onStopping: (stopp
   </>;
 }
 
-/** Stop unconfirmed: the job may still run; Check status asks again. */
-function Unconfirmed({ repair }: { repair: Repair }) {
-  const check = useRepairAction(() => repairRequest(`/api/repairs/${repair.id}/stop`, {}, newRequest()));
-  return <>
-    <SysLine fault>Stop unconfirmed · The repair may still be running.</SysLine>
-    <div className="repair-center">
-      <button type="button" className="btn" disabled={check.isPending} onClick={() => check.mutate(undefined)}>
-        <BusyLabel busy={check.isPending} label="Check status" working="Checking…" /></button>
-    </div>
-  </>;
-}
-
 function engineText(repair: Repair, overview: Overview | undefined) {
   const engine = overview?.engines.find((row) => row.engine === repair.engine)?.label ?? repair.engine;
-  return repair.model ? `${engine} ${modelName(repair.model)}` : engine;
+  return repair.model ? `${modelName(repair.model)} on ${engine}` : engine;
 }
 
-/** The end of the page: the report, how the session ended without one, and what comes next. */
+/** The end of the conversation: the report, how the session ended without one, and what comes next. */
 function Ending({ repair }: { repair: Repair }) {
-  if (repair.stop_unconfirmed) return <Unconfirmed repair={repair} />;
+  if (repair.stop_unconfirmed) return <SysLine fault>Stop unconfirmed · The repair may still be running.</SysLine>;
   if (!repair.ended) return null;
   if (repair.report) return <Report repair={repair} />;
   const stopped = repair.end === "stop";
   return <>
-    {stopped ? <SysLine>{repair.stop?.update ? "Stopped by you · the update it started continues; its result appears here"
+    {stopped ? <SysLine at={repair.stop?.at}>{repair.stop?.update ? "Stopped by you · the update it started continues; its result appears here"
       : "Stopped by you · the agent and its processes were stopped"}</SysLine>
       : repair.end === "time" ? null : <SysLine fault>The repair ended without a report</SysLine>}
     {repair.left_running?.length ? <section className="repair-outcome" data-tone="neutral" aria-label="Left running"><LeftRunning jobs={repair.left_running} /></section> : null}
-    {!stopped && repair.end !== "time" ? <div className="repair-center"><RepairButton label="Repair again" problem={repair.problem ?? ""} /></div> : null}
   </>;
 }
 
-function Messages({ repair }: { repair: Repair }) {
+function Messages({ repair, onEscapeOwnership }: { repair: Repair; onEscapeOwnership: (owned: boolean) => void }) {
   const [draft, setDraft] = useState("");
   const send = useRepairAction((input: { text: string; request: string }) => repairRequest(`/api/repairs/${repair.id}/message`, { text: input.text }, input.request));
-  return <div className="convo-dock repair-composer">
+  return <div className="convo-dock">
     {send.isError ? <p className="text-danger text-meta" role="alert">{send.error.message}</p> : null}
     <Composer conversation={`repair/${repair.id}`} value={draft} onChange={setDraft} placeholder="Message the repair" ariaLabel="Message the repair"
+      onEscapeOwnership={onEscapeOwnership}
       onSubmit={async (text, onAccepted, _images, copy) => {
         await send.mutateAsync({ text, request: copy ?? newRequest() });
         onAccepted();
@@ -225,25 +282,51 @@ function Terminal({ repair }: { repair: Repair }) {
   </>;
 }
 
+/** The brief, folded at the top as a full-width row; it opens to what the agent was given. */
+function Brief({ brief }: { brief: string }) {
+  return <details className="repair-brief">
+    <summary><span><b>Brief</b> What you wrote, the rules, how this installation is laid out and Altitude’s records</span>
+      <svg aria-hidden viewBox="0 0 20 20" width="16" height="16"><path d="M8 5l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+    </summary>
+    <pre>{brief}</pre>
+  </details>;
+}
+
+const BACK_ICON = <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
+  <path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+</svg>;
+
 export default function RepairRoute() {
   const id = useParams().id ?? "";
   const { phone } = useViewport();
   const navigate = useNavigate();
   const location = useLocation();
   const overview = useOverview();
+  const selected = useSelectedProject();
   const query = useRepair(id);
   const now = useNow();
   const [stopping, setStopping] = useState(false);
-  const back = () => location.key !== "default" ? navigate(-1) : navigate("/settings");
+  const [voiceOwnsEscape, setVoiceOwnsEscape] = useState(false);
+  // A repair belongs to Altitude: its crumb leads to the Work it came from or the selected project's, and to Settings
+  // before any project exists.
+  const from = location.state && typeof location.state === "object" ? (location.state as { project?: unknown }).project : null;
+  const project = scopedProject(overview.data, typeof from === "string" ? from : selected);
+  const home = project ? `/projects/${project}?tab=work` : "/settings";
+  const back = () => location.key !== "default" ? navigate(-1) : navigate(home);
   const repair = query.data;
-  const title = repair ? `Repair · ${repair.title}` : "Repair";
-  const age = repair ? span(((when(repair.ended) ?? now) - (when(repair.started) ?? now)) / 1000) : "";
+  const title = repair?.title ?? "Repair";
   const left = repair?.left == null ? null : Math.max(0, repair.left - (now - query.dataUpdatedAt) / 1000);
   const app = repair?.route === "app";
-  const head = repair ? <span className="repair-head-meta">
-    <RepairChip status={repair.status} />{" "}<span>{engineText(repair, overview.data)} · {age}</span>
-  </span> : null;
-  const stop = repair && app && !repair.ended ? <StopButton repair={repair} onStopping={setStopping} /> : null;
+  const running = Boolean(repair && app && !repair.ended);
+  const low = running && left != null && left <= KEEP_GOING_SECONDS;
+  const action = repair && app && (running || repair.stop_unconfirmed)
+    ? <StopButton repair={repair} escape={!phone} onStopping={setStopping} voiceOwnsEscape={voiceOwnsEscape} /> : null;
+  const chips = repair ? <div className="task-chips">
+    <span className="chip" data-tone={{ waiting: "held", repaired: "ok", not_repaired: "danger", no_report: "danger" }[repair.status as string]}>{REPAIR_STATUS[repair.status]}</span>
+    {app ? <span className="chip">{engineText(repair, overview.data)}</span> : <span className="chip">From a terminal</span>}
+    {running && left != null ? <span className="chip" data-tone={low ? "held" : undefined}>Full access · {span(left)} left</span> : null}
+  </div> : null;
+
   let body: ReactNode;
   if (query.isPending) body = <p><StatusMark label="Loading repair…" /></p>;
   else if (query.isError && !repair) {
@@ -251,34 +334,52 @@ export default function RepairRoute() {
       : <p role="alert" className="text-danger">Could not load this repair. <button type="button" className="link" onClick={() => void query.refetch()}>Retry</button></p>;
   } else if (repair) {
     body = <>
-      {app ? <AccessLine repair={repair} left={left} /> : null}
-      {query.isError ? <p className="repair-access" data-low role="status">Altitude is not answering · the repair continues and this page catches up when it is back</p> : null}
-      <div className="repair-timeline">
-        {app ? (repair.timeline ?? []).map((item, i) => <Item key={`${item.kind}:${"id" in item ? item.id : i}`} item={item} repair={repair} />)
-          : <Terminal repair={repair} />}
-        {app ? <Ending repair={repair} /> : null}
-        {repair.brief ? <details className="repair-brief"><summary>Brief</summary><pre>{repair.brief}</pre></details> : null}
-      </div>
+      {repair.brief ? <Brief brief={repair.brief} /> : null}
+      {app ? <><Timeline repair={repair} /><Ending repair={repair} /><KeepGoing repair={repair} left={left} /></> : <Terminal repair={repair} />}
     </>;
   }
-  const foot = repair && app ? !repair.ended && !repair.stop_unconfirmed && !stopping && !repair.stopping ? <Messages repair={repair} />
-    : repair.ended && repair.report ? <div className="convo-dock repair-composer repair-center"><RepairButton label="Continue repair…" continues={repair.id} /></div>
-      : null : null;
-  return <>
-    {phone ? <header className="phone-header repair-header">
-      <button type="button" className="btn settings-back" aria-label="Back" onClick={back}>‹</button>
-      <div className="repair-head-text"><h1 tabIndex={-1}>{title}</h1>{head}</div>
-      {stop}
-    </header> : null}
-    <div className="page repair-page">
-      {!phone ? <header className="repair-head">
-        <div className="repair-head-text"><h1 tabIndex={-1}>{title}</h1>{head}</div>
-        {stop}
-      </header> : null}
-      {body}
-      {repair && !app ? <Link className="link text-meta" to="/settings/repairs">All repairs</Link> : null}
+  const foot = repair && app ? running && !repair.stop_unconfirmed && !stopping && !repair.stopping
+    ? <Messages repair={repair} onEscapeOwnership={setVoiceOwnsEscape} />
+    : repair.ended && repair.report ? <div className="convo-dock repair-center"><RepairButton label="Continue repair…" continues={repair.id} /></div>
+      : repair.ended && repair.end !== "stop" && repair.end !== "time" ? <div className="convo-dock repair-center"><RepairButton label="Repair again" problem={repair.problem ?? ""} /></div>
+        : null : null;
+  const conversation = <section className="convo" aria-label="Repair conversation">
+    {query.isError && repair ? <p className="conversation-notice" role="status">Altitude is not answering · the repair continues and this page catches up when it is back</p> : null}
+    <div className="convo-scroll">
+      <div className="convo-col">{body}</div>
     </div>
     {foot}
-  </>;
+  </section>;
+  const dot = repair ? <span className="dot" data-state={repairDot(repair.status)} aria-hidden /> : null;
+
+  if (phone) {
+    return <>
+      <header className="phone-header" data-task>
+        <button type="button" className="icon-btn" aria-label="Back" onClick={back}>{BACK_ICON}</button>
+        <h1 className="phone-title" aria-label={title} tabIndex={-1}>
+          <span className="phone-heading">
+            <span className="truncate">{title}</span>
+            {repair ? <span className="phone-status" aria-live="polite"><span className="task-state-line" role="status">
+              {dot}<span data-tone={repairDot(repair.status) === "danger" ? "danger" : undefined}>{REPAIR_STATUS[repair.status].replace(/^[✓✕] /, "")}</span>
+              {running && left != null ? <span data-tone={low ? "held" : undefined}> · {span(left)} left</span> : null}
+            </span></span> : null}
+          </span>
+        </h1>
+        {action ?? <span className="icon-btn invisible" aria-hidden />}
+      </header>
+      <div className="task-page" data-phone>{conversation}</div>
+    </>;
+  }
+  return <div className="task-page">
+    <header className="task-header">
+      <div className="task-crumb-row">
+        <button type="button" className="task-crumb" onClick={() => navigate(home)}>‹ {project ? "Work" : "Settings"}</button>
+        <h1 className="task-title" tabIndex={-1}>{dot}<span>{title}</span></h1>
+        <div className="task-actions">{action}</div>
+      </div>
+      {chips}
+    </header>
+    <div className="task-body"><div className="task-main">{conversation}</div></div>
+  </div>;
 }
 
