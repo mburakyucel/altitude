@@ -33,9 +33,9 @@ Feature release of the early preview.
   types a chat command once, never onto an unrun copy of it.
 - A Claude task owner uses a skill or custom command you type by name in its conversation
   (`/name arguments`), your own and the project's alike.
-- Confined agents reach less: Codex task workers run inside Altitude's own sandbox, as Claude's do; no
-  confined job can read your own Claude or Codex folder, your Claude state file, the common browsers'
-  profiles or the desktop session's sockets; and Altitude's own agents can no longer act with a paired
+- Confined agents reach less: Codex task workers run inside Altitude's own sandbox, as Claude's do, and
+  no job in it can read your own Claude or Codex folder, your Claude state file or the common browsers'
+  profiles, or reach the desktop session's sockets. Altitude's own agents can no longer act with a paired
   device's sign-in. Workers therefore no longer use your desktop's SSH or keyring agents, so a worker's
   own SSH fetch needs a key file; landing is unaffected.
 - On macOS, logging out stops every job Altitude started instead of leaving it running. A task whose
@@ -43,13 +43,15 @@ Feature release of the early preview.
   goes back to its owner.
 
 Updating from v0.10.0 needs nothing, except that a Codex-only installation on Linux now needs bubblewrap,
-as setup and `alt doctor` say. From v0.9.0 or older, follow the v0.10.0 notes first.
+as setup and `alt doctor` say. From v0.8.0 or older, take the steps in the v0.10.0 notes first.
 
-Known limits: on Linux, a Codex coordinator can still read your Claude state file once your own Claude
-rewrites it during the coordinator's turn; the project conversation's Claude coordinator does not load
-typed skills or commands, and Codex is not yet confirmed to. Repairs on the native Mac service, Codex
-workers under the Mac sandbox, the paired-device refusal on a Mac and the phone terminal on a real
-iPhone still await confirmation on a real installation. Live providers are not part of release testing.
+Known limits: a Codex coordinator keeps Codex's own sandbox and runs on your Codex folder, and on Linux it
+can still read your Claude state file once your own Claude rewrites it during its turn. On Linux older
+than 6.12, agents can still reach the desktop's abstract sockets, as setup and `alt doctor` say. The
+project conversation's Claude coordinator does not load typed skills or commands, and Codex is not yet
+confirmed to. Repairs on the native Mac service, Codex workers under the Mac sandbox, the paired-device
+refusal on a Mac and the phone terminal on a real iPhone still await confirmation on a real installation.
+Live providers are not part of release testing.
 
 ## v0.10.0 — 2026-10-19
 
