@@ -6,7 +6,7 @@ import { BusyLabel } from "../components/StatusMark";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useWaitsForTool } from "../data/api";
 import type { Attention, ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
 import { agoText } from "../data/observed";
-import { attentionSummary, isStep } from "../data/decisions";
+import { attentionSummary, isTaskDecision } from "../data/decisions";
 import { TaskCard } from "../components/TaskCard";
 import { WorkRepairs } from "../components/Repairs";
 import { RoleModelButton } from "../components/ModelMenu";
@@ -51,7 +51,7 @@ export function WorkPanel({
 }) {
   const overview = useOverview();
   const { phone } = useViewport();
-  const decisions = decisionsFor(overview.data, name).filter((row): row is Decision => !isStep(row));
+  const decisions = decisionsFor(overview.data, name).filter(isTaskDecision);
   const tasks = project.data?.tasks ?? [];
   // Overview and project reads can arrive in either order; retain newly published waiting tasks.
   const current = [...new Map([...tasks, ...decisions.filter((d) => !tasks.some((t) => t.slug === d.slug)

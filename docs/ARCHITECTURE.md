@@ -2381,9 +2381,10 @@ describes both.
 ### Project agents
 
 The approved [project agents design](../design/wireframes/project-agents/PROPOSAL.md) lets the operator give a
-project briefs that Altitude runs on a schedule or when asked, reporting only (`altitude/project_agents.py`). An
-agent is a definition (name, brief of at most 8,000 characters, up to four schedules of weekdays and a time, Tell
-me, an optional model choice and a limit of 10, 20 or 60 minutes per run) with its state: new, on, paused or retired.
+project briefs that Altitude runs on a schedule, on events the operator sends or when asked, reporting only
+(`altitude/project_agents.py`). An agent is a definition (name, brief of at most 8,000 characters, up to four
+schedules of weekdays and a time, whether it runs when it's sent an event, Tell me, an optional model choice and a
+limit of 10, 20 or 60 minutes per run) with its state: new, on, paused or retired.
 `<project>/project-agents.json` holds the project's agents, every saved definition as a numbered version, every state
 change with who made it and its source, the runs, L3's offers, the presses' receipts and the weekly budget. A run's
 prompt, report and worker job live in `<project>/project-agents/<agent>/<n>/`. A run is never a task: nothing that
@@ -2403,6 +2404,20 @@ caught up. A schedule a saved version adds or changes starts from the save, so a
 not fire. A claim becomes a waiting run, or a skip ("Its last run was still going") while the agent's previous run
 waits or runs: an agent has at most one. While Altitude waits to activate a change, nothing is claimed.
 
+**Events.** An agent with the event trigger runs on short texts the operator sends from this computer:
+`alt agent send AGENT TEXT|- [--key KEY]`, a change of the operator's CLI only, refused on L3's socket, in task
+workers and from paired devices, and agent runs have no `alt` verbs. Altitude reads no source of its own; the agent
+page and [operations](OPERATIONS.md#sending-agents-events) show example scripts (`project_agents.recipes`) that send
+pull request and issue numbers and the operator's own words. A send is one locked write: a key the agent already
+took answers "Already received." before anything else; otherwise it is refused (agent not on, paused or retired, no
+event trigger, text empty or over 4,000 characters, 50 events already waiting, or the week's budget short of its
+limit) and keeps nothing, or the event (`{text, key, at}`) starts a waiting run, joins the waiting one, or waits in
+the agent's `pending` while one runs. When a run ends, the agent's `pending` events become its next waiting run if it
+is still on; a schedule that comes due while events wait takes them into its run. The agent keeps its latest 1,000
+keys in `received` and its latest event, which Run now replays without using it up; `alt agent run AGENT TEXT` gives
+one run a text of its own instead. Pause, Retire, pausing itself and a skip drop the events no run read and give
+their keys back, so a script that sends the latest few each time brings them in again.
+
 **Starting.** A project starts one run at a time, its oldest waiting run first (`project_agents.start_next`, spawned
 by the tick and by Run now), under the provider admission, the machine launch lock and the restart lock that task
 launches take. A run starts only when the machine's running work (task slots held, adversarial reviews and
@@ -2417,7 +2432,7 @@ limit. Run now is refused with the same budget reason.
 (`route.pick_engine`). It runs in its own detached checkout of the fetched main branch
 (`.claude/worktrees/project-agent-<agent>-<n>`) as a worker job of its own kind (`engines.start_project_agent_run`):
 the helper role, the repository's rules and the run template (`templates/project-agent-run.md`: the brief, what
-fired it, the previous report quoted as data, what the run may do, the limit and the report's shape). Unlike a task
+fired it with the events it took quoted as data, oldest first, the previous report quoted as data, what the run may do, the limit and the report's shape). Unlike a task
 worker it links nothing of the operator's engine folder (their settings, instructions, skills, plugins or rules),
 runs in the engine's restricted mode where it has one (only Altitude's own settings apply, and its file tools stay
 in its working directories), writes only its own checkout's Git state (no objects or branches of the shared
@@ -2436,22 +2451,26 @@ An answer in another shape couldn't finish ("Its answer was not in the report's 
 something, nothing found, couldn't finish, stopped by the operator, stopped at its limit, or skipped, and its copy
 and scratch folder are removed. Its record keeps the outcome, minutes used, tokens and session. Each ending
 writes at most one assistant chat row (trigger `project-agent`) after the record is saved, once, as Tell me allows:
-found and couldn't finish unless Tell me is never, nothing found and stopped only with every run. Three runs in a
-row on the agent's schedule that couldn't finish or stopped at their limit pause the agent, with its own line;
-Run now, Stop and skips do not count, and turning it back on starts again from zero. Runs older than 90 days
+found and couldn't finish unless Tell me is never, nothing found and stopped only with every run; a run that took
+events names them ("for “PR #809 merged”"). Three runs in a row on the agent's schedule or its events that couldn't
+finish or stopped at their limit pause the agent, with its own line; Run now, Stop and skips do not count, and
+turning it back on starts again from zero. An agent that paused itself waits in Needs you as a row of kind `agent`
+(`project_agents.needs`, listed by `tasks.decisions` after the project's questions and steps) with no `alert_key`,
+so it never alerts a device; Resume, a saved change, which makes it paused by the operator, or Retire clears it. Runs older than 90 days
 beyond an agent's newest ten are removed.
 
 **Authority.** The operator changes agents with presses on `POST /api/agents` from a paired device only, each
 carrying a request id whose repeat returns the first receipt, and with `alt agent new|set|on|pause|resume|retire|run|stop`
-on their CLI. L3 reads them with `alt agent list|show`, and on the operator's own chat message can pause, resume,
+on their CLI, which alone sends events (`alt agent send`). L3 reads them with `alt agent list|show`, and on the operator's own chat message can pause, resume,
 turn on, retire, run or stop one. It never writes a definition: `alt agent offer` drafts a new agent or a change as
 a card under its reply, which only the operator's press saves (Create agent, Save change, or Edit first through the
 form). An offer lapses after seven days, and a change offer is refused once the agent changed since it was drafted.
 
 **Pages.** `GET /api/agents/<project>` is the Agents page (budget, agents, retired agents, built-ins not on,
 offers, and in Altitude's own project the [Weekly improvement review](#improvement-review) as `weekly`); `/<agent>`
-an agent's status, actions, definition and recent runs, and `/weekly` the review's own page; `/<agent>/runs/<n>` a
-run's outcome, the version it ran and its report; `/<agent>/runs/<n>/transcript` its session through the transcript
+an agent's status with its note, actions, definition, recent runs and, with the event trigger, `send`: the command and
+the example scripts; `/weekly` the review's own page; `/<agent>/runs/<n>` a run's outcome, the events it took, the
+version it ran and its report; `/<agent>/runs/<n>/transcript` its session through the transcript
 reader, read only. The project view carries `project_agents`: the runs waiting or running, shown in Work under
 Current; the number of agents not retired, with the Weekly improvement review once it is the operator's; and the
 offers.

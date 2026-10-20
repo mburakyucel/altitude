@@ -852,6 +852,7 @@ class TestEvents(AgentCase):
                           "actions": ["run", "pause"], "run": None, "spinning": False})
         self.change("run", agent=agent)
         self.assertEqual(self.runs()[0]["events"], [])
+        self.assertEqual(A.run_view(self.project, agent, 1, now=NOW)["trigger_line"], "Run now by you · No event yet")
         self.change("stop", agent=agent)
         self.send(agent, "PR #812 merged", "pr-812")
         self.change("stop", agent=agent)
@@ -947,6 +948,10 @@ class TestEvents(AgentCase):
                              [f"--project|{self.project}|agent|send|{agent}|" + said.format(n, n) + "|"
                               for n in (812, 811)])
         self.assertNotIn("$t", merges["text"] + issues["text"], "no titles: anyone can write one")
+        self.patch(github_intake, "project_repo", return_value=("example", "harbor"))
+        operations = (Path(__file__).parents[1] / "docs" / "OPERATIONS.md").read_text()
+        for recipe in A.recipes("harbor", "3f9a2c1b0e4d"):
+            self.assertIn(f"```sh\n{recipe['text']}\n```", operations, "docs/OPERATIONS.md shows the page's examples")
         self.patch(github_intake, "project_repo", side_effect=github_intake.IssueIntakeError("not on GitHub"))
         self.assertEqual([r["what"] for r in A.recipes(self.project, agent)], ["When a command of yours fails"])
 

@@ -3,6 +3,7 @@ import { useParams } from "react-router";
 import { sendProjectAgent, useOverview, useProjectAgentRun } from "../data/api";
 import type { ProjectAgentRunDetail, TaskView } from "../data/api";
 import { runCost, runTime } from "../data/projectAgents";
+import { clockText, dayText } from "../data/observed";
 import { AgentFrame, RunDot } from "../components/ProjectAgentParts";
 import { InlineProse, Prose, ProseScope } from "../components/Prose";
 import { StatusMark } from "../components/StatusMark";
@@ -88,6 +89,9 @@ export default function ProjectAgentRunPage() {
         <button type="button" className="btn agents-retry" onClick={() => void run.refetch()}>Retry</button></div>
         : <ProseScope project={name}>
           <p className="text-meta text-muted agent-run-meta">{[data.trigger_line, data.model, live ? "" : runCost(data)].filter(Boolean).join(" · ")}</p>
+          {data.events.length ? <div className="text-meta text-muted agent-run-events" aria-label="Events">
+            {data.events.map((event, index) => <p key={index}>{dayText(event.at) === dayText(data.at) ? clockText(event.at) : runTime(event.at)} · {event.line}</p>)}
+          </div> : null}
           {live ? <Live key={data.n} project={name} agent={id} run={data} onRead={() => void run.refetch()} />
             : <Ended project={name} agent={id} run={data} />}
         </ProseScope>}

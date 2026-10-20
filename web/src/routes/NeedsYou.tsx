@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { useOverview } from "../data/api";
 import { useDecisionSurface } from "../data/pending";
 import type { Attention, Decision, Overview } from "../data/api";
-import { DecisionCard, StepCard } from "../components/DecisionCard";
+import { AgentCard, DecisionCard, StepCard } from "../components/DecisionCard";
 import { ImprovementCard } from "../components/Improvement";
 import type { QuestionOrigin } from "../components/DecisionCard";
 import { useVisitReturn } from "../components/visitMemory";
 import { AlertStatus } from "../data/alerts";
-import { attentionSummary, decisionGroups, isStep, openRepairQuestions } from "../data/decisions";
+import { attentionSummary, decisionGroups, isAgentRow, isStep, isTaskDecision, openRepairQuestions } from "../data/decisions";
 import { RepairQuestion } from "../components/Repairs";
 import { useSelectedProject } from "../shell/scope";
 
@@ -130,7 +130,9 @@ export default function NeedsYou() {
           <div className="needs-list" aria-label="Decisions" ref={list}>
             <AltitudeSection overview={overview.data!} />
             {projectOrder(overview.data!.queue, selected).map((project) => {
-              const items = overview.data!.queue.filter((decision) => decision.project === project);
+              // A paused agent's card follows its project's questions.
+              const rows = overview.data!.queue.filter((decision) => decision.project === project);
+              const items = [...rows.filter((row) => !isAgentRow(row)), ...rows.filter(isAgentRow)];
               const open = !collapsed.has(project);
               return (
                 <section className="needs-project" key={project} aria-label={`Project ${project}`}>
@@ -143,9 +145,11 @@ export default function NeedsYou() {
                   <div className="needs-project-cards" hidden={!open}>
                     {decisionGroups(items).map((group) => {
                       const first = group[0]!;
-                      if (isStep(first)) return <StepCard key={`step:${first.id}`} step={first} disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />;
-                      const decisions = group.filter((row): row is Decision => !isStep(row));
-                      return <DecisionCard key={`${first.slug}:${first.group_id || first.id}`} decision={first} decisions={decisions} from="needs" disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />;
+                      const stale = overview.isError || (!overview.isFetchedAfterMount && overview.isFetching);
+                      if (isStep(first)) return <StepCard key={`step:${first.id}`} step={first} disabled={stale} />;
+                      if (isAgentRow(first)) return <AgentCard key={first.id} row={first} disabled={stale} />;
+                      const decisions = group.filter(isTaskDecision);
+                      return <DecisionCard key={`${first.slug}:${first.group_id || first.id}`} decision={first} decisions={decisions} from="needs" disabled={stale} />;
                     })}
                   </div>
                 </section>

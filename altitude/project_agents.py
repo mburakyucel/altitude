@@ -377,6 +377,8 @@ def _run_now(record, fields, *, by, source, now):
         trigger["event"], events = "latest", [dict(agent["latest"])]
     else:
         events = []
+        if agent["events"]:
+            trigger["event"] = "none"
     run = _new_run(record, agent, trigger, now)
     run["events"] = events
     return {"agent": agent["id"], "n": run["n"]}
@@ -1116,6 +1118,8 @@ def _run_row(run: dict) -> dict:
     if label:
         named = f"For {label}" + {"latest": ", the latest", "yours": ", your text"}.get(trigger.get("event"), "")
         said = f"{said} · {named}" if said else named
+    elif trigger.get("event") == "none":
+        said = f"{said} · No event yet"
     return {"n": run["n"], "state": run["state"], "outcome": OUTCOMES[run["state"]],
             "tone": "accent" if run["state"] == "found" else "danger" if run["state"] in ("failed", "limit") else "muted",
             "at": trigger.get("due") or run["created"], "started": run.get("started"),

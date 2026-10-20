@@ -410,6 +410,17 @@ describe("Project page", () => {
     expect(panel).toHaveTextContent("1 current · 1 done this week");
   });
 
+  it("counts an agent that paused itself in the header, never as a task in Work", async () => {
+    const paused = { project: "altitude", slug: null, kind: "agent", id: "agent:flaky-tests", agent: "flaky-tests", title: "Flaky tests", run: 7,
+      question: "3 runs in a row couldn't finish.", asked_by: "altitude", asked: ago(2), since: ago(2) };
+    mockFetch({ overview: { ...overview, queue: [decision, paused] }, project: { ...project, tasks: [], archive: [] } });
+    setViewport(1440);
+    renderApp({ route: "/projects/altitude" });
+    await screen.findByText(/1 question · 1 paused agent need you$/);
+    const current = within(await screen.findByRole("region", { name: "Work" })).getByRole("region", { name: "Current" });
+    expect(within(current).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(["/projects/altitude/tasks/add-badge?question=q-badge&revision=1"]);
+  });
+
   it("keeps an explicit stop and fault visible alongside the unanswered question", async () => {
     const fixtures: Fixtures = { project: { ...project, tasks: [{ slug: decision.slug, title: decision.title, state: "blocked", stop_id: "operator-stop" }] } };
     mockFetch(fixtures);

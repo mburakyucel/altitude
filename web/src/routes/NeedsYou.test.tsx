@@ -119,6 +119,64 @@ function mockFetch(initialQueue: unknown[], decideStatus = 200) {
   return fetchMock;
 }
 
+describe("an agent that paused itself", () => {
+  const paused = { project: "harbor", slug: null, kind: "agent", id: "agent:flaky-tests", agent: "flaky-tests", title: "Flaky tests", run: 7,
+    question: "3 runs in a row couldn't finish. The last: `make test-e2e` is not a target.", asked_by: "altitude", asked: ago(120), since: ago(120) };
+
+  function serve(resume: () => Response | Promise<Response>) {
+    let queue: unknown[] = [paused, l2Asks];
+    const presses: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview(queue));
+      if (url.includes("/api/project/")) return jsonResponse({ name: "harbor", tasks: [] });
+      if (url === "/api/agents" && init?.method === "POST") {
+        presses.push(JSON.parse(String(init.body)));
+        const answer = await resume();
+        if (answer.ok) queue = [l2Asks];
+        return answer;
+      }
+      return jsonResponse({ error: "not found" }, 404);
+    }));
+    return presses;
+  }
+
+  it("waits after its project's questions, counted but never alerting, with its name, reason, Resume and the last run", async () => {
+    serve(() => jsonResponse({ ok: true }));
+    renderApp({ route: "/" });
+    expect(await screen.findByText("1 question · 1 paused agent in harbor")).toBeInTheDocument();
+    const section = screen.getByRole("region", { name: "Project harbor" });
+    const cards = within(section).getAllByRole("article");
+    expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["Score pronunciation per phoneme", "Flaky tests"]);
+    const card = cards[1]!;
+    expect(within(card).getByText("Agent paused itself")).toHaveClass("kind-label");
+    expect(card.querySelector(".decision-kind")).toHaveAttribute("data-tone", "danger");
+    expect(within(card).getByRole("link", { name: "Flaky tests" })).toHaveAttribute("href", "/projects/harbor/agents/flaky-tests");
+    expect(card).toHaveTextContent("3 runs in a row couldn't finish. The last: make test-e2e is not a target.");
+    expect(within(card).getByText("make test-e2e").tagName).toBe("CODE");
+    expect(within(card).getByRole("link", { name: "Open the last run" })).toHaveAttribute("href", "/projects/harbor/agents/flaky-tests/runs/7");
+    expect(within(card).queryByRole("link", { name: "Open L2 chat" })).toBeNull();
+  });
+
+  it("Resume spins until the agent reads as on, and the card leaves; a refusal returns the button with why", async () => {
+    let answer = Promise.withResolvers<Response>();
+    const presses = serve(() => answer.promise);
+    const { user } = renderApp({ route: "/" });
+    const card = await screen.findByRole("article", { name: "Flaky tests" });
+    await user.click(within(card).getByRole("button", { name: "Resume" }));
+    expect(within(card).getByRole("button", { name: "Resume, saving" })).toBeDisabled();
+    expect(presses).toMatchObject([{ project: "harbor", action: "resume", agent: "flaky-tests" }]);
+    answer.resolve(jsonResponse({ error: "Flaky tests is retired." }, 409));
+    expect(await within(card).findByText("Not resumed: Flaky tests is retired.")).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Resume" })).toBeEnabled();
+    answer = Promise.withResolvers<Response>();
+    await user.click(within(card).getByRole("button", { name: "Resume" }));
+    answer.resolve(jsonResponse({ ok: true }));
+    await waitFor(() => expect(screen.queryByRole("article", { name: "Flaky tests" })).toBeNull());
+    expect(screen.getByText("1 question in harbor")).toBeInTheDocument();
+  });
+});
+
 describe("Needs you", () => {
   it("puts the selected project first, follows a selection change, and keeps question groups whole", async () => {
     const first = { ...l2Asks, title: "Shared task title", group_id: "scope", group_revision: 1 };

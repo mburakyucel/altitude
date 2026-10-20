@@ -1,5 +1,5 @@
 import type { Attention, TaskRow } from "./api";
-import { isStep } from "./decisions";
+import { isTaskDecision } from "./decisions";
 import { localTimes } from "./observed";
 
 function text(value: unknown): string {
@@ -48,7 +48,7 @@ export function taskExplanation(task: TaskRow, decision?: Attention, includeStat
   const questions = records.filter((q) => q["status"] === "open"
     && (q["audience"] === "l3" || !task["handed_back"] || text(q["asked"]) > text(task["handed_back"])));
   const incomingQuestion = decision?.id && !records.some((q) => q["id"] === decision.id
-    && Number(q["revision"] ?? 1) >= ((isStep(decision) ? null : decision.revision) ?? 1) && text(q["asked"]) >= text(decision.asked))
+    && Number(q["revision"] ?? 1) >= ((isTaskDecision(decision) ? decision.revision : null) ?? 1) && text(q["asked"]) >= text(decision.asked))
     && (!task["handed_back"] || text(decision.asked) > text(task["handed_back"]));
   const coordinator = questions.find((q) => q["audience"] === "l3" && !q["response"]);
   const question = statusExcerpt(coordinator?.["detail"] ?? coordinator?.["question"]);

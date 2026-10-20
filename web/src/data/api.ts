@@ -367,6 +367,15 @@ export const StepSchema = z.object({
   tasks: z.array(z.object({ slug: z.string(), title: z.string() })),
 });
 
+/**
+ * An agent that paused itself (altitude/project_agents.py `needs`): it belongs to no task, carries the agent's id
+ * and name and its last failed run, and has no `alert_key`, so it never alerts a device.
+ */
+export const AgentRowSchema = z.object({
+  project: z.string(), slug: z.null(), kind: z.literal("agent"), id: z.string(), agent: z.string(), title: z.string(),
+  run: z.number().nullable(), question: z.string(), asked_by: z.literal("altitude"), asked: z.string(), since: z.string(),
+});
+
 export const QuestionGroupSchema = z.object({
   id: z.string(), revision: z.number(), anchor_id: z.string().nullish(),
   questions: z.array(DecisionSchema),
@@ -531,6 +540,8 @@ export const ProjectAgentDefinitionSchema = z.object({
   name: z.string(),
   brief: z.string(),
   schedules: z.array(z.object({ days: z.array(z.number()), time: z.string() })),
+  /** The trigger "When it's sent an event": `alt agent send` from this computer starts or joins a run. */
+  events: z.boolean(),
   tell: z.enum(["found", "every", "never"]),
   model: ChoiceSchema,
   limit: z.number(),
@@ -551,7 +562,7 @@ export const OverviewSchema = z
     deployment: z.enum(["native", "container"]).optional(),
     lifecycle: ContainerLifecycleSchema.nullish(),
     projects: z.array(ProjectRowSchema),
-    queue: z.array(z.union([StepSchema, DecisionSchema])),
+    queue: z.array(z.union([StepSchema, AgentRowSchema, DecisionSchema])),
     /** Improvement cards waiting for a decision or a task: listed after the queue, never counted with it. */
     suggestions: z.array(ImprovementRunSchema.extend({ project: z.string() })).default([]),
     wip: WipSchema,
@@ -759,7 +770,9 @@ export const ProjectAgentRunSchema = z.object({
   outcome: z.string(), tone: ToneSchema,
   at: z.string(), started: z.string().nullable(), late: z.boolean(), ended: z.string().nullable(),
   minutes: z.number().nullable(), tokens: z.number().nullable(), line: z.string().nullable(),
-  page: z.boolean(), trigger_line: z.string(),
+  page: z.boolean(), trigger_line: z.string().nullable(),
+  /** The events the run took, oldest first: each one's arrival and first line. */
+  events: z.array(z.object({ at: z.string(), line: z.string() })),
 });
 export type ProjectAgentRun = z.infer<typeof ProjectAgentRunSchema>;
 const AgentActionSchema = z.enum(["run", "pause", "resume", "turn_on", "stop", "open"]);
@@ -768,11 +781,13 @@ export const ProjectAgentDetailSchema = z.object({
   id: z.string(), name: z.string(), state: AgentStateSchema, builtin: z.string().nullable(),
   /** Sent back with an edit: a stale version is refused. */
   version: z.number(),
-  status: z.object({ line: z.string(), actions: z.array(AgentActionSchema), run: z.number().nullable(), spinning: z.boolean() }),
+  status: z.object({ line: z.string(), note: z.string().nullable(), actions: z.array(AgentActionSchema), run: z.number().nullable(), spinning: z.boolean() }),
   definition: ProjectAgentDefinitionSchema,
   definition_line: z.string(),
   runs: z.array(ProjectAgentRunSchema),
   more: z.boolean(),
+  /** With the event trigger: the command that sends it an event, and examples to copy (project_agents.recipes). */
+  send: z.object({ command: z.string(), recipes: z.array(z.object({ what: z.string(), text: z.string() })) }).nullable(),
 });
 export type ProjectAgentDetail = z.infer<typeof ProjectAgentDetailSchema>;
 export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
@@ -1193,7 +1208,8 @@ export type RoutingRow = z.infer<typeof RoutingRowSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type Step = z.infer<typeof StepSchema>;
 /** One Needs you item: a task's decision or a project's operator step. */
-export type Attention = Decision | Step;
+export type AgentRow = z.infer<typeof AgentRowSchema>;
+export type Attention = Decision | Step | AgentRow;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
 export type Wip = z.infer<typeof WipSchema>;
 export type ProjectRow = z.infer<typeof ProjectRowSchema>;

@@ -465,8 +465,8 @@ an event), its words and a Remove button (44px on phone). A schedule row opens t
 (M T W T F S S, 40px targets on phone, on one line) and a time; with no day on, the row says "Pick at
 least one day." and Save waits for one. The event row reads "When it's sent an event" over "You send
 it from this computer; its page shows how.". **+ Add a trigger** opens a menu: On a schedule · When
-it's sent an event (step 4; before it, **+ Add a schedule** with no menu). With the event trigger, the hint "Events that arrive during a run go to its next run together."
-follows the list. Removing the last trigger leaves "Only when you run it". New agents start with a
+it's sent an event; with the event row in the list it adds a schedule at once. With the event trigger, the hint
+"Events that arrive during a run go to its next run together." follows the list. Removing the last trigger leaves "Only when you run it". New agents start with a
 weekday 07:00 schedule.
 
 Without a name or brief, Create agent looks unavailable and, pressed, focuses the first empty field
@@ -793,7 +793,7 @@ paused by you, and the status reads "Paused". Run now does not clear it.
 | Runs | None / several events / late / skipped | "No runs yet."; one run's line names every event it took; "Oct 13, 07:00, ran at 09:14"; "No free slot for 6 hours" with no chevron |
 | Run page | Running / ended / couldn't finish / loading / read failed | The live session and Stop; the report with Brief it ran and Session folded; the reason in the report's place; a spinner; "Could not load this run." and Retry |
 | Form | Saving / refused / unsaved / incomplete / no day | Save shows a spinner; refused keeps the edit with "Not saved: <reason>" and Retry; the Discard dialog; "Give it a name and a brief."; "Pick at least one day." |
-| Triggers | Add / none | The trigger menu (from step 4; before it, + Add a schedule); "Only when you run it" |
+| Triggers | Add / none | The trigger menu; "Only when you run it" |
 | Triggers | Menu / event row / event added | On a schedule and When it's sent an event, Escape returning focus; the event row with its line and the hint after the list; + Add a trigger adds a schedule directly |
 | Status | Events only / none yet / events waiting | "Runs when it's sent an event"; "No event yet, so Run now runs without one."; "3 events wait for the next run." under Running |
 | Send it an event | Command / examples | The command with Copy and the line about trying it; Examples folded, then three recipes, each its line with Copy over its code, and the line about others' text |

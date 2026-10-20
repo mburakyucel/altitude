@@ -6,6 +6,7 @@ import { refusal, runCost, runWhen, zoned } from "../data/projectAgents";
 import { AgentFrame, Chevron, ClampedBrief, PauseMark, RunDot } from "../components/ProjectAgentParts";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { BusyLabel, StatusMark } from "../components/StatusMark";
+import { CodeBlock, CopyButton } from "../components/CodeBlock";
 import { Overlay } from "../shell/Overlay";
 
 /*
@@ -58,6 +59,7 @@ function StatusCard({ project, agent, clock, onRead }: { project: string; agent:
     <div className="agent-status-row">
       <p className="agent-status-line" aria-live="polite">{shown.mark}<span>{shown.line}
         {shown.actions.includes("open") && status.run != null ? <>{" · "}<Link className="link" to={`/projects/${project}/agents/${agent.id}/runs/${status.run}`}>Open</Link></> : null}
+        {status.note && !pending ? <small className="agent-status-note">{status.note}</small> : null}
       </span></p>
       <div className="agent-status-actions">
         {shown.actions.filter((action): action is Exclude<ProjectAgentAction, "open"> => action !== "open").map((action) =>
@@ -96,6 +98,26 @@ function Runs({ project, agent, more, loadingOlder, onOlder }: { project: string
     {loadingOlder ? <StatusMark label="Loading older runs…" />
       : more ? <button type="button" className="link agents-link" onClick={onOlder}>Show older</button> : null}
   </section>;
+}
+
+/** Send it an event: the command with Copy, how to try it, folded examples to copy, and what a run may read. */
+function SendSection({ send }: { send: NonNullable<ProjectAgentDetail["send"]> }) {
+  return <div className="agent-send" role="group" aria-labelledby="agent-send">
+    <h3 id="agent-send">Send it an event</h3>
+    <p className="text-meta text-muted">From a script or your terminal on this computer:</p>
+    <CodeBlock text={send.command} info="" />
+    <p className="text-meta text-muted">To try it first, use <code>agent run</code> in place of <code>agent send</code>: it starts a run now, even before the agent is on.</p>
+    <details className="agent-fold">
+      <summary>Examples</summary>
+      <div className="agent-recipes">
+        {send.recipes.map((recipe) => <div key={recipe.what} className="agent-recipe">
+          <div className="agent-recipe-head"><span className="text-meta text-muted">{recipe.what}</span><CopyButton text={recipe.text} /></div>
+          <pre className="session-code">{recipe.text}</pre>
+        </div>)}
+      </div>
+    </details>
+    <p className="text-meta text-muted">Send numbers and your own words, not text anyone else can write: a run has your code and the network.</p>
+  </div>;
 }
 
 type Retiring = { state: "idle" | "retiring" } | { state: "refused"; message: string };
@@ -151,6 +173,7 @@ export default function ProjectAgentPage() {
             <div className="settings-card agent-what">
               <ClampedBrief text={data.definition.brief} />
               <p className="text-meta text-muted">{zoned(data.definition_line, clock)}</p>
+              {data.send ? <SendSection send={data.send} /> : null}
               {retired ? null : <Link className="btn agent-edit" to={`/projects/${name}/agents/${id}/edit`}>Edit</Link>}
             </div>
           </section>
