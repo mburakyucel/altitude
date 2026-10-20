@@ -41,6 +41,11 @@
 .agent-brief[data-clamped] { max-height: 4.5em; overflow: hidden; }
 .agent-brief p + p { margin-top: 0.5em; }
 
+/* The Weekly improvement review: an unavailable Run now still says why when pressed; titles keep to two lines. */
+.agent-status .btn[aria-disabled="true"] { opacity: 0.45; }
+.weekly-run-line { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.weekly-past a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
+
 /* One run. */
 .agent-run-meta { margin-top: -14px; }
 .agent-report { display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }

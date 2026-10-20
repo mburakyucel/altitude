@@ -881,7 +881,7 @@ def _summary(record: dict, agent: dict, now: datetime) -> dict:
 
 
 def view(project: str, *, now: datetime | None = None) -> dict:
-    """The Agents page."""
+    """The Agents page, with the Weekly improvement review in Altitude's own project (`improve.agent`)."""
     now = now or datetime.now(timezone.utc)
     record = _load(project)
     used, budget = _used(record, now), _budget(record)
@@ -894,7 +894,7 @@ def view(project: str, *, now: datetime | None = None) -> dict:
             "builtins": [{"key": b["key"], "name": b["name"],
                           "line": f"{triggers(b['schedules'])} · {b['summary']}"}
                          for b in builtins() if b["key"] not in active],
-            "offers": offers(project, record=record, now=now)}
+            "weekly": improve.agent(project), "offers": offers(project, record=record, now=now)}
 
 
 def agent_view(project: str, agent_id: str, *, runs: int = 10, now: datetime | None = None) -> dict:
@@ -997,7 +997,8 @@ def _base(record: dict, item: dict) -> dict:
 
 
 def project_summary(project: str, *, now: datetime | None = None) -> dict:
-    """What the project view shows: run rows in Work, the Agents row's count and the chat's offer cards."""
+    """What the project view shows: run rows in Work, the Agents row's count, which includes the Weekly improvement
+    review once it is the operator's, and the chat's offer cards."""
     now = now or datetime.now(timezone.utc)
     record = _load(project)
     rows = []
@@ -1008,7 +1009,7 @@ def project_summary(project: str, *, now: datetime | None = None) -> dict:
         line = (f"Agent run · {_elapsed(run, now)} of {run['limit']} min" if run["state"] == "running"
                 else "Agent run · " + _lower(_waiting_for(record, run)))
         rows.append({"agent": agent["id"], "name": agent["name"], "n": run["n"], "state": run["state"], "line": line})
-    return {"runs": rows, "count": sum(a["state"] != "retired" for a in record["agents"]),
+    return {"runs": rows, "count": sum(a["state"] != "retired" for a in record["agents"]) + improve.yours(project),
             "offers": offers(project, record=record, now=now)}
 
 

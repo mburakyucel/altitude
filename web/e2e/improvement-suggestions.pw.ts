@@ -191,14 +191,14 @@ test("posted cards, endings and the running line take their presses and appear u
   });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
-  // Settings sum the reviews that posted or found nothing; Latest opens the latest card in chat.
-  await walk.open("/settings/projects/alpha");
-  const area = page.getByRole("region", { name: "Improvement suggestions", exact: true });
+  // The review's page sums the reviews that posted or found nothing; Latest opens the latest card in chat.
+  await walk.open("/projects/alpha/agents/weekly");
+  const area = page.getByRole("region", { name: "What it does", exact: true });
   const past = area.getByText(/^3 runs · 5 suggestions · 1 became a task · 0 dismissed/);
   await past.scrollIntoViewIfNeeded();
   await walk.state("14-past-suggestions", { visible: [past, past.getByRole("link", { name: "Latest", exact: true })], hidden: [] });
   await press(past.getByRole("link", { name: "Latest", exact: true }));
   await expect(page).toHaveURL(/\/projects\/alpha#improvement-[0-9a-f]{12}$/);
-  await walk.state("15-latest-card-from-settings", { visible: [recent], hidden: [area] });
+  await walk.state("15-latest-card-from-its-page", { visible: [recent], hidden: [area] });
   await expect(recent).toBeInViewport();
 });

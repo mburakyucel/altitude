@@ -2364,28 +2364,6 @@ The project page `/settings/projects/<name>` has a labelled **Settings** back bu
   configured tier order and weekly headroom policy. Only keeps tasks on that engine and waits
   when it cannot run. Saved routing tiers with explicit models remain visible here and editable through
   the existing `alt project set --routing` CLI option. Saves compare `expected`; a conflict says "Changed in another window."
-- **Improvement suggestions** (`#improvement`, the Altitude project only;
-  [design](improvement-review/PROPOSAL.md#turning-it-on-the-settings-section)): "Finds friction that
-  keeps coming back in this project's tasks and suggests fixes." over one card. **Weekly** is a switch
-  whose line reads "Every Monday morning, when at least 5 tasks have finished." when off, "Next:
-  Monday, Oct 19." when on (", if 2 more tasks finish" while fewer than five have), "Skipped Oct 12: 3
-  tasks had finished. Next: …" after a skipped Monday, and "Off: the terms changed. Turn on to see
-  them." **Get suggestions now** is a secondary button beside "Reads the 6 tasks finished since Oct
-  12."; with too few tasks or Claude's allowance inside the reserve it looks disabled and its reason
-  ("Needs 5 finished tasks since Oct 12; 3 so far.") is its accessible description, shown under it on
-  press. While a review runs, its line ("Reading 6 tasks") with an underlined **Stop** replaces the
-  button. A muted row says what is sent: "Counts and short chat quotes · Claude Sonnet 5.5 on your
-  plan · capped per run, plus one L3 check". Once a review has posted or found nothing, a muted last
-  row sums them: "4 runs · 7 suggestions · 3 became tasks · 2 dismissed · Latest", Latest underlined
-  and opening the latest card in the project's chat (absent when no review had a card). Before the operator agrees to the current terms, turning
-  Weekly on or pressing Get suggestions now opens a sheet (bottom at 390px with full-width buttons,
-  Turn on above Cancel; centered at 1440px): **Turn on improvement suggestions for <name>?**, what the
-  model reads and how much of the plan it uses, then **Cancel** (focused) and the primary **Turn on**,
-  which agrees and completes the press. Cancel, Escape and the scrim change nothing. A switch change
-  moves the switch at once and shows Saving… under the card with the controls disabled, the Weekly line
-  empty until the saved schedule is read; a refusal shows
-  "Not saved: <reason>" in red with **Retry**, and the switch returns to its saved value. When the terms change, chat says "Improvement suggestions are off
-  until you agree to the new terms in settings.", linking here.
 - **Project**: **Setup** with its status, opening §3.12, and **Remove project** ("Detach L3. Files
   and history stay; its settings here don't.") with an outlined red **Remove…**. This section stays
   usable when the model settings cannot be read.
@@ -2421,10 +2399,7 @@ typed draft preservation, all three choices, key replacement/removal and loading
 All projects, independent default saves, reload persistence, restoring Default, routing (Prefer,
 Only, a change made elsewhere), loading/read failure and saving/denied states at both sizes, with the
 project draft preserved. `web/e2e/project-lifecycle.pw.ts` walks the Remove dialog's cancel, refused,
-lost-response and removed outcomes. `web/e2e/improvement-settings.pw.ts` walks the Improvement
-suggestions section: the sheet, Cancel, Escape, Turn on and saving, Weekly on and off, running with
-Stop, a refusal, a skipped week, the unavailable reason and the change-of-terms line;
-`web/e2e/improvement-suggestions.pw.ts` walks Past suggestions with Latest.
+lost-response and removed outcomes.
 `web/e2e/models.pw.ts` walks §3.6.1.
 Composer listening, denied, unavailable, cancellation and transcript states remain §3.6.
 
@@ -2584,8 +2559,40 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   makes on your word adds one quiet line ("Paused Dependency check", "Resumed …", "Turned on …", "Retired …",
   "Stopped …'s run") whose **Open** leads to the agent, where Resume is.
 
-Event triggers and their menu, the Weekly review as a built-in agent and Monitor's Agents section are later
-steps of the design and do not appear.
+- **Weekly improvement review** (Altitude's own project only;
+  [design](project-agents/PROPOSAL.md#the-weekly-improvement-review)): the first **Built in** row, "Mondays at
+  08:00 · Suggests fixes for friction that keeps coming back in this project's tasks", whose **Turn on** opens its
+  terms sheet (bottom at 390px with full-width buttons, Turn on above Cancel; centered at 1440px): **Turn on the
+  Weekly improvement review for <name>?**, what the model reads and how much of the plan it uses, **Cancel**
+  (focused) and the primary **Turn on**, which agrees and turns it on; Cancel, Escape and the scrim change
+  nothing. Turn on spins until the list reads it as yours; a refusal says "Not turned on: <reason>" under the
+  row. Once agreed to, switched or run, it is the first of your agents ("Mondays at 08:00 · Reading 6 tasks",
+  "· Paused", "· Paused: its terms changed", "· 3 suggestions 2 d ago", "· Never run") and counts in Work's
+  Agents. Its page (`/projects/:name/agents/weekly`, title **Weekly improvement review**, "Loading Weekly
+  improvement review…", "Could not load the Weekly improvement review." with **Retry**) has the status card:
+  "Next: Monday, Oct 26" (", if 2 more tasks finish" while fewer than five have) with **Run now** and
+  **Pause** and "Reads the 6 tasks finished since Oct 19." under it; a Run now that cannot run looks disabled
+  and shows its reason ("Run now needs 5 finished tasks since Oct 19; 3 so far.") only when pressed, as its
+  accessible description otherwise; Run now pressed reads "Starting…" with Pause unavailable, a refusal its
+  reason in red; running, "Reading 6 tasks" or "L3 is checking 3" with a spinner and **Stop** only, which reads
+  "Stopping…" or "Not stopped. Try again."; "Paused" with **Resume** and **Run now**; Pause and Resume answer
+  at once and a refusal shows "Not saved: <reason>" with **Retry**. While its agreement is not to the current
+  terms the line is "Paused: its terms changed" and Turn on, Resume and Run now show the sheet first. Recent
+  runs list the last ten, newest first: "3 suggestions" over the titles joined by "; " in two lines at most,
+  "Nothing to suggest" over "6 tasks read.", "Couldn't finish" over its reason, "Stopped by you" over "It was
+  reading 7 tasks.", each opening its card or line in chat (`/projects/:name#improvement-<run>`), and
+  "Skipped" over "3 tasks had finished; it needs 5." without a link; "No runs yet." when none. What it does
+  says "Finds friction that keeps coming back in this project's tasks and suggests fixes, as cards in chat you
+  can make into tasks.", the muted What is sent line and, once a review posted or found nothing, "4 runs · 7
+  suggestions · 3 became tasks · 2 dismissed · Latest", Latest underlined. It has no Edit or Retire. When its
+  terms change, chat says "**Weekly improvement review** paused: its terms changed." with **Open** to its page.
+
+`web/e2e/weekly-review.pw.ts` walks Built in, the sheet with Cancel, Escape and a refused and a saving Turn on,
+the page's loading, failed read, ready, Run now refused and Starting…, running, Stop failed and Stopping…,
+stopped, Pause refused and Paused, too few tasks with the reason on press and a skipped week, the chat's terms
+line with Open and the page's changed terms, and every kind of run with the totals, at both widths.
+
+Event triggers and their menu and Monitor's Agents section are later steps of the design and do not appear.
 
 ## 4. Behaviour rules
 

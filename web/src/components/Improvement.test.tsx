@@ -192,6 +192,20 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     expect(presses(fetchMock).map((press) => [press.action, press.ref])).toEqual([["stop", "feedfacecafe"], ["stop", "feedfacecafe"]]);
   });
 
+  it("a change of terms says the Weekly improvement review paused, Open going to its page", async () => {
+    setViewport(width);
+    const { fetchMock } = serve([]);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => String(input).includes("/api/chat/")
+      ? json({ history: [{ at: ago(5), role: "assistant", text: "Weekly improvement review paused: its terms changed.", trigger: "improvement",
+        turn_id: "0123456789ab", improvement: "terms-0123456789ab" }], active: null, busy: false, queued: [], l3: { session_id: "abc" } })
+      : original(input, init));
+    renderApp({ route: "/projects/altitude" });
+    const line = (await screen.findByText(/paused: its terms changed\./)).closest<HTMLElement>(".sys-line")!;
+    expect(line).toHaveTextContent(/Weekly improvement review paused: its terms changed\. Open$/);
+    expect(within(line).getByRole("link", { name: "Open" })).toHaveAttribute("href", "/projects/altitude/agents/weekly");
+  });
+
   it("endings are system lines: nothing to suggest and failed open their details, stopped has none", async () => {
     setViewport(width);
     serve([ended("aaaaaaaaaaaa", "nothing"), ended("bbbbbbbbbbbb", "failed", "Claude Sonnet 5.5 is unavailable"), ended("cccccccccccc", "stopped")]);
@@ -202,6 +216,8 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     expect(failed.querySelector(".sys-dot")).toHaveAttribute("data-tone", "danger");
     expect(nothing.querySelector(".sys-dot")).not.toHaveAttribute("data-tone");
     expect(within(stopped).queryByRole("button")).toBeNull();
+    // Recent runs on the Weekly improvement review's page open each ending here.
+    expect(nothing).toHaveAttribute("id", "improvement-aaaaaaaaaaaa");
     await user.click(within(nothing).getByRole("button", { name: "Show" }));
     expect(within(nothing).getByText("Suggestion 3: already owned by an open task")).toBeVisible();
     await user.click(within(nothing).getByRole("button", { name: "Hide" }));

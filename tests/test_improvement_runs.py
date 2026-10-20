@@ -49,7 +49,7 @@ class RunCase(AltitudeCase):
         self.engine = self.patch(engines, "improvement_review", side_effect=review)
 
     def agree(self):
-        """The operator's Turn on, as the settings sheet records it."""
+        """The operator's Turn on, as the terms sheet records it."""
         with S.project_lock(self.project):
             record = improve._load(self.project)
             improve._agree_locked(record, improve.terms(self.project)["version"], self.now.isoformat())
@@ -578,7 +578,7 @@ class TestPastSuggestions(RunCase):
     """Past suggestions, the feature's own measure: the runs that posted or found nothing, the suggestions they showed,
     how many became tasks and how many the operator dismissed."""
     def test_past_suggestions_sum_runs_suggestions_tasks_and_dismissals(self):
-        self.assertNotIn("past", improve.settings(self.project, now=NOW))
+        self.assertIsNone(improve.page(self.project, now=NOW)["what"]["past"])
         self.patch(improve, "CUTOFF", NOW - timedelta(days=60))
         improve_eval.load({"project": self.project, "now": NOW.isoformat(), "tasks": [
             *(finished_task(n, 13 + n) for n in range(1, 7)), *(finished_task(20 + n, n) for n in range(1, 7))]})
@@ -596,10 +596,10 @@ class TestPastSuggestions(RunCase):
         improve.execute(self.project, second)
         improve.post(self.project, second, [1], [], now=NOW)
         improve.resolve(self.project, f"{second}/1", "dismissed", self.operator("Dismiss it", 3), "no", now=NOW)
-        self.assertEqual(improve.settings(self.project, now=NOW)["past"],
+        self.assertEqual(improve.page(self.project, now=NOW)["what"]["past"],
                          {"line": "2 runs · 2 suggestions · 1 became a task · 1 dismissed", "latest": second})
 
     def test_a_review_with_nothing_to_suggest_counts_as_a_run_without_a_card(self):
         self.started()
-        self.assertEqual(improve.settings(self.project, now=NOW)["past"],
+        self.assertEqual(improve.page(self.project, now=NOW)["what"]["past"],
                          {"line": "1 run · 0 suggestions · 0 became tasks · 0 dismissed", "latest": None})

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -629,7 +630,7 @@ def start(project: str, source: str, *, now: datetime | None = None, week: str |
         # tick read it starts nothing.
         if week is not None and (_due(record, now) != week or not _agreed(record) or _window_start(record, now) != begin):
             return None
-        why = ("Turn on improvement suggestions in this project's settings first." if not _agreed(record)
+        why = (AGREE_FIRST if not _agreed(record)
                else "An improvement review is already running for this project."
                if any(r["state"] in ACTIVE for r in record["runs"])
                else "Another review just ended; ask again." if _window_start(record, now) != begin
@@ -671,6 +672,9 @@ def _tasks(count: int) -> str:
 
 #: The Weekly run's schedule, in the machine's local time zone: Monday morning, after the check that writes the digest.
 WEEKLY_DAYS, WEEKLY_TIME = (0,), "08:00"
+#: The review as a built-in agent of Altitude's own project (design/wireframes/project-agents/PROPOSAL.md).
+NAME = "Weekly improvement review"
+AGREE_FIRST = f"Agree to the {NAME}'s terms on the Agents page first."
 
 
 def terms(project: str) -> dict:
@@ -688,7 +692,7 @@ def terms(project: str) -> dict:
               SHEETS_BYTES, PROMPT_BYTES, config.IMPROVEMENT_MODEL, engines.IMPROVEMENT_INPUT_TOKENS,
               engines.IMPROVEMENT_OUTPUT_TOKENS]
     version = hashlib.sha256(json.dumps([body, sent, limits]).encode()).hexdigest()[:12]
-    return {"version": version, "title": f"Turn on improvement suggestions for {project}?", "body": body, "sent": sent}
+    return {"version": version, "title": f"Turn on the {NAME} for {project}?", "body": body, "sent": sent}
 
 
 def _agreed(record: dict) -> bool:
@@ -699,7 +703,7 @@ def _agree_locked(record: dict, version: str | None, at: str) -> None:
     """Record the operator's Turn on for the sheet version they saw; a sheet that changed since is refused."""
     if version is None:
         if not _agreed(record):
-            raise ValueError("Turn on improvement suggestions in this project's settings first.")
+            raise ValueError(AGREE_FIRST)
         return
     if version != terms("")["version"]:
         raise ValueError("The terms changed while the sheet was open; read them again.")
@@ -760,43 +764,136 @@ def weekly(project: str, now: datetime | None = None) -> dict | None:
     return start(project, f"week {week}", now=now, week=week)
 
 
-def settings(project: str, *, now: datetime | None = None) -> dict:
-    """The settings section: the sheet, the Weekly switch and its line, and Get suggestions now with its line, its
-    reason when unavailable, or the running review in its place."""
+# ---- the review as a built-in agent of Altitude's own project: its Agents row and its page ----------------------
+
+SUMMARY = "Suggests fixes for friction that keeps coming back in this project's tasks"
+WHAT = ("Finds friction that keeps coming back in this project's tasks and suggests fixes, as cards in chat you can "
+        "make into tasks.")
+RECENT = 10
+
+
+def _yours(record: dict) -> bool:
+    """Agreed to, switched or run: the operator's agent. Until then it waits under Built in."""
+    return bool(record.get("agreement") or record.get("weekly") or record["runs"])
+
+
+def _running(record: dict) -> dict | None:
+    return next((r for r in record["runs"] if r["state"] in ACTIVE), None)
+
+
+def _running_line(run: dict) -> str:
+    return f"Reading {_tasks(run['tasks'])}" if run["state"] == "reading" else f"L3 is checking {len(run['suggestions'])}"
+
+
+def _paused(record: dict) -> str | None:
+    """Why the operator's review does not run on Mondays: its terms are out of date, whatever its switch says, or
+    the switch is off."""
+    if not _agreed(record):
+        return "Paused: its terms changed"
+    return None if (record.get("weekly") or {}).get("on") else "Paused"
+
+
+def _shown(run: dict) -> list[str]:
+    return [s["title"] for s in run["suggestions"] if s["n"] in (run.get("post") or {}).get("shown", [])]
+
+
+def _outcome(run: dict) -> str:
+    if run["state"] == "posted":
+        count = len(_shown(run))
+        return f"{count} suggestion{'' if count == 1 else 's'}"
+    return {"nothing": "Nothing to suggest", "failed": "Couldn't finish", "stopped": "Stopped by you"}[run["state"]]
+
+
+def agent(project: str) -> dict | None:
+    """The review on the Agents page of Altitude's own project, with the terms its Turn on shows: the first of the
+    operator's agents once it is theirs, else the first Built in row. None in every other project."""
     if not _altitude(project):
-        return {"available": False}
-    now = now or datetime.now(timezone.utc)
-    record = _load(project)
-    begin = _window_start(record, now)
-    count = len(finished(project, now, begin)[0])
-    since = _day(begin.isoformat())
-    switch = record.get("weekly") or {}
-    if switch.get("on"):
-        last = schedule.latest(WEEKLY_DAYS, WEEKLY_TIME, now)
-        week = record.get("weeks", {}).get(last.date().isoformat())
-        upcoming = schedule.upcoming(WEEKLY_DAYS, WEEKLY_TIME, now)
-        line = (f"Skipped {_day(last.isoformat())}: {week['skipped']}. " if week and "skipped" in week else "") \
-            + f"Next: {upcoming:%A}, {_day(upcoming.isoformat())}" \
-            + (f", if {MIN_TASKS - count} more {'task finishes' if MIN_TASKS - count == 1 else 'tasks finish'}"
-               if count < MIN_TASKS else "") + "."
-    elif switch.get("off") == "terms":
-        line = "Off: the terms changed. Turn on to see them."
-    else:
-        line = f"Every Monday morning, when at least {MIN_TASKS} tasks have finished."
-    active = next((r for r in record["runs"] if r["state"] in ACTIVE), None)
-    out = {"available": True, "terms": terms(project), "agreed": _agreed(record), "weekly": bool(switch.get("on")),
-           "line": line}
-    if past := _past(project, record, now):
-        out["past"] = past
-    if active:
-        out["running"] = {"id": active["id"], "line": f"Reading {_tasks(active['tasks'])}" if active["state"] == "reading"
-                          else f"L3 is checking {len(active['suggestions'])}"}
-    else:
-        out["now"] = {"line": f"Reads the {_tasks(count)} finished since {since}.",
-                      "unavailable": route.improvement_reserve() or (
-                          f"Needs {MIN_TASKS} finished tasks since {since}; {count} so far." if count < MIN_TASKS
-                          else None)}
+        return None
+    record, when = _load(project), schedule.words(WEEKLY_DAYS, WEEKLY_TIME)
+    out = {"terms": terms(project), "agent": None, "builtin": None}
+    if not _yours(record):
+        out["builtin"] = {"key": "weekly", "name": NAME, "line": f"{when} · {SUMMARY}"}
+        return out
+    ended = next((r for r in reversed(record["runs"]) if r["state"] not in ACTIVE), None)
+    news, at, cue = (
+        (_running_line(run), None, "running") if (run := _running(record))
+        else (paused, None, "paused") if (paused := _paused(record))
+        else (_outcome(ended), ended["ended"], None) if ended else ("Never run", None, None))
+    out["agent"] = {"id": "weekly", "name": NAME, "state": "paused" if cue == "paused" else "on", "triggers": when,
+                    "news": news, "news_at": at, "cue": cue, "retired_line": None}
     return out
+
+
+def yours(project: str) -> bool:
+    """Whether the review counts among the project's agents (Work's Agents row). Only Altitude's own project keeps
+    a record, so other projects' views never ask git for their origin."""
+    return _path(project).exists() and _yours(_load(project)) and _altitude(project)
+
+
+def page(project: str, *, now: datetime | None = None) -> dict | None:
+    """Its agent page: the status card, recent runs and what it does, with the terms the sheet shows. None in every
+    project but Altitude's own."""
+    if not _altitude(project):
+        return None
+    now = now or datetime.now(timezone.utc)
+    record, sheet = _load(project), terms(project)
+    return {"name": NAME, "terms": sheet, "agreed": _agreed(record), "status": _status(project, record, now),
+            "runs": _recent(record), "what": {"text": WHAT, "sent": sheet["sent"], "past": _past(project, record, now)}}
+
+
+def _status(project: str, record: dict, now: datetime) -> dict:
+    """Running: its line, with Stop only. Otherwise Run now, with what it reads or the reason it cannot run, beside
+    Turn on until the review is the operator's, Resume while paused, or Pause with when it runs next."""
+    if run := _running(record):
+        return {"line": _running_line(run), "actions": ["stop"], "run": run["id"], "spinning": True, "paused": False,
+                "now": None}
+    begin = _window_start(record, now)
+    count, since = len(finished(project, now, begin)[0]), _day(begin.isoformat())
+    unavailable = route.improvement_reserve() or (
+        f"Run now needs {MIN_TASKS} finished tasks since {since}; {count} so far." if count < MIN_TASKS else None)
+    paused = None
+    if not _yours(record):
+        line, actions = "Not on yet", ["run", "turn_on"]
+    elif paused := _paused(record):
+        line, actions = paused, ["resume", "run"]
+    else:
+        upcoming = schedule.upcoming(WEEKLY_DAYS, WEEKLY_TIME, now)
+        short = MIN_TASKS - count
+        line = f"Next: {upcoming:%A}, {_day(upcoming.isoformat())}" + (
+            f", if {short} more {'task finishes' if short == 1 else 'tasks finish'}" if short > 0 else "")
+        actions = ["run", "pause"]
+    return {"line": line, "actions": actions, "run": None, "spinning": False, "paused": bool(paused),
+            "now": {"line": None if unavailable else f"Reads the {_tasks(count)} finished since {since}.",
+                    "unavailable": unavailable}}
+
+
+def _sentence(text: str) -> str:
+    text = text.strip().rstrip(".")
+    return f"{text[:1].upper()}{text[1:]}."
+
+
+def _recent(record: dict) -> list[dict]:
+    """Recent runs, newest first: each ended review, which opens its card or line in chat, and each skipped week."""
+    rows = []
+    for run in record["runs"]:
+        if run["state"] in ACTIVE:
+            continue
+        line = ("; ".join(_shown(run)) if run["state"] == "posted"
+                else f"{_tasks(run['tasks'])} read." if run["state"] == "nothing"
+                else _sentence(run["reason"] or "it did not finish") if run["state"] == "failed"
+                else f"L3 was checking {len(run['suggestions'])}." if run["suggestions"]
+                else f"It was reading {_tasks(run['tasks'])}.")
+        took = (_date(run["ended"]) - _date(run["started"])).total_seconds()
+        rows.append({"id": run["id"], "state": run["state"], "outcome": _outcome(run),
+                     "tone": "accent" if run["state"] == "posted" else "danger" if run["state"] == "failed" else "muted",
+                     "at": run["started"], "minutes": math.ceil(took / 60), "line": line})
+    for week in record.get("weeks", {}).values():
+        if "skipped" in week:
+            why = week["skipped"]
+            rows.append({"id": None, "state": "skipped", "outcome": "Skipped", "tone": "muted", "at": week["at"],
+                         "minutes": None, "line": _sentence(why if not why.endswith("had finished")
+                                                            else f"{why}; it needs {MIN_TASKS}")})
+    return sorted(rows, key=lambda row: _date(row["at"]), reverse=True)[:RECENT]
 
 
 def _past(project: str, record: dict, now: datetime) -> dict | None:
@@ -1182,7 +1279,7 @@ def reconcile(project: str, now: datetime | None = None) -> None:
                                 "terms": record["agreement"]["terms"]}
             record.setdefault("changes", []).append({"at": at, "by": "altitude", "weekly": False,
                                                      "reason": "the terms changed"})
-            record["line"] = "Improvement suggestions are off until you agree to the new terms in settings."
+            record["line"] = f"{NAME} paused: its terms changed."
         for run in record["runs"]:
             if run["state"] in ACTIVE and now > _date(run["deadline"]):
                 if run["state"] == "checking":

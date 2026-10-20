@@ -19,6 +19,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   landed), New agent to write your own and a weekly time budget. A run only reads and reports: it cannot
   push, open pull requests, file issues or message anyone, and it stops at its limit of 10, 20 or 60
   minutes. Ask L3 for an agent or a change and it drafts one for you to save.
+- In the Altitude project, the Weekly improvement review is a built-in agent: turn it on from Agents with the
+  same terms as before, then its own page shows when it runs next, Run now or why it cannot run yet, Pause,
+  its recent runs opening their cards in chat, and what it reads. Its section in the project's settings is
+  gone; its runs stay as cheap as before and do not use the agents' budget.
 
 ## v0.11.0 — 2026-10-20
 

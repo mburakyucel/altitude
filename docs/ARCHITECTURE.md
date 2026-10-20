@@ -2227,10 +2227,10 @@ and [CLI times](CLI.md#times).
 ### Improvement review
 
 The approved [improvement suggestions design](../design/wireframes/improvement-review/PROPOSAL.md)
-reads one project's finished work and proposes at most three fixes. It covers the Altitude project. A
-review runs on Monday mornings with Weekly on, when the operator presses Get suggestions now in the
-project's settings, or when they ask L3 in chat; each needs their agreement to the terms the settings
-sheet shows.
+reads one project's finished work and proposes at most three fixes. It covers the Altitude project,
+where it is the built-in agent **Weekly improvement review** on the [Agents page](#project-agents). A
+review runs on Monday mornings while it is on, when the operator presses Run now on its page, or when
+they ask L3 in chat; each needs their agreement to the terms its sheet shows.
 
 `improve.py` builds the evidence in code. Signals are exact, versioned predicates over existing task
 records (`SIGNALS_VERSION`): question revisions with no operator or L3 message since the previous
@@ -2282,14 +2282,14 @@ The terms (`improve.terms`) are the sheet's title and text and the What is sent 
 hash of that text with the signals version, the window's bounds, quote, sheet and prompt sizes, the
 model and its token limits, so a change to what is read, the model or the limit is a new version. The agreement in `<project>/improvements.json` records
 the version, `operator` and when; an agreement to an earlier version does not count. While Weekly is on
-under an earlier version, the next tick turns it off and writes one chat line, "Improvement
-suggestions are off until you agree to the new terms in settings.", linking to the settings section.
+under an earlier version, the next tick turns it off and writes one chat line, "Weekly improvement
+review paused: its terms changed.", whose Open goes to its page.
 Weekly (`weekly`: on, when and by whom) and every change to it or the agreement (`changes`) live in the
 same record.
 
 A run starts in one of three ways, each with its authority, and a source starts one run: the same
 source again returns it. `alt improve run` on L3's coordinator socket is admitted only during the chat
-turn that answers the operator's own project-chat message, which is its source. Get suggestions now is
+turn that answers the operator's own project-chat message, which is its source. Run now is
 the operator's press with its request id. The Weekly run's source is its week: once 08:00 on Monday,
 machine local time, has passed, the first tick that finds the week unclaimed claims it
 (`improve.weekly`), so a week Altitude was down at 08:00 runs at its first check that week; a week it
@@ -2350,17 +2350,26 @@ again queued it first. The overview lists under
 shows them under Suggestions, newest first, after what needs the operator and not counted with it,
 each heading linking to its card in the project's chat.
 
-The project's settings show an Improvement suggestions section from `GET /api/improve/<project>`
-(`improve.settings`): the Weekly switch with its line (off; the next Monday, with how many more tasks
-must finish; the week skipped and why; off because the terms changed), Get suggestions now with the
-tasks it would read, or the reason it cannot start as its accessible description, or the running review
-with Stop in its place, What is sent, and once a review has posted or found nothing, Past suggestions:
-its runs, the suggestions they showed, how many became tasks and how many were dismissed, with Latest
-opening the latest card in chat. Without the agreement to the current terms, turning Weekly
-on or pressing Get suggestions now opens the sheet first; Turn on sends the press with the sheet's
-version (`terms`), which records the agreement and completes the press, and a version that changed
-since is refused. `weekly` and `run` presses on `POST /api/improve` come only from a paired device's
-cookie, never a client holding only the machine key. Projects other than Altitude have no section.
+The review is a built-in agent of Altitude's own project, read from the same record. `improve.agent`
+is its Agents page entry in `GET /api/agents/<project>` (`weekly`): the first Built in row until the
+record has an agreement, a Weekly switch or a run, then the first of the operator's agents, whose line
+after "Mondays at 08:00" is its running line, Paused, "Paused: its terms changed", the latest ended run
+or Never run; Work's Agents count includes it. `improve.page` is its page, `GET
+/api/agents/<project>/weekly`: the status card (Not on yet with Turn on; the next Monday, with how many
+more tasks must finish, and Pause; Paused or "Paused: its terms changed" with Resume; Run now beside
+each, with the tasks it reads or the reason it cannot run; while a run is going, its line with Stop
+only), the last ten ended runs and skipped weeks, newest first, each ended run opening its card or line
+in chat (`#improvement-<run>`), and What it does: its purpose, What is sent and, once a review has
+posted or found nothing, its totals: runs, the suggestions they showed, how many became tasks and how
+many were dismissed, with Latest opening the latest card. The terms are out of date whenever the
+agreement is not to the current version, whatever the switch says. Without the agreement to the
+current terms, Turn on, Resume and Run now open the sheet first; Turn on sends the press with the
+sheet's version (`terms`), which records the agreement and completes the press, and a version that
+changed since is refused. Turn on, Pause and Resume are the `weekly` press and Run now the `run` press
+on `POST /api/improve`; they come only from a paired device's cookie, never a client holding only the
+machine key. Its runs are not agent runs: they use neither the agents' weekly budget nor their one run
+at a time and never appear in Work's Current rows, and it has no Edit or Retire. `alt agent` neither
+lists nor switches it. Projects other than Altitude have none.
 
 `improve_eval.py` loads fictional scenarios from `tests/fixtures/improvement/` as ordinary task
 folders and project chat and runs the same prompt builder and reviewer. Its offline part, in `make
@@ -2437,10 +2446,12 @@ a card under its reply, which only the operator's press saves (Create agent, Sav
 form). An offer lapses after seven days, and a change offer is refused once the agent changed since it was drafted.
 
 **Pages.** `GET /api/agents/<project>` is the Agents page (budget, agents, retired agents, built-ins not on,
-offers); `/<agent>` an agent's status, actions, definition and recent runs; `/<agent>/runs/<n>` a run's outcome,
-the version it ran and its report; `/<agent>/runs/<n>/transcript` its session through the transcript reader, read
-only. The project view carries `project_agents`: the runs waiting or running, shown in Work under Current; the
-number of agents not retired; and the offers.
+offers, and in Altitude's own project the [Weekly improvement review](#improvement-review) as `weekly`); `/<agent>`
+an agent's status, actions, definition and recent runs, and `/weekly` the review's own page; `/<agent>/runs/<n>` a
+run's outcome, the version it ran and its report; `/<agent>/runs/<n>/transcript` its session through the transcript
+reader, read only. The project view carries `project_agents`: the runs waiting or running, shown in Work under
+Current; the number of agents not retired, with the Weekly improvement review once it is the operator's; and the
+offers.
 
 ### Image input
 

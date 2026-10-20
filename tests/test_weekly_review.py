@@ -1,6 +1,6 @@
-"""Turning improvement suggestions on: the operator's agreement to the sheet's terms, the Weekly switch and its
-Monday run, skipped weeks, a change of terms turning Weekly off, Get suggestions now, and the settings section's
-lines. Projects are fictional records; the reviewer is scripted at the engine seam."""
+"""The Weekly improvement review as a built-in agent of Altitude's own project: the operator's agreement to the
+sheet's terms, the Weekly switch and its Monday run, skipped weeks, a change of terms pausing it, Run now, its row on
+the Agents page and its own page. Projects are fictional records; the reviewer is scripted at the engine seam."""
 import http.client
 import json
 import threading
@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 from unittest import mock
 
-from tests.test_improvement_runs import NOW, RunCase
+from tests.test_improvement_runs import NOW, RunCase, suggestion
 from altitude import access, config, improve, l3, schedule, server, state as S
 
 
@@ -16,11 +16,11 @@ class TestAgreement(RunCase):
     def test_nothing_starts_without_the_operators_agreement_to_the_current_terms(self):
         self.load(agree=False)
         version = improve.terms(self.project)["version"]
-        with self.assertRaisesRegex(ValueError, "Turn on improvement suggestions in this project's settings first"):
+        with self.assertRaisesRegex(ValueError, "Agree to the Weekly improvement review's terms on the Agents page first"):
             improve.start(self.project, self.operator("Get improvement suggestions"), now=NOW)
-        with self.assertRaisesRegex(ValueError, "settings first"):
+        with self.assertRaisesRegex(ValueError, "Agents page first"):
             improve.run_now(self.project, "a" * 32, now=NOW)
-        with self.assertRaisesRegex(ValueError, "settings first"):
+        with self.assertRaisesRegex(ValueError, "Agents page first"):
             improve.set_weekly(self.project, True, now=NOW)
         with self.assertRaisesRegex(ValueError, "terms changed while the sheet was open"):
             improve.run_now(self.project, "a" * 32, agree="0" * 12, now=NOW)
@@ -46,7 +46,7 @@ class TestAgreement(RunCase):
                 self.assertNotEqual(improve.terms(self.project)["version"], version, name)
         self.assertEqual(improve.terms(self.project)["version"], version)
 
-    def test_a_change_of_terms_turns_weekly_off_says_so_once_and_needs_a_new_agreement(self):
+    def test_a_change_of_terms_pauses_it_says_so_once_and_needs_a_new_agreement(self):
         self.load()
         improve.set_weekly(self.project, True, now=NOW)
         improve.reconcile(self.project, now=NOW)
@@ -54,22 +54,23 @@ class TestAgreement(RunCase):
         with mock.patch.object(config, "IMPROVEMENT_MODEL", "claude-haiku-5-5"):
             improve.reconcile(self.project, now=NOW)
             improve.reconcile(self.project, now=NOW)
-            view = improve.settings(self.project, now=NOW)
-            self.assertEqual((view["weekly"], view["agreed"], view["line"]),
-                             (False, False, "Off: the terms changed. Turn on to see them."))
+            view = improve.page(self.project, now=NOW)
+            self.assertEqual((view["agreed"], view["status"]["line"], view["status"]["actions"]),
+                             (False, "Paused: its terms changed", ["resume", "run"]))
             self.assertEqual([row["text"] for row in self.chat()],
-                             ["Improvement suggestions are off until you agree to the new terms in settings."])
-            with self.assertRaisesRegex(ValueError, "settings first"):
+                             ["Weekly improvement review paused: its terms changed."])
+            with self.assertRaisesRegex(ValueError, "Agents page first"):
                 improve.start(self.project, self.operator("Get improvement suggestions"), now=NOW)
             improve.set_weekly(self.project, True, agree=improve.terms(self.project)["version"], now=NOW)
-            self.assertEqual(improve.settings(self.project, now=NOW)["line"][:6], "Next: ")
+            self.assertEqual(improve.page(self.project, now=NOW)["status"]["line"][:6], "Next: ")
         changes = improve._load(self.project)["changes"]
         self.assertEqual([c.get("weekly") for c in changes], [None, True, False, None, True])
         self.assertEqual(changes[2]["by"], "altitude")
 
-    def test_only_the_altitude_project_has_the_section(self):
+    def test_only_the_altitude_project_has_the_review(self):
         with mock.patch.object(improve.github_intake, "project_repo", return_value=("someone", "orchard")):
-            self.assertEqual(improve.settings(self.project), {"available": False})
+            self.assertEqual((improve.agent(self.project), improve.page(self.project), improve.yours(self.project)),
+                             (None, None, False))
             with self.assertRaisesRegex(ValueError, "only the Altitude project"):
                 improve.set_weekly(self.project, True, agree=improve.terms(self.project)["version"])
 
@@ -97,6 +98,9 @@ class TestWeekly(RunCase):
         self.monday = schedule.upcoming(*weekly, self.now - timedelta(microseconds=1))
         self.following = schedule.upcoming(*weekly, self.monday)
 
+    def line(self, now):
+        return improve.page(self.project, now=now)["status"]["line"]
+
     def switched(self, at=None, count=6):
         self.load(count)
         improve.set_weekly(self.project, True, now=at or self.now)
@@ -104,8 +108,7 @@ class TestWeekly(RunCase):
     def test_monday_morning_claims_the_weeks_one_run(self):
         self.switched()
         self.assertIsNone(improve.weekly(self.project, now=self.monday - timedelta(minutes=1)))
-        self.assertEqual(improve.settings(self.project, now=self.monday - timedelta(minutes=1))["line"],
-                         f"Next: Monday, {improve._day(self.monday.isoformat())}.")
+        self.assertEqual(self.line(self.monday - timedelta(minutes=1)), f"Next: Monday, {improve._day(self.monday.isoformat())}")
         receipt = improve.weekly(self.project, now=self.monday + timedelta(minutes=1))
         self.assertEqual((receipt["state"], receipt["tasks"]), ("reading", 6))
         improve.execute(self.project, receipt["run"])
@@ -114,8 +117,8 @@ class TestWeekly(RunCase):
         self.assertEqual(record["weeks"], {self.monday.date().isoformat(): {
             "at": (self.monday + timedelta(minutes=1)).replace(microsecond=0).isoformat(), "run": receipt["run"]}})
         self.assertEqual(record["runs"][-1]["message"], f"week {self.monday.date().isoformat()}")
-        self.assertEqual(improve.settings(self.project, now=self.monday + timedelta(hours=1))["line"],
-                         f"Next: Monday, {improve._day(self.following.isoformat())}, if 5 more tasks finish.")
+        self.assertEqual(self.line(self.monday + timedelta(hours=1)),
+                         f"Next: Monday, {improve._day(self.following.isoformat())}, if 5 more tasks finish")
 
     def test_a_week_altitude_was_down_runs_at_the_first_check_and_a_missed_week_is_not_caught_up(self):
         self.switched()
@@ -126,18 +129,21 @@ class TestWeekly(RunCase):
         self.switched(at=self.monday + timedelta(hours=1))
         self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(hours=2)))
         self.assertEqual(improve._load(self.project).get("weeks", {}), {})
-        self.assertRegex(improve.settings(self.project, now=self.monday + timedelta(hours=2))["line"],
+        self.assertRegex(self.line(self.monday + timedelta(hours=2)),
                          rf"^Next: Monday, {improve._day(self.following.isoformat())}")
 
-    def test_a_week_that_fails_a_condition_is_skipped_recorded_and_said_only_in_settings(self):
+    def test_a_week_that_fails_a_condition_is_skipped_recorded_and_said_only_in_recent_runs(self):
         self.switched(count=3)
         self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(minutes=1)))
         week = self.monday.date().isoformat()
         self.assertEqual(improve._load(self.project)["weeks"][week]["skipped"], "3 tasks had finished")
         self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(hours=1)))
-        self.assertEqual(improve.settings(self.project, now=self.monday + timedelta(hours=1))["line"],
-                         f"Skipped {improve._day(self.monday.isoformat())}: 3 tasks had finished. "
-                         f"Next: Monday, {improve._day(self.following.isoformat())}, if 2 more tasks finish.")
+        later = self.monday + timedelta(hours=1)
+        self.assertEqual(self.line(later), f"Next: Monday, {improve._day(self.following.isoformat())}, if 2 more tasks finish")
+        self.assertEqual(improve.page(self.project, now=later)["runs"], [{
+            "id": None, "state": "skipped", "outcome": "Skipped", "tone": "muted",
+            "at": (self.monday + timedelta(minutes=1)).replace(microsecond=0).isoformat(), "minutes": None,
+            "line": "3 tasks had finished; it needs 5."}])
         self.assertEqual(self.chat(), [])
         self.engine.assert_not_called()
 
@@ -172,8 +178,7 @@ class TestWeekly(RunCase):
         self.switched()
         improve.set_weekly(self.project, False, now=self.now)
         self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(minutes=1)))
-        self.assertEqual(improve.settings(self.project, now=self.now)["line"],
-                         "Every Monday morning, when at least 5 tasks have finished.")
+        self.assertEqual(self.line(self.now), "Paused")
 
     def test_the_tick_starts_the_monday_run_on_its_own_thread(self):
         self.switched()
@@ -200,29 +205,130 @@ for _zone in ("UTC", "America/Los_Angeles"):
 del _zone, _name, _hour, _case
 
 
-class TestSection(RunCase):
-    def test_get_suggestions_now_says_what_it_reads_why_it_cannot_or_shows_the_running_review(self):
-        self.load(count=3, agree=False)
-        view = improve.settings(self.project, now=NOW)
-        since = improve._day((NOW - improve.FIRST_WINDOW).isoformat())
-        self.assertEqual((view["agreed"], view["weekly"], view["terms"]["title"]),
-                         (False, False, f"Turn on improvement suggestions for {self.project}?"))
-        self.assertEqual(view["terms"]["sent"],
-                         "Counts and short chat quotes · Claude Sonnet 5.5 on your plan · capped per run, plus one L3 check")
-        self.assertEqual(view["now"], {"line": f"Reads the 3 tasks finished since {since}.",
-                                       "unavailable": f"Needs 5 finished tasks since {since}; 3 so far."})
-        self.usage.return_value = {"claude": (95.0, 10.0), "codex": (None, None)}
-        self.assertEqual(improve.settings(self.project, now=NOW)["now"]["unavailable"],
-                         "Claude's weekly allowance is inside Altitude's reserve.")
+class TestAgentsRow(RunCase):
+    """The review on the Agents page: Built in until it is the operator's, then the first of their agents."""
+    def news(self):
+        row = improve.agent(self.project)
+        self.assertIsNone(row["builtin"])
+        return row["agent"]["news"], row["agent"]["cue"]
 
-    def test_a_running_review_replaces_the_button(self):
+    def test_built_in_until_agreed_switched_or_run(self):
+        self.load(agree=False)
+        row = improve.agent(self.project)
+        self.assertEqual((row["agent"], row["builtin"]), (None, {
+            "key": "weekly", "name": "Weekly improvement review",
+            "line": "Mondays at 08:00 · Suggests fixes for friction that keeps coming back in this project's tasks"}))
+        self.assertEqual(row["terms"]["title"], f"Turn on the Weekly improvement review for {self.project}?")
+        self.assertFalse(improve.yours(self.project))
+        self.agree()
+        self.assertEqual(improve.agent(self.project)["agent"]["triggers"], "Mondays at 08:00")
+        self.assertTrue(improve.yours(self.project))
+        self.assertEqual(self.news(), ("Paused", "paused"))
+
+    def test_its_news_running_paused_then_the_latest_ended_run(self):
         self.load()
-        improve.run_now(self.project, "b" * 32, now=NOW)
-        view = improve.settings(self.project, now=NOW)
-        self.assertNotIn("now", view)
-        self.assertEqual(view["running"]["line"], "Reading 6 tasks")
+        improve.set_weekly(self.project, True, now=NOW)
+        self.assertEqual(self.news(), ("Never run", None))
+        receipt = improve.run_now(self.project, "a" * 32, now=NOW)
+        self.assertEqual(self.news(), ("Reading 6 tasks", "running"))
+        improve.execute(self.project, receipt["run"])
+        row = improve.agent(self.project)["agent"]
+        self.assertEqual((row["id"], row["state"], row["news"], row["cue"]), ("weekly", "on", "Nothing to suggest", None))
+        self.assertEqual(row["news_at"], improve._load(self.project)["runs"][0]["ended"])
+        improve.set_weekly(self.project, False, now=NOW)
+        self.assertEqual(self.news(), ("Paused", "paused"))
+        with mock.patch.object(config, "IMPROVEMENT_MODEL", "claude-haiku-5-5"):
+            self.assertEqual(self.news(), ("Paused: its terms changed", "paused"))
 
-    def test_switch_and_run_come_only_from_a_paired_devices_own_page(self):
+    def test_the_agents_view_and_works_count_carry_it(self):
+        from altitude import project_agents
+        self.load(agree=False)
+        self.assertEqual(project_agents.view(self.project)["weekly"]["builtin"]["key"], "weekly")
+        self.assertEqual(project_agents.project_summary(self.project)["count"], 0)
+        self.agree()
+        self.assertEqual(project_agents.view(self.project)["weekly"]["agent"]["id"], "weekly")
+        self.assertEqual(project_agents.project_summary(self.project)["count"], 1)
+
+
+class TestPage(RunCase):
+    def status(self, now=NOW):
+        return improve.page(self.project, now=now)["status"]
+
+    def test_terms_out_of_date_whatever_the_switch_says_until_agreed(self):
+        changed = mock.patch.object(config, "IMPROVEMENT_MODEL", "claude-haiku-5-5")
+        # Never switched: agreed through Run now, then the terms changed.
+        self.load()
+        with changed:
+            self.assertEqual((self.status()["line"], self.status()["actions"], self.status()["paused"]),
+                             ("Paused: its terms changed", ["resume", "run"], True))
+        # Paused by the operator before the change.
+        improve.set_weekly(self.project, True, now=NOW)
+        improve.set_weekly(self.project, False, now=NOW)
+        with changed:
+            self.assertEqual(self.status()["line"], "Paused: its terms changed")
+        # Turned off by the change itself.
+        improve.set_weekly(self.project, True, now=NOW)
+        with changed:
+            improve.reconcile(self.project, now=NOW)
+            self.assertEqual(improve._load(self.project)["weekly"]["off"], "terms")
+            self.assertEqual(self.status()["line"], "Paused: its terms changed")
+            improve.set_weekly(self.project, True, agree=improve.terms(self.project)["version"], now=NOW)
+            self.assertEqual((self.status()["line"][:6], self.status()["actions"]), ("Next: ", ["run", "pause"]))
+
+    def test_not_on_yet_and_run_nows_reason(self):
+        self.load(count=3, agree=False)
+        since = improve._day((NOW - improve.FIRST_WINDOW).isoformat())
+        status = self.status()
+        self.assertEqual((status["line"], status["actions"], status["run"]), ("Not on yet", ["run", "turn_on"], None))
+        self.assertEqual(status["now"], {"line": None, "unavailable": f"Run now needs 5 finished tasks since {since}; 3 so far."})
+        self.usage.return_value = {"claude": (95.0, 10.0), "codex": (None, None)}
+        self.assertEqual(self.status()["now"]["unavailable"], "Claude's weekly allowance is inside Altitude's reserve.")
+
+    def test_on_says_when_it_runs_next_and_running_offers_stop_only(self):
+        self.load()
+        since = improve._day((NOW - improve.FIRST_WINDOW).isoformat())
+        improve.set_weekly(self.project, True, now=NOW)
+        upcoming = schedule.upcoming(improve.WEEKLY_DAYS, improve.WEEKLY_TIME, NOW)
+        self.assertEqual(self.status(), {
+            "line": f"Next: Monday, {improve._day(upcoming.isoformat())}", "actions": ["run", "pause"], "run": None,
+            "spinning": False, "paused": False,
+            "now": {"line": f"Reads the 6 tasks finished since {since}.", "unavailable": None}})
+        receipt = improve.run_now(self.project, "b" * 32, now=NOW)
+        self.assertEqual(self.status(), {"line": "Reading 6 tasks", "actions": ["stop"], "run": receipt["run"],
+                                         "spinning": True, "paused": False, "now": None})
+
+    def test_recent_runs_newest_first_with_every_ending(self):
+        self.patch(improve, "CUTOFF", NOW - timedelta(days=60))
+        self.load()
+        self.answer = {"suggestions": [suggestion(anchors=["CITE"]), suggestion(title="Docks list rebuilt by hand", anchors=["CITE"])]}
+        posted = improve.run_now(self.project, "c" * 32, now=NOW)["run"]
+        improve.execute(self.project, posted)
+        improve.post(self.project, posted, [1, 2], [], now=NOW)
+        with S.project_lock(self.project):
+            record = improve._load(self.project)
+            run = record["runs"][0]
+            # Later fictional endings: one stopped while reading, one that failed.
+            for n, (state, reason) in enumerate((("stopped", "stopped by you"), ("failed", "it was interrupted by a restart")), 1):
+                at = (NOW + timedelta(days=n)).isoformat()
+                record["runs"].append({**run, "id": f"{n:012x}", "state": state, "reason": reason, "started": at,
+                                       "ended": (NOW + timedelta(days=n, minutes=3)).isoformat(), "suggestions": [], "post": None})
+            S.write_json(improve._path(self.project), record)
+        rows = improve.page(self.project, now=NOW + timedelta(days=3))["runs"]
+        titles = "; ".join(s["title"] for s in run["suggestions"])
+        self.assertEqual([(r["id"], r["outcome"], r["tone"], r["line"]) for r in rows], [
+            (f"{2:012x}", "Couldn't finish", "danger", "It was interrupted by a restart."),
+            (f"{1:012x}", "Stopped by you", "muted", "It was reading 6 tasks."),
+            (posted, "2 suggestions", "accent", titles)])
+        self.assertEqual(rows[0]["minutes"], 3)
+        self.assertEqual(improve.page(self.project, now=NOW)["what"]["text"],
+                         "Finds friction that keeps coming back in this project's tasks and suggests fixes, as cards in chat "
+                         "you can make into tasks.")
+
+    def test_no_runs_yet(self):
+        self.load(agree=False)
+        self.assertEqual(improve.page(self.project, now=NOW)["runs"], [])
+
+    def test_its_page_and_presses_through_the_server(self):
         self.load(agree=False)
         self.patch(server, "spawn")
         httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -240,19 +346,25 @@ class TestSection(RunCase):
             self.assertEqual(response.status, status, payload)
             return payload
 
-        version = call("GET", f"/api/improve/{self.project}")["terms"]["version"]
-        call("GET", "/api/improve/no-such-project", status=404)
+        self.assertEqual(call("GET", f"/api/agents/{self.project}")["weekly"]["builtin"]["key"], "weekly")
+        version = call("GET", f"/api/agents/{self.project}/weekly")["terms"]["version"]
+        call("GET", "/api/agents/no-such-project/weekly", status=404)
+        call("GET", f"/api/improve/{self.project}", status=404)
         on = {"action": "weekly", "on": True, "request_id": "c" * 32, "terms": version}
         self.assertIn("paired device", call("POST", "/api/improve", on, 403)["error"])
         self.patch(access, "device", return_value={"id": "fictional-phone", "name": "Phone"})
         self.patch(access, "renew", return_value=False)
         self.assertIn("Altitude's own page", call("POST", "/api/improve", on, 403, **{"Sec-Fetch-Site": "cross-site"})["error"])
         self.assertIn("Unsupported", call("POST", "/api/improve", {**on, "on": "yes"}, 409)["error"])
+        self.assertIn("read them again", call("POST", "/api/improve", {**on, "terms": "0" * 12}, 409)["error"])
         self.assertEqual(call("POST", "/api/improve", on)["weekly"], True)
+        self.assertEqual(call("GET", f"/api/agents/{self.project}")["weekly"]["agent"]["id"], "weekly")
         receipt = call("POST", "/api/improve", {"action": "run", "request_id": "d" * 32})
         self.assertEqual(receipt["state"], "reading")
         server.spawn.assert_called_once_with(f"improve:{self.project}", improve.execute, self.project, receipt["run"])
         self.assertTrue(call("POST", "/api/improve", {"action": "run", "request_id": "d" * 32})["replayed"])
         server.spawn.assert_called_once()
-        self.assertEqual(call("GET", f"/api/improve/{self.project}")["running"]["line"], "Reading 6 tasks")
+        self.assertEqual(call("GET", f"/api/agents/{self.project}/weekly")["status"]["line"], "Reading 6 tasks")
         self.assertEqual(improve._load(self.project)["agreement"]["by"], "operator")
+        with mock.patch.object(improve.github_intake, "project_repo", return_value=("someone", "orchard")):
+            call("GET", f"/api/agents/{self.project}/weekly", status=404)

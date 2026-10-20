@@ -1,7 +1,7 @@
-"""Improvement suggestions in fictional projects' settings through the real handlers and records: "altitude" has six
-finished tasks and no agreement yet; "beacon" has Weekly on, three tasks, and this week's Monday run skipped; "cove"
-had Weekly on until its terms changed, which turned it off and said so in its chat. The reviewer waits until the
-service stops, so a started review stays reading."""
+"""The Weekly improvement review as a built-in agent of fictional projects, through the real handlers and records:
+"altitude" has six finished tasks and no agreement yet, so the review waits under Built in; "beacon" has it on, three
+tasks, and this week's Monday run skipped; "cove" had it on until its terms changed, which paused it and said so in
+its chat. The reviewer waits until the service stops, so a started review stays reading."""
 from datetime import datetime, timedelta, timezone
 import threading
 
@@ -30,7 +30,7 @@ def project(name: str, titles: list[str], end: datetime = NOW) -> None:
 
 def main():
     configure()
-    # The Altitude-project gate and Claude's reserve are unit-tested and fixed here.
+    # The Altitude-project gate and the engine's reserve are unit-tested and fixed here.
     improve._altitude = lambda _project: True
     route.improvement_reserve = lambda: None
     stopping = threading.Event()
@@ -51,7 +51,7 @@ def main():
     version = improve.terms("beacon")["version"]
     improve.set_weekly("beacon", True, agree=version, now=monday - timedelta(days=1))
     improve.weekly("beacon", now=monday + timedelta(minutes=1))
-    # cove: switched on under earlier terms; the next check turns Weekly off and says so in chat.
+    # cove: switched on under earlier terms; the next check pauses it and says so in chat.
     improve.set_weekly("cove", True, agree=version, now=NOW - timedelta(days=3))
     with S.project_lock("cove"):
         record = improve._load("cove")

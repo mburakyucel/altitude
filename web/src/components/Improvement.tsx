@@ -62,7 +62,7 @@ function Details({ run }: { run: ImprovementRun }) {
   );
 }
 
-/** A running review's line, in chat or in settings, with Stop until it ends. */
+/** A running review's line in chat, with Stop until it ends. */
 export function ImprovementRunning({ project, run }: { project: string; run: Pick<ImprovementRun, "id" | "line"> }) {
   const { busy, failed, press } = usePress(project);
   return (
@@ -84,7 +84,7 @@ export function ImprovementEnding({ run }: { run: ImprovementRun }) {
     : run.state === "failed" ? `Improvement suggestions failed · ${run.reason ?? "it did not finish"}`
       : "Improvement suggestions stopped by you";
   return (
-    <div className="irc-ending" data-improvement={run.id}>
+    <div className="irc-ending" id={`improvement-${run.id}`} data-improvement={run.id}>
       <div className="sys-line">
         <span className="sys-dot" data-tone={run.state === "failed" ? "danger" : undefined} aria-hidden />
         <Stamp at={run.ended} className="sys-time" />
@@ -98,15 +98,15 @@ export function ImprovementEnding({ run }: { run: ImprovementRun }) {
   );
 }
 
-/** Weekly turned off by a change of terms: the line opens the settings section where the new terms are agreed. */
+/** A change of terms paused the Weekly improvement review: Open goes to its page, where the new terms are agreed. */
 export function ImprovementTermsLine({ project, at }: { project: string; at?: string | null }) {
   return (
     <div className="sys-line">
       <span className="sys-dot" aria-hidden />
       <Stamp at={at} className="sys-time" />
       <span className="sys-text">
-        Improvement suggestions are off until you agree to the new terms in{" "}
-        <Link to={`/settings/projects/${encodeURIComponent(project)}#improvement`}>settings</Link>.
+        <strong>Weekly improvement review</strong> paused: its terms changed.{" "}
+        <Link to={`/projects/${encodeURIComponent(project)}/agents/weekly`}>Open</Link>
       </span>
     </div>
   );

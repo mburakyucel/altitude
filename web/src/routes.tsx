@@ -20,6 +20,7 @@ import ProjectAgents from "./routes/ProjectAgents";
 import ProjectAgent from "./routes/ProjectAgent";
 import ProjectAgentRun from "./routes/ProjectAgentRun";
 import ProjectAgentForm from "./routes/ProjectAgentForm";
+import WeeklyReview from "./routes/WeeklyReview";
 
 /** /projects: the first managed project, or First run when nothing is managed
  * (SPEC.md §2.1, §3.12). */
@@ -66,9 +67,11 @@ export const routes: RouteObject[] = [
       { path: "/projects", element: <ProjectIndex /> },
       { path: "/projects/:name", element: <ProjectPage /> },
       { path: "/projects/:name/file", element: <TaskFile /> },
-      // A project's agents: the list, the form for a new one, one agent, its form and one run (project-agents/PROPOSAL.md).
+      // A project's agents: the list, the form for a new one, the Weekly improvement review, one agent, its form and one
+      // run (project-agents/PROPOSAL.md).
       { path: "/projects/:name/agents", element: <ProjectAgents /> },
       { path: "/projects/:name/agents/new", element: <ProjectAgentForm /> },
+      { path: "/projects/:name/agents/weekly", element: <WeeklyReview /> },
       { path: "/projects/:name/agents/:id", element: <ProjectAgent /> },
       { path: "/projects/:name/agents/:id/edit", element: <ProjectAgentForm /> },
       { path: "/projects/:name/agents/:id/runs/:n", element: <ProjectAgentRun /> },
