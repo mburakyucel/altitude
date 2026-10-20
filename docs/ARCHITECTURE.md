@@ -2425,7 +2425,10 @@ repository, `git_policy.worker_git_access(shared=False)`), receives no GitHub si
 refuses every verb. Its job ends at its limit (`platform.job_command` `runtime_max`), and the tick stops a run that
 reaches its limit while Altitude is watching. Stop ends a waiting run at once and stops a running one's job; a run stopped while it
 is starting ends at once, and its start stops the worker it made. A run still without a recorded worker ten minutes
-after it started was interrupted by Altitude stopping, and the tick ends it as couldn't finish.
+after it started was interrupted by Altitude stopping, and the tick ends it as couldn't finish. While a run is
+running, the tick also reads its session's context through the passive reader a running task's uses
+(`usage.capture` with the run's folder) and keeps `context: {percent, at}` on the run, saved only when the reading
+changed, for its row in [Monitor](#monitor-and-live-sessions).
 
 **Reports.** The run's final answer (`engines.worker_answer`) is its report: a first line of `Found:`, `Nothing:`
 or `Couldn't finish:` with one sentence of at most 200 characters, then the full report, at most 20,000 characters.
@@ -3869,12 +3872,19 @@ for a turn started now, in `pick_engine`'s own words. It explains the selected t
 unknown quota, continuity and skipped options; no eligible option gives an actionable installation,
 authentication, reset or configuration explanation. The
 sessions the monitor knows follow, each with its task, its engine and the model when the API reports
-one, its context meter and the age of its snapshot. L2 rows carry their persisted `token_usage` in
+one, its context meter and the age of its snapshot. A running [project agent](#project-agents) run is a
+session row of kind `agent` after its project's tasks: its agent's name, run number, engine and model, the
+context the project tick last read and when, and its minutes so far against its limit. L2 rows carry their persisted `token_usage` in
 the same read and offer **L2 usage details**: the task total, observed helper counts and attributable
 tokens, then per-helper parentage and owner attempt context. All helper detail stays behind the
 disclosure; expansion starts no collection or separate request. Archived evidence remains in task
-and report reads. No session is one muted sentence. Loading is a
-skeleton in the page's shape, and a failed read is one sentence with Retry.
+and report reads. No session is one muted sentence. Last, `agents` lists each project agent that is
+not retired and is on with a schedule, has a run waiting or running, paused itself, or ran in the last seven
+days, plus the Weekly improvement review once it is the operator's on the same terms (`monitor.agents`,
+`project_agents.monitor_agents`, `improve.monitor`): what comes next in the agent page's status order and the
+latest run that ran. `clock` is the computer's zone, so the page names it after a schedule's time when the
+browser is elsewhere. These reads write nothing, and the Weekly review is read only where its record exists.
+Loading is a skeleton in the page's shape, and a failed read is one sentence with Retry.
 
 The task page is the operator's conversation with the L2 beside the worker's live session
 (design spec §3.10). Its compact desktop header puts the crumb back to the project, wrapping title

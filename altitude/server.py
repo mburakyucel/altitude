@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_agents, project_setup, push, qr, repair, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_agents, project_setup, push, qr, repair, reviews, route, schedule, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -2616,7 +2616,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 400)
             if api == "monitor":
                 return self._json({"seats": route.seats(), "routing": monitor.routing(),
-                                   "sessions": monitor.sessions()})
+                                   "sessions": monitor.sessions(), "agents": monitor.agents(), "clock": schedule.zone()})
             if api == "digest":
                 return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:

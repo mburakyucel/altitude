@@ -15,8 +15,8 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import REPO, AltitudeCase, make_repo
-from altitude import (access, config, dispatch, door, engines, git_policy, l3, platform, project_agents as A, route, schedule,
-                      server, state as S, tasks as T, transcript)
+from altitude import (access, config, dispatch, door, engines, git_policy, l3, monitor, platform, project_agents as A,
+                      route, schedule, server, state as S, tasks as T, transcript)
 
 # A Wednesday morning in the case's zone (UTC): the week's budget counts from Monday the 12th.
 NOW = datetime(2026, 10, 14, 9, 0, tzinfo=timezone.utc)
@@ -624,3 +624,102 @@ class TestPages(AgentCase):
         call("GET", f"{base}?engine=claude&session_id=other&attempt=1", status=404)
         with self.assertRaises(transcript.TranscriptAccessError):
             transcript.view(self.project, "x", run=("../escape", 1), engine="claude", session_id="s", attempt=1)
+
+
+class TestMonitor(AgentCase):
+    """Monitor's Agents section and session rows: who is listed, what comes next in the status card's order, the last
+    run that ran, and a running run's context as the tick reads it."""
+    def put(self, agent, n, state, created, *, started=None, ended=None, tokens=None, **fields):
+        with S.project_lock(self.project):
+            record = self.record()
+            record["runs"].append({"agent": agent, "n": n, "state": state, "created": created, "started": started,
+                                   "ended": ended, "tokens": tokens, "limit": 20, "engine": "claude",
+                                   "trigger": {"kind": "now", "by": "operator", "source": "test"}, **fields})
+            A._save(self.project, record)
+
+    def rows(self, now=NOW):
+        return {row["name"]: (row["next"], row["cue"]) for row in A.monitor_agents(self.project, now=now)}
+
+    def test_who_is_listed_and_what_comes_next_in_the_status_cards_order(self):
+        self.agent(name="Scheduled")
+        self.agent(name="Mine paused")
+        self.change("pause", agent=self.record()["agents"][1]["id"])
+        self.agent(name="Not on, no runs", on=False)
+        tried = self.agent(name="Tried before on", on=False)
+        self.put(tried, 1, "nothing", "2026-10-13T09:00:00+00:00", started="2026-10-13T09:00:00+00:00",
+                 ended="2026-10-13T09:04:00+00:00")
+        by_hand = self.agent(name="By hand", schedules=[])
+        self.put(by_hand, 1, "found", "2026-10-12T09:00:00+00:00", started="2026-10-12T09:00:00+00:00",
+                 ended="2026-10-12T09:15:00+00:00")
+        self.agent(name="By hand, idle", schedules=[])
+        old = self.agent(name="By hand, long ago", schedules=[])
+        self.put(old, 1, "found", "2026-10-01T09:00:00+00:00", started="2026-10-01T09:00:00+00:00",
+                 ended="2026-10-01T09:05:00+00:00")
+        itself = self.agent(name="Gave up")
+        retired = self.agent(name="Retired")
+        self.change("retire", agent=retired)
+        running, waiting = self.agent(name="Running one"), self.agent(name="Waiting one")
+        self.put(running, 1, "running", NOW.isoformat(), started=NOW.isoformat())
+        self.put(waiting, 1, "waiting", NOW.isoformat())
+        with S.project_lock(self.project):
+            record = self.record()
+            A._agent(record, itself).update(state="paused", paused="itself")
+            A._save(self.project, record)
+        self.assertEqual(self.rows(), {
+            "Scheduled": ("Next tomorrow at 07:00", None), "Tried before on": ("Not on yet", None),
+            "By hand": ("Only when you run it", None), "Gave up": ("Paused itself", "paused"),
+            "Running one": ("Running", "running"), "Waiting one": ("Waiting", None)})
+        self.assertEqual([row["name"] for row in A.monitor_agents(self.project, now=NOW)],
+                         ["Scheduled", "Tried before on", "By hand", "Gave up", "Running one", "Waiting one"],
+                         "the Agents page's order")
+        self.change("budget", minutes=30)
+        self.assertEqual(self.rows()["Scheduled"], ("Waits until Monday", None), "the running run holds its 20, by hand used 15, tried 4")
+        self.assertIn("Gave up", self.rows(NOW + timedelta(days=30)), "paused itself stays listed until resumed")
+        self.change("pause", agent=running)
+        self.put(tried, 2, "waiting", NOW.isoformat())
+        rows = self.rows()
+        self.assertEqual((rows["Running one"], rows["Tried before on"], rows["Gave up"]),
+                         (("Running", "running"), ("Waiting", None), ("Paused itself", "paused")),
+                         "a run outranks paused and not on yet; paused outranks the spent budget")
+
+    def test_paused_by_you_shows_only_while_it_ran_recently(self):
+        agent = self.agent()
+        self.put(agent, 1, "nothing", "2026-10-13T09:00:00+00:00", started="2026-10-13T09:00:00+00:00",
+                 ended="2026-10-13T09:04:00+00:00")
+        self.change("pause", agent=agent)
+        self.assertEqual(self.rows(), {"Dependency check": ("Paused", "paused")})
+        self.assertEqual(self.rows(NOW + timedelta(days=7)), {})
+
+    def test_last_is_the_latest_run_that_ran_a_skip_never_replaces_it(self):
+        agent = self.agent()
+        self.assertIsNone(A.monitor_agents(self.project, now=NOW)[0]["last"])
+        self.put(agent, 1, "found", "2026-10-13T07:00:00+00:00", started="2026-10-13T07:00:00+00:00",
+                 ended="2026-10-13T07:05:30+00:00", tokens=3_900_000)
+        self.put(agent, 2, "skipped", "2026-10-14T07:00:00+00:00", ended="2026-10-14T07:00:00+00:00")
+        self.assertEqual(A.monitor_agents(self.project, now=NOW)[0]["last"],
+                         {"outcome": "Found something", "at": "2026-10-13T07:05:30+00:00", "minutes": 6, "tokens": 3_900_000})
+
+    def test_a_running_run_is_a_session_row_with_the_context_the_tick_read(self):
+        agent = self.agent()
+        self.put(agent, 1, "running", "2026-10-14T08:56:00+00:00", started="2026-10-14T08:56:00+00:00",
+                 worker="worker-1", session="run-session", engine_model="fixture-model")
+        self.patch(engines, "owned_worker", return_value={"state": "working", "detail": "", "detail_at": 0, "usage": {}})
+        readings = iter([6, 6, 7])
+
+        def observe(engine, session, cursor, *, job_root):
+            self.assertEqual((engine, session, job_root), ("claude", "run-session", A.run_dir(self.project, agent, 1) / "l2-engine"))
+            context = {"tokens": 1, "window": 1, "percent": next(readings), "observed_at": "2026-10-14T08:59:00+00:00"}
+            return {"cursor": {}, "sessions": [{"session_id": session, "parent_session_id": None, "context": context,
+                                                "observed_at": context["observed_at"]}], "status": "observed"}
+        self.patch(engines, "observe_token_usage", side_effect=observe, create=True)
+        saved = self.patch(A, "_save", wraps=A._save)
+        A.reconcile(self.project, NOW)
+        A.reconcile(self.project, NOW)
+        self.assertEqual(saved.call_count, 1, "an unchanged reading is not saved again")
+        A.reconcile(self.project, NOW)
+        self.assertEqual(saved.call_count, 2)
+        self.assertEqual(A.monitor_sessions(self.project, now=NOW), [{
+            "kind": "agent", "project": self.project, "agent_id": agent, "name": "Dependency check", "run": 1,
+            "session_id": "run-session", "state": "running", "engine": "claude", "model": "fixture-model",
+            "context_percent": 7, "at": "2026-10-14T08:59:00+00:00", "limit": 20, "minutes": 4}])
+        self.assertIn(agent, [row.get("agent_id") for row in monitor.sessions()])

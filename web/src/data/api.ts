@@ -739,9 +739,10 @@ const BuiltInSchema = z.object({ key: z.string(), name: z.string(), line: z.stri
 /** What the Weekly improvement review's sheet shows; Turn on sends its version back. */
 const WeeklyTermsSchema = z.object({ version: z.string(), title: z.string(), body: z.string(), sent: z.string() });
 export type WeeklyTerms = z.infer<typeof WeeklyTermsSchema>;
+/** The machine's zone label and its UTC offset in minutes now: schedule times are written in this clock. */
+const AgentClockSchema = z.object({ zone: z.string(), offset: z.number() });
 export const ProjectAgentsSchema = z.object({
-  /** The machine's zone label and its UTC offset in minutes now: schedule times are written in this clock. */
-  clock: z.object({ zone: z.string(), offset: z.number() }),
+  clock: AgentClockSchema,
   budget: z.object({ minutes: z.number(), choices: z.array(z.number()), used: z.number(), spent: z.boolean() }),
   agents: z.array(ProjectAgentSummarySchema),
   retired: z.array(ProjectAgentSummarySchema),
@@ -751,7 +752,7 @@ export const ProjectAgentsSchema = z.object({
   offers: z.array(ProjectAgentOfferSchema),
 });
 export type ProjectAgents = z.infer<typeof ProjectAgentsSchema>;
-export type AgentClock = ProjectAgents["clock"];
+export type AgentClock = z.infer<typeof AgentClockSchema>;
 export const ProjectAgentRunSchema = z.object({
   n: z.number(),
   state: z.enum(["waiting", "running", "found", "nothing", "failed", "stopped", "limit", "skipped"]),
@@ -1070,12 +1071,19 @@ export const SessionSchema = z
   })
   .passthrough();
 
+/** One row of Monitor's Agents (SPEC.md §3.14): what comes next, its cue, and the latest run that ran. */
+export const MonitorAgentSchema = z.object({
+  project: z.string(), id: z.string(), name: z.string(), next: z.string(), cue: z.enum(["running", "paused"]).nullable(),
+  last: z.object({ outcome: z.string(), at: z.string().nullable(), minutes: z.number().nullable(), tokens: z.number().nullable() }).nullable(),
+});
+
 export const MonitorSchema = z
   .object({
     seats: z.array(MonitorSeatSchema).nullish(),
     routing: z.array(RoutingRowSchema).nullish(),
     sessions: z.array(SessionSchema),
-    agents: z.unknown().nullish(),
+    agents: z.array(MonitorAgentSchema),
+    clock: AgentClockSchema,
   })
   .passthrough();
 
@@ -1204,6 +1212,7 @@ export type TranscriptEvent = z.infer<typeof TranscriptEventSchema>;
 export type Transcript = z.infer<typeof TranscriptSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type MonitorView = z.infer<typeof MonitorSchema>;
+export type MonitorAgent = z.infer<typeof MonitorAgentSchema>;
 export type DigestView = z.infer<typeof DigestSchema>;
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 export type QueuedMessage = z.infer<typeof QueuedMessageSchema>;

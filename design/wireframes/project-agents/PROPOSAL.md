@@ -1,8 +1,8 @@
 # Project agents: proposal
 
 Status: approved by the operator on 2026-10-19 with one addition: Altitude ships built-in agents,
-including the Weekly improvement review, that you turn on with one press. Steps 1 and 2 ([The Weekly
-improvement review](#the-weekly-improvement-review)) are built. In
+including the Weekly improvement review, that you turn on with one press. Steps 1, 2 ([The Weekly
+improvement review](#the-weekly-improvement-review)) and 3 ([Monitor](#monitor-step-3)) are built. In
 the interface the feature is called **Agents**; one of them is "an agent", and one time it works is "a run". This
 replaces the earlier scheduled-only proposal: a schedule is one kind of trigger, not the definition.
 

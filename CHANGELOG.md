@@ -23,6 +23,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   same terms as before, then its own page shows when it runs next, Run now or why it cannot run yet, Pause,
   its recent runs opening their cards in chat, and what it reads. Its section in the project's settings is
   gone; its runs stay as cheap as before and do not use the agents' budget.
+- Monitor shows agents: a running agent is listed among Sessions with its context and minutes used, and a new
+  Agents section at the end lists each agent with what it does next and how its last run went, opening its page.
 
 ## v0.11.0 — 2026-10-20
 

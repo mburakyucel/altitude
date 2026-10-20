@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from . import engines, state as S
 
@@ -30,8 +31,9 @@ def _sum(rows: list[dict], key: str) -> int | None:
     return sum(values) if values else None
 
 
-def capture(project: str, task: dict, *, final: bool = False) -> None:
-    """Refresh the task in place under its existing project lock; telemetry never gates delivery.
+def capture(project: str, task: dict, *, final: bool = False, folder: Path | None = None) -> None:
+    """Refresh the task in place under its existing project lock; telemetry never gates delivery. `folder` holds the
+    cursor and the worker job (`l2-engine`), the task's own folder unless a project agent run passes its own.
 
     Cursors contain counters/identities only, are private to collection, and move with the task.
     The public snapshot is on status.json, independent of the worker-authored report's spend fields.
@@ -39,7 +41,7 @@ def capture(project: str, task: dict, *, final: bool = False) -> None:
     remember(task)
     previous = task.get("token_usage") or {}
     try:
-        path = S.task_dir(project, task["slug"]) / "token-usage.json"
+        path = (folder or S.task_dir(project, task["slug"])) / "token-usage.json"
         cursors = S.read_json(path, {}) or {}
         identities = task.get("token_usage_sessions", [])
         rows, notes, statuses, helpers, helper_statuses = [], [], [], [], []
