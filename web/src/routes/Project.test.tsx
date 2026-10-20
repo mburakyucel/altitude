@@ -458,8 +458,10 @@ describe("Project page", () => {
     await user.click(more);
     const menu = screen.getByRole("menu");
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(
-      ["Project settings…", expect.stringMatching(/^Setup…/), "Reset L3 conversation…", "All settings…"]);
+      ["Project settings…", "Agents…", expect.stringMatching(/^Setup…/), "Reset L3 conversation…", "All settings…"]);
     await waitFor(() => expect(screen.getByRole("menuitem", { name: "Project settings…" })).toHaveFocus());
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Agents…" })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: /^Setup:/ })).toHaveFocus();
     await user.keyboard("{ArrowDown}");

@@ -881,17 +881,19 @@ def transcript_engine(task: dict) -> str:
 
 
 @contextmanager
-def transcript_sources(project: str, slug: str, task: dict):
-    """Task-selected session evidence and any owning turn, oldest first."""
+def transcript_sources(project: str, slug: str, task: dict, *, folder: tuple[str, ...] | None = None):
+    """Task-selected session evidence and any owning turn, oldest first; with `folder`, the session of the job in
+    that folder of the project's (a project agent run's), selected by its task-shaped record."""
     engine = transcript_engine(task)
     native = _configured(engine)
     if native and native.TRANSCRIPT_IN_JOB:
-        with invocation.job_directory(project, slug) as (job, root):
+        with invocation.job_directory(project, slug, folder=folder) as (job, root):
             items = native.transcript_sources(task, job=job, root=root) if job is not None else []
             info = os.fstat(job) if job is not None else None
             yield invocation.RuntimeSources(items, (info.st_dev, info.st_ino) if info else None)
     else:
-        yield native.transcript_sources(task, job_root=S.task_dir(project, slug) / "l2-engine") if native else []
+        root = config.project_dir(project).joinpath(*folder) if folder else S.task_dir(project, slug)
+        yield native.transcript_sources(task, job_root=root / "l2-engine") if native else []
 
 
 def transcript_rows(engine: str, record: dict, worktree: str) -> list[dict]:
@@ -1295,16 +1297,19 @@ def owned_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
 def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
                   persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
                   settings: Path | None = None, start_timeout: float = 15.0, effort: str | None = None,
-                  images: list[dict] | tuple = ()) -> dict:
-    """One foreground CLI per transient unit; both engines persist identity and output for adoption."""
+                  images: list[dict] | tuple = (), report_only: bool = False, runtime_max: int | None = None) -> dict:
+    """One foreground CLI per transient unit; both engines persist identity and output for adoption.
+
+    A `report_only` worker (a project agent run) gets the repository rules but no owner instruction, nothing of the
+    operator's engine folder, no GitHub sign-in and no Send now, and its job ends after `runtime_max` seconds."""
     config.task_effort(engine, effort)
-    prompt = owner_prompt(cwd, persona, resume=bool(resume)) + prompt
+    prompt = (repository_rule_prompt(cwd) if report_only else owner_prompt(cwd, persona, resume=bool(resume))) + prompt
     native = implementation(engine)
     scratch = task_scratch(extra_env)
     root = Path(job_root)
     cmd, content, writable, read_only, own_env, launch = native.prepare_worker(
         name, prompt, cwd=cwd, scratch=scratch, job_root=root, persona=persona, model=model, settings=settings,
-        effort=effort, resume=resume, images=images)
+        effort=effort, resume=resume, images=images, restricted=report_only)
     worker_id = uuid.uuid4().hex
     unit = native.worker_unit_name(worker_id)
     root.mkdir(parents=True, exist_ok=True)
@@ -1312,7 +1317,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     record = {"id": worker_id, "name": name, "pid": None, "unit": unit, "engine": engine,
               "started_at": datetime.now(timezone.utc).isoformat(), **native.worker_record({**launch_env(extra_env), **own_env}),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
-              "launch_model": model, "launch_effort": effort, "input_delivered": False, "sends": str(paths["sends"])}
+              "launch_model": model, "launch_effort": effort, "input_delivered": False,
+              "sends": None if report_only else str(paths["sends"])}
     S.write_json(paths["record"], record)
     worker_env = task_tool_env(launch_env(extra_env, retain_user_bus=True), scratch)
     if native.EFFORT_ENV and effort is not None:
@@ -1322,17 +1328,17 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         with open(paths["stdout"], "ab", buffering=0, opener=storage.opener) as out, \
                 open(paths["stderr"], "ab", buffering=0, opener=storage.opener) as err:
             proc = subprocess.Popen(platform.job_command(unit, _driver_command(), job_env, writable=writable,
-                                                         read_only=read_only),
+                                                         read_only=read_only, runtime_max=runtime_max),
                                     cwd=str(cwd), stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=worker_env, start_new_session=True)
         input_written = False
         try:
             task = ({"project": extra_env["ALTITUDE_PROJECT"], "slug": extra_env["ALTITUDE_TASK"]}
                     if extra_env and extra_env.get("ALTITUDE_PROJECT") and extra_env.get("ALTITUDE_TASK") else None)
-            token = github_token(launch_env(extra_env, retain_user_bus=True))  # the operator's own settings
+            token = "" if report_only else github_token(launch_env(extra_env, retain_user_bus=True))  # the operator's own settings
             data = _driver_input({**launch, "engine": engine, "command": cmd, "input": content, "cwd": str(cwd),
                                   "model": model, "resume": resume, "worker_id": worker_id, "task": task,
-                                  "sends": str(paths["sends"]),
+                                  "sends": record["sends"],
                                   "env": {**({"GH_TOKEN": token} if token else {}), **own_env}}).encode()
             written = proc.stdin.write(data)
             proc.stdin.close()
@@ -1426,6 +1432,28 @@ def resume_l2(engine: str, name: str, session_id: str, prompt: str, *, cwd: Path
              images: list[dict] | tuple = ()) -> dict:
     return _start_worker(engine, name, prompt, cwd=cwd, resume=session_id, persona=persona, model=model,
                          settings=settings, extra_env=extra_env, job_root=job_root, effort=effort, images=images)
+
+
+def start_project_agent_run(engine: str, name: str, prompt: str, *, cwd: Path, job_root: Path, model: str | None,
+                            effort: str | None, runtime_max: int, extra_env: dict) -> dict:
+    """A project agent run: the helper role, reporting only (`_start_worker`), ended by its job after `runtime_max`."""
+    return _start_worker(engine, name, prompt, cwd=cwd, persona=config.PERSONAS / "l1.md", model=model,
+                         extra_env=extra_env, job_root=job_root, effort=effort, report_only=True,
+                         runtime_max=runtime_max)
+
+
+def worker_answer(worker_id: str, *, job_root: Path) -> str:
+    """A finished worker's final answer, as its engine's events give it."""
+    paths = _worker_paths(job_root, worker_id)
+    engine = _record_engine(S.read_json(paths["record"], None))
+    return implementation(engine).final_answer(_worker_events(paths["stdout"], engine))
+
+
+def usage_tokens(engine: str, usage: dict) -> int | None:
+    """A worker's input and output tokens from its events' usage (`_event_usage`); None when it reported none."""
+    counts = implementation(engine).token_numbers(usage or {})
+    found = [counts.get(key) for key in ("input_tokens", "output_tokens") if counts.get(key) is not None]
+    return sum(found) if found else None
 
 
 def stop_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:

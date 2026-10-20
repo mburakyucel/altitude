@@ -20,6 +20,7 @@ import { MessageImages, PendingImages } from "../components/MessageImages";
 import { SystemGroup, SystemLine, notable, subjectOf } from "../components/SystemLine";
 import { TaskCards } from "../components/TaskCard";
 import { ImprovementCard, ImprovementEnding, ImprovementRunning, ImprovementTermsLine } from "../components/Improvement";
+import { ProjectAgentLine, ProjectAgentOfferCard } from "../components/ProjectAgentChat";
 import { ChoiceError, CreateTask } from "../components/Choice";
 import type { ChoiceState } from "../components/Choice";
 import type { SystemTurn } from "../components/SystemLine";
@@ -72,8 +73,8 @@ export function turnsOf(history: ChatMessage[]): Turn[] {
       open = turn;
       return;
     }
-    if (row.trigger === "improvement") {
-      // An improvement review's row stands alone: it never answers the message waiting for L3.
+    if (row.trigger === "improvement" || row.trigger === "project-agent") {
+      // An improvement review's or agent run's row stands alone: it never answers the message waiting for L3.
       fresh(id || `row-${index}`, row).assistant = row;
       return;
     }
@@ -110,6 +111,7 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
 type Item =
   | { kind: "chat"; turn: Turn; inProgress: boolean }
   | { kind: "improvement"; turn: Turn }
+  | { kind: "project-agent"; turn: Turn }
   | { kind: "system"; turn: SystemTurn }
   | { kind: "group"; turns: SystemTurn[]; at: string | null };
 
@@ -125,9 +127,9 @@ export function itemsOf(turns: Turn[], project: string, activeId: string | null)
     run = [];
   };
   for (const turn of turns) {
-    if (turn.trigger === "improvement") {
+    if (turn.trigger === "improvement" || turn.trigger === "project-agent") {
       flush();
-      items.push({ kind: "improvement", turn });
+      items.push({ kind: turn.trigger, turn });
       continue;
     }
     if (turn.trigger === "chat") {
@@ -391,6 +393,7 @@ export default function Conversation({
     return offerTurn === turn ? "ready" : null;
   };
   const listed = waiting.filter((row) => !row.offer_turn || !offering.has(row.offer_turn));
+  const agentOffers = project.data?.project_agents?.offers ?? [];
 
   const rows: ReactNode[] = [];
   let lastDay = "";
@@ -424,6 +427,8 @@ export default function Conversation({
           {run.state === "posted" ? <ImprovementCard project={name} run={run} tasks={tasks} /> : <ImprovementEnding run={run} />}
         </div>,
       );
+    } else if (item.kind === "project-agent") {
+      rows.push(<div key={item.turn.id} className="turn" data-turn={item.turn.id}><ProjectAgentLine project={name} row={item.turn.assistant!} /></div>);
     } else if (item.kind === "group") {
       rows.push(<SystemGroup key={item.turns[0]?.id ?? item.at ?? "group"} turns={item.turns} project={name} tasks={tasks}
         enter={enter(`group:${item.turns[0]?.id}`, ...item.turns.map((turn) => `sys:${turn.id}`))} />);
@@ -445,6 +450,7 @@ export default function Conversation({
           {turn.assistant ? silent ? null : (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant" enter={enter(`reply:${turn.id}`)}>
               {turn.assistant.tasks?.length ? <TaskCards project={name} slugs={turn.assistant.tasks} tasks={tasks} enter={enter(`cards:${turn.id}`)} /> : null}
+              {agentOffers.filter((agentOffer) => agentOffer.turn_id === turn.id).map((agentOffer) => <ProjectAgentOfferCard key={agentOffer.id} project={name} offer={agentOffer} />)}
               {offer ? (
                 <CreateTask title={turn.assistant.offer!} state={offer} error={refused} onPress={() => void pressCreateTask(turn.id)}
                   onRemove={pressRow && !pressRow.turn_id ? () => dequeue.mutate(pressRow.id) : undefined}

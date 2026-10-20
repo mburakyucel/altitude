@@ -522,6 +522,30 @@ export const ImprovementRunSchema = z.object({
 });
 export type ImprovementRun = z.infer<typeof ImprovementRunSchema>;
 
+/**
+ * A project agent's definition (design/wireframes/project-agents/PROPOSAL.md): its brief, schedules in the machine's
+ * clock (days 0 Monday to 6 Sunday, "HH:MM"), Tell me in chat, model choice (null is the default model) and per-run
+ * limit in minutes. Every sentence about it (schedules, "Next: …", outcomes) is written by the server.
+ */
+export const ProjectAgentDefinitionSchema = z.object({
+  name: z.string(),
+  brief: z.string(),
+  schedules: z.array(z.object({ days: z.array(z.number()), time: z.string() })),
+  tell: z.enum(["found", "every", "never"]),
+  model: ChoiceSchema,
+  limit: z.number(),
+});
+export type ProjectAgentDefinition = z.infer<typeof ProjectAgentDefinitionSchema>;
+const ToneSchema = z.enum(["accent", "danger", "muted"]);
+/** L3's offer to create or change an agent, drawn from the definition it stored; only the operator's press saves it. */
+export const ProjectAgentOfferSchema = z.object({
+  id: z.string(), turn_id: z.string(), kind: z.enum(["new", "change"]),
+  agent: z.string().nullable(), agent_name: z.string().nullable(),
+  definition: ProjectAgentDefinitionSchema, line: z.string(), changes: z.array(z.string()), on: z.boolean(),
+  state: z.enum(["open", "created", "saved", "refused", "lapsed"]), reason: z.string().nullable(), result_agent: z.string().nullable(),
+});
+export type ProjectAgentOffer = z.infer<typeof ProjectAgentOfferSchema>;
+
 export const OverviewSchema = z
   .object({
     deployment: z.enum(["native", "container"]).optional(),
@@ -586,6 +610,12 @@ export const ProjectViewSchema = z
     design_viewer: z.string().nullish(),
     repository: z.string().nullish(),
     improvements: z.array(ImprovementRunSchema).default([]),
+    /** Agent runs waiting or running (Work's Current rows), agents not retired, and L3's offers for chat. */
+    project_agents: z.object({
+      runs: z.array(z.object({ agent: z.string(), name: z.string(), n: z.number(), state: z.enum(["waiting", "running"]), line: z.string() })),
+      count: z.number(),
+      offers: z.array(ProjectAgentOfferSchema),
+    }).nullish(),
   })
   .passthrough();
 
@@ -736,6 +766,115 @@ export async function sendImprovementSetting(project: string, change: { action: 
     method: "POST",
     body: JSON.stringify({ project, ...change, request_id: crypto.randomUUID().replaceAll("-", ""), ...(terms ? { terms } : {}) }),
   });
+}
+
+// ---- project agents (design/wireframes/project-agents/PROPOSAL.md) ----------------------------
+
+const AgentStateSchema = z.enum(["new", "on", "paused", "retired"]);
+export const ProjectAgentSummarySchema = z.object({
+  id: z.string(), name: z.string(), state: AgentStateSchema,
+  triggers: z.string(), news: z.string(), news_at: z.string().nullable(),
+  cue: z.enum(["running", "paused"]).nullable(), retired_line: z.string().nullable(),
+});
+export type ProjectAgentSummary = z.infer<typeof ProjectAgentSummarySchema>;
+export const ProjectAgentsSchema = z.object({
+  /** The machine's zone label and its UTC offset in minutes now: schedule times are written in this clock. */
+  clock: z.object({ zone: z.string(), offset: z.number() }),
+  budget: z.object({ minutes: z.number(), choices: z.array(z.number()), used: z.number(), spent: z.boolean() }),
+  agents: z.array(ProjectAgentSummarySchema),
+  retired: z.array(ProjectAgentSummarySchema),
+  builtins: z.array(z.object({ key: z.string(), name: z.string(), line: z.string() })),
+  offers: z.array(ProjectAgentOfferSchema),
+});
+export type ProjectAgents = z.infer<typeof ProjectAgentsSchema>;
+export type AgentClock = ProjectAgents["clock"];
+export const ProjectAgentRunSchema = z.object({
+  n: z.number(),
+  state: z.enum(["waiting", "running", "found", "nothing", "failed", "stopped", "limit", "skipped"]),
+  outcome: z.string(), tone: ToneSchema,
+  at: z.string(), started: z.string().nullable(), late: z.boolean(), ended: z.string().nullable(),
+  minutes: z.number().nullable(), tokens: z.number().nullable(), line: z.string().nullable(),
+  page: z.boolean(), trigger_line: z.string(),
+});
+export type ProjectAgentRun = z.infer<typeof ProjectAgentRunSchema>;
+const AgentActionSchema = z.enum(["run", "pause", "resume", "turn_on", "stop", "open"]);
+export type ProjectAgentAction = z.infer<typeof AgentActionSchema>;
+export const ProjectAgentDetailSchema = z.object({
+  id: z.string(), name: z.string(), state: AgentStateSchema, builtin: z.string().nullable(),
+  /** Sent back with an edit: a stale version is refused. */
+  version: z.number(),
+  status: z.object({ line: z.string(), actions: z.array(AgentActionSchema), run: z.number().nullable(), spinning: z.boolean() }),
+  definition: ProjectAgentDefinitionSchema,
+  definition_line: z.string(),
+  runs: z.array(ProjectAgentRunSchema),
+  more: z.boolean(),
+});
+export type ProjectAgentDetail = z.infer<typeof ProjectAgentDetailSchema>;
+export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
+  agent: z.object({ id: z.string(), name: z.string() }),
+  /** None until the run starts and its engine is chosen. */
+  model: z.string().nullable(), limit: z.number(),
+  /** The brief as the run read it. */
+  brief: z.string(),
+  report: z.string().nullable(),
+  session: z.object({ engine: z.string(), session_id: z.string(), attempt: z.number() }).nullable(),
+});
+export type ProjectAgentRunDetail = z.infer<typeof ProjectAgentRunDetailSchema>;
+
+const agentsKey = (project: string) => ["project", project, "agents"];
+type BudgetChange = { minutes: number };
+
+/** A project's agents, budget and built-ins; a budget on its way shows at once. Under the project's key, so its
+ * change events and press refetches refresh it. */
+export function useProjectAgents(project: string, enabled = true) {
+  const saving = useSaving<BudgetChange>(agentsKey(project));
+  const select = useCallback((data: ProjectAgents) => saving.reduce((view, change) => ({ ...view, budget: { ...view.budget, minutes: change.minutes } }), data), [saving]);
+  return useQuery({
+    queryKey: agentsKey(project),
+    queryFn: async () => ProjectAgentsSchema.parse(await api(`/api/agents/${project}`)),
+    enabled: Boolean(project) && enabled,
+    refetchInterval: pollInterval,
+    select,
+  });
+}
+
+/** One agent with its latest `runs` runs, read every two seconds while a run waits or runs. */
+export function useProjectAgent(project: string, id: string, runs = 10) {
+  return useQuery({
+    queryKey: [...agentsKey(project), id, runs],
+    queryFn: async () => ProjectAgentDetailSchema.parse(await api(`/api/agents/${project}/${id}?runs=${runs}`)),
+    enabled: Boolean(project && id),
+    // Show older keeps the loaded runs on screen while the longer list arrives.
+    placeholderData: (previous) => previous,
+    refetchInterval: (query) => query.state.data?.status.run != null ? 2_000 : pollInterval(),
+  });
+}
+
+export function useProjectAgentRun(project: string, id: string, n: number) {
+  return useQuery({
+    queryKey: [...agentsKey(project), id, "runs", n],
+    queryFn: async () => ProjectAgentRunDetailSchema.parse(await api(`/api/agents/${project}/${id}/runs/${n}`)),
+    enabled: Boolean(project && id),
+    refetchInterval: (query) => ["waiting", "running"].includes(query.state.data?.state ?? "") ? 2_000 : pollInterval(),
+  });
+}
+
+export const pressId = () => crypto.randomUUID().replaceAll("-", "");
+
+/** One press on agents. A retry of the same press passes its `requestId` again, so a press whose answer was lost
+ * returns its first receipt instead of saving twice. */
+export async function sendProjectAgent<T = Record<string, unknown>>(project: string, action: string, fields: Record<string, unknown> = {},
+  requestId = pressId()) {
+  return api<{ ok: true } & T>("/api/agents", {
+    method: "POST",
+    body: JSON.stringify({ project, action, request_id: requestId, ...fields }),
+  });
+}
+
+/** The weekly budget; the save ends once the agents' read shows it. */
+export function useSaveAgentBudget(project: string) {
+  return useSave<BudgetChange, unknown>(agentsKey(project), ({ minutes }) => sendProjectAgent(project, "budget", { minutes }),
+    (client) => client.refetchQueries({ queryKey: agentsKey(project), exact: true }));
 }
 
 export const TaskMessageSchema = z
@@ -997,6 +1136,8 @@ export const ChatMessageSchema = z
     queue_ids: z.array(z.string()).nullish(),
     /** On an improvement review's row (trigger "improvement"): the review it shows, read from the project view. */
     improvement: z.string().nullish(),
+    /** On a project agent's result row (trigger "project-agent"): the agent, its run when one is meant, and the dot. */
+    project_agent: z.object({ agent: z.string(), n: z.number().nullable(), tone: ToneSchema }).nullish(),
   })
   .passthrough();
 
@@ -1585,11 +1726,16 @@ function mergeTranscript(rows: TranscriptEvent[], page: Transcript): TranscriptE
   return [...merged.values()].sort((a, b) => a.order < b.order ? -1 : a.order > b.order ? 1 : 0);
 }
 
+/** Whose transcript: a task's by slug, or a project agent's run, read from under its agent. */
+export type TranscriptSource = string | { agent: string; run: number };
+const transcriptPath = (project: string, source: TranscriptSource) => typeof source === "string"
+  ? `/api/transcript/${project}/${source}` : `/api/agents/${project}/${source.agent}/runs/${source.run}/transcript`;
+
 /** Only the mounted viewer retains rows. One serialized reader owns history, deltas and epoch
  * reconciliation; aborted requests never publish into a different task, attempt or representation. */
 export function useTranscript(
   project: string,
-  slug: string,
+  source: TranscriptSource,
   engine: string,
   sessionId: string,
   raw: boolean,
@@ -1598,6 +1744,7 @@ export function useTranscript(
   attempt = 0,
   following = true,
 ) {
+  const slug = typeof source === "string" ? source : `${source.agent}/runs/${source.run}`;
   const reader = useMemo<TranscriptReader>(() => ({ cursor: "", error: null, historyError: null,
     fetching: false, historyPending: false, catchingUp: false, tail: false, lastRead: 0 }), [project, slug, engine, sessionId, attempt, raw]);
   const follows = useRef(following);
@@ -1661,9 +1808,9 @@ export function useTranscript(
       publish();
       let again = false;
       try {
-        const page = TranscriptSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`, { signal: controller.signal }));
+        const page = TranscriptSchema.parse(await api(`${transcriptPath(project, source)}?${query}`, { signal: controller.signal }));
         if (stopped) return;
-        if (page.project !== project || page.slug !== slug || page.engine !== engine || page.session_id !== sessionId || page.attempt !== attempt) {
+        if (page.project !== project || (typeof source === "string" && page.slug !== source) || page.engine !== engine || page.session_id !== sessionId || page.attempt !== attempt) {
           throw new ApiError(404, "The session changed. Refresh the task.");
         }
         reader.lastRead = Date.now();
@@ -1763,11 +1910,11 @@ export function useTranscript(
 }
 
 const TranscriptRecordSchema = z.object({ text: z.string(), next_offset: z.number().nullable() });
-export async function fetchTranscriptRecord(project: string, slug: string, engine: string, sessionId: string,
+export async function fetchTranscriptRecord(project: string, source: TranscriptSource, engine: string, sessionId: string,
   attempt: number, record: string, offset: number, signal: AbortSignal) {
   const query = new URLSearchParams({ engine, session_id: sessionId, attempt: String(attempt),
     raw: "1", mode: "record", record, offset: String(offset) });
-  return TranscriptRecordSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`, { signal }));
+  return TranscriptRecordSchema.parse(await api(`${transcriptPath(project, source)}?${query}`, { signal }));
 }
 
 export function useMonitor() {

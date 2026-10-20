@@ -108,10 +108,11 @@ def running() -> list[str]:
 
 
 def _capacity(task):
-    from . import dispatch
+    from . import dispatch, project_agents
     if active_count():
         return "Another adversarial review is running on this machine."
-    owners = sum(dispatch.occupies_slot(t) for p in config.load_projects() for t in S.list_tasks(p))
+    owners = (sum(dispatch.occupies_slot(t) for p in config.load_projects() for t in S.list_tasks(p))
+              + project_agents.running_count())
     # A reported owner must also resume before it can prepare/run the review.
     if owners + (task.get("state") in ("reported", "blocked")) + 1 > config.machine_wip():
         return "No machine capacity for an additional reviewer. Try again when a slot is free."

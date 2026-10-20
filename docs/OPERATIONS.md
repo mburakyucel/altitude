@@ -241,6 +241,9 @@ its commits are on `origin/main` or a verified PR merged it. A branch with commi
 machine stays; `alt task events <slug> --json` shows the `cleanup-worktree` event with its reason and
 unmerged commit count. Uncommitted changes or commits on no branch keep the worktree with a recorded
 reason. Inspect them in that worktree, then remove it with `git worktree remove` once nothing is needed.
+A [project agent](ARCHITECTURE.md#project-agents) run's copy, `.claude/worktrees/project-agent-<agent>-<n>`,
+and its scratch folder are removed when the run ends; its prompt, report and session stay in the project's
+`project-agents` folder until the run is pruned, 90 days on and beyond the agent's newest ten runs.
 
 A source deployment removes `.altitude-source/<sha>` exports that nothing names: the running service's
 export, the target of `current` and exports named by an unfinished or not yet cleaned-up task's brief

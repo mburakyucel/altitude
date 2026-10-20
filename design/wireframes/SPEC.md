@@ -136,6 +136,9 @@ distinct from the fictional local UI harness.
 | `/projects/:name/tasks/:slug/terminal` | the same page with the task's terminal in front (phone tab, desktop panel view) | new |
 | `/projects/:name/terminal` | the project with its folder's terminal in the right panel; full screen on phone | new |
 | `/projects/:name/tasks/:slug/report` | the task's full report, with its digest at `#digest` | new |
+| `/projects/:name/agents` | the project's agents (§3.17) | new |
+| `/projects/:name/agents/new`, `/projects/:name/agents/:id[/edit]` | the agent form; one agent's page and its form (§3.17) | new |
+| `/projects/:name/agents/:id/runs/:n` | one agent run's page (§3.17) | new |
 | `/monitor` | Monitor | unchanged |
 | `/repairs/:id` | one repair's page in a task's form (§3.15); Work is lit, or no tab before any project exists | new |
 | `/projects`, `/chat/:name` | redirect to the first managed project, or to `/projects/:name` | the Projects list |
@@ -249,7 +252,8 @@ A healthy project's header holds no Setup control. **Setup…** in the overflow 
 configuration checklist without replacing the conversation or draft; the header shows Setup only
 while setup needs attention (§3.12).
 
-Overflow menu: **Project settings…** (opens `/settings/projects/<name>`), **Setup…** with the current
+Overflow menu: **Project settings…** (opens `/settings/projects/<name>`), **Agents…** (opens the project's
+agents, §3.17), **Setup…** with the current
 setup status in muted text (§3.12), **Reset L3 conversation…** (confirm inline; `POST /api/l3/reset`),
 **All settings…** (opens Settings with this project under **This project**), **Design boards ↗**
 (present only when `GET /api/project/<name>` reports a design URL; opens in a new tab). The menu
@@ -867,6 +871,12 @@ releasing the task. There is no release button in Work or the task conversation.
 | Final answer | Attention leaves; the row shows observed execution or waiting status. Saving an answer cannot claim Running. |
 | Done or rejected | The row leaves Current and enters Done this week once, with a 200ms fade. The disclosure shows or hides every task finished in the last seven days, newest first, with or without a PR, and is absent when none exist. A no-code completion also posts a task-linked FYI to the project conversation. |
 | Open and Back | Waiting rows focus the owning question with live activity closed. App Back and browser Back/Forward preserve the originating Work or Needs you view (§3.9). |
+
+A waiting or running [project agent](#317-project-agents) run is a row in Current with the ordinary dot
+and chevron: the agent's name over "Agent run · 2 of 20 min", "Agent run · waiting for a free task slot" or
+"Agent run · waiting for <agent>"; it opens the run's page and counts in Current. Runs are not tasks: the
+project header's tasks in flight and Done this week leave them out, and a finished run leaves Work. After Done this week, **Agents · N** with a chevron
+opens the Agents page; with no agents the row is absent and the project menu's **Agents…** remains.
 
 Work and Needs you add no voice controls. Listening, transcribing, denied and send-failure states
 remain in the owning conversation (§3.6); sending leaves no extra transcript field.
@@ -2548,6 +2558,34 @@ separate devices. `web/e2e/trust.pw.ts` walks Chromium over real HTTPS past the 
 ignoring certificate errors, to Not trusted yet with no Pair item. `web/e2e/trust-steps.pw.ts` walks the
 desktop steps in both widths: the hosting computer's `alt trust`, its steps by hand and Trusted removing
 them, and each **Steps for** choice with a switch to another.
+
+### 3.17 Project agents
+
+A project's agents run briefs on a schedule or when asked and report what they found
+([design](project-agents/PROPOSAL.md#screens), whose screens, exact text and states table this section
+adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
+
+- **Agents page** (`/projects/:name/agents`): **‹ <project>** back, **Agents** over "Each one runs a brief
+  when its trigger fires, and tells you what it found.", one card of agent rows (name; triggers · latest
+  news, with a running dot or pause mark), the weekly budget select (30 min · 1 h · 2 h · 5 h · 10 h) with
+  "N used this week" (amber "… · agents wait until Monday" when spent), **New agent**, and "N retired" opening
+  the retired rows. **Built in** lists each built-in agent not on with **Turn on**.
+- **One agent** (`/projects/:name/agents/:id`): the status card and its actions (Run now, Pause, Resume, Turn
+  on, Stop, Open), Recent runs with **Show older**, What it does with **Edit**, and **Retire…** with its
+  dialog. A retired agent's page is read-only.
+- **One run** (`…/runs/:n`): what fired it, the model once it starts and usage once it ends; waiting, what it
+  waits for ("Waiting for a free task slot", "Waiting for Review each merge") with **Stop**; running, the live
+  session read only with **Stop**; ended, the outcome and report with **Brief it ran** and **Session** folded. No composer.
+- **The form** (`…/agents/new`, `…/:id/edit`): Name, What it does, Runs when (schedule rows of seven day
+  toggles and a time, **+ Add a schedule**, "Only when you run it" with none), Tell me in chat, Model (§3.6.1)
+  and Each run stops after. A new agent is saved not on.
+- **Chat**: one system line per ending as Tell me allows, led by the agent's name with **Open**; L3's offer card
+  under its reply with **Create agent** or **Save change** and **Edit first**, created, refused and lapsed. A switch L3
+  makes on your word adds one quiet line ("Paused Dependency check", "Resumed …", "Turned on …", "Retired …",
+  "Stopped …'s run") whose **Open** leads to the agent, where Resume is.
+
+Event triggers and their menu, the Weekly review as a built-in agent and Monitor's Agents section are later
+steps of the design and do not appear.
 
 ## 4. Behaviour rules
 

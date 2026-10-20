@@ -80,9 +80,11 @@ def call(kind: str, fields: dict, *, wait: float = WAIT, timeout: float = TIMEOU
 
     from . import platform, tls
     try:
-        data = request_body({"project": os.environ["ALTITUDE_PROJECT"], "slug": os.environ["ALTITUDE_TASK"],
-                             "attempt": os.environ["ALTITUDE_ATTEMPT"], "kind": kind, "request": uuid.uuid4().hex,
-                             **fields})
+        # A project agent run's door answers only its engine's sign-in (`project_agents.door`).
+        owner = ({"run": os.environ["ALTITUDE_AGENT_RUN"]} if os.environ.get("ALTITUDE_AGENT_RUN") else
+                 {"slug": os.environ["ALTITUDE_TASK"], "attempt": os.environ["ALTITUDE_ATTEMPT"]})
+        data = request_body({"project": os.environ["ALTITUDE_PROJECT"], **owner, "kind": kind,
+                             "request": uuid.uuid4().hex, **fields})
     except KeyError as exc:
         raise DoorError(f"the task door serves a task's own L2: {exc.args[0]} is not set") from None
     deadline = time.monotonic() + wait

@@ -33,8 +33,9 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
   const file = route.endsWith("/file");
   const captures = route.includes("/captures/");
   const repair = route === "/repairs/:id";
+  const agents = route.startsWith("/projects/:name/agents");
   test.use({ serviceScript: shown ? "shown-files-service.py" : captures ? "captures-service.py" : file ? "file-references-service.py"
-    : repair ? "repairs-service.py" : "" });
+    : repair ? "repairs-service.py" : agents ? "project-agents-service.py" : "" });
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request, browserName }, info) => {
     const project = await fixtureProject(request, route === "/projects" || route === "/chat");
     // The reader opens the fixture's own reply and question; other task routes take the project's first task.
@@ -42,13 +43,19 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
     const task = files ? { slug: files.slug as string, question: files.question as { id: string; revision: number } }
       : route.includes(":slug") ? await fixtureTask(request, project.name) : undefined;
     // The reply whose captures are all present: a missing one is captures.pw.ts's unavailable state.
+    // The agent routes open the fixture's first agent with a run, and its newest run.
+    const agent = agents ? (await (await request.get(`/api/agents/${encodeURIComponent(project.name)}`)).json()).agents
+      .find((row: { cue: string | null }) => row.cue !== "running") as { id: string; name: string } : undefined;
+    const runs = agent ? (await (await request.get(`/api/agents/${encodeURIComponent(project.name)}/${agent.id}?runs=10`)).json()).runs
+      .filter((row: { page: boolean }) => row.page) as { n: number }[] : [];
     const reply = captures ? (await (await request.get("/fixture/captures")).json()).single as string : files?.readme as string ?? "";
     let url = route.replace(":name", encodeURIComponent(project.name))
       .replace(":slug", encodeURIComponent(task?.slug ?? ""))
       .replace(":questionId", encodeURIComponent(task?.question?.id ?? ""))
       .replace(":revision", String(task?.question?.revision ?? ""))
       .replace(":messageId", encodeURIComponent(reply))
-      .replace(":id", repair ? (await (await request.get("/api/repairs")).json()).repairs[0].id : "")
+      .replace(":id", repair ? (await (await request.get("/api/repairs")).json()).repairs[0].id : agent?.id ?? "")
+      .replace(":n", String(runs[0]?.n ?? ""))
       .replace("*", "__ui_unknown_route__");
     if (file) {
       const { paths } = await (await request.get("/fixture/files")).json();
@@ -212,6 +219,12 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("button", { name: "Remove…", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
+    } else if (agent) {
+      const title = route.endsWith("/agents") ? "Agents" : route.endsWith("/new") ? "New agent" : route.endsWith("/edit") ? "Edit"
+        : route.endsWith("/runs/:n") ? /^Run · / : agent.name;
+      await expect(page.getByRole("heading", { level: 1, name: title, exact: typeof title === "string" })).toBeVisible();
+      await expect(page.locator("a.agents-back")).toBeVisible();
+      await expect(main.getByRole("status")).toHaveCount(0);
     } else if (route.startsWith("/projects") || route.startsWith("/chat")) {
       await expect(page).toHaveURL(new RegExp(`${project.path}(\\?tab=work)?$`));
       await expect(main.getByRole("button", { name: "More actions" })).toBeVisible();

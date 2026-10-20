@@ -203,7 +203,7 @@ class TestClaudeFolders(AltitudeCase):
             job_root=self.runtime_tmp / "l2-engine", persona=None, model=None,
             settings=dispatch.session_settings(self.project, "hidden"), effort=None, resume="sid-old", images=())
         self.assertEqual(list(read_only[-len(linked) - 2:]), [*linked, notes, session])
-        self.assertEqual(launch, {"copies": [str(session)]})
+        self.assertEqual(launch, {"copies": [str(session)], "linked": True})
         self.assert_none_shared(writable)
 
         captured = {}

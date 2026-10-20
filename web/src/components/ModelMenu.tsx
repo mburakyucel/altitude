@@ -292,6 +292,47 @@ export function RoleModelButton({ project, variant = "pill" }: { project?: strin
   return row ? <div className="model-pair-labelled"><span className="model-pair-label">New tasks</span>{button}</div> : button;
 }
 
+// ---- A form's choice: a pick changes only the form ---------------------------------------------
+
+/**
+ * The model button inside a form (a project agent's Model): the same panel, with Default where a role has Auto. A
+ * pick only changes the form's value, saved with the form.
+ */
+export function ChoiceButton({ value, onChange, label }: { value: Choice; onChange: (value: Choice) => void; label: string }) {
+  const overview = useOverview(false);
+  const options = overview.data?.new_tasks ?? undefined;
+  const engines = (overview.data?.engines ?? []) as Engines;
+  const menu = useMenu("down");
+  const order = engines.length ? engines.map(engineId) : [...new Set((options?.models ?? []).map((m) => m.engine))];
+  const groups: Group[] = [{ engine: null, label: "", rows: [{ key: "auto", engine: null, model: null, label: "Default" }] },
+    ...order.map((engine) => ({ engine, label: engines.find((e) => engineId(e) === engine)?.label ?? engine,
+      rows: (options?.models ?? []).filter((m) => m.engine === engine && m.model).map((m) => ({ key: rowKey(engine, m.model), engine, model: m.model, label: m.label })) }))];
+  const levels = (engine: string | null | undefined) => {
+    const efforts = options?.efforts ?? {};
+    if (engine) return efforts[engine] ?? [];
+    const lists = Object.values(efforts);
+    return (lists[0] ?? []).filter((e) => lists.every((list) => list.some((x) => x.value === e.value)));
+  };
+  const pickModel = (row: Row) => {
+    const effort = value?.effort && levels(row.engine).some((e) => e.value === value.effort) ? value.effort : null;
+    onChange(row.engine ? { engine: row.engine, ...(row.model ? { model: row.model } : {}), ...(effort ? { effort } : {}) } : effort ? { effort } : null);
+  };
+  const pickEffort = (effort: string | null) => {
+    const base = { ...(value?.engine ? { engine: value.engine } : {}), ...(value?.model ? { model: value.model } : {}) };
+    onChange(base.engine || effort ? { ...base, ...(effort ? { effort } : {}) } : null);
+  };
+  const model = value?.engine ? modelName(value, options, engines) : "Default";
+  const effort = value?.effort ? effortLabel(value.effort, options) : "Default";
+  return <Picker menu={menu} label={`${label}: ${model} · ${effort}${value?.effort ? "" : " effort"}`} menuLabel={label} title={label}
+    text={<PairText model={model} effort={effort} unpinned={!value?.effort} />}>
+    {!options ? <p className="model-menu-note">{overview.isPending ? <StatusMark label="Loading models…" /> : "Models are unavailable."}</p> : <>
+      <Rows name="Model" groups={groups} checked={rowKey(value?.engine, value?.model)} pending="" onPick={pickModel} />
+      <Rows name="Effort" groups={effortRows([{ value: null, label: "Default" }, ...levels(value?.engine)])} checked={value?.effort ?? "default"}
+        pending="" onPick={(row) => pickEffort(row.value ?? null)} />
+    </>}
+  </Picker>;
+}
+
 // ---- One task: picks are a draft until the switch is confirmed ---------------------------------
 
 type Draft = { engine: string; value: string; model: string; effort: string };

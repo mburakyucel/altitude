@@ -73,6 +73,7 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   interface subsection:
   [times](ARCHITECTURE.md#times),
   [improvement review](ARCHITECTURE.md#improvement-review),
+  [project agents](ARCHITECTURE.md#project-agents),
   [image input](ARCHITECTURE.md#image-input),
   [task usage](ARCHITECTURE.md#task-usage),
   [validation and release](ARCHITECTURE.md#validation-and-release),
@@ -114,7 +115,8 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   [Times](CLI.md#times), [inspection](CLI.md#inspection), [project heads-ups](CLI.md#project-heads-ups),
   [coordinator information messages](CLI.md#coordinator-information-messages),
   [superseded PR closure](CLI.md#superseded-pr-closure),
-  [improvement suggestions](CLI.md#improvement-suggestions), [GitHub issues](CLI.md#github-issues)
+  [improvement suggestions](CLI.md#improvement-suggestions), [project agents](CLI.md#project-agents),
+  [GitHub issues](CLI.md#github-issues)
   (including [incremental delivery](CLI.md#incremental-issue-delivery)),
   [task file lists](CLI.md#task-file-lists), [dirty-checkout recovery](CLI.md#dirty-checkout-recovery),
   [device pairing](CLI.md#device-pairing), [project lifecycle](CLI.md#project-lifecycle),

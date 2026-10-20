@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
-import { useLocation, useMatch, useNavigate, useParams, useSearchParams } from "react-router";
+import { Link, useLocation, useMatch, useNavigate, useParams, useSearchParams } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { BusyLabel } from "../components/StatusMark";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useWaitsForTool } from "../data/api";
@@ -79,13 +79,17 @@ export function WorkPanel({
       <TaskCard project={name} task={task} variant="row" />
     </div>
   );
+  // Agent runs waiting or running sit in Current as rows of their own; they are not tasks, so nothing else counts them.
+  const agents = project.data?.project_agents;
+  const runs = agents?.runs ?? [];
+  const inCurrent = current.length + runs.length;
 
   return (
     <section className="work-panel" aria-label="Work">
       <div className="wp-head">
         <h2 className="wp-title">Work</h2>
         {project.data ? <p className="wp-count text-muted">
-          {current.length} current · {doneThisWeek.length} done this week{project.isError ? " · saved" : ""}
+          {inCurrent} current · {doneThisWeek.length} done this week{project.isError ? " · saved" : ""}
         </p> : null}
       </div>
       {phone ? <RoleModelButton variant="row" /> : null}
@@ -105,15 +109,32 @@ export function WorkPanel({
         </div>
       ) : project.data ? (
         <>
-          {current.length > 0 ? (
+          {inCurrent > 0 ? (
             <section className="wp-section" aria-label="Current">
               <h3 className="wp-section-title">
-                Current <span className="text-muted">({current.length})</span>
+                Current <span className="text-muted">({inCurrent})</span>
               </h3>
-              <div className="wp-rows">{current.map(row)}</div>
+              <div className="wp-rows">
+                {current.map(row)}
+                {runs.map((run) => (
+                  <div key={`${name}:agent:${run.agent}:${run.n}`} className="wp-row">
+                    <Link className="task-card" data-variant="row" to={`/projects/${name}/agents/${run.agent}/runs/${run.n}`}
+                      state={{ from: "project", tab: "work" }} aria-label={`${run.name} · ${run.line}`}>
+                      <span className="dot task-card-dot" data-state={run.state === "waiting" ? "idle" : "running"} aria-hidden />
+                      <span className="task-card-body">
+                        <span className="task-card-title">{run.name}</span>
+                        <span className="task-card-meta">{run.line}</span>
+                      </span>
+                      <svg className="task-card-go" aria-hidden viewBox="0 0 20 20" width="16" height="16">
+                        <path d="M8 5l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </Link>
+                  </div>
+                ))}
+              </div>
             </section>
           ) : null}
-          {current.length === 0 ? (
+          {inCurrent === 0 ? (
             <p className="text-muted">No current tasks. Ask L3 to start something.</p>
           ) : null}
           <WorkRepairs project={name} />
@@ -122,6 +143,14 @@ export function WorkPanel({
               <summary className="wp-fold-summary">Done this week ({doneThisWeek.length})</summary>
               <div className="wp-rows">{doneThisWeek.map(row)}</div>
             </details>
+          ) : null}
+          {agents?.count ? (
+            <Link className="wp-agents" to={`/projects/${name}/agents`} state={{ from: "project", tab: "work" }}>
+              Agents · {agents.count}
+              <svg aria-hidden viewBox="0 0 20 20" width="16" height="16">
+                <path d="M8 5l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </Link>
           ) : null}
         </>
       ) : null}
@@ -142,7 +171,8 @@ export function statusParts(
   if (chat?.active) {
     parts.push(chat.active.trigger === "chat" ? "L3 is answering" : `L3 is handling ${handling(chat.active.trigger)}`);
   } else if (chat) {
-    const last = [...chat.history].reverse().find((row) => row.role === "assistant");
+    // An agent run's result line is Altitude's, not an answer from L3.
+    const last = [...chat.history].reverse().find((row) => row.role === "assistant" && row.trigger !== "project-agent");
     if (last) {
       const label = engines.find((e) => e.engine === last.engine)?.label;
       parts.push(`L3 answered ${agoText(last.at) || "earlier"}${label ? ` on ${label}` : ""}`);
@@ -243,6 +273,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
   const menu = (
         <div role="menu" className="menu project-menu" aria-label="Project actions" onKeyDown={onMenuKey}>
           <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => settings(`/settings/projects/${name}`)}>Project settings…</button>
+          <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => navigate(`/projects/${name}/agents`)}>Agents…</button>
           <button type="button" role="menuitem" className="menu-item" data-action="setup" aria-label={`Setup: ${setup.label}`} aria-haspopup="dialog" disabled={pending} onClick={() => { close(true); setup.open(); }}>
             Setup…<span className="menu-item-meta">{setup.label}</span>
           </button>

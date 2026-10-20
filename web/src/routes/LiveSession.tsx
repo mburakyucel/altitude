@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { StatusMark } from "../components/StatusMark";
 import { Prose, ProseAt } from "../components/Prose";
 import { ApiError, fetchTranscriptRecord, useTranscript } from "../data/api";
-import type { TaskView, TranscriptEvent } from "../data/api";
+import type { TaskView, TranscriptEvent, TranscriptSource } from "../data/api";
 import { SteeringControls, SteeringNotice } from "../components/TaskSteering";
 import { Stamp } from "../components/Stamp";
 import { CueLine, activityCue, duration, elapsed, useNow } from "../components/TaskActivity";
@@ -199,7 +199,7 @@ function Conversation({ events, engineLabel, running, background = [] }: {
 
 interface RecordScope {
   project: string;
-  slug: string;
+  source: TranscriptSource;
   engine: string;
   sessionId: string;
   attempt: number;
@@ -223,7 +223,7 @@ function RawRecord({ event, scope, active }: { event: TranscriptEvent; scope: Re
     setPending(true);
     setError(false);
     try {
-      const result = await fetchTranscriptRecord(scope.project, scope.slug, scope.engine, scope.sessionId, scope.attempt, event.id, offset, controller.signal);
+      const result = await fetchTranscriptRecord(scope.project, scope.source, scope.engine, scope.sessionId, scope.attempt, event.id, offset, controller.signal);
       if (controller.signal.aborted) return;
       setText((previous) => previous + result.text);
       setOffset(result.next_offset);
@@ -395,6 +395,8 @@ export interface LiveSessionProps {
   active?: boolean;
   /** Replaces the panel title beside the activity pulse, as the desktop Live session | Terminal switch does. */
   heading?: ReactNode;
+  /** A project agent's run: its session is read from under its agent, and `task` carries only its session. */
+  run?: { agent: string; run: number };
 }
 
 /**
@@ -405,11 +407,11 @@ export interface LiveSessionProps {
  * unavailable. The server derives the files from the task record; the page sends no paths.
  */
 export default function LiveSession(props: LiveSessionProps) {
-  const scope = [props.project, props.task.slug, props.task.l2_engine, props.task.session_id, props.task.attempt].join(":");
+  const scope = [props.project, props.run ? `${props.run.agent}/${props.run.run}` : props.task.slug, props.task.l2_engine, props.task.session_id, props.task.attempt].join(":");
   return <ScopedLiveSession key={scope} {...props} />;
 }
 
-function ScopedLiveSession({ project, task, engineLabel, waiting, steering, readOnly, active = true, heading }: LiveSessionProps) {
+function ScopedLiveSession({ project, task, engineLabel, waiting, steering, readOnly, active = true, heading, run }: LiveSessionProps) {
   const [raw, setRaw] = useState(false);
   const [paused, setPaused] = useState(false);
   const engine = str(task["l2_engine"]);
@@ -418,9 +420,10 @@ function ScopedLiveSession({ project, task, engineLabel, waiting, steering, read
   const running = state === "running";
   const hasSession = !waiting && Boolean(sessionId);
   const attempt = typeof task.attempt === "number" ? task.attempt : 0;
-  const transcript = useTranscript(hasSession ? project : "", task.slug, engine, sessionId, raw, running, active, attempt, !paused);
+  const source = run ?? task.slug;
+  const transcript = useTranscript(hasSession ? project : "", source, engine, sessionId, raw, running, active, attempt, !paused);
   const events = transcript.data?.events ?? [];
-  const scope = { project, slug: task.slug, engine, sessionId, attempt };
+  const scope = { project, source, engine, sessionId, attempt };
   const background = task.activity?.background ?? [];
   const loadOlder = () => {
     if (transcript.data?.has_earlier && !transcript.historyPending && !transcript.historyError && !transcript.reconnecting) void transcript.loadOlder();

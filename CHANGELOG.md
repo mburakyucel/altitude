@@ -13,6 +13,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Repairs show in Work: an Altitude repairs section under your current tasks holds the repair running and those
   that ended in the last three days, and a repair's page reads like a task's, its steps in one conversation.
   Settings → About keeps Repair… and links All repairs; Monitor no longer lists a repair.
+- Projects have agents: briefs Altitude runs on a schedule or when you press Run now, each in a fresh copy
+  of the project, telling you in chat what they found. Agents… in the project menu lists them, with three
+  built-in agents to turn on (a dependency check, a build health check and a weekly summary of what
+  landed), New agent to write your own and a weekly time budget. A run only reads and reports: it cannot
+  push, open pull requests, file issues or message anyone, and it stops at its limit of 10, 20 or 60
+  minutes. Ask L3 for an agent or a change and it drafts one for you to save.
 
 ## v0.11.0 — 2026-10-20
 
