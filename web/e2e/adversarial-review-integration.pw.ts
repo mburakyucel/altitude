@@ -43,8 +43,8 @@ test("proposal review preserves its approval question and captured version along
   await expect(card.getByText(initial.proposal.text, { exact: true })).toBeVisible();
   await walk.state("02-proposal-result-before-approval", { visible: [card.getByText(verdict), card.getByText("Owner engine · same engine as the task"), page.getByText("Use this pagination approach?", { exact: true })], hidden: [] });
   await fixture("revise-proposal");
-  // The revised message changes the reviewed context, not committed content: L2 reassesses it.
-  expect((await status()).review.history.at(-1)).toMatchObject({ coverage: "earlier", earlier: false });
+  // The owner's revised message carries no authority, so the review stays current until the operator acts on it.
+  expect((await status()).review.history.at(-1)).toMatchObject({ coverage: "current", earlier: false });
   await fixture("assess");
   expect((await status()).questions).toEqual(initial.questions);
   await walk.state("03-revised-proposal-assessed", { visible: [card.getByText("1 finding, resolved"), card.getByText(initial.proposal.text, { exact: true })], hidden: [card.getByText(/earlier version/)] });
