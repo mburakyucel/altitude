@@ -1181,10 +1181,25 @@ class TestReviews(AltitudeCase):
         with self.assertRaises(reviews.AssessmentRequired) as stale:
             reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual({row["id"] for row in stale.exception.stale_reviews}, {review["id"] for review in reviewed})
-        self.assertIn("your own messages and questions leave an assessment current", str(stale.exception))
+        self.assertIn("the questions you ask or withdraw leave an assessment current", str(stale.exception))
         for review in reviewed:
             self.assess(review)
             T.message(self.project, self.slug, "l2", f"Reassessed {review['id']} after the follow-up note.", expected_attempt=1)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        # An answer the owner records is the operator's decision, so recording it after assessing asks once more.
+        S.save_task(self.project, {**S.load_task(self.project, self.slug), "state": "running"})
+        question = T.block(self.project, self.slug, "Keep the follow-up out of scope?", actor="l2", expected_attempt=1)["questions"][-1]
+        T.accept_question(self.project, self.slug, question["id"], question["revision"], text="Yes, keep it out.")
+        answer = [row for row in T.task_messages(self.project, self.slug) if row["role"] == T.OPERATOR_MESSAGE_ROLE][-1]
+        for review in reviewed:
+            self.assess(review)
+        T.resolve_question(self.project, self.slug, question["id"], None, answer["id"],
+                           disposition="answered", reason="The operator keeps the follow-up out of scope.", expected_attempt=1)
+        with self.assertRaises(reviews.AssessmentRequired) as stale:
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertEqual({row["id"] for row in stale.exception.stale_reviews}, {review["id"] for review in reviewed})
+        for review in reviewed:
+            self.assess(review)
         reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual(self.engine.call_count, 2)
 

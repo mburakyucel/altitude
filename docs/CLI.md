@@ -1718,7 +1718,7 @@ head (and base, in the turn) and current conversation, then run
 The notice lists all stale review IDs and subjects together, with the assessment timestamp and
 assessed/current values of each changed head, base, tree, proposal or context hash. Context is the
 request, brief, operator and L3 messages and the decisions they carry; inspect the current task
-conversation when its hash changes. The owner's own messages, questions and withdrawals carry no
+conversation when its hash changes. The owner's own messages and the questions it asks or withdraws carry no
 authority and leave an assessment current, so explanations can come before or after it. Record the
 resolution of an answered question before assessing. Then collect the original landing result. A changes assessment does not retire a proposal assessment or its
 findings. If code needs edits or another review, cancel landing and prepare a new candidate. Missing or

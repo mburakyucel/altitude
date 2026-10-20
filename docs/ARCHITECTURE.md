@@ -989,8 +989,9 @@ The [failure-evidence contract](SESSION_LIFECYCLE.md#adversarial-review) describ
 Review records retain original findings and separate owner dispositions for each subject. Exact
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
 candidate and evidence for every finding; code, base, proposal, request, brief, operator or L3 message
-and decision changes require reassessment. The owner's own messages and questions carry no authority,
-so explaining an assessment never makes it stale.
+and decision changes require reassessment. The owner's own messages and the questions it asks or
+withdraws carry no authority, so explaining an assessment never makes it stale; an answer it records
+is the operator's or L3's decision and does.
 A finding the owner leaves `open` stays visibly unresolved, blocks merge and prevents replacing its
 review; only evidence-backed fixed/dismissed outcomes clear an assessment. An additional review of the
 same subject replaces nothing, so earlier reviews stay in the merge gate with their original authority.

@@ -37,8 +37,9 @@ class AssessmentRequired(T.TransitionError):
                            f"at {review['assessed_at']}: {changes}. "
                            f"Run alt task review assess --review-id {review['id']} --file <assessment.json>.")
         super().__init__("\n".join(details) + f"\nInspect the candidate and alt task messages {slug}, then assess each one. "
-                         "Task context is the request, brief, operator and L3 messages and their decisions; "
-                         "your own messages and questions leave an assessment current, so explain before or after it.")
+                         "Task context is the request, brief, operator and L3 messages and their decisions. "
+                         "Your own messages and the questions you ask or withdraw leave an assessment current, so explain "
+                         "before or after it; record an answer's resolution before assessing.")
 
 
 def _load(project, slug):
@@ -193,8 +194,9 @@ def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
             raise T.TransitionError("Name an original L2 proposal message with --proposal-message before review.")
         context["proposal"] = proposal
         identity.update(proposal_id=proposal_id, proposal_hash=_hash(proposal))
-    # Freshness follows authority. The owner's own messages and question records carry none, so explaining an
-    # assessment never makes it stale; a landing once looped through three reassessments as each explanation did.
+    # Freshness follows authority. The owner's own messages and the questions it asks or withdraws carry none (an answer
+    # it records is the operator's or L3's), so explaining an assessment never makes it stale; a landing once looped
+    # through three reassessments as each explanation did.
     identity["context_hash"] = _hash({**context, "messages": [r for r in context["messages"] if r["role"] != "l2"],
                                       "decisions": [d for d in context["decisions"] if d.get("by") != "l2"]})
     return identity, context
