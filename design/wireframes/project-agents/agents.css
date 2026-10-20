@@ -151,3 +151,4 @@ a.agentsrow{display:flex;align-items:center;justify-content:space-between;color:
 .scard .bare{border-top:0;margin-top:0;padding-top:0}
 .m .scard .acts .btn{height:44px;padding:0 16px;font-size:15px}
 .nsec{margin:22px 0 10px;color:var(--text-muted);font-size:13px;font-weight:600;letter-spacing:.02em}
+.fold .i.open{transform:rotate(90deg)}

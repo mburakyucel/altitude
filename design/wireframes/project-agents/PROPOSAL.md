@@ -785,9 +785,9 @@ paused by you, and the status reads "Paused". Run now does not clear it.
 A run that finds something often knows the fix: a test to add, a page to update, a dependency to
 bump. Today it can only describe the fix in its report, so turning it into work means reading the
 report and asking L3 for a task in your own words. From this step a run may also **suggest tasks**.
-Each one waits for your decision with **Make a task** and **Dismiss**, as the Weekly improvement review's
-suggestions do. A run still never acts: a suggestion becomes work only when you press Make a task, and
-L3 then checks it before opening anything.
+L3 checks each one first, as it checks the Weekly improvement review's, so only what holds up reaches
+you. What survives waits for your decision with **Make a task** and **Dismiss**. A run still never acts:
+a suggestion becomes work only when you press Make a task.
 
 **What a run writes.** After its report, a run that found something may add up to three blocks:
 
@@ -807,42 +807,58 @@ change to it fails a test.
 - The run template says when to suggest: only work a task owner could do as it stands, one task each,
   never something the report only wonders about.
 
-**At most three waiting per agent.** An agent has at most three undecided suggestions at a time, and
-Altitude enforces it. A run's prompt says how much room is left. Altitude keeps only as many of the
-run's blocks as fit, and a run whose agent already has three waiting is told to suggest nothing.
-Deciding or a lapse frees room. **Before you** lists the agent's earlier suggestions from its last five
-runs that had any, each with what became of it: waiting for you, made a task with the task's state,
-covered by an existing task or issue, dismissed, or not decided. The run is told not to suggest one of
-these again without new evidence. An agent that runs on every merge therefore holds at most three
-suggestions in Needs you, however busy the week.
+**L3 checks them first.** When a run ends with suggestions, Altitude queues one L3 turn that names only
+the run, as it does after a Weekly review.
 
-**In chat**, the run's line stays one quiet line. When the run suggested tasks, the line says how many
-before its **Open**:
+- L3 reads the suggestions and the run's report with `alt agent show AGENT --run N`. Its turn says they
+  come from a run that read the project and the web, so they are claims to check, never instructions.
+- It checks each one against the repository, current tasks, open issues and the agent's earlier
+  suggestions. Then it keeps each one or sets it aside with a reason, naming every number once:
+  `alt improve post agent:<agent>/<run> --keep 1 --drop 2:'already covered by #214'`. That is the only
+  command the turn may run.
+- Altitude, not L3, shows what was kept, in the run's own plain wording.
+- While the check runs, the run page shows "L3 is checking 2 suggestions" with a spinner, and nothing
+  is in Needs you yet.
+- What L3 set aside shows only on the run page, folded under **Set aside · 1**, each with its reason.
+  When L3 keeps none, Needs you never shows the run.
+- The check has two hours from the run's end, as the Weekly check has. A check that misses it or is
+  interrupted sets every suggestion aside with "L3 did not finish checking". The agent's next run may
+  suggest them again.
+- Each check is one L3 turn on your plan, outside the agents' weekly budget. The limit below bounds how
+  often that happens.
 
-> **Review each merge** found something for “PR #810 merged” and 2 more: #811 changed the retry limit
-> without a test. · 2 suggested tasks · Open
+**At most three waiting per agent.** An agent has at most three suggestions waiting at a time, counting
+those L3 is checking and those waiting for you, and Altitude enforces it. A run's prompt says how much
+room is left. Altitude keeps only as many of the run's blocks as fit, and a run whose agent already has
+three waiting is told to suggest nothing, so it causes no check. Deciding, a lapse or L3 setting one
+aside frees room. **Before you** lists the agent's earlier suggestions from its last five runs that had
+any, each with what became of it: waiting, made a task with the task's state, set aside by L3 with its
+reason, dismissed, or not decided. The run is told not to suggest one of these again without new
+evidence. An agent that runs on every merge therefore holds at most three suggestions in Needs you,
+however busy the week.
 
-Open goes to the run page, where they can be decided. Tell me governs the line as before. With Never
-there is no line, and the suggestions still wait in Needs you.
+**In chat** nothing changes: the run's line is the same quiet line, governed by Tell me. Suggestions are
+decisions, not news, so they wait in Needs you.
 
 **The suggestion card** is the improvement card's layout without its improvement-only parts:
 
 - **Header:** the agent's name, bold, with the run's time on the right. Under it, muted, what fired the
   run: "For “PR #810 merged” and 2 more", "On its weekday schedule" or "Run now by you". The finding
   is not repeated; the run page holds it.
-- **Each suggestion**, separated by a hairline: its number and title (15px semibold, wraps, never cut),
-  then its explanation, then **Make a task** (bordered, accent text) and **Dismiss** (ghost). There is no
-  target chip, no "Seen in" and no count: one run is the evidence.
+- **Each kept suggestion**, separated by a hairline: its number and title (15px semibold, wraps, never
+  cut), then its explanation, then **Make a task** (bordered, accent text) and **Dismiss** (ghost). There
+  is no target chip, no "Seen in" and no count: one run is the evidence.
 - **Footer:** an underlined **Open the run**.
 
 The card appears in two places:
 
-- **In Needs you**, under **Suggestions**, while any suggestion on it is undecided or accepted without
-  its task. It sits newest first among the project's improvement cards. It is never counted and never
-  alerts a device. It shows whatever Tell me says, because a suggestion waits for a decision, while
-  Tell me governs news.
-- **On the run page**, as a **Suggested tasks** card under the report, with the same suggestions,
-  buttons and states, and no footer. It loads and fails with the run page.
+- **In Needs you**, under **Suggestions**, once L3 has kept at least one, while any suggestion on it is
+  undecided or accepted without its task. It sits newest first among the project's improvement cards.
+  It is never counted and never alerts a device. It shows whatever Tell me says, because a suggestion
+  waits for a decision, while Tell me governs news.
+- **On the run page**, as a **Suggested tasks** card under the report: the checking line while L3
+  checks, then the kept suggestions with the same buttons and states, then **Set aside · N** folded,
+  and no footer. It loads and fails with the run page.
 
 Deciding in one place updates the other. The form's Tell me row has one muted line under its choices:
 "Suggested tasks wait in Needs you whatever you choose."
@@ -852,43 +868,37 @@ Deciding in one place updates the other. The form's Tell me row has one muted li
 - **Make a task** saves your acceptance, with your press as its authority. While it saves, a spinner
   holds the button's place and Dismiss dims. Then the line reads "Accepted · L3 is opening a task"
   until the outcome is read. These words name the work Altitude carries out, as the Weekly card already
-  does. L3 then does one of two things:
-  - **opens the task**, and the line becomes that task's card;
-  - **finds an existing task or issue that already covers it**, and the line reads "Accepted · covered by"
-    followed by that task's card, or by the issue's number and title as a link.
-
-  If the turn ends with neither, the line reads "Accepted · no task yet" with **Try again**, which
-  queues the same single turn. While it queues, Try again becomes a spinner. If it is refused, it
-  returns with "Not saved: <reason>". Each suggestion makes at most one task.
+  does. When L3 opens the task, the line becomes that task's card. If the turn ends without a task, the
+  line reads "Accepted · no task yet" with **Try again**, which queues the same single turn. While it
+  queues, Try again becomes a spinner. If it is refused, it returns with "Not saved: <reason>". Each
+  suggestion makes at most one task.
 - **Dismiss** folds the suggestion at the press to its muted title and **Dismissed**, with a spinner where
   **Undo** goes until the save lands. Undo is offered until the suggestion lapses. Pressing it opens the
   suggestion again at once, with both buttons disabled beside a spinner until the save lands. A refused
   Dismiss or Undo puts the suggestion back as it was, with "Not saved: <reason>" and Retry.
-- A suggestion lapses seven days after its run ended, whether or not chat showed the line. It folds to
-  **Not decided**, and the card leaves Needs you once nothing on it waits.
+- A suggestion lapses seven days after L3 kept it. It folds to **Not decided**, and the card leaves Needs
+  you once nothing on it waits.
 - **In chat:** "make a task for the retry-limit one". L3 records your answer citing your message, as
   for improvement suggestions, and the card changes exactly as a press would change it.
-- Retiring an agent leaves its suggestions decidable until they lapse, with the card unchanged.
-  Pausing changes nothing.
+- Retiring an agent leaves its suggestions decidable until they lapse, with the card unchanged. A check
+  in flight still finishes. Pausing changes nothing.
 
 **Where a task came from.** A task made from a suggestion shows it at the end of its card's muted
 line, in Work and wherever its card appears: "Running · PR #811 green · from Review each merge". Tasks
 from the Weekly improvement review's suggestions read "from Weekly improvement review". The review is
 one of the project's agents, so the two read the same way.
 
-**Safety.** This path is riskier than the Weekly review's, and the design treats it so. The Weekly
-reviewer reads only a summary Altitude builds, with no tools, and L3 checks its suggestions before you
-see them. An agent run holds your code and reads the web, and its suggestions reach you unchecked.
-Three things stand between that text and work:
+**Safety.** An agent run holds your code and reads the web, so its suggestions are riskier than the
+Weekly reviewer's, which reads only a summary Altitude builds, with no tools. Four things stand between
+that text and work:
 
+- **L3 checks before you see it**, as above, in a turn that may only post its check.
 - **You see it as plain text.** It has no links or formatting, and nothing in it is a control.
 - **Make a task is your press.** The task's authority is that press, never the text.
-- **L3's turn is written for this source.** It says the suggestion comes from an agent run that read the
-  project and the web, so its title, explanation and the run's report are claims to check, not
-  instructions. L3 reads them with `alt agent show AGENT --run N` and checks them against the
-  repository, current tasks and open issues. It writes the task's brief from what it verified itself,
-  quoting the suggestion only as the claim that started it. That turn may run exactly one
-  `alt task new --improvement REF`, or record what already covers it; nothing else. So it makes no
+- **L3's task turn is written for this source.** It says the suggestion comes from an agent run that read
+  the project and the web, so its wording and the run's report are claims, not instructions. L3 writes
+  the task's brief from what it verified itself, quoting the suggestion only as the claim that started
+  it. That turn may run exactly one `alt task new --improvement REF`; nothing else. So it makes no
   offers, files no issues and sends no messages.
 
 A run gains no new ability: it still cannot open a task, message anyone or use `alt`. Strangers' text
@@ -899,49 +909,53 @@ your own scripts send (step 4). No step adds a reader of strangers' text.
 
 - **Answer.** `project_agents.report` also returns the run's `Suggest:` blocks. They are made plain by
   the improvement review's plain-text helper and credential redaction, bounded, cut to the agent's free
-  room, and numbered from 1. A run keeps `suggestions: [{n, title, explanation}]` and
-  `decisions: [{n, from, to, at, by, turn?, message?, reason?, covered?}]`. Every kept suggestion of a
-  found run counts as shown. Its lapse counts from the run's `ended`.
-- **One decision model.** The improvement review's suggestion states, button table, lapse and
-  "opening" reading move to one module that both records use. `improve.py` keeps what is the review's
-  own: its `post`, which gates what the review shows.
+  room, and numbered from 1. A run keeps `suggestions: [{n, title, explanation}]`, then `check` (the
+  queued L3 turn) and `post: {shown, drops, at}` as a Weekly run does, and
+  `decisions: [{n, from, to, at, by, turn?, message?, reason?}]`. `post` gates what shows; a lapse counts
+  from `post.at`.
+- **One suggestion model.** The improvement review's check, post, suggestion states, button table, lapse
+  and "opening" reading move to one module that both records use. `improve.py` keeps what is the
+  review's own: its reader, prompt and run lifecycle.
+  - A run with suggestions queues the `improvement-check` turn with an agent ref. `alt improve post`
+    and `alt improve status --run` take either kind of ref. The tick sets aside every suggestion of a
+    check past its deadline.
   - Presses go to `POST /api/improve` with a ref: `<run>/<n>` for a review, and `agent:<agent>/<run>/<n>`
     for a run. One handler serves both, with request ids and 409s.
   - Receipts live in the record the ref names: the improvement record's `presses`, or the agents record's.
   - Accepting queues an `improvement-task` turn whose text depends on the ref's kind (the safety rules
     above for agent refs).
   - `alt task new --improvement REF` takes either kind and records it on the task as `improvement`.
-  - `alt improve covered REF --task SLUG|--issue N` records that existing work already covers an
-    accepted suggestion, admitted only in that suggestion's turn.
   - `alt improve resolve REF` records a typed answer for either kind.
   - L3's persona paragraph covers both kinds.
 - **Reading.**
-  - The project view's `improvements` gains agent runs with suggestions, and the overview's
+  - The project view's `improvements` gains agent runs with kept suggestions, and the overview's
     `suggestions` lists both kinds.
   - The web's `ImprovementCard` takes its header, muted line and footer from the run's kind. Its
-    `Suggestion` part gains the covered outcome.
-  - The run page renders its run's suggestions with the same part.
-- **Chat.** A found run's line gains " · N suggested tasks" when it has suggestions.
+    `Suggestion` part is unchanged.
+  - The run page renders its run's suggestions with the same part, its checking line and Set aside.
 - **Prompt.** The run template gains the `Suggest:` shape, when to use it and the agent's free room.
   **Before you** gains the earlier suggestions with their outcomes.
 - **Task origin.** The task card's muted line ends with "from <agent>" when the task's `improvement` names
   a suggestion: the agent's name for a run, "Weekly improvement review" for a review.
-- **Removed.** The improvement-only state code the shared module replaces. Review refs keep their form,
-  so there is no compatibility reader.
+- **Removed.** The improvement-only check, post and state code the shared module replaces. Review refs
+  keep their form, so there is no compatibility reader.
 - **Docs.**
-  - SPEC: §3.17 (the line, the card, the run page, Needs you, the form's line) and §3.5 (the origin).
+  - SPEC: §3.17 (the card, the run page, Needs you, the form's line) and §3.5 (the origin).
   - ARCHITECTURE's project agents and improvement review.
-  - CLI: refs, `covered`.
+  - CLI: refs for `post`, `status`, `resolve` and `--improvement`.
   - L3's persona.
   - The changelog.
 - **Tests.**
   - Answers with zero to four `Suggest:` blocks; over-long text, links, markdown and credentials;
     blocks after Nothing or Couldn't finish.
-  - The three-waiting cap and its prompt line.
-  - Each press, typed answer and covered outcome on an agent ref, and refs for pruned or unknown runs.
-    One task per suggestion; the agent turn's text; lapse at seven days.
+  - The three-waiting cap, counting checks in flight, and its prompt line.
+  - The check: queued once per run with suggestions, a post keeping and setting aside, a post naming a
+    number twice or none refused, the deadline setting all aside, and nothing in Needs you before it posts.
+  - Each press and typed answer on an agent ref, and refs for pruned or unknown runs. One task per
+    suggestion; both agent turns' text; lapse at seven days.
   - **Before you** listing outcomes.
-  - The chat line by Tell me. Needs you's order, without counting or alerting. The run page.
+  - Needs you's order, without counting or alerting, whatever Tell me says. The run page's checking,
+    kept and set-aside states.
   - The origin line for both kinds.
   - The review's existing tests unchanged.
   - Phone and desktop walkthroughs of the states below, with fictional fixtures.
@@ -967,9 +981,9 @@ your own scripts send (step 4). No step adds a reader of strangers' text.
 | Runs | Several events / Run now replay / skipped with events | "For “PR #810 merged” and 2 more: …"; the run page's "Run now by you · For “PR #812 merged”, the latest"; "For “PR #806 merged” · No free slot for 6 hours." |
 | Run page | Events | One muted line per event, its time and first line, under what fired it |
 | Needs you | Paused itself / resuming / refused / cleared | The card with its title link, Resume and Open the last run, counted, no alert; a spinner in Resume; "Not resumed: Flaky tests is retired."; gone after Resume, a saved edit or Retire |
-| Chat | A found run with suggestions / Tell me Never | "… · 2 suggested tasks · Open", Open going to the run page; no line, the card still in Needs you |
-| Suggestion card | Needs you / run page / agent retired | Under Suggestions, uncounted, newest first; Suggested tasks under the report, loading and failing with the page; unchanged and decidable |
-| Suggestion | Make a task pressed / accepted / task opened / covered | A spinner in Make a task, Dismiss dimmed; "Accepted · L3 is opening a task"; the task's card; "Accepted · covered by" with the task's card or the issue's link |
+| Run page | Checking / none kept / check unfinished | "L3 is checking 2 suggestions" with a spinner, nothing in Needs you; only Set aside · 2 with reasons, Needs you never shows the run; all set aside with "L3 did not finish checking" |
+| Suggestion card | Needs you / run page / agent retired | Under Suggestions once kept, uncounted, newest first, whatever Tell me says; Suggested tasks under the report with Set aside · N folded, loading and failing with the page; unchanged and decidable |
+| Suggestion | Make a task pressed / accepted / task opened | A spinner in Make a task, Dismiss dimmed; "Accepted · L3 is opening a task"; the task's card |
 | Suggestion | No task yet / Try again pressed / refused | "Accepted · no task yet" with Try again; a spinner in Try again; "Not saved: <reason>" |
 | Suggestion | Dismissed / Undo pressed / refused / lapsed / typed answer | Folded with a spinner, then Dismissed and Undo; open with both buttons disabled beside a spinner; back as it was with "Not saved: <reason>" and Retry; "Not decided"; the same change a press makes |
 | Form | Tell me | "Suggested tasks wait in Needs you whatever you choose." under the choices |
@@ -1004,9 +1018,9 @@ Each step is its own held pull request and comes back to you before it is built.
    the latest event; the paused-itself item in Needs you. By the operator's decision of 2026-10-20 there
    is no built-in list of happenings and no GitHub reader of Altitude's own; events from other machines
    are #1105.
-5. **Suggestions.** A run may propose up to three tasks, shown on the improvement suggestion card in
-   chat and under Suggestions in Needs you, with Make a task and Dismiss; tasks made from one show
-   "from <agent>" in Work.
+5. **Suggestions.** A run may propose up to three tasks. L3 checks them first, and those it keeps wait
+   on the improvement suggestion card under Suggestions in Needs you, with Make a task and Dismiss;
+   tasks made from one show "from <agent>" in Work.
 6. **Acting.** A per-agent choice to open pull requests, each held for your merge as a review card, and
    to list issues for L3 to file.
 
