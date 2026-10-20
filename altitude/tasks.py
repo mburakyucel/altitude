@@ -968,17 +968,21 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         wake_blocked = wake_blocked and not (role == "l3" and task.get("fault"))
         if not wake_blocked:
             row["wake"] = False
-        groups = _groups(task)
         explicit_question = question_id is not None or revision is not None
-        if explicit_question and (group_id is not None or group_revision is not None):
+        explicit_group = group_id is not None or group_revision is not None
+        if explicit_question and explicit_group:
             raise TransitionError("message context names a question or a group, not both")
+        # A message naming neither discusses the current group only while one of its questions is still open.
+        groups = _groups(task)
+        current = groups[-1] if groups else None
+        if current and not any(q["status"] == "open" for q in _group_members(task, current)):
+            current = None
         if explicit_question:
             target = _question_target(task, question_id, revision)
             row.update(question_id=target["id"], question_revision=target["revision"], answers=[target["id"]],
                        question_refs=[{"id": target["id"], "revision": target["revision"]}])
-        elif groups or group_id is not None or group_revision is not None:
-            group = (_group_target(task, group_id, group_revision)
-                     if group_id is not None or group_revision is not None else groups[-1])
+        elif explicit_group or current:
+            group = _group_target(task, group_id, group_revision) if explicit_group else current
             members = _group_members(task, group)
             row.update(group_id=group["id"], group_revision=group["revision"],
                        question_refs=[{"id": q["id"], "revision": q["revision"]} for q in members])
