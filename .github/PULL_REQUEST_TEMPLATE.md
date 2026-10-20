@@ -22,7 +22,7 @@ at phone and desktop sizes. Link the review and its findings' dispositions.
 Review:
 
 <!--
-List each check only the other installation can run (macOS, or Linux for a change made on a Mac):
-what to run, the evidence that counts and what stays unproven until then. Otherwise "none".
+List each check only the other installation (macOS or Linux) can run: what to run, the evidence
+that counts and what stays unproven until then. Otherwise "none".
 -->
-Mac verification: none.
+Other-installation verification: none.
