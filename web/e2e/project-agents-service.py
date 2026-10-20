@@ -102,17 +102,19 @@ def main():
         pass
     l3.save_info(PROJECT, {"session_id": "fictional-harbor", "engine_last": config.ENGINES[0], "turns": 1})
 
-    week = NOW - timedelta(days=6)
+    # Past runs end before this week's Monday, so on any weekday the budget counts only the run going now.
+    monday = A.week_start(NOW)
+    week = monday - timedelta(days=6)
     dependency = A.change(PROJECT, "builtin", {"key": "dependency-check"}, by="operator", source="fixture",
                           now=week)["agent"]
     notes = make("Release notes check", LONG, tell="every", at=week)
-    run(notes, NOW - timedelta(days=4, hours=2), 6, "done", answer=FOUND)
-    run(notes, NOW - timedelta(days=3, hours=2), 4, "done", answer="Nothing: Every merged change has a note.")
+    run(notes, monday - timedelta(days=4, hours=2), 6, "done", answer=FOUND)
+    run(notes, monday - timedelta(days=3, hours=2), 4, "done", answer="Nothing: Every merged change has a note.")
     route.reserve = lambda _engine: "Its engine's weekly allowance is inside Altitude's reserve."
-    A.change(PROJECT, "run", {"agent": notes}, by="operator", source="fixture", now=NOW - timedelta(days=2))
-    A.start_next(PROJECT, now=NOW - timedelta(days=2))
+    A.change(PROJECT, "run", {"agent": notes}, by="operator", source="fixture", now=monday - timedelta(days=2))
+    A.start_next(PROJECT, now=monday - timedelta(days=2))
     route.reserve = lambda _engine: None
-    run(notes, NOW - timedelta(days=1, hours=2), 3, "failed", detail="The checkout has no CHANGELOG.md")
+    run(notes, monday - timedelta(days=1, hours=2), 3, "failed", detail="The checkout has no CHANGELOG.md")
     paused = make("Test timing", "Say which test files got slower since last week.", at=week)
     A.change(PROJECT, "pause", {"agent": paused}, by="operator", source="fixture", now=week)
     retired = make("Old lint sweep", "List lint warnings added this week.", at=week - timedelta(days=20))
