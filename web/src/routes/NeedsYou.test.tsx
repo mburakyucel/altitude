@@ -158,8 +158,14 @@ describe("an agent that paused itself", () => {
     expect(within(card).queryByRole("link", { name: "Open L2 chat" })).toBeNull();
   });
 
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => { resolve = done; });
+    return { promise, resolve };
+  }
+
   it("Resume spins until the agent reads as on, and the card leaves; a refusal returns the button with why", async () => {
-    let answer = Promise.withResolvers<Response>();
+    let answer = deferred<Response>();
     const presses = serve(() => answer.promise);
     const { user } = renderApp({ route: "/" });
     const card = await screen.findByRole("article", { name: "Flaky tests" });
@@ -169,7 +175,7 @@ describe("an agent that paused itself", () => {
     answer.resolve(jsonResponse({ error: "Flaky tests is retired." }, 409));
     expect(await within(card).findByText("Not resumed: Flaky tests is retired.")).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Resume" })).toBeEnabled();
-    answer = Promise.withResolvers<Response>();
+    answer = deferred<Response>();
     await user.click(within(card).getByRole("button", { name: "Resume" }));
     answer.resolve(jsonResponse({ ok: true }));
     await waitFor(() => expect(screen.queryByRole("article", { name: "Flaky tests" })).toBeNull());
