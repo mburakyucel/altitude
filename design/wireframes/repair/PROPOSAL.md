@@ -314,10 +314,11 @@ already reads (`GET /api/repairs`, whose status says when a repair waits for you
 not ended or ended less than 72 hours ago, with no cap, since one repair runs at a time. Every change
 Altitude reports refreshes the listing, so a finished row leaves at the first refresh past its 72
 hours. A record a terminal repair left unended reads "Checking the result" until the service's check
-settles it at its next tick. The section is absent while its read loads, so the fold below it moves
-down once, and when it has no row; with no current task, Work's empty line comes first. A failed
-first read shows "Could not read repairs. Retry" in its place, and a failed refresh keeps the rows
-it has.
+settles it at its next tick. The section appears only with a row to show: it is absent when there
+is no repair to show, while its read loads (so the fold below it moves down once) and when the read
+fails, since an empty or failing section would only puzzle someone with no repair; a failed refresh
+keeps the rows it has, and Needs you and the failed-update notice still carry anything urgent. With
+no current task, Work's empty line comes first.
 
 **Repair page**, a task's page: on desktop the header row has the **‹ Work** crumb, back to the Work it
 came from or the selected project's, and **‹ Settings** when no project exists, the state dot and
