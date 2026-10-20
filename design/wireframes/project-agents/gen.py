@@ -235,10 +235,42 @@ WEEKLY_RUNS = [
 ]
 
 
+def weekly_status(state="few"):
+    """The Weekly review's status card: its line, Run now's line or reason under it, and its buttons."""
+    off = '<span class="btn" aria-disabled="true" style="opacity:.45">Run now</span>'
+    run_now, pause, resume = '<span class="btn">Run now</span>', '<span class="btn">Pause</span>', '<span class="btn">Resume</span>'
+    reads = "Reads the 6 tasks finished since Oct 19."
+    rows = {
+        "few": ("Next: Monday, Oct 26, if 2 more tasks finish", off + pause, "Run now needs 5 finished tasks since Oct 19; 3 so far."),
+        "ready": ("Next: Monday, Oct 26", run_now + pause, reads),
+        "starting": ("Next: Monday, Oct 26", '<span class="btn" style="min-width:86px" aria-label="Run now, starting"><span class="spin"></span>Starting…</span>'
+                     '<span class="btn" aria-disabled="true">Pause</span>', reads),
+        "reading": ('<span class="spin"></span>Reading 6 tasks', '<span class="btn">Stop</span>' + pause, ""),
+        "checking": ('<span class="spin"></span>L3 is checking 3', '<span class="btn">Stop</span>' + pause, ""),
+        "stopping": ('<span class="spin"></span>Reading 6 tasks', '<span class="btn" aria-disabled="true"><span class="spin"></span>Stopping…</span>' + pause, ""),
+        "paused": (PAUSE + "Paused", resume + run_now, reads),
+        "terms": (PAUSE + "Paused: its terms changed", resume + run_now, reads),
+        "reserve": ("Next: Monday, Oct 26", off + pause, "Claude’s allowance is inside Altitude’s reserve."),
+    }
+    line, btns, under = rows[state]
+    under = f'<p class="muted" style="margin:8px 0 0;font-size:13px">{under}</p>' if under else ""
+    return f'<div class="card"><div class="status"><span class="tx">{line}</span><span class="btns">{btns}</span></div>{under}</div>'
+
+
+WEEKLY_ALL = [
+    ("found", "Oct 19, 08:00", "3 suggestions", "4 min", "Owners re-ask settled questions; a review box hides its reason; landing waits are unclear."),
+    ("", "Oct 15, 14:02", "Nothing to suggest", "3 min", "6 tasks read."),
+    ("fail", "Oct 12, 08:00", "Couldn’t finish", "1 min", "It was interrupted by a restart."),
+    ("", "Oct 8, 10:40", "Stopped by you", "2 min", "It was reading 7 tasks."),
+    ("skip", "Oct 5, 08:00", "Skipped", "", "3 tasks had finished; it needs 5."),
+]
+SHEET_TEXT = ("Claude Sonnet 5.5 reads counts from this project’s tasks and short quotes from its chats (up to 300 characters each). "
+              "It runs on your Claude plan, capped at far less per run than an ordinary task; one ordinary L3 turn then checks what it finds. "
+              "With Weekly on, this happens Monday mornings once 5 tasks have finished. Nothing is published, and nothing becomes work until you choose it.")
+
+
 def weekly_page():
-    card = ('<div class="card"><div class="status"><span class="tx">Next: Monday, Oct 26, if 2 more tasks finish</span>'
-            '<span class="btns"><span class="btn" aria-disabled="true" style="opacity:.45">Run now</span><span class="btn">Pause</span></span></div>'
-            '<p class="muted" style="margin:8px 0 0;font-size:13px">Run now needs 5 finished tasks since Oct 19; 3 so far.</p></div>')
+    card = weekly_status()
     what = ('<h2 style="margin-top:24px">What it does</h2><div class="card">'
             '<p style="margin:0">Finds friction that keeps coming back in this project’s tasks and suggests fixes, as cards in chat you can make into tasks.</p>'
             '<p class="muted" style="margin:10px 0 0">Counts and short chat quotes · Claude Sonnet 5.5 on your plan · capped per run, plus one L3 check</p>'
@@ -519,11 +551,31 @@ CELLS = [
     ("38 · Turn on refused", "the button returns with the reason", builtin(state="refused")),
     ("39 · Altitude’s own project", "the Weekly review is built in there (step 2); its Turn on opens its terms first",
      builtin(rows=[WEEKLY_ROW] + BUILTIN_ALL[:2])),
+    ("40 · Weekly: its terms", "Cancel has focus; Turn on agrees and turns it on; at 390 a bottom sheet",
+     dialog("Turn on the Weekly improvement review for altitude?", SHEET_TEXT,
+            f'<span class="btn"{FOCUS}>Cancel</span><span class="btn primary">Turn on</span>', static=True)),
+    ("41 · Weekly: yours", "first among your agents; its runs don’t count toward the budget",
+     '<div class="card alist">' + arow("Weekly improvement review", "Mondays at 08:00 · 3 suggestions 2 d ago")
+     + arow("Weekly improvement review", PULSE + "Mondays at 08:00 · Reading 6 tasks")
+     + arow("Weekly improvement review", PAUSE + "Mondays at 08:00 · Paused: its terms changed") + '</div>'),
+    ("42 · Weekly: ready, starting, reserve", "Run now’s line or its reason under the status",
+     weekly_status("ready") + '<div style="height:10px"></div>' + weekly_status("starting")
+     + '<div style="height:10px"></div>' + weekly_status("reserve")),
+    ("43 · Weekly: running, then Stop", "reading, then L3 checking; Stop holds until the end is read",
+     weekly_status("reading") + '<div style="height:10px"></div>' + weekly_status("checking")
+     + '<div style="height:10px"></div>' + weekly_status("stopping")),
+    ("44 · Weekly: paused", "by you, or by a change of its terms: Resume and Run now open the terms first",
+     weekly_status("paused") + '<div style="height:10px"></div>' + weekly_status("terms")),
+    ("45 · Weekly: every kind of run", "each opens its card or line in chat; a skip has none",
+     runs(rows=WEEKLY_ALL, more=False)),
+    ("46 · Weekly: no runs yet", "the totals line appears after the first ended run", runs(rows=[], more=False)),
+    ("47 · Weekly: terms changed, in chat", "a quiet line; Open goes to its page",
+     sysa("Weekly improvement review", "paused: its terms changed.")),
 ]
-board("States", 1200, 9860, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
+board("States", 1200, 11520, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Every state of the agents page, the agent page, the form, the dialogs and chat, as PROPOSAL.md specifies them.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in CELLS) + '</div>')
-board("PhoneStates", 1720, 6960, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
+board("PhoneStates", 1720, 8060, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: stacked choices, 44px targets, full-width cards.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in CELLS) + '</div>')
 print("written")
