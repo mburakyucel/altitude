@@ -132,7 +132,7 @@ def trow(title, meta, dot="dot", attention=""):
 REPAIR_ROWS = {
     "working": trow(TITLE, "Repair working · started 12 min ago"),
     "terminal": trow("Service didn’t start after login", "Repair working in a terminal · started 5 min ago"),
-    "waiting": trow(TITLE, "Repair waiting · started 7 min ago", "dot held", "Your turn · 1 question"),
+    "waiting": trow(TITLE, "Repair waiting · started 7 min ago", "dot held", "Your turn · the repair asks"),
     "checking": trow(TITLE, "Checking the result · ended just now"),
     "repaired": trow(TITLE, "✓ Repaired · ended yesterday", "dot idle"),
     "confirm": trow("The page doesn’t load on my phone", "Confirm yourself · ended 2d ago", "dot idle"),
@@ -142,15 +142,15 @@ REPAIR_ROWS = {
 
 
 def repairs_section(*rows):
-    return f'<div><div class="sh">Repairs <span>{len(rows)}</span></div>' + "".join(REPAIR_ROWS[row] for row in rows) + '</div>'
+    return f'<div><div class="sh">Altitude repairs <span>{len(rows)}</span></div>' + "".join(REPAIR_ROWS[row] for row in rows) + '</div>'
 
 
-def work_rows():
+def work_rows(repairs=""):
     return ('<div><div class="sh">Current <span>3</span></div>'
             + trow("Index rollout", "Running · Opus on Claude · started 40 min ago", "dot held", "Your turn · 2 questions")
             + trow("Keep pagination working", "L2 working · Opus on Claude · started 32 min ago")
             + trow("Add the beta stage", "Queued · waits for a free task slot", "dot q")
-            + f'</div><div class="fold">{CHEVR}Done this week · 2</div>')
+            + f'</div>{repairs}<div class="fold">{CHEVR}Done this week · 2</div>')
 
 
 board("PhoneWork", 390, 844,
@@ -158,7 +158,7 @@ board("PhoneWork", 390, 844,
       '<div class="subl" style="padding-left:4px;margin-top:-6px">L3 · Ready</div></div><span class="sp"></span><span class="ib">' + MORE + '</span></header>'
       '<div class="mbody top"><div class="wh"><h2>Work</h2><span>3 current · 2 done this week</span></div>'
       f'<span class="muted" style="display:block;font-size:11px;margin:0 0 4px">New tasks</span><span class="newtasks" style="margin:0 0 4px"><span><b>Auto</b> · Default</span>{CHEVD}</span>'
-      + work_rows() + repairs_section("working", "confirm", "terminal_bad") + '</div><div></div>' + tabbar("work", 2) + '</div>')
+      + work_rows(repairs_section("working", "confirm", "terminal_bad")) + '</div><div></div>' + tabbar("work", 2) + '</div>')
 
 
 RAIL = ('<aside class="rail"><div class="brand"><span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-10 4 6 2-3 4 7"/></svg></span>Altitude</div>'
@@ -182,7 +182,7 @@ board("DesktopWork", 1440, 900,
       f'<div class="convo"><div class="col">{PROJECT_CHAT}</div><div style="height:22px"></div>'
       + composer("Message L3 about atlas", "L3 · <b>Auto</b> · Default effort") + '<div style="height:20px"></div></div></main>'
       '<aside class="work"><div class="wh"><h2>Work</h2><span>3 current · 2 done this week</span></div>'
-      + work_rows() + repairs_section("waiting", "repaired") + '</aside></div>')
+      + work_rows(repairs_section("waiting", "repaired")) + '</aside></div>')
 
 
 # ---- the repair page, like a task ----
@@ -192,8 +192,8 @@ def tool(name, call, hint, bad=False, at=""):
             f'<span class="call">{call}</span><span class="n{" bad" if bad else ""}">{hint}{CHEVR if hint not in ("running · 1 min",) else ""}</span>{stamp}</div>')
 
 
-BRIEF = ('<details class="prompt rbrief"><summary><b>Brief</b>What you wrote, the rules, how this installation is laid out and '
-         'Altitude’s records · <span class="u">Show</span></summary></details>')
+BRIEF = ('<details class="prompt rbrief"><summary><span><b>Brief</b>What you wrote, the rules, how this installation is laid out and '
+         'Altitude’s records</span>' + CHEVR + '</summary></details>')
 STARTED = sysline("Started by you · full access for 2 hours", at="09:12")
 ASKED = '<div class="me">The update to 0.9.0 failed: the download failed its certificate check.</div>'
 LOOK = '<div class="l3"><p>The update’s log shows a certificate error from GitHub. Checking Python’s certificate store.</p></div>'
@@ -317,7 +317,7 @@ def phone_header(status="working", left="1 h 48 min left", action="Stop"):
     tone = ' style="color:var(--chip-claimed-text)"' if left and left.startswith("14") else ""
     act = {"Stop": '<span class="btn">Stop</span>', "": "", "Stopping": '<span class="btn" aria-disabled="true"><span class="spin"></span>Stopping…</span>',
            "Check status": '<span class="btn">Check status</span>'}[action]
-    sub = f'<span class="{dot}"></span>{label}' + (f'<span{tone}> · {left}</span>' if left else "")
+    sub = f'<span class="{dot}"></span>{label.lstrip("✓✕ ")}' + (f'<span{tone}> · {left}</span>' if left else "")
     return (f'<header class="mh rh"><a href="#" aria-label="Back" class="back">{CHEVL}</a>'
             f'<div class="rt"><div class="tt">{TITLE}</div><div class="tm">{sub}</div></div>{act}</header>')
 
@@ -356,7 +356,7 @@ def about(state="idle"):
             '<div class="arow"><span><b>Check for new versions</b></span><span class="sw on"><i></i></span></div>'
             '<div class="arow"><span><b>Automatic updates</b></span><span class="sw on"><i></i></span></div>'
             f'<div class="arow"><span><b>Repair</b><br><small class="muted">Something not working? A repair agent finds out why and fixes it, with full access while it works.</small></span>{act}</div>'
-            '</div>')
+            f'<a class="arow" href="#"><span><b>All repairs</b></span>{CHEVR}</a></div>')
 
 
 board("PhoneAbout", 390, 844,
@@ -397,7 +397,7 @@ NEEDS = ('<div class="nyh">Altitude</div><div class="dq"><div class="muted" styl
 NOTANSWERING = '<p class="cnotice">Altitude is not answering · the repair continues and this page catches up when it is back</p>'
 states = [
     ("1 · Work, no repairs", "the section is absent; nothing else in Work changes", work_box('<div class="wh"><h2>Work</h2><span>3 current · 2 done this week</span></div>' + work_rows())),
-    ("2 · Work, repair rows", "below Done this week; one row per repair, newest first; a finished one leaves 3 days after it ended",
+    ("2 · Work, repair rows", "between Current and Done this week, in every project's Work; newest first; a finished one leaves 3 days after it ended",
      work_box(repairs_section("working", "waiting", "checking", "terminal") + repairs_section("repaired", "confirm", "terminal_bad", "stopped"))),
     ("3 · Work, reads", "absent while loading; a failed first read says so; saved rows stay through a failed refresh",
      work_box(f'<div><div class="sh">Repairs</div><p class="rerr" style="margin:0 4px">Could not read repairs. <a href="#" {U}>Retry</a></p></div>')),
@@ -431,7 +431,7 @@ states = [
     ("23 · Ended without a report", "Repair again opens the sheet", report("ended") + dock("again")),
     ("24 · After the report", "no composer; Continue repair… opens the sheet", dock("continue")),
     ("25 · A terminal repair", "start and end, the report and Altitude's check; its steps stay in the terminal", report("terminal") + report("pass")),
-    ("26 · Settings → About", "the start only; Open while one runs, no link for a terminal repair", about() + about("running") + about("terminal")),
+    ("26 · Settings → About", "the start and All repairs; Open while one runs, no link for a terminal repair", about() + about("running") + about("terminal")),
     ("27 · Needs you", "a repair's question in an Altitude section before projects", NEEDS),
 ]
 board("States", 1200, 8200,
@@ -473,7 +473,7 @@ board("Terminal", 900, 740, f'<div class="term"><pre>{TERM}</pre></div>')
 # ---- review-only alternative: two panes, exactly a task's layout (ignored captures/) ----
 alt = out / "captures"
 STEPS_PANEL = ('<aside class="live"><div class="lh"><h2><span class="pulse"></span>Steps</h2></div><div class="lbody">'
-               + BRIEF.replace("details", "div").replace(' · <span class="u">Show</span>', "")
+               + BRIEF.replace("details", "div").replace(CHEVR, "")
                + STARTED + STEPS_A + LOOK + steps(STEP_B, STEPS_C) + '</div></aside>')
 board("AltDesktop", 1440, 900,
       '<div style="display:grid;grid-template-columns:260px minmax(0,1fr) 480px;height:100%">' + rail(True, 1) +

@@ -9,18 +9,19 @@ choice.
 ## This revision: repairs in Work
 
 Repairs had a surface of their own: a page, a Needs you section, a Monitor row and a history in
-Settings → About. This revision lets them ride on what Altitude already has. **Work** gains a
-**Repairs** section at its bottom, shown only while there is a repair to show: the one running and
-those that ended in the last three days, each a row like a task's. A repair's page reads like a
-task's conversation, with the task page's header, chips, rows and composer. Monitor's repair row and
-About's history go; About keeps **Repair…**, the failed-update notice keeps **Repair**, and Needs you
-keeps a repair's questions. What a repair does, who starts it and its limits do not change.
+Settings → About. This revision lets them ride on what Altitude already has. **Work** gains an
+**Altitude repairs** section below its current tasks, shown only while there is a repair to show: the
+one running and those that ended in the last three days, each a row like a task's. A repair's page
+reads like a task's conversation, with the task page's header, chips, rows and composer. Monitor's
+repair row and About's list of recent repairs go; About keeps **Repair…** and an **All repairs**
+link, the failed-update notice keeps **Repair**, and Needs you keeps a repair's questions. What a
+repair does, who starts it and its limits do not change.
 
 | Decision | Recommendation | Alternatives |
 | --- | --- | --- |
 | How long a finished repair stays in Work | Three days after it ends; a running one always shows | Seven days, as Work's **Done this week** keeps tasks |
-| Older repairs in Settings → About | Nothing: About keeps only **Repair…**; an older repair's page still opens from a link, and its record stays in Altitude's home | Keep an **All repairs** link to the full list |
-| The page's layout | One column, a task's header and rows: steps sit in the conversation as Live session's rows, since on a phone the steps are what you follow | Two panes, exactly a task's: the conversation beside a **Steps** panel, which is a tab on the phone (review captures: [desktop](captures/AltDesktop.png), [phone](captures/AltPhone.png)) |
+| Older repairs | An **All repairs** link in About, the one way back to a repair that has left Work, and to every repair before any project exists | Nothing: About keeps only **Repair…**, and an older repair is reachable only by its address. **On Monitor:** Work keeps only the repair running, and Monitor gains the section of ended ones |
+| The page's layout | One column, a task's header and rows: steps sit in the conversation as Live session's rows, since a repair has one session whose steps are its conversation, and on a phone they are what you follow | Two panes, exactly a task's: the conversation beside a **Steps** panel, a tab on the phone (review captures: [desktop](captures/AltDesktop.png), [phone](captures/AltPhone.png)). **Both:** two panes on desktop, one column on the phone |
 
 ## What it is for
 
@@ -174,7 +175,7 @@ the coding agent's interactive session in that terminal, in a repair folder, as 
 normal mode: it asks you before each step unless your own settings allow it. You are at the
 keyboard, so no time limit applies. When it writes its report (`alt repair report`) or ends, the
 service runs `alt doctor` itself, at once or at its next start, and sets the outcome under the same
-rule as the app. The repair appears in Work's **Repairs** marked "from a terminal", and its page says its
+rule as the app. The repair appears in Work's **Altitude repairs** marked "from a terminal", and its page says its
 steps are in the terminal's history. When `alt` itself cannot start, the release's standalone installer starts it:
 `python3.12 install.py --repair`. It cannot start without a signed-in coding agent or Python 3.12,
 or repair a deleted installation; those go back to Setup.
@@ -184,13 +185,14 @@ while the user service manager runs; on the Mac it stops at logout, like the ser
 
 ## Where repairs show
 
-Work, on the phone's Work tab and in the desktop's work panel, ends with a **Repairs** section below
-**Done this week**: the repair running now and every repair that ended in the last three days,
-newest first, each one row opening its page. The section is the same in every project's Work, since
-a repair belongs to Altitude rather than a project, and it is absent when there is nothing to show.
-Needs you keeps a repair's questions in its **Altitude** section, and the failed-update notice links
-the running repair. A repair that left Work keeps its record in Altitude's home, and its page still
-opens from a link.
+Work, on the phone's Work tab and in the desktop's work panel, has an **Altitude repairs** section
+between **Current** and **Done this week**: the repair running now and every repair that ended in the
+last three days, newest first, each one row opening its page. A repair belongs to Altitude rather
+than a project, so the section is the same in every project's Work, and its heading says whose it is;
+Work's own counts stay the project's. It is absent when there is nothing to show. Needs you keeps a
+repair's questions in its **Altitude** section, the failed-update notice links the running repair,
+and Settings → About's **All repairs** lists every repair, including those that left Work and those
+started before any project exists, when there is no Work.
 
 ## Engines
 
@@ -242,8 +244,8 @@ worker-termination question; each step comments its delivered scope there.
    recorder outside the service, its page and Needs you section, the sheet from the failed-update
    notice and Settings, the time limit with **Keep going**, Stop, **Left running**,
    the report with Altitude's check, and the app route's rule text.
-3. **Repairs in Work.** The **Repairs** section, the page in a task's form, and About without its
-   history; Monitor's repair row goes.
+3. **Repairs in Work.** The **Altitude repairs** section, the page in a task's form, and About with
+   **All repairs** in place of its recent list; Monitor's repair row goes.
 4. **More places to start.** Project Setup failures, tasks stopped by a system fault, source
    activation failure.
 
@@ -266,14 +268,14 @@ native Mac service; those stay listed on each step's issue for the Mac installat
 
 Fictional data. Phone 390×844, desktop 1440×900. Boards, written by `gen.py` beside this file:
 
-- [Work with its Repairs section, phone](PhoneWork.html)
+- [Work with its Altitude repairs section, phone](PhoneWork.html)
 - [Work with a repair waiting for you, desktop](DesktopWork.html)
 - [Failed-update notice, phone](PhoneNotice.html)
 - [Start a repair, phone](PhoneSheet.html)
 - [A repair at work, phone](PhoneRunning.html)
 - [A repair asks before a big change, phone](PhoneAsk.html)
 - [Repair reports, phone](PhoneReport.html)
-- [Settings → About with Repair…, phone](PhoneAbout.html)
+- [Settings → About with Repair… and All repairs, phone](PhoneAbout.html)
 - [A repair asks, desktop](Desktop.html)
 - [All states](States.html)
 - [The terminal route](Terminal.html)
@@ -299,29 +301,40 @@ the buttons: "A repair is already running. **Open it**", "A repair is running in
 computer.", "No coding agent can run now: Claude's weekly allowance is used. Run `alt repair` in a
 terminal instead.", or "Repairs start only from your own browser or terminal."
 
-**Work's Repairs section**: "Repairs" with its count, after **Done this week**; rows in the task
-row's anatomy (state dot, title, meta, chevron), the title "Failed update to 0.9.0", the first line
-of what you wrote, or "Repair". Meta: "Repair working · started 12 min ago" (running dot); "Repair
-working in a terminal · started 5 min ago"; for a question, the amber "Your turn · 1 question" line
-over "Repair waiting · started 7 min ago" (amber dot); "Checking the result · ended just now"; then
-"✓ Repaired · ended yesterday", "Confirm yourself · ended 2d ago", "Stopped · ended 3h ago" (muted
-dot) and "✕ Not repaired · ended 2d ago" (red dot, also for an end without a report). A terminal
-repair adds "from a terminal" before when it ended. Absent while its read loads and when it has no
-row; a failed first read shows "Could not read repairs. Retry" in its place, and a failed refresh
-keeps the rows it has.
+**Work's Altitude repairs section**: "Altitude repairs" with its count, after **Current** and
+before **Done this week**; rows in the task row's anatomy (state dot, title, meta, chevron), the
+title "Failed update to 0.9.0", the first line of what you wrote, or "Repair", on one line with an
+ellipsis; the meta wraps as a task row's. Meta: "Repair working · started 12 min ago" (running dot);
+"Repair working in a terminal · started 5 min ago"; while it asks, the amber "Your turn · the repair
+asks" line over "Repair waiting · started 7 min ago" (amber dot); "Checking the result · ended just
+now"; then "✓ Repaired · ended yesterday", "Confirm yourself · ended 2d ago", "Stopped · ended 3h
+ago" (muted dot) and "✕ Not repaired · ended 2d ago" (red dot, also for an end without a report). A
+terminal repair says "from a terminal" in its meta. The rows come from the repairs listing Settings
+already reads (`GET /api/repairs`, whose status says when a repair waits for you); Work keeps those
+not ended or ended less than 72 hours ago, with no cap, since one repair runs at a time. Every change
+Altitude reports refreshes the listing, so a finished row leaves at the first refresh past its 72
+hours. A record a terminal repair left unended reads "Checking the result" until the service's check
+settles it at its next tick. The section is absent while its read loads, so the fold below it moves
+down once, and when it has no row; with no current task, Work's empty line comes first. A failed
+first read shows "Could not read repairs. Retry" in its place, and a failed refresh keeps the rows
+it has.
 
-**Repair page**, a task's page: on desktop the header row has the **‹ Work** crumb, the state dot and
+**Repair page**, a task's page: on desktop the header row has the **‹ Work** crumb, back to the Work it
+came from or the selected project's, and **‹ Settings** when no project exists, the state dot and
 title, and Stop in the task's 104px header button (**Stopping…**, then **Check status** when a stop
 is unconfirmed); the chip row holds the status ("Repair working", "Repair waiting for you",
 "Checking the result", "✓ Repaired", "Confirm yourself", "✕ Not repaired", "Stopped"), the model
 on its engine ("Opus on Claude") and, while the session runs, "Full access · 1 h 48 min left", amber
 from fifteen minutes before the end. A terminal repair's chips are its status and "From a
 terminal". On phone the task's header: back, the title on one line, the status line ("● Repair
-working · 1 h 48 min left") and Stop; the tab bar stays with **Work** lit. **Stop** asks first: "Stop
+working · 1 h 48 min left", the dot standing for the state without the chip's ✓ or ✕) and Stop; the
+tab bar stays with **Work** lit, and with no project, unlit. Like a task, the desktop page gives the
+conversation the width beside the rail and closes the work panel; Stop's Esc hint is the task's. **Stop** asks first: "Stop
 the repair? A command running now is cut off." with **Stop repair** (danger) and **Keep running**;
 "Stop unconfirmed · The repair may still be running." is a red system line.
 
-The conversation column: the **Brief** folded at the top, as a task's brief in its live session;
+The conversation column: the **Brief** folded at the top, a full-width row whose whole height (at
+least 44px) opens it, with a chevron;
 day dividers; system lines with their time, as in a task's chat: "Started by you · full access for 2
 hours", "Altitude is restarting · the repair continues", "Altitude is back", "Kept going · one more
 hour". Your words are your bubbles; the agent's words are prose, as the L2's. Steps are Live
@@ -354,7 +367,8 @@ steps are in that terminal's history.", its end, the report and Altitude's check
 
 **Settings → About**: a **Repair** row, "Something not working? A repair agent finds out why and
 fixes it, with full access while it works." with **Repair…**; while one runs, "Running · **Open**",
-or "Running in a terminal" without a link.
+or "Running in a terminal" without a link; then **All repairs ›**, opening the list of every repair,
+newest first, in the same rows as Work's section.
 
 **Terminal**: `alt repair` prints, before handing over: what it found ("Altitude 0.8.0 · service
 running · the update to 0.9.0 failed 2 hours ago" or "Altitude's service is not answering"),
