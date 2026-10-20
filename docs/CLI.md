@@ -844,6 +844,8 @@ Python caches written into the installed release never block `alt update`, autom
 refuses them; [generated-cache recovery](OPERATIONS.md#generated-cache-recovery) covers it once.
 `alt update` or the app's Try again explicitly retries a failed release. A new release may still
 receive its own automatic attempt.
+`alt uninstall` removes the service and the `alt` command and keeps settings, certificates, paired
+browsers and data; see the [installed application lifecycle](OPERATIONS.md#installed-application-lifecycle).
 
 `alt repair [--problem TEXT] [--engine NAME]` (operator only, from their own terminal) starts a
 [repair](OPERATIONS.md#repairs) in that terminal: the first installed coding agent's interactive session,
