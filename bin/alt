@@ -572,7 +572,7 @@ def main(argv=None) -> None:
     from altitude import improve
     sub.add_parser("improve", parents=[improve.parser()], add_help=False, help="improvement suggestions: status here; the rest through the project's coordinator")
     from altitude import project_agents
-    sub.add_parser("agent", parents=[project_agents.parser()], add_help=False, help="briefs a project runs on a schedule or when asked: list, show, new, set, on, pause, resume, retire, run, stop")
+    sub.add_parser("agent", parents=[project_agents.parser()], add_help=False, help="briefs a project runs on a schedule, when sent an event or when asked: list, show, new, set, on, pause, resume, retire, run, send, stop")
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
@@ -1174,11 +1174,16 @@ def main(argv=None) -> None:
         out(improve.status(_project(args), args.run)); return
     if c == "agent":
         from altitude import project_agents
-        brief = sys.stdin.read() if getattr(args, "brief", None) == "-" else ""
+        stdin = sys.stdin.read() if "-" in (getattr(args, "brief", None), getattr(args, "text", None)) else ""
         try:
-            out(project_agents.verb(_project(args), args, brief, by="operator", source="cli"))
+            result = project_agents.verb(_project(args), args, stdin, by="operator", source="cli")
+        except project_agents.Refused as exc:
+            sys.exit(f"Not sent: {exc}" if args.action == "send" else f"alt agent: {exc}")
         except (ValueError, KeyError) as exc:
             sys.exit(f"alt agent: {exc}")
+        if args.action == "send":
+            say(f"Sent to {result['name']}." if result["sent"] else "Already received."); return
+        out(result)
         return
     if c == "dispatch":
         from altitude import dispatch; out(dispatch.run(_project(args), args.slug, model=args.model)); return

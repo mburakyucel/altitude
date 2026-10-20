@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { settingsOpener } from "../components/visitMemory";
-import type { Attention, Overview } from "./api";
-import { attentionPath, isStep } from "./decisions";
+import type { Attention, Decision, Overview, Step } from "./api";
+import { attentionPath, isAgentRow, isStep, isTaskDecision } from "./decisions";
 
 /**
  * Decision alerts (issue #221): one notification per newly escalated operator question, carrying the
@@ -333,7 +333,7 @@ export function useAlertState(): AlertState {
   return useSyncExternalStore(watch, readAlertState, () => "unsupported");
 }
 
-type Ask = Attention & { alert_key: string };
+type Ask = (Decision | Step) & { alert_key: string };
 
 /**
  * A published operator question, which altd keys for alerting (`alert_key`): one key per question group,
@@ -341,17 +341,17 @@ type Ask = Attention & { alert_key: string };
  * of a waiting decision never alerts twice.
  */
 function alerting(decision: Attention): decision is Ask {
-  return Boolean(decision.alert_key);
+  return !isAgentRow(decision) && Boolean(decision.alert_key);
 }
 
 /** What a banner may name: the task, or for an operator step only that it is one, never its text. */
-const alertName = (decision: Attention) => isStep(decision) ? "A command to run" : decision.title || decision.slug;
+const alertName = (decision: Decision | Step) => isStep(decision) ? "A command to run" : decision.title || decision.slug;
 
 /** Needs you shows every decision; a task or decision page shows its own. */
 export function showsDecision(pathname: string, decision: Attention): boolean {
   if (pathname === "/") return true;
-  // Project chat shows only a count, so a step shows only in Needs you.
-  if (isStep(decision)) return false;
+  // Project chat shows only a count, so a step or a paused agent shows only in Needs you.
+  if (!isTaskDecision(decision)) return false;
   const owner = `/projects/${decision.project}/tasks/${decision.slug}`;
   return pathname === owner || pathname.startsWith(`${owner}/`)
     || pathname === `/projects/${decision.project}/decisions/${decision.slug}`;

@@ -1007,7 +1007,7 @@ at most — never question, conversation or incident text. What a banner names, 
 whether they sound follow the device's choices in Settings (§3.15); the formats below are the default,
 project and task. A question asked again after the operator replied
 alerts again, the same way; a rewording, an escalation or L3 settling one member while it waits does not. Activating it opens that decision in the running
-app. Faults, stopped tasks, reviews and completed work stay in Needs you without an alert. A grouped
+app. Faults, stopped tasks, reviews, agents that paused themselves (§3.17) and completed work stay in Needs you without an alert. A grouped
 ask alerts once. On a device without push, a decision already on screen, in Needs you or its owning task,
 is recorded without alerting; a device push wakes gets the alert without sound while Altitude is on screen.
 Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the switch on never
@@ -2556,7 +2556,7 @@ them, and each **Steps for** choice with a switch to another.
 
 ### 3.17 Project agents
 
-A project's agents run briefs on a schedule or when asked and report what they found
+A project's agents run briefs on a schedule, on events the operator sends or when asked, and report what they found
 ([design](project-agents/PROPOSAL.md#screens), whose screens, exact text and states table this section
 adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
 
@@ -2566,14 +2566,35 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   "N used this week" (amber "… · agents wait until Monday" when spent), **New agent**, and "N retired" opening
   the retired rows. **Built in** lists each built-in agent not on with **Turn on**.
 - **One agent** (`/projects/:name/agents/:id`): the status card and its actions (Run now, Pause, Resume, Turn
-  on, Stop, Open), Recent runs with **Show older**, What it does with **Edit**, and **Retire…** with its
-  dialog. A retired agent's page is read-only.
-- **One run** (`…/runs/:n`): what fired it, the model once it starts and usage once it ends; waiting, what it
+  on, Stop, Open), with a muted note under its line when one applies ("No event yet, so Run now runs without
+  one.", "3 events wait for the next run."); Recent runs with **Show older**, a run that took events named by
+  them ("For “PR #810 merged” and 2 more: …"); What it does with **Edit**; and **Retire…** with its dialog. A
+  retired agent's page is read-only.
+- **Send it an event**: with the event trigger, What it does gains this section before Edit: "From a script or
+  your terminal on this computer:" over the `alt agent send` command with the agent's id and **Copy**; "To try it
+  first, use `agent run` in place of `agent send`: it starts a run now, even before the agent is on."; **Examples**
+  folded, three scripts each under its muted label with **Copy** at its right, the code keeping its lines and
+  scrolling sideways; and "Send numbers and your own words, not text anyone else can write: a run has your code
+  and the network."
+- **One run** (`…/runs/:n`): what fired it ("On its schedule", "For “PR #810 merged” and 2 more", "Run now by
+  you · For “PR #812 merged”, the latest", "… · your text", "… · No event yet"), then each event it took on its
+  own muted line (its time · its first line), the model once it starts and usage once it ends; waiting, what it
   waits for ("Waiting for a free task slot", "Waiting for Review each merge") with **Stop**; running, the live
   session read only with **Stop**; ended, the outcome and report with **Brief it ran** and **Session** folded. No composer.
-- **The form** (`…/agents/new`, `…/:id/edit`): Name, What it does, Runs when (schedule rows of seven day
-  toggles and a time, **+ Add a schedule**, "Only when you run it" with none), Tell me in chat, Model (§3.6.1)
-  and Each run stops after. A new agent is saved not on.
+- **The form** (`…/agents/new`, `…/:id/edit`): Name, What it does, Runs when, Tell me in chat, Model (§3.6.1)
+  and Each run stops after. A new agent is saved not on. Runs when lists schedule rows (seven day toggles and a
+  time) and the event row (a bolt, "When it’s sent an event" over "You send it from this computer; its page shows
+  how.") each with Remove, or "Only when you run it" with none. **+ Add a trigger** opens a menu under it of
+  **On a schedule** and **When it’s sent an event** (items 44px tall on the phone; Escape or a press outside
+  closes it and focus returns to the button); choosing the event adds its row and focuses its Remove. With the
+  event row in the list the button adds a schedule at once. The hint "Events that arrive during a run go to its
+  next run together." follows the list while the event row is in it.
+- **Needs you**: an agent that paused itself waits as a card after its project's questions: "Agent paused
+  itself" in the danger tone with its age, the agent's name linking to its page with a chevron, "3 runs in a row
+  couldn't finish. The last: <reason>", a bordered **Resume** and the link **Open the last run**. Resume spins
+  until the agent reads as on and the card leaves; a refusal brings the button back with "Not resumed: <reason>"
+  under it. Resume, a saved edit or Retire clears it. It counts as "1 paused agent" in the summary and the
+  badge and never alerts a device.
 - **Chat**: one system line per ending as Tell me allows, led by the agent's name with **Open**; L3's offer card
   under its reply with **Create agent** or **Save change** and **Edit first**, created, refused and lapsed. A switch L3
   makes on your word adds one quiet line ("Paused Dependency check", "Resumed …", "Turned on …", "Retired …",
@@ -2613,7 +2634,10 @@ stopped, Pause refused and Paused, too few tasks with the reason on press and a 
 line with Open and the page's changed terms, every kind of run with the totals, and an older run opening its
 line in chat back past the conversation the chat loads at first, at both widths.
 
-Event triggers and their menu and Monitor's Agents section are later steps of the design and do not appear.
+`web/e2e/project-agent-events.pw.ts` walks an agent running with events waiting, runs named by their events,
+Send it an event folded and with its examples, a run's events and a replay, an agent with no event yet, the
+trigger menu with Escape, the event row and its hint, a schedule added at once, the event row removed, and Needs
+you's card with Resume refused, resuming and resumed, at both widths.
 
 ## 4. Behaviour rules
 

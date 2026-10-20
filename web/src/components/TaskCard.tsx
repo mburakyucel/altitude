@@ -3,7 +3,7 @@ import { useOverview } from "../data/api";
 import type { Attention, Decision, Overview, TaskRow } from "../data/api";
 import { agoText, clockText } from "../data/observed";
 import type { DotState } from "../shell/projects";
-import { isStep, questionPath, turnLabel } from "../data/decisions";
+import { isStep, isTaskDecision, questionPath, turnLabel } from "../data/decisions";
 import { setSelectedProject } from "../shell/scope";
 import { statusExcerpt, stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 
@@ -104,8 +104,8 @@ export function TaskCard({
   // The task's own decisions, and while it waits each operator step L3 named it on (§3.8.4).
   const decisions = task.state === "done" || task.state === "rejected" ? [] : (overview.data?.queue ?? [])
     .filter((d) => d.project === project && (isStep(d) ? waiting && d.tasks.some((t) => t.slug === task.slug)
-      : d.slug === task.slug && d.status !== "resolved" && d.audience !== "l3"));
-  const questions = decisions.filter((d): d is Decision => !isStep(d) && Boolean(d.id));
+      : isTaskDecision(d) && d.slug === task.slug && d.status !== "resolved" && d.audience !== "l3"));
+  const questions = decisions.filter(isTaskDecision).filter((d) => Boolean(d.id));
   const facts = taskCardFacts(task, overview.data, project, decisions[0]);
   const turn = turnLabel(decisions, waiting);
   const attention = turn ? `${turn}${overview.isError ? " · saved" : ""}` : null;

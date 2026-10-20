@@ -3235,8 +3235,9 @@ def review_row(project: str, task: dict) -> dict | None:
 
 
 def decisions(project: str) -> list[dict]:
-    """Questions and held reviews on the operator's turn, explicit operator blocks and the project's open operator
-    steps (rows with no `slug`); a pause needs no answer.
+    """Questions and held reviews on the operator's turn, explicit operator blocks, the project's open operator
+    steps (`kind` "step") and its agents that paused themselves (`kind` "agent", which never alert); a pause needs
+    no answer.
 
     Each question carries `alert_key`, the one identity altd's wake, the page and the service worker alert
     on: its question group, since the operator's latest message on that task. A rewording, an escalation or
@@ -3262,6 +3263,8 @@ def decisions(project: str) -> list[dict]:
                  "asked_by": "l3", "asked": step["asked"], "since": step["asked"], "alert_key": f"{project}:step:{step['id']}",
                  "tasks": [{"slug": slug, "title": titles[slug]} for slug in step["tasks"] if slug in titles]}
                 for step in operator_steps(project))
+    from . import project_agents
+    rows.extend(project_agents.needs(project))
     return rows
 
 

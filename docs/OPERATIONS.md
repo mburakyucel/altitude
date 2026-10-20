@@ -232,6 +232,56 @@ resume waiting messages. Removing the last project opens First run; otherwise a 
 project is selected. `alt project remove <name>` uses the same checks. See
 [project lifecycle](CLI.md#project-lifecycle).
 
+## Sending agents events
+
+A [project agent](ARCHITECTURE.md#project-agents) with the trigger "When it's sent an event" runs on what your own
+scripts on this computer send it. Its page shows the command with its id filled in:
+
+```sh
+alt --project harbor agent send 3f9a2c1b0e4d "PR #812 merged"
+```
+
+Events that arrive during a run go to its next run together. `--key` makes a send safe to repeat: the agent
+ignores a key it already took, so a script can send the latest few things it sees every time it runs and needs
+no record of its own. A refused send ("Not sent: Review each merge is paused." and the like, on standard
+error with exit status 1) keeps nothing, and an event no run read gives its key back when the agent is paused,
+retired or pauses itself, or its run is skipped or stopped before it starts, so the script's next run brings it in again. To try an agent first, `alt agent run`
+in place of `alt agent send` starts a run now with your text, even before the agent is on.
+
+A run has your code and the network, so send numbers and your own words, never text anyone else can write, such
+as an issue's title; the run reads the pull request or issue itself. These examples, which the agent's page also
+shows for its own id and repository, run from cron every few minutes; a line starting `#` holds the crontab entry.
+They use the GitHub CLI, signed in as you already are, and `PATH` finds `alt` and `gh` from cron on Linux and the
+Mac. Cron mails or logs what a refused send writes to standard error, as it is set up.
+
+Each merged pull request:
+
+```sh
+# crontab: */10 * * * * sh ~/bin/harbor-merges.sh
+PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+for n in $(gh pr list -R example/harbor --state merged --search sort:updated-desc -L 10 --json number -q '.[].number'); do
+  alt --project harbor agent send 3f9a2c1b0e4d "PR #$n merged" --key "pr-$n" >/dev/null
+done
+```
+
+Each new issue:
+
+```sh
+# crontab: */15 * * * * sh ~/bin/harbor-issues.sh
+PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+for n in $(gh issue list -R example/harbor --state all -L 10 --json number -q '.[].number'); do
+  alt --project harbor agent send 3f9a2c1b0e4d "Issue #$n opened" --key "issue-$n" >/dev/null
+done
+```
+
+When a command of yours fails:
+
+```sh
+make bench >/dev/null 2>&1 || alt --project harbor agent send 3f9a2c1b0e4d "Benchmarks failed on $(git rev-parse --short HEAD)"
+```
+
+Only you send events: task workers, L3 and agent runs cannot, and nothing new listens on the network.
+
 ## Worktree and source export retention
 
 Altitude removes what it created for finished work; the operator does not clean these by hand.

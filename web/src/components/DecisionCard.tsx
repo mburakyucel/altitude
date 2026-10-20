@@ -1,8 +1,8 @@
 import { Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, sendAnswers, sendApproval, useProject } from "../data/api";
-import type { DecideInput, Decision, QuestionAnswer, QuestionGroup, Step } from "../data/api";
+import { ApiError, sendAnswers, sendApproval, sendProjectAgent, useProject } from "../data/api";
+import type { AgentRow, DecideInput, Decision, QuestionAnswer, QuestionGroup, Step } from "../data/api";
 import { chatOnScreen, dropPending, shownOnScreen, usePending } from "../data/pending";
 import type { PendingAnswer, PendingWrite } from "../data/pending";
 import { notDone } from "./Bubbles";
@@ -19,6 +19,8 @@ import { ReviewStatus, StateIcon, reviewLine } from "./TaskReview";
 import { ShownFiles } from "./Shown";
 import { PrPictures } from "./PrPictures";
 import { keepForVisit, useVisitMemory } from "./visitMemory";
+import { Chevron } from "./ProjectAgentParts";
+import { refusal } from "../data/projectAgents";
 
 type Draft = { option?: string; text?: string };
 const draftKey = (q: Decision) => `${q.project}:${q.slug}:${q.id}:${q.revision}`;
@@ -363,6 +365,42 @@ export function StepCard({ step, disabled = false }: { step: Step; disabled?: bo
       <StepBody step={step} disabled={disabled} />
     </article>
   </ProseScope>;
+}
+
+/**
+ * The Needs you card of an agent that paused itself (design/wireframes/project-agents/PROPOSAL.md): Resume holds its
+ * spinner until the queue no longer lists the agent, and Open the last run reads what broke first.
+ */
+export function AgentCard({ row, disabled = false }: { row: AgentRow; disabled?: boolean }) {
+  const client = useQueryClient();
+  const navigate = useNavigate();
+  const [state, setState] = useState<{ busy: boolean; error?: string }>({ busy: false });
+  const to = `/projects/${row.project}/agents/${row.agent}`;
+  const resume = async () => {
+    setState({ busy: true });
+    try {
+      await sendProjectAgent(row.project, "resume", { agent: row.agent });
+      await client.refetchQueries({ queryKey: ["overview"], exact: true });
+    } catch (failure) {
+      setState({ busy: false, error: (failure as Error).message });
+    }
+  };
+  return <article className="decision" aria-label={row.title} data-agent={row.agent} onClick={(event) => {
+    if (!(event.target as HTMLElement).closest("a,button")) { setSelectedProject(row.project); navigate(to); }
+  }}>
+    <div className="decision-kind" data-tone={decisionKind(row).tone}>
+      <span className="kind-label">{decisionKind(row).label}</span>
+      <span className="ml-auto text-muted" title={exactTime(row.asked)}>{ageText(row.asked)}</span>
+    </div>
+    <Link className="decision-task decision-agent" to={to} onClick={() => setSelectedProject(row.project)}>{row.title}<Chevron /></Link>
+    <p className="decision-question"><InlineProse text={row.question} /></p>
+    <div className="decision-options">
+      <button type="button" className="btn agent-resume" disabled={disabled || state.busy} aria-label={state.busy ? "Resume, saving" : undefined}
+        onClick={() => void resume()}>{state.busy ? <span className="spinner" aria-hidden /> : "Resume"}</button>
+      {row.run != null ? <Link className="link" to={`${to}/runs/${row.run}`} onClick={() => setSelectedProject(row.project)}>Open the last run</Link> : null}
+    </div>
+    {state.error ? <p role="alert" className="text-meta text-danger">{refusal("Not resumed", state.error)}</p> : null}
+  </article>;
 }
 
 export function DecisionCard({ decision, decisions = [decision], selected = false, from = "project", disabled = false }: {

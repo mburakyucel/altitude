@@ -25,6 +25,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   gone; its runs stay as cheap as before and do not use the agents' budget.
 - Monitor shows agents: a running agent is listed among Sessions with its context and minutes used, and a new
   Agents section at the end lists each agent with what it does next and how its last run went, opening its page.
+- Agents can run when they're sent an event: your own scripts on this computer send one a short line with
+  `alt agent send`, such as "PR #812 merged", and events that arrive during a run go to its next run together.
+  An agent's page shows the command and example scripts for each merged pull request, each new issue or a
+  failing command. An agent that pauses itself after three runs that couldn't finish now waits in Needs you with
+  Resume, without alerting your devices.
 
 ## v0.11.0 — 2026-10-20
 

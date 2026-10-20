@@ -1,7 +1,11 @@
-import type { Attention, Decision, Overview, Step, TaskMessage } from "./api";
+import type { AgentRow, Attention, Decision, Overview, Step, TaskMessage } from "./api";
 
 /** An operator step belongs to the project, not a task (SPEC.md §3.8.4). */
-export const isStep = (row: Attention): row is Step => row.slug === null;
+export const isStep = (row: Attention): row is Step => row.kind === "step";
+/** An agent that paused itself belongs to the project too (design/wireframes/project-agents/PROPOSAL.md). */
+export const isAgentRow = (row: Attention): row is AgentRow => row.kind === "agent";
+/** A task's own question, review, stop or fault: every row with a task. */
+export const isTaskDecision = (row: Attention): row is Decision => row.slug !== null;
 
 /** Unknown attention never looks like a known empty inbox. */
 export function attentionCount(overview: Overview | undefined, failed: boolean) {
@@ -18,11 +22,13 @@ export function openRepairQuestions(overview: Overview): number {
 /** The badge counts questions individually and operational attention items separately. */
 export function attentionSummary(rows: Attention[]): string {
   const steps = rows.filter(isStep).length;
-  const questions = rows.filter((row) => !isStep(row) && (row.id || !["fault", "stopped", "review"].includes(row.kind ?? ""))).length;
-  const stopped = rows.filter((row) => !row.id && row.kind === "stopped").length;
-  const reviews = rows.filter((row) => !row.id && row.kind === "review").length;
-  const faults = rows.length - steps - questions - stopped - reviews;
-  return [[questions, "question"], [steps, "step"], [reviews, "review"], [stopped, "stopped task"], [faults, "fault"]]
+  const agents = rows.filter(isAgentRow).length;
+  const decisions = rows.filter(isTaskDecision);
+  const questions = decisions.filter((row) => row.id || !["fault", "stopped", "review"].includes(row.kind ?? "")).length;
+  const stopped = decisions.filter((row) => !row.id && row.kind === "stopped").length;
+  const reviews = decisions.filter((row) => !row.id && row.kind === "review").length;
+  const faults = decisions.length - questions - stopped - reviews;
+  return [[questions, "question"], [steps, "step"], [agents, "paused agent"], [reviews, "review"], [stopped, "stopped task"], [faults, "fault"]]
     .filter(([count]) => count).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ");
 }
 
@@ -38,7 +44,7 @@ export function headline(text: string | null | undefined): string {
  * operator step naming the task. The task page, which shows the question or step itself, and a question with
  * choices keep the count. */
 export function turnLabel(rows: Attention[], named = false): string | null {
-  const questions = rows.filter((row): row is Decision => !isStep(row) && Boolean(row.id));
+  const questions = rows.filter(isTaskDecision).filter((row) => Boolean(row.id));
   const steps = rows.filter(isStep);
   const review = rows.find((row) => row.kind === "review") as Decision | undefined;
   const lone = named && questions.length === 1 && !optionsFor(questions[0]!).length ? headline(questions[0]!.question) : "";
@@ -52,7 +58,7 @@ export function turnLabel(rows: Attention[], named = false): string | null {
 export function decisionGroups<Row extends Attention>(rows: Row[]): Row[][] {
   const groups = new Map<string, Row[]>();
   for (const row of rows) {
-    const key = `${row.project}:${row.slug}:${isStep(row) ? row.id : row.group_id || row.id || "operational"}`;
+    const key = `${row.project}:${row.slug}:${isTaskDecision(row) ? row.group_id || row.id || "operational" : row.id}`;
     const group = groups.get(key) ?? [];
     group.push(row);
     groups.set(key, group);
@@ -63,7 +69,7 @@ export function decisionGroups<Row extends Attention>(rows: Row[]): Row[][] {
 /** Where an alert opens: a question's owning L2 conversation, for every historical revision; an operator step,
  * which only Needs you shows, opens Needs you. */
 export function attentionPath(row: Attention): string {
-  return isStep(row) ? "/" : questionPath(row);
+  return isTaskDecision(row) ? questionPath(row) : "/";
 }
 
 /** A task question and every historical revision open the same owning L2 conversation. */
@@ -78,6 +84,7 @@ export function decisionKind(decision: Pick<Decision, "kind" | "asked_by">): { l
   if (decision.kind === "fault") return { label: "Fault", tone: "danger" };
   if (decision.kind === "stopped") return { label: "Stopped mid-task", tone: "danger" };
   if (decision.kind === "review") return { label: "Review before merge", tone: "claimed" };
+  if (decision.kind === "agent") return { label: "Agent paused itself", tone: "danger" };
   return { label: decision.asked_by === "l3" ? "L3 brought this to you" : "The L2 asks", tone: "accent" };
 }
 

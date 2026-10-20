@@ -58,4 +58,4 @@ export const TELL = [{ value: "found", label: "When it finds something" }, { val
 
 /** A new agent: weekdays at 07:00, telling you when it finds something, on the default model, stopping after 20 min. */
 export const NEW_SCHEDULE = { days: [0, 1, 2, 3, 4], time: "07:00" };
-export const NEW_DEFINITION: ProjectAgentDefinition = { name: "", brief: "", schedules: [NEW_SCHEDULE], tell: "found", model: null, limit: 20 };
+export const NEW_DEFINITION: ProjectAgentDefinition = { name: "", brief: "", schedules: [NEW_SCHEDULE], events: false, tell: "found", model: null, limit: 20 };

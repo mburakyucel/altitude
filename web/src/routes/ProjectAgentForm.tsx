@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, Ref } from "react";
 import { useBlocker, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { pressId, sendProjectAgent, useProjectAgent, useProjectAgents } from "../data/api";
@@ -28,9 +29,7 @@ function ScheduleRow({ index, schedule, clock, onChange, onRemove }: {
         <circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" />
       </svg>
       <span>On a schedule</span>
-      <button type="button" className="icon-btn agent-trigger-remove" aria-label="Remove this trigger" onClick={onRemove}>
-        <svg aria-hidden viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M7 7l10 10M17 7L7 17" /></svg>
-      </button>
+      <button type="button" className="icon-btn agent-trigger-remove" aria-label="Remove this trigger" onClick={onRemove}>{REMOVE}</button>
     </div>
     <div className="agent-days">
       {DAY_NAMES.map((day, i) => <button key={day} type="button" className="agent-day" aria-label={day} aria-pressed={schedule.days.includes(i)}
@@ -41,6 +40,61 @@ function ScheduleRow({ index, schedule, clock, onChange, onRemove }: {
       </span>
     </div>
     {schedule.days.length ? null : <p className="text-meta text-danger">Pick at least one day.</p>}
+  </div>;
+}
+
+const REMOVE = <svg aria-hidden viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M7 7l10 10M17 7L7 17" /></svg>;
+const EVENT = "When it’s sent an event";
+
+/** The event trigger's row: where events come from, and Remove. */
+function EventRow({ remove, onRemove }: { remove: Ref<HTMLButtonElement>; onRemove: () => void }) {
+  return <div className="agent-trigger" role="group" aria-label={EVENT}>
+    <div className="agent-trigger-head">
+      <svg aria-hidden viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+        <path d="M13 3L5 13h6l-1 8 8-10h-6l1-8z" />
+      </svg>
+      <span className="agent-trigger-words">{EVENT}<small className="text-muted">You send it from this computer; its page shows how.</small></span>
+      <button type="button" className="icon-btn agent-trigger-remove" aria-label="Remove this trigger" ref={remove} onClick={onRemove}>{REMOVE}</button>
+    </div>
+  </div>;
+}
+
+/**
+ * + Add a trigger: a menu of the two triggers under the button, as the project menu opens, until the list has the
+ * event trigger; then it adds a schedule at once. Escape or a press outside closes the menu and returns focus.
+ */
+function AddTrigger({ events, onSchedule, onEvent }: { events: boolean; onSchedule: () => void; onEvent: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => { setOpen(false); opener.current?.focus(); }, []);
+  useEffect(() => {
+    if (!open) return;
+    ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const onPointer = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) close(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, close]);
+  const onMenuKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    items[(next + items.length) % items.length]!.focus();
+  };
+  return <div className="agent-trigger agent-trigger-add relative" ref={ref}>
+    <button type="button" className="btn" ref={opener} aria-haspopup={events ? undefined : "menu"} aria-expanded={events ? undefined : open}
+      onClick={() => events ? onSchedule() : setOpen(!open)}>+ Add a trigger</button>
+    {open ? <div role="menu" className="menu agent-trigger-menu" aria-label="Add a trigger" onKeyDown={onMenuKey}>
+      <button type="button" role="menuitem" className="menu-item" onClick={() => { close(); onSchedule(); }}>On a schedule</button>
+      <button type="button" role="menuitem" className="menu-item" onClick={() => { setOpen(false); onEvent(); }}>{EVENT}</button>
+    </div> : null}
   </div>;
 }
 
@@ -69,6 +123,13 @@ function Form({ project, id, read, latest, start, offer, clock }: {
   const [error, setError] = useState<string | null>(null);
   const [incomplete, setIncomplete] = useState(false);
   const form = useRef<HTMLFormElement>(null);
+  // Adding the event trigger moves focus to its row's Remove.
+  const eventRemove = useRef<HTMLButtonElement>(null);
+  const eventAdded = useRef(false);
+  useEffect(() => {
+    if (draft.events && eventAdded.current) eventRemove.current?.focus();
+    eventAdded.current = false;
+  }, [draft.events]);
   const saved = useRef(false);
   // One press until the draft changes: Retry repeats it, so a save whose answer was lost is not made twice.
   const press = useRef<string | null>(null);
@@ -122,11 +183,12 @@ function Form({ project, id, read, latest, start, offer, clock }: {
         {draft.schedules.map((schedule, index) => <ScheduleRow key={index} index={index} schedule={schedule} clock={clock}
           onChange={(next) => set({ schedules: draft.schedules.map((s, i) => i === index ? next : s) })}
           onRemove={() => set({ schedules: draft.schedules.filter((_, i) => i !== index) })} />)}
-        {draft.schedules.length ? null : <p className="agent-trigger agent-trigger-none text-muted">Only when you run it</p>}
-        <div className="agent-trigger agent-trigger-add">
-          <button type="button" className="btn" onClick={() => set({ schedules: [...draft.schedules, NEW_SCHEDULE] })}>+ Add a schedule</button>
-        </div>
+        {draft.events ? <EventRow remove={eventRemove} onRemove={() => set({ events: false })} /> : null}
+        {draft.schedules.length || draft.events ? null : <p className="agent-trigger agent-trigger-none text-muted">Only when you run it</p>}
+        <AddTrigger events={draft.events} onSchedule={() => set({ schedules: [...draft.schedules, NEW_SCHEDULE] })}
+          onEvent={() => { eventAdded.current = true; set({ events: true }); }} />
       </div>
+      {draft.events ? <p className="text-meta text-muted">Events that arrive during a run go to its next run together.</p> : null}
     </fieldset>
     <fieldset className="agent-fieldset">
       <legend className="agent-label">Tell me in chat</legend>

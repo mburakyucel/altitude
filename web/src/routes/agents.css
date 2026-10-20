@@ -3,6 +3,9 @@
 /* The phone header holds the title, so the line under it keeps its own space. */
 .shell[data-phone] .agents-intro, .shell[data-phone] .agent-retired-line, .shell[data-phone] .agent-run-meta { margin-top: 0; }
 .agents-chevron { flex: none; color: var(--text-muted); }
+/* Needs you's paused-agent card: the name opens the agent, and Resume keeps its width while it spins. */
+.decision-agent { display: inline-flex; align-items: center; gap: 2px; align-self: flex-start; }
+.agent-resume { min-width: 86px; justify-content: center; }
 /* A long agent name in the phone header's back link shortens instead of wrapping over the title. */
 .shell[data-phone] .agents-back { flex: 0 1 auto; min-width: 0; max-width: 45%; white-space: nowrap; }
 .agents-pause { flex: none; color: var(--text-muted); }
@@ -36,6 +39,15 @@
 .agent-run-line { overflow-wrap: anywhere; }
 .agent-what { display: flex; flex-direction: column; gap: 10px; }
 .agent-edit { align-self: flex-start; }
+/* Send it an event: examples keep their lines and scroll sideways, Copy in a row above the code. */
+.agent-send { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding-top: 10px; border-top: 1px solid var(--hairline); }
+.agent-send > h3 { font-weight: 600; }
+.agent-send > .agent-fold > summary { min-height: 36px; }
+.agent-recipes { display: flex; flex-direction: column; gap: 12px; padding: 2px 0 6px; }
+.agent-recipe-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.agent-recipe > pre.session-code { white-space: pre; overflow-x: auto; }
+.agent-status-note { display: block; margin-top: 2px; font-size: var(--text-meta); color: var(--text-muted); }
+.agent-run-events { margin-top: -14px; overflow-wrap: anywhere; }
 .agent-brief-wrap { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .agent-brief { line-height: 1.5; overflow-wrap: anywhere; }
 .agent-brief[data-clamped] { max-height: 4.5em; overflow: hidden; }
@@ -72,6 +84,11 @@
 .agent-trigger-remove { margin-left: auto; }
 .agent-trigger-none { padding-block: 14px; }
 .agent-trigger-add { align-items: flex-start; }
+.agent-trigger-words { display: flex; flex-direction: column; min-width: 0; }
+.agent-trigger-words > small { font-size: var(--text-meta); }
+/* + Add a trigger's menu opens under the button, its items 44px tall on the phone. */
+.menu.agent-trigger-menu { top: calc(100% - 6px); left: 12px; right: auto; }
+.shell[data-phone] .agent-trigger-menu .menu-item { min-height: 44px; }
 .agent-days { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .agent-day { width: 36px; height: 36px; flex: none; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); font-weight: 500; cursor: pointer; }
 .agent-day[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }

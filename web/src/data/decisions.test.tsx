@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Decision, Step } from "./api";
-import { attentionPath, attentionSummary, decisionKind, headline, isStep, turnLabel } from "./decisions";
+import type { AgentRow, Decision, Step } from "./api";
+import { attentionPath, attentionSummary, decisionGroups, decisionKind, headline, isAgentRow, isStep, isTaskDecision, turnLabel } from "./decisions";
 
 const question = (id: string): Decision => ({ project: "atlas", slug: "landing-window", id, kind: "asks" });
 const review: Decision = { project: "atlas", slug: "landing-window", kind: "review", pr: 12, question: "Review PR #12 before merge" };
@@ -42,6 +42,19 @@ describe("the operator's turn", () => {
     expect(turnLabel([step])).toBe("Your turn · 1 step");
     expect(attentionSummary([question("scope"), step, review])).toBe("1 question · 1 step · 1 review");
     expect(attentionPath(step)).toBe("/");
+  });
+
+  it("counts an agent that paused itself apart from questions, and never as a task's turn", () => {
+    const paused: AgentRow = { project: "atlas", slug: null, kind: "agent", id: "agent:flaky", agent: "flaky", title: "Flaky tests", run: 7,
+      question: "3 runs in a row couldn't finish.", asked_by: "altitude", asked: "2026-10-15T09:00:00Z", since: "2026-10-15T09:00:00Z" };
+    expect([isAgentRow(paused), isStep(paused), isTaskDecision(paused)]).toEqual([true, false, false]);
+    expect(isTaskDecision(review)).toBe(true);
+    expect(attentionSummary([question("scope"), paused])).toBe("1 question · 1 paused agent");
+    expect(attentionSummary([paused, { ...paused, id: "agent:other" }])).toBe("2 paused agents");
+    expect(turnLabel([paused])).toBeNull();
+    expect(decisionGroups([paused, { ...paused, id: "agent:other" }, question("scope")])).toHaveLength(3);
+    expect(decisionKind(paused)).toEqual({ label: "Agent paused itself", tone: "danger" });
+    expect(attentionPath(paused)).toBe("/");
   });
 
   it("counts reviews apart from questions, stops and faults", () => {

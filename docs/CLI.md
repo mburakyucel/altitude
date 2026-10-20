@@ -437,24 +437,36 @@ its task with `alt task new --improvement`, and the press is the task's authorit
 ```text
 alt agent list
 alt agent show AGENT [--run N]
-alt agent new --name NAME --brief - [--schedules 'weekdays 07:00; fri 17:00'|none] [--tell found|every|never]
-              [--limit 10|20|60] [--engine ENGINE --model MODEL --effort EFFORT] [--on]
+alt agent new --name NAME --brief - [--schedules 'weekdays 07:00; fri 17:00'|none] [--events|--no-events]
+              [--tell found|every|never] [--limit 10|20|60] [--engine ENGINE --model MODEL --effort EFFORT] [--on]
 alt agent set AGENT [the same flags] [--default-model]
-alt agent on|pause|resume|retire|run|stop AGENT
+alt agent on|pause|resume|retire|stop AGENT
+alt agent run AGENT [TEXT|-]
+alt agent send AGENT TEXT|- [--key KEY]
 alt agent offer [AGENT] [the same flags]
 ```
 
 These read and change a project's [agents](ARCHITECTURE.md#project-agents). `AGENT` is an agent's id
 or the name of exactly one agent that is not retired. On the operator's CLI, `new` saves an agent that
 runs only with Run now until it is turned on (`--on` turns it on at once), `set` saves a new version
-from the flags it names, `run` asks for a run now and `stop` ends a waiting or running run. Refusals
-read as the page says them after "Not saved: ", such as a Run now that does not fit the week's budget.
+from the flags it names, `run` asks for a run now and `stop` ends a waiting or running run. `--events` gives
+an agent the trigger "When it's sent an event". Refusals read as the page says them after "Not saved: ",
+such as a Run now that does not fit the week's budget.
+
+`send` sends an agent with the event trigger an event: a text of at most 4,000 characters, from the argument
+or with `-` from standard input. With `--key`, of 1 to 200 characters, a repeat of a key the agent already
+took is ignored, so a script can send everything it sees each time. It prints "Sent to NAME." or "Already
+received." with exit status 0, or "Not sent: <reason>" with exit status 1, keeping nothing, not even the key.
+On an agent with the event trigger, `run` without a text replays its latest event; `run AGENT TEXT` gives
+that run a text of its own as its one event, even before the agent is on. Only the operator's own
+terminal and scripts send events or give `run` a text. [Operations](OPERATIONS.md#sending-agents-events)
+has example scripts.
 
 L3 reaches the same grammar through its coordinator socket. `list` and `show` are read-only;
 `on`, `pause`, `resume`, `retire`, `run` and `stop` are admitted only during the chat turn that
 answers the operator's own message, which becomes the change's recorded source. L3 never writes a
 definition: `offer` drafts a new agent, or a change to `AGENT` from the flags it names, as a card
-under its reply, and only the operator's press saves it. A run has no `alt` verbs.
+under its reply, and only the operator's press saves it; it has no `send`. A run has no `alt` verbs.
 
 ## GitHub issues
 

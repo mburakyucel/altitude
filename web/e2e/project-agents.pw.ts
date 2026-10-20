@@ -317,7 +317,7 @@ test("the form: defaults, what is missing, create, edit and discard", async ({ p
   await walk.state("29-new-agent-defaults", {
     visible: [title("New agent"), name, brief, page.getByText("On a schedule", { exact: true }), page.getByLabel("Time"),
       page.getByRole("radio", { name: "When it finds something" }), page.getByLabel("Each run stops after"), create,
-      page.getByRole("button", { name: "Cancel", exact: true }), page.getByRole("button", { name: "+ Add a schedule", exact: true })],
+      page.getByRole("button", { name: "Cancel", exact: true }), page.getByRole("button", { name: "+ Add a trigger", exact: true })],
     hidden: [missing, noDay, page.getByText("Only when you run it")],
   });
   for (const label of ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]) await expect(day(label)).toHaveAttribute("aria-pressed", "true");
