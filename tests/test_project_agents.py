@@ -845,6 +845,19 @@ class TestEvents(AgentCase):
             self.send(agent, "One more", "one-more")
         self.assertNotIn("one-more", self.record()["agents"][0].get("received", []))
 
+    def test_a_replay_uses_nothing_up_even_when_it_is_skipped(self):
+        self.launching()
+        agent = self.events_agent()
+        self.send(agent, "PR #900 merged", "pr-900")
+        A.start_next(self.project, NOW)
+        self.ended("Nothing: fine.")
+        A.reconcile(self.project, NOW + timedelta(minutes=1))
+        self.change("run", agent=agent)
+        A.claim(self.project, NOW + timedelta(hours=7))
+        self.assertEqual(self.runs()[-1]["state"], "skipped")
+        self.assertEqual(self.record()["agents"][0]["received"], ["pr-900"], "the run that read it keeps its key")
+        self.assertEqual(self.send(agent, "PR #900 merged", "pr-900")["sent"], False)
+
     def test_run_now_replays_the_latest_event_and_the_cli_gives_it_a_text(self):
         agent = self.events_agent()
         self.assertEqual(A.agent_view(self.project, agent, now=NOW)["status"],
@@ -856,10 +869,10 @@ class TestEvents(AgentCase):
         self.change("stop", agent=agent)
         self.send(agent, "PR #812 merged", "pr-812")
         self.change("stop", agent=agent)
+        self.assertEqual(self.record()["agents"][0]["received"], [], "a run stopped before it started read nothing")
         self.change("run", agent=agent)
         self.assertEqual(A.run_view(self.project, agent, 3, now=NOW)["trigger_line"],
                          "Run now by you · For “PR #812 merged”, the latest")
-        self.assertEqual(self.record()["agents"][0]["received"], ["pr-812"], "a replay uses nothing up")
         self.change("stop", agent=agent)
         with self.assertRaisesRegex(ValueError, "only from this computer's terminal"):
             self.change("run", agent=agent, text="PR #1 merged")
@@ -886,6 +899,9 @@ class TestEvents(AgentCase):
                          {"slug": None, "agent": agent, "title": "Review each merge", "run": 3,
                           "question": "3 runs in a row couldn't finish. The last: make test-e2e is not a target."})
         self.assertNotIn("alert_key", card, "a paused agent never alerts a device")
+        from altitude import digest
+        with mock.patch.object(digest, "queue", return_value=rows):
+            self.assertIn(f"- [{self.project}] Review each merge: 3 runs in a row", digest.text())
         self.change("set", agent=agent, version=1, definition=definition(name="Review each merge", schedules=[],
                                                                            events=True, brief="Run make test."))
         self.assertEqual(A.agent_view(self.project, agent, now=NOW)["status"]["line"], "Paused")

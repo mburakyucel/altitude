@@ -541,13 +541,13 @@ RECIPES = [
     ("Each merged pull request: a script for cron every 10 minutes",
      f"""# crontab: */10 * * * * sh ~/bin/{P}-merges.sh
 {PATHLINE}
-for n in $(gh pr list -R acme/{P} --state merged -L 5 --json number -q '.[].number'); do
+for n in $(gh pr list -R acme/{P} --state merged --search sort:updated-desc -L 10 --json number -q '.[].number'); do
   alt --project {P} agent send {AGENT_ID} "PR #$n merged" --key "pr-$n" >/dev/null
 done"""),
     ("Each new issue: a script for cron every 15 minutes",
      f"""# crontab: */15 * * * * sh ~/bin/{P}-issues.sh
 {PATHLINE}
-for n in $(gh issue list -R acme/{P} --state open -L 5 --json number -q '.[].number'); do
+for n in $(gh issue list -R acme/{P} --state all -L 10 --json number -q '.[].number'); do
   alt --project {P} agent send {AGENT_ID} "Issue #$n opened" --key "issue-$n" >/dev/null
 done"""),
     ("When a command of yours fails",

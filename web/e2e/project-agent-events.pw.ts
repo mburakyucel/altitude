@@ -73,7 +73,7 @@ test("an agent with the event trigger: its status, how to send it events, and ru
   // A script keeps its lines and scrolls sideways, and its Copy sits above it, never over the code.
   const merges = recipe("Each merged pull request");
   const code = merges.locator("pre");
-  await expect(code).toContainText("gh pr list -R example/harbor --state merged -L 5");
+  await expect(code).toContainText("gh pr list -R example/harbor --state merged --search sort:updated-desc -L 10");
   expect(await code.evaluate((pre) => getComputedStyle(pre).whiteSpace)).toBe("pre");
   const copy = await merges.getByRole("button", { name: "Copy" }).boundingBox();
   const box = await code.boundingBox();

@@ -2414,9 +2414,9 @@ event trigger, text empty or over 4,000 characters, 50 events already waiting, o
 limit) and keeps nothing, or the event (`{text, key, at}`) starts a waiting run, joins the waiting one, or waits in
 the agent's `pending` while one runs. When a run ends, the agent's `pending` events become its next waiting run if it
 is still on; a schedule that comes due while events wait takes them into its run. The agent keeps its latest 1,000
-keys in `received` and its latest event, which Run now replays without using it up; `alt agent run AGENT TEXT` gives
-one run a text of its own instead. Pause, Retire, pausing itself and a skip drop the events no run read and give
-their keys back, so a script that sends the latest few each time brings them in again.
+keys in `received` and its latest event, which Run now replays without its key, so a replay uses nothing up; `alt agent run AGENT TEXT` gives
+one run a text of its own instead. Pause, Retire, pausing itself, a skip and a Stop before the run starts drop the events no run read
+and give their keys back, so a script that sends the latest few each time brings them in again.
 
 **Starting.** A project starts one run at a time, its oldest waiting run first (`project_agents.start_next`, spawned
 by the tick and by Run now), under the provider admission, the machine launch lock and the restart lock that task

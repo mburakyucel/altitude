@@ -374,7 +374,7 @@ def _run_now(record, fields, *, by, source, now):
     if fields.get("text") is not None:
         trigger["event"], events = "yours", [_event(fields["text"], None, now)]
     elif agent["events"] and agent.get("latest"):
-        trigger["event"], events = "latest", [dict(agent["latest"])]
+        trigger["event"], events = "latest", [{**agent["latest"], "key": None}]  # an earlier run read its key
     else:
         events = []
         if agent["events"]:
@@ -569,7 +569,7 @@ def _end(record: dict, run: dict, state: str, reason: str | None, now: datetime,
         _say(run, key, f"{name} stopped at its {agent['limit']}-minute limit.", "danger")
     elif state == "stopped" and tell == "every" and run.get("started"):
         _say(run, key, f"{name} stopped by you.", "muted")
-    if state == "skipped":
+    if not run.get("started"):  # skipped or stopped while waiting: no run read its events
         _give_back(agent, run.get("events") or [])
     if run["trigger"]["kind"] in ("schedule", "event") and state not in ("stopped", "skipped"):
         agent["failures"] = agent.get("failures", 0) + 1 if state in ("failed", "limit") else 0
@@ -1062,11 +1062,12 @@ def recipes(project: str, agent_id: str) -> list[dict]:
         for what, kind, name, said, key, every in (
                 ("Each merged pull request", "pr", "merges", "PR #$n merged", "pr", 10),
                 ("Each new issue", "issue", "issues", "Issue #$n opened", "issue", 15)):
-            state = "merged" if kind == "pr" else "open"
+            # The latest merges are the pull requests updated last; new issues include those already closed.
+            state, search = ("merged", " --search sort:updated-desc") if kind == "pr" else ("all", "")
             out.append({"what": f"{what}: a script for cron every {every} minutes", "text": "\n".join([
                 f"# crontab: */{every} * * * * sh ~/bin/{project}-{name}.sh",
                 CRON_PATH,
-                f"for n in $(gh {kind} list -R {repo} --state {state} -L 5 --json number -q '.[].number'); do",
+                f"for n in $(gh {kind} list -R {repo} --state {state}{search} -L 10 --json number -q '.[].number'); do",
                 f'  {send} "{said}" --key "{key}-$n" >/dev/null',
                 "done"])})
     out.append({"what": "When a command of yours fails",

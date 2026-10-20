@@ -245,7 +245,7 @@ Events that arrive during a run go to its next run together. `--key` makes a sen
 ignores a key it already took, so a script can send the latest few things it sees every time it runs and needs
 no record of its own. A refused send ("Not sent: Review each merge is paused." and the like, on standard
 error with exit status 1) keeps nothing, and an event no run read gives its key back when the agent is paused,
-retired or pauses itself, so the script's next run brings it in again. To try an agent first, `alt agent run`
+retired or pauses itself, or its run is skipped or stopped before it starts, so the script's next run brings it in again. To try an agent first, `alt agent run`
 in place of `alt agent send` starts a run now with your text, even before the agent is on.
 
 A run has your code and the network, so send numbers and your own words, never text anyone else can write, such
@@ -259,7 +259,7 @@ Each merged pull request:
 ```sh
 # crontab: */10 * * * * sh ~/bin/harbor-merges.sh
 PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
-for n in $(gh pr list -R example/harbor --state merged -L 5 --json number -q '.[].number'); do
+for n in $(gh pr list -R example/harbor --state merged --search sort:updated-desc -L 10 --json number -q '.[].number'); do
   alt --project harbor agent send 3f9a2c1b0e4d "PR #$n merged" --key "pr-$n" >/dev/null
 done
 ```
@@ -269,7 +269,7 @@ Each new issue:
 ```sh
 # crontab: */15 * * * * sh ~/bin/harbor-issues.sh
 PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
-for n in $(gh issue list -R example/harbor --state open -L 5 --json number -q '.[].number'); do
+for n in $(gh issue list -R example/harbor --state all -L 10 --json number -q '.[].number'); do
   alt --project harbor agent send 3f9a2c1b0e4d "Issue #$n opened" --key "issue-$n" >/dev/null
 done
 ```

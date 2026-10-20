@@ -621,7 +621,7 @@ alt --project harbor agent send 3f9a2c1b0e4d "PR #812 merged"
     or the week's budget cannot fit its run limit.
 - A refused send keeps nothing, not even its key, so the script's next send gets it in. An event that
   no run reads gives its key back too: one dropped by Pause or Retire, including the agent pausing
-  itself, and one skipped with its run. A script that sends the latest few each time therefore loses
+  itself, and one whose run is skipped or stopped before it starts. A script that sends the latest few each time therefore loses
   nothing while the agent is paused, and the first time it runs after you turn the agent on, the
   latest few arrive together in one run.
 - To try an agent with an event before it is on, `alt agent run AGENT [TEXT|-]` gives Run now a text
@@ -675,9 +675,9 @@ definition line and before Edit:
   than wrapping:
   - "Each merged pull request: a script for cron every 10 minutes": a comment with its crontab line,
     a `PATH` line that finds `alt` and `gh` from cron on Linux and the Mac, and a loop that lists the
-    five latest merged pull requests' numbers with `gh` and sends each as "PR #812 merged" with
+    numbers of the ten pull requests merged or updated last with `gh` and sends each as "PR #812 merged" with
     `--key pr-812`, discarding the answer when it is sent;
-  - "Each new issue: a script for cron every 15 minutes": the same for open issues, "Issue #42
+  - "Each new issue: a script for cron every 15 minutes": the same for the ten newest issues, open or closed, "Issue #42
     opened" with `--key issue-42`;
   - "When a command of yours fails": `make bench >/dev/null 2>&1 || alt … "Benchmarks failed on $(git rev-parse --short HEAD)"`.
   The recipes use the agent's id, and the project's repository where they need one. A refused send
