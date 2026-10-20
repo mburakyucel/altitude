@@ -207,8 +207,7 @@ SESSION = ('<div class="tl" style="gap:8px">'
 FOLDS = ''.join(f'<div class="fold" style="margin-top:4px">{CHEVR.replace("chev", "")}{t}</div>' for t in ("Brief it ran", "Session"))
 
 
-EVENT_LINES = ('<div class="evl"><p>10:02 · PR #810 merged: Move the upload limit to settings</p><p>10:02 · PR #811 merged: Raise the retry limit</p>'
-               '<p>10:04 · PR #812 merged: Show upload progress on the phone</p></div>')
+EVENT_LINES = '<div class="evl"><p>10:02 · PR #810 merged</p><p>10:02 · PR #811 merged</p><p>10:04 · PR #812 merged</p></div>'
 
 
 def run_page(state="ended"):
@@ -346,10 +345,9 @@ def triggers(kind="schedule", open_schedule=True, empty=False, noday=False):
     return f'<div class="trig">{rows}<div class="add"><span class="btn">+ Add a trigger</span></div></div>'
 
 
-def trigger_menu(added=False):
-    """+ Add a trigger's menu: the event trigger is left out once the list has it."""
-    event = "" if added else f'<div>{EVENT[0]}</div>'
-    return f'<div class="menu-mock" role="menu"><div class="hi">On a schedule</div>{event}</div>'
+def trigger_menu():
+    """+ Add a trigger's menu, until the list has the event trigger."""
+    return f'<div class="menu-mock" role="menu"><div class="hi">On a schedule</div><div>{EVENT[0]}</div></div>'
 
 
 EVHINT = '<span class="hint">Events that arrive during a run go to its next run together.</span>'
@@ -538,28 +536,45 @@ board("PhoneRetire", 390, 844, phone(agent_page(), back=P, title="Dependency che
 # ---- sending an agent events (step 4) ----
 AGENT_ID = "3f9a2c1b0e4d"
 SEND = f'alt --project {P} agent send {AGENT_ID} "what happened"'
+PATHLINE = 'PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"'
 RECIPES = [
-    ("Each merged pull request, checked every 10 minutes",
-     f"""*/10 * * * * gh pr list -R acme/{P} --state merged -L 5 --json number,title -q '.[] | "\\(.number) \\(.title)"' | while read -r n t; do alt --project {P} agent send {AGENT_ID} "PR #$n merged: $t" --key "pr-$n"; done"""),
-    ("Each new issue, checked every 15 minutes",
-     f"""*/15 * * * * gh issue list -R acme/{P} --state open -L 5 --json number,title -q '.[] | "\\(.number) \\(.title)"' | while read -r n t; do alt --project {P} agent send {AGENT_ID} "Issue #$n opened: $t" --key "issue-$n"; done"""),
+    ("Each merged pull request: a script for cron every 10 minutes",
+     f"""# crontab: */10 * * * * sh ~/bin/{P}-merges.sh
+{PATHLINE}
+for n in $(gh pr list -R acme/{P} --state merged -L 5 --json number -q '.[].number'); do
+  alt --project {P} agent send {AGENT_ID} "PR #$n merged" --key "pr-$n" >/dev/null
+done"""),
+    ("Each new issue: a script for cron every 15 minutes",
+     f"""# crontab: */15 * * * * sh ~/bin/{P}-issues.sh
+{PATHLINE}
+for n in $(gh issue list -R acme/{P} --state open -L 5 --json number -q '.[].number'); do
+  alt --project {P} agent send {AGENT_ID} "Issue #$n opened" --key "issue-$n" >/dev/null
+done"""),
     ("When a command of yours fails",
-     f'make bench || alt --project {P} agent send {AGENT_ID} "Benchmarks failed on $(git rev-parse --short HEAD)"'),
+     f'make bench >/dev/null 2>&1 || alt --project {P} agent send {AGENT_ID} "Benchmarks failed on $(git rev-parse --short HEAD)"'),
 ]
 
 
-def code(text):
+def code(text, copy=True):
     import html
-    return f'<div class="codeb"><code>{html.escape(text)}</code><span class="btn sm">Copy</span></div>'
+    btn = '<span class="btn sm">Copy</span>' if copy else ""
+    return f'<div class="codeb"><code>{html.escape(text)}</code>{btn}</div>'
+
+
+def recipe(what, cmd):
+    return (f'<div class="rhead"><span class="muted">{what}</span><span class="btn sm">Copy</span></div>'
+            f'<div class="codeb pre"><code>{__import__("html").escape(cmd)}</code></div>')
 
 
 def send_section(examples=False):
     fold = f'<div class="fold" style="margin-top:8px">{(DOWN if examples else CHEVR.replace("chev", ""))}Examples</div>'
-    body = "".join(f'<p class="muted" style="margin:10px 0 4px;font-size:13px">{what}</p>{code(cmd)}' for what, cmd in RECIPES) if examples else ""
+    body = "".join(recipe(*r) for r in RECIPES) if examples else ""
     return ('<div class="card"><p style="margin:0 0 2px;font-weight:600;font-size:14px">Send it an event</p>'
             '<p class="muted" style="margin:0 0 6px;font-size:13px">From a script or your terminal on this computer:</p>'
-            f'{code(SEND)}{fold}{body}'
-            '<p class="muted" style="margin:10px 0 0;font-size:12.5px">Send titles and numbers rather than text other people wrote: a run has your code and the network.</p></div>')
+            f'{code(SEND)}'
+            '<p class="muted" style="margin:6px 0 0;font-size:12.5px">To try it first, use <code>agent run</code> in place of <code>agent send</code>: it starts a run now, even before the agent is on.</p>'
+            f'{fold}{body}'
+            '<p class="muted" style="margin:10px 0 0;font-size:12.5px">Send numbers and your own words, not text anyone else can write: a run has your code and the network.</p></div>')
 
 
 # ---- needs you: an agent that paused itself (step 4) ----
@@ -715,8 +730,8 @@ CELLS = [
      '<h2 style="margin-top:0">Sessions (1)</h2>' + session_row("L3", "harbor", "Claude Code · Fable · context 12%", "1 min ago", 12)),
     ("56 · The event trigger", "its row says where events come from; the hint follows the list (step 4)",
      '<div>' + triggers("both", open_schedule=False) + EVHINT + '</div>'),
-    ("57 · Event trigger added", "the menu holds only On a schedule",
-     triggers("both", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">' + trigger_menu(added=True) + '</div>'),
+    ("57 · Event trigger added", "+ Add a trigger now adds a schedule directly, with no menu",
+     triggers("both", open_schedule=True)),
     ("58 · Events only; none yet; events waiting", "the status names the trigger; events during a run wait for the next one",
      status("events") + '<div style="height:10px"></div>' + status("events-none") + '<div style="height:10px"></div>' + status("running-pending")),
     ("59 · Event runs", "a replay of the latest event; a skip names its events",

@@ -52,12 +52,14 @@ first, so agents never crowd out your work. Waiting runs start oldest first, and
 six hours is skipped ("no free slot for 6 hours"), so a 07:00 check never starts at midnight.
 
 **Missed time.** A schedule missed while Altitude was off runs once when it comes back, marked late
-("07:00, ran at 09:14"); older ones are not caught up. An event is never lost while Altitude runs: it is recorded with the agent before
-anything starts. Each trigger fires once: a run is keyed by the agent and what fired it, so a restart
+("07:00, ran at 09:14"); older ones are not caught up. An event is recorded with the agent before
+its send answers, and one that no run reads gives its key back, so a script's next send brings it in
+again. Each trigger fires once: a run is keyed by the agent and what fired it, so a restart
 cannot start the same run twice.
 
 **No loops.** Only you send events, from your own shell or scripts: task workers, L3 and agent runs
-cannot send one, so no agent run ever fires an agent.
+cannot send one, so no run sends an event itself. A chain through your own scripts goes through you:
+from step 6, a pull request an agent opens reaches a merge recipe only once you merge it.
 
 ## Lifecycle
 
@@ -126,8 +128,9 @@ is the remaining gap.
 **Event text is data.** A run receives what fired it quoted as data after its brief, never as
 instructions. That text comes from Altitude, your own tasks and the events your scripts send, so
 you choose what a run reads. An agent that holds your private code, reads a stranger's words and can
-reach the internet can be talked into sending one to the other. So the examples send titles and
-numbers, not text other people wrote such as an issue's body, and the agent page says why. Running a
+reach the internet can be talked into sending one to the other. Anyone can write a public issue's
+title, so the examples send numbers ("PR #812 merged") and the run reads the public page if it needs
+more; the agent page says why. Running a
 stranger's text with no network beyond the engine's provider would need a new sandbox mode, which no
 step builds.
 
@@ -601,21 +604,28 @@ from. There is no catalogue of ready-made triggers to install.
 **Sending.** One command on this computer sends an agent a short text:
 
 ```sh
-alt --project harbor agent send 3f9a2c1b0e4d "PR #812 merged: Show upload progress on the phone"
+alt --project harbor agent send 3f9a2c1b0e4d "PR #812 merged"
 ```
 
 - The agent is named by its id, so renaming it never breaks a script. Its page shows the command
   with that id filled in.
 - The text is at most 4,000 characters, read from the argument or, with `-`, from stdin.
-- `--key pr-812` makes a send idempotent: an event whose key the agent already received is ignored
+- `--key pr-812` makes a send idempotent: an event whose key the agent already took is ignored
   ("Already received."). So a script can send everything it sees each time it runs, with no record
-  of its own. Keys are remembered for 30 days.
-- A send answers at once:
-  - "Sent to Review each merge.", with exit status 0;
+  of its own. An agent keeps its latest 1,000 keys for as long as it exists.
+- A send answers at once. The key is checked first:
   - "Already received.", with exit status 0;
+  - "Sent to Review each merge.", with exit status 0;
   - otherwise "Not sent: <reason>." with exit status 1, as when the agent is paused, not on yet,
-    retired, has no event trigger, the text is too long, or the week's budget cannot fit its run
-    limit.
+    retired, has no event trigger, the text is too long, 50 events already wait for its next run,
+    or the week's budget cannot fit its run limit.
+- A refused send keeps nothing, not even its key, so the script's next send gets it in. An event that
+  no run reads gives its key back too: one dropped by Pause or Retire, including the agent pausing
+  itself, and one skipped with its run. A script that sends the latest few each time therefore loses
+  nothing while the agent is paused, and the first time it runs after you turn the agent on, the
+  latest few arrive together in one run.
+- To try an agent with an event before it is on, `alt agent run AGENT [TEXT|-]` gives Run now a text
+  of your own; that run reads it as its one event.
 - Only you can send. The command runs only in your own shell or a script you run, with this
   computer's key, as `alt agent new` does. Task workers, L3 and agent runs have no `send`, so an
   agent run can never fire an agent, and nothing new is reachable from the network. A web address
@@ -627,17 +637,17 @@ alt --project harbor agent send 3f9a2c1b0e4d "PR #812 merged: Show upload progre
 - With a run waiting, the event joins that run.
 - With a run running, the event waits for the next run.
 
-When the running run ends, the next run starts at once with every event that waited, so a burst of
-five sends during a twenty-minute run costs one more run, not five. Pausing or retiring the agent
-drops the events that waited. A run skipped at its start (the reserve, six hours without a slot) is
+When the running run ends, the next run waits with every event that waited, so a burst of five sends
+during a twenty-minute run costs one more run, not five. At most 50 events wait or join one run.
+Pausing or retiring the agent drops the events that waited. A run skipped at its start (the reserve, six hours without a slot) is
 skipped with its events, and its line names them. A schedule that comes due while events wait still
 fires; the events join its run. Event runs count toward pausing itself as scheduled runs do.
 
 **What a run reads.** Every event the run took, in the order they arrived, each with the time it came.
 The text is quoted as data after the brief, never as instructions, as a run reads everything that
 fired it. You decide what text a run sees. A run holds your code and has the network, so the
-examples send titles and numbers, not text strangers wrote, such as issue bodies. Docs and the
-examples say so in one line.
+examples send numbers and your own words, never text anyone else can write, such as an issue's
+title. Docs and the agent page say so in one line.
 
 **Run now** on an agent with the event trigger replays the latest event it received, without using it
 up. Its run page says "Run now by you · For “PR #812 merged”, the latest". With none yet, the run
@@ -646,8 +656,9 @@ yet, so Run now runs without one."
 
 **The form.** **+ Add a trigger** replaces + Add a schedule. It opens a menu under the button at
 both widths, as the project menu does, with items at least 44px tall on the phone: **On a schedule**
-and **When it's sent an event**. The second is left out once the list has it. Choosing it adds its
-row after the schedules, and focus moves to the row's Remove button. Escape or a press outside closes
+and **When it's sent an event**. Choosing the second adds its row after the schedules, and focus
+moves to the row's Remove button. Once the list has the event row, + Add a trigger adds a schedule
+directly, with no menu. Escape or a press outside closes
 the menu and returns focus to the button. The event row has the bolt icon, "When it's sent an event"
 over "You send it from this computer; its page shows how.", and Remove (44px on the phone). With it,
 the hint "Events that arrive during a run go to its next run together." follows the list.
@@ -657,15 +668,22 @@ definition line and before Edit:
 
 - "From a script or your terminal on this computer:" over the command in a code block with **Copy**,
   the text a placeholder ("what happened");
-- **Examples**, folded, opening three short recipes, each a code block with Copy and one muted line
-  saying what it does:
-  - "Each merged pull request, checked every 10 minutes": a crontab line that lists the five
-    latest merged pull requests with `gh` and sends each with `--key pr-<number>`;
-  - "Each new issue, checked every 15 minutes": the same for open issues, `--key issue-<number>`;
-  - "When a command of yours fails": `make bench || alt … "Benchmarks failed on $(git rev-parse --short HEAD)"`.
-  The recipes use the agent's id, and the project's repository where they need one.
-- a muted line: "Send titles and numbers rather than text other people wrote: a run has your code
-  and the network."
+- the muted line "To try it first, use `agent run` in place of `agent send`: it starts a run now,
+  even before the agent is on.";
+- **Examples**, folded, opening three short recipes. Each has a muted line saying what it does with
+  **Copy** at its right, over its code in a block that keeps its lines and scrolls sideways rather
+  than wrapping:
+  - "Each merged pull request: a script for cron every 10 minutes": a comment with its crontab line,
+    a `PATH` line that finds `alt` and `gh` from cron on Linux and the Mac, and a loop that lists the
+    five latest merged pull requests' numbers with `gh` and sends each as "PR #812 merged" with
+    `--key pr-812`, discarding the answer when it is sent;
+  - "Each new issue: a script for cron every 15 minutes": the same for open issues, "Issue #42
+    opened" with `--key issue-42`;
+  - "When a command of yours fails": `make bench >/dev/null 2>&1 || alt … "Benchmarks failed on $(git rev-parse --short HEAD)"`.
+  The recipes use the agent's id, and the project's repository where they need one. A refused send
+  writes its reason to standard error, which cron mails or logs as it is set up.
+- a muted line: "Send numbers and your own words, not text anyone else can write: a run has your
+  code and the network."
 
 **Words.** The trigger reads "When it's sent an event":
 
@@ -687,7 +705,7 @@ more". That name appears:
 - in a skip line ("For “PR #806 merged” · No free slot for 6 hours.").
 
 A run page lists each event it took under its line, muted, one per line: its time and its first
-line. While a run is running and events wait, a muted line under the status line, before the
+line. A text given to `alt agent run` reads "Run now by you · For “PR #812 merged”, your text". While a run is running and events wait, a muted line under the status line, before the
 buttons, says "1 event waits for the next run." or "3 events wait for the next run.". On the phone
 the buttons sit beneath, as the status card already stacks there.
 
@@ -715,20 +733,24 @@ paused by you, and the status reads "Paused". Run now does not clear it.
   and say it. The built-in agents keep their schedules.
 - **Send.** `alt agent send AGENT [TEXT|-] [--key KEY]` is a change of the operator's CLI only, made
   as `new` and `set` are, under the project lock in one write. It refuses on L3's socket and in every
-  worker, and agent runs already have no `alt` verbs. It creates the waiting run, adds the event to
-  the waiting run, or adds it to the agent's `pending`. The event is `{text, key, at}`. Keys sit in
-  the agent's `received` map and are pruned after 30 days. The agent keeps its latest event for Run
-  now. There is no event log, offset or reader. A send is one locked write that either happened or
-  did not, so a restart loses nothing and repeats nothing.
+  worker, and agent runs already have no `alt` verbs. It checks the key, then the refusals, then
+  creates the waiting run, adds the event to the waiting run, or adds it to the agent's `pending`
+  (at most 50 in either). The event is `{text, key, at}`. The agent's `received` keys are its latest
+  1,000; dropping or skipping events removes theirs. The agent keeps its latest event for Run now.
+  There is no event log, offset or reader. A send is one locked write that either happened or did
+  not, so a restart loses nothing and repeats nothing. `alt agent run` takes an optional text, the
+  run's one event, which does not become the latest.
 - **Runs.** A run gains `events`. When a run ends, `reconcile` starts the agent's next run with its
   `pending` events if the agent is still on. Pause and Retire clear `pending`. `_end` counts event
   runs, and schedule runs that events joined, toward pausing itself. Run now and skips still do not
   count. The run template quotes the events as data after the brief.
 - **Needs you.** `T.decisions`' queue gains a row of kind `agent` for each agent that paused itself,
   with the agent's id and name and the last run's number and reason, and no `alert_key`, so it never
-  alerts. Rows without a slug are no longer taken for operator steps: `isStep` and its callers check
-  `kind === "step"`. The card is its own component beside `StepCard`, grouped by `agent:<id>`, and
-  `attentionSummary` counts "paused agent". Resume presses the existing `resume` change. Saving a
+  alerts. The queue's rows become a union told apart by kind: `isStep` checks `kind === "step"`, a
+  new `isAgentRow` checks `"agent"`, and every reader that means a task's decision (Work's Current
+  and the project header, the task card and page, alerts, task status) takes rows through one
+  `isTaskDecision` guard, a row with a slug. The card is its own component beside `StepCard`,
+  grouped by `agent:<id>`, and `attentionSummary` counts "paused agent". Resume presses the existing `resume` change. Saving a
   definition on an agent that paused itself marks it paused by you.
 - **Removed.** The step-1 **+ Add a schedule** button, and its branch in the form and the boards.
 - **Docs.**
@@ -736,20 +758,26 @@ paused by you, and the status reads "Paused". Run now does not clear it.
   - ARCHITECTURE's project agents: events you send, `received`, `pending`.
   - CLI: `alt agent send`, `--events`.
   - OPERATIONS: sending events, with the three examples and the line about others' text.
+- **Recipes.** `project_agents.recipes(project, agent)` writes the three examples, and the agent's
+  API and OPERATIONS show the same text.
   - The changelog.
 - **Tests.**
   - A send in each state: none, waiting, running, paused, new, retired, no trigger, too long,
-    budget spent. Keys: a repeat ignored, and a key accepted again after 30 days.
+    budget spent, 50 waiting. Keys: checked before refusals, a repeat ignored, the 1,001st dropping
+    the oldest, and a key given back by Pause, Retire, pausing itself and a skip.
   - Refusal outside the operator's CLI: L3's socket, an L2 worker, a run.
   - The next run starting with pending events, a schedule run joined, and skips carrying their
     events. Three failing event runs pause the agent.
-  - Run now with and without a latest event. The input quoted and bounded. Every words rule and
-    name form.
-  - The Needs you row: its count beside an operator step's in the same project, no alert, and
-    Resume, edit and retire clearing it.
+  - Run now with and without a latest event, and `alt agent run` with a text. The input quoted and
+    at most 50 events. Every words rule and name form.
+  - Each recipe under `sh -n`, and the two `gh` recipes run with stand-in `gh` and `alt` commands,
+    checking what they send. These run on the Mac too through `alt task validate`.
+  - The Needs you row: its count beside an operator step's in the same project, no alert, never in
+    Work or a task card, and Resume, edit and retire clearing it.
   - The API and the offer.
   - Phone and desktop walkthroughs of the states below, with fictional fixtures.
-  - No native behavior changes, and cron is only an example, so the Mac owes nothing new.
+  - No native behavior changes, and the recipes run in tests on both platforms; which scheduler runs
+    them is yours, so the Mac owes nothing new.
 
 ### States
 
@@ -766,9 +794,9 @@ paused by you, and the status reads "Paused". Run now does not clear it.
 | Run page | Running / ended / couldn't finish / loading / read failed | The live session and Stop; the report with Brief it ran and Session folded; the reason in the report's place; a spinner; "Could not load this run." and Retry |
 | Form | Saving / refused / unsaved / incomplete / no day | Save shows a spinner; refused keeps the edit with "Not saved: <reason>" and Retry; the Discard dialog; "Give it a name and a brief."; "Pick at least one day." |
 | Triggers | Add / none | The trigger menu (from step 4; before it, + Add a schedule); "Only when you run it" |
-| Triggers | Menu / event row / event added | On a schedule and When it's sent an event, Escape returning focus; the event row with its line and the hint after the list; the menu holds only On a schedule |
+| Triggers | Menu / event row / event added | On a schedule and When it's sent an event, Escape returning focus; the event row with its line and the hint after the list; + Add a trigger adds a schedule directly |
 | Status | Events only / none yet / events waiting | "Runs when it's sent an event"; "No event yet, so Run now runs without one."; "3 events wait for the next run." under Running |
-| Send it an event | Command / examples | The command with Copy; Examples folded, then three recipes with Copy, and the line about others' text |
+| Send it an event | Command / examples | The command with Copy and the line about trying it; Examples folded, then three recipes, each its line with Copy over its code, and the line about others' text |
 | Runs | Several events / Run now replay / skipped with events | "For “PR #810 merged” and 2 more: …"; the run page's "Run now by you · For “PR #812 merged”, the latest"; "For “PR #806 merged” · No free slot for 6 hours." |
 | Run page | Events | One muted line per event, its time and first line, under what fired it |
 | Needs you | Paused itself / resuming / refused / cleared | The card with its title link, Resume and Open the last run, counted, no alert; a spinner in Resume; "Not resumed: Flaky tests is retired."; gone after Resume, a saved edit or Retire |

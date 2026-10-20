@@ -125,3 +125,7 @@ a.agentsrow{display:flex;align-items:center;justify-content:space-between;color:
 .codeb code{flex:1;min-width:0;font-size:12.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .codeb .btn.sm{height:28px;font-size:12.5px;padding:0 10px;flex:none}
 .phonesheet .codeb .btn.sm,.m .codeb .btn.sm{height:44px}
+.codeb.pre code{white-space:pre;overflow-x:auto;overflow-wrap:normal}
+.rhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:12px 0 4px;font-size:13px}
+.rhead .btn.sm{height:28px;font-size:12.5px;padding:0 10px}
+.m .rhead .btn.sm,.phonesheet .rhead .btn.sm{height:44px}
