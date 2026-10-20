@@ -76,6 +76,9 @@ and one authenticated coding CLI. Agent work uses your coding account's allowanc
    address and the next thing to set up. [Pair additional devices](docs/SETUP.md#pair-each-device) with
    `alt pair` or Settings → Devices.
 
+`alt uninstall` removes the service and the `alt` command and keeps your settings, certificates, paired
+browsers and data; [setup](docs/SETUP.md#install-the-application) has the details.
+
 Altitude runs as a per-user background service on the computer you installed it on; closing the
 terminal or the browser leaves it running. The default `https://127.0.0.1:8890` opens only on that
 computer. **Settings → Network** explains reaching it from a phone or another computer, and how an
