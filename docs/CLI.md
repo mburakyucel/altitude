@@ -2007,7 +2007,9 @@ assessment then faces the ordinary freshness checks; withdrawal authority is unc
 addendum. It needs every current review finished and assessed, cannot name `--previous`, and has its
 own focus and requester. Earlier reviews keep their open findings, requester, focus and withdrawal
 authority, and still block merge however the additional review turns out. Repeating the
-additional review with `--previous` replaces only it.
+additional review with `--previous` replaces only it. `--previous` names the subject's latest review;
+naming an earlier one is refused with the latest review's id, so the owner either names that one or
+requests an additional review. Repeating a request with the same identity or source returns its review.
 With no findings, use an empty array and an assessment reason. Commit fixes before
 assessing; an outcome explanation posted before or after the assessment leaves it current.
 For a held PR, reassess after reading the operator's merge approval, including any conditions.

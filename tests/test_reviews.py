@@ -845,6 +845,25 @@ class TestReviews(AltitudeCase):
         with self.assertRaises(T.TransitionError):
             reviews.require_merge(self.project, self.slug, self.pair())
 
+    def test_naming_an_earlier_review_is_refused_with_the_latest(self):
+        # Owner report (2026-10-20): naming an earlier review answered with the later additional review,
+        # so the owner believed a new review was pending when none was.
+        first = self.run_review()
+        self.assess(first)
+        additional = self.request(additional=True, request_id="additional")
+        for state in ("requested", "completed"):
+            if state == "completed":
+                self.assess(self.run_review(additional))
+            with self.subTest(state=state):
+                reviews_before = S.load_task(self.project, self.slug)["reviews"]
+                events_before = S.read_events(self.project, self.slug)
+                with self.assertRaisesRegex(T.TransitionError, f"{first['id']} is not the latest changes review; "
+                                            "the latest is additional. Name it with --previous"):
+                    self.request(previous=first["id"], request_id="stale", focus="Review the later revision")
+                self.assertEqual(S.load_task(self.project, self.slug)["reviews"], reviews_before)
+                self.assertEqual(S.read_events(self.project, self.slug), events_before)
+        self.assertEqual(self.request(previous="additional", request_id="replacement")["previous"], "additional")
+
     def test_owner_replacement_before_start_cancels_result(self):
         def replace_owner(prompt, **kwargs):
             task = S.load_task(self.project, self.slug)

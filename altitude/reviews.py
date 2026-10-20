@@ -368,9 +368,13 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         # Naming a waiting request with a different explicit selection replaces it; nothing else re-selects.
         reselect = bool(latest and previous == latest["id"] and latest["state"] == "requested"
                         and (engine or model) and selection != latest.get("selection"))
+        if latest and previous and previous != latest["id"]:
+            # Answering with the latest review would let the owner believe a request is pending when none is.
+            raise T.TransitionError(f"Review {previous} is not the latest {subject} review; the latest is {latest['id']}. "
+                                    "Name it with --previous to replace it, or request an additional review.")
         if latest and not reselect:
-            # An additional review adds to an assessed latest review; every other request names what it replaces.
-            if previous != latest["id"] and not additional or latest["state"] in ("requested", "running"):
+            # An additional review adds to an assessed latest review; a request naming none answers with the latest.
+            if not previous and not additional or latest["state"] in ("requested", "running"):
                 if (engine or model) and latest.get("selection") != selection:
                     raise T.TransitionError("Another review request is open. Name it with --previous to select a different reviewer.")
                 return _project_review(latest, task, None)
