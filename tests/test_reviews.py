@@ -651,7 +651,6 @@ class TestReviews(AltitudeCase):
         self.assertNotIn(owner["id"], result["snapshot"]["context_ids"])
         self.assertEqual(result["coverage"], "current")
         self.assertEqual(result["snapshot"]["captured_context_hash"], reviews._hash(captured))
-        self.assertNotEqual(result["snapshot"]["captured_context_hash"], result["snapshot"]["context_hash"])
         self.assess(result)
         reviews.require_merge(self.project, self.slug, self.pair())
 
@@ -1161,6 +1160,34 @@ class TestReviews(AltitudeCase):
         self.assess(result)
         reviews.require_merge(self.project, self.slug, self.pair())
 
+    def test_owner_explanations_and_questions_leave_assessments_current(self):
+        # A landing once needed three extra reassessments: each explanation the owner posted made the reviews stale.
+        proposal = T.message(self.project, self.slug, "l2", "Proposal: preserve the public result")
+        reviewed = [self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"]), self.run_review()]
+        for review in reviewed:
+            self.assess(review)
+        T.message(self.project, self.slug, "l2", "f1 dismissed on both reviews: the API requires a value.", expected_attempt=1)
+        T.block(self.project, self.slug, "Merge after checks?", actor="l2", expected_attempt=1)
+        S.save_task(self.project, {**S.load_task(self.project, self.slug), "state": "running"})  # resumed by an answer
+        question = T.block(self.project, self.slug, "Merge once checks pass?", actor="l2", expected_attempt=1)["questions"][-1]
+        T.resolve_question(self.project, self.slug, question["id"], None, None, disposition="withdrawn",
+                           reason="Merge needs no hold.", expected_attempt=1)
+        self.assertEqual([(q["resolution"]["disposition"], q["resolution"]["by"]) for q in S.load_task(self.project, self.slug)["questions"]],
+                         [("superseded", "l2"), ("withdrawn", "l2")])
+        reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertNotIn("earlier", {row["coverage"] for row in reviews.view(self.project, self.slug)["history"]})
+        # New authority asks for one reassessment of each review, which later explanations keep current.
+        T.message(self.project, self.slug, "l3", "Issue 12 tracks the follow-up.", by="l3")
+        with self.assertRaises(reviews.AssessmentRequired) as stale:
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertEqual({row["id"] for row in stale.exception.stale_reviews}, {review["id"] for review in reviewed})
+        self.assertIn("your own messages and questions leave an assessment current", str(stale.exception))
+        for review in reviewed:
+            self.assess(review)
+            T.message(self.project, self.slug, "l2", f"Reassessed {review['id']} after the follow-up note.", expected_attempt=1)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertEqual(self.engine.call_count, 2)
+
     def test_unfinished_request_takes_precedence_over_stale_assessment(self):
         completed = self.run_review()
         self.assess(completed)
@@ -1488,7 +1515,11 @@ class TestReviews(AltitudeCase):
         review = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"])
         self.assess(review)
         reviews.require_merge(self.project, self.slug, self.pair())
+        # The owner's revision carries no authority until the operator's go on it, which needs reassessment.
         revised = T.message(self.project, self.slug, "l2", "Proposal version two with cursor continuity")
+        reviews.require_merge(self.project, self.slug, self.pair())
+        question = T.block(self.project, self.slug, "Build proposal version two?", actor="l2", expected_attempt=1)["questions"][-1]
+        T.accept_question(self.project, self.slug, question["id"], question["revision"], text="Build version two.")
         self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]["coverage"], "earlier")
         with self.assertRaisesRegex(T.TransitionError, "changed after review assessment"):
             reviews.require_merge(self.project, self.slug, self.pair())
@@ -1653,6 +1684,7 @@ class TestReviews(AltitudeCase):
         self.assertEqual(len(S.load_task(self.project, self.slug)["reviews"]), 2)
         changes = self.run_review(changes)
         self.assess(changes)
+        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Also propose the follow-up behavior.")
         proposal = T.message(self.project, self.slug, "l2", "Proposal for follow-up behavior")
         proposed = self.run_review(queued, proposal_id=proposal["id"])
         self.assess(proposed)

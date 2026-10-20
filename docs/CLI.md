@@ -1713,13 +1713,14 @@ When task context or the turn's integration makes completed review assessments s
 invocation waits while the owner explicitly assesses the pinned candidate: before the line within the
 first phase's bound, or within its turn after integrating. Failed or unavailable checks end the wait.
 Keep landing alive in a native background/tool session and read its partial output. Inspect the printed
-head (and base, in the turn) and current conversation, post any explanation for all affected reviews,
-then run `alt task review assess --review-id <id> --file <assessment.json>` in a separate command for
-each. The notice lists all stale review IDs and subjects together, with the assessment timestamp and
-assessed/current values of each changed head, base, tree, proposal or context hash. Context includes
-the request, brief, messages and decisions; inspect the current task conversation when its hash
-changes. Assess every stale request, including proposals, before posting further explanations, and
-collect the original landing result. A changes assessment does not retire a proposal assessment or its
+head (and base, in the turn) and current conversation, then run
+`alt task review assess --review-id <id> --file <assessment.json>` in a separate command for each.
+The notice lists all stale review IDs and subjects together, with the assessment timestamp and
+assessed/current values of each changed head, base, tree, proposal or context hash. Context is the
+request, brief, operator and L3 messages and the decisions they carry; inspect the current task
+conversation when its hash changes. The owner's own messages, questions and withdrawals carry no
+authority and leave an assessment current, so explanations can come before or after it. Record the
+resolution of an answered question before assessing. Then collect the original landing result. A changes assessment does not retire a proposal assessment or its
 findings. If code needs edits or another review, cancel landing and prepare a new candidate. Missing or
 unfinished review, changed local/remote head or PR identity, and lost ownership refuse; `--wait 0` and
 operator-run landings refuse stale assessment immediately. Context changes detected during final merge
@@ -1963,7 +1964,7 @@ question shows "skipped by L2" with its reason (spec §3.8.3); a recorded review
 skip, and merge requirements are unchanged. Open questions do not prevent either subject: a request can continue a
 question-blocked owner solely to prepare, run and assess review. Every open question, its revision, its card
 and any merge hold stay unchanged, and implementation or merge still needs its own approval. Because review
-freshness covers the task conversation and decisions, a later answer or resolution needs reassessment before merge.
+freshness covers operator and L3 messages and decisions, a later answer or resolution needs reassessment before merge.
 The same owner attempt assesses a review that completed while it waited on a question, whether it is
 running or blocked again, and republishes the revised question with the dispositions; a fault or Stop
 holds assessment until the owner resumes.
@@ -2008,10 +2009,10 @@ own focus and requester. Earlier reviews keep their open findings, requester, fo
 authority, and still block merge however the additional review turns out. Repeating the
 additional review with `--previous` replaces only it.
 With no findings, use an empty array and an assessment reason. Commit fixes before
-assessing; post the outcome explanation before assessment so it is included in the final context.
+assessing; an outcome explanation posted before or after the assessment leaves it current.
 For a held PR, reassess after reading the operator's merge approval, including any conditions.
 This updates L2's assessment without another reviewer invocation.
-Code, base or subsequent conversation changes require changes reassessment before merge. During
+Code, base or later operator or L3 messages and decisions require changes reassessment before merge. During
 [concurrent landing](#concurrent-landings), the current owner can assess the pinned integrated candidate
 while the original landing command retains its turn; this invokes no reviewer. Later
 proposal/source/context changes require proposal assessment or deliberate new review; optional

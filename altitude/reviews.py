@@ -36,9 +36,9 @@ class AssessmentRequired(T.TransitionError):
             details.append(f"review {review['id']} ({review['subject']}) changed after review assessment "
                            f"at {review['assessed_at']}: {changes}. "
                            f"Run alt task review assess --review-id {review['id']} --file <assessment.json>.")
-        super().__init__("\n".join(details) + f"\nInspect the candidate and alt task messages {slug}; "
-                         "post explanations for all affected reviews before assessing each one. "
-                         "Task context includes the request, brief, messages and decisions.")
+        super().__init__("\n".join(details) + f"\nInspect the candidate and alt task messages {slug}, then assess each one. "
+                         "Task context is the request, brief, operator and L3 messages and their decisions; "
+                         "your own messages and questions leave an assessment current, so explain before or after it.")
 
 
 def _load(project, slug):
@@ -193,7 +193,10 @@ def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
             raise T.TransitionError("Name an original L2 proposal message with --proposal-message before review.")
         context["proposal"] = proposal
         identity.update(proposal_id=proposal_id, proposal_hash=_hash(proposal))
-    identity["context_hash"] = _hash(context)
+    # Freshness follows authority. The owner's own messages and question records carry none, so explaining an
+    # assessment never makes it stale; a landing once looped through three reassessments as each explanation did.
+    identity["context_hash"] = _hash({**context, "messages": [r for r in context["messages"] if r["role"] != "l2"],
+                                      "decisions": [d for d in context["decisions"] if d.get("by") != "l2"]})
     return identity, context
 
 
@@ -243,8 +246,8 @@ def _project_review(review, task, identity):
 
 
 def _earlier(review, task, identity):
-    """"Earlier version" names new content (commits or a revised proposal); a moved main or conversation is
-    L2's routine reassessment before landing, which require_merge still enforces. A question published with
+    """"Earlier version" names new content (commits or a revised proposal); a moved main or new operator or L3 context
+    is L2's routine reassessment before landing, which require_merge still enforces. A question published with
     other shown files than the review read also makes it an earlier version; a merge question's files are not the
     proposal's."""
     snapshot = review.get("snapshot") or {}
