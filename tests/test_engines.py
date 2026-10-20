@@ -404,6 +404,8 @@ class TestWorkerTokenInput(AltitudeCase):
             with self.subTest(engine=engine):
                 command, sent = self.launched(engine, "linux")
                 self.assertEqual(json.loads(sent)["env"]["GH_TOKEN"], self.TOKEN)
+                self.assertNotIn("GH_CONFIG_DIR", engines.common.github_token.call_args.args[0],
+                                 "the launcher reads the operator's own GitHub CLI sign-in, not the task's settings")
                 # systemd-run --pipe hands the job its launcher's own input pipe.
                 job = subprocess.run(_unconfined(command[command.index("--") + 1:]), input=sent, capture_output=True, timeout=60)
                 self.assertEqual(job.returncode, 0, job.stderr)

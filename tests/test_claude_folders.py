@@ -241,7 +241,7 @@ class TestClaudeFolders(AltitudeCase):
         with mock.patch.object(platform, "operator_paths", return_value=present) as named:
             filesystem = next(setting for setting in engines.codex_l3_permissions(self.tmp, project=self.project)
                               if ".filesystem=" in setting)
-        self.assertEqual(set(named.call_args.args[0]), set(engines.claude.operator_places()),
+        self.assertEqual(set(named.call_args.args[0]), {*platform.credential_places(), *engines.claude.operator_places()},
                          "a Codex coordinator keeps its own folder")
         for path in present[:2]:
             self.assertIn(f'{json.dumps(path)}="deny"', filesystem)

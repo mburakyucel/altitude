@@ -7,11 +7,11 @@ Real bubblewrap starts neither inside an Altitude worker, nor in the validation 
 /proc, nor on the hosted runner, whose AppArmor refuses it user namespaces. The guest boots as the installation lane's
 does (scripts/installation_vm.py), from the signature-checked cached image on a copy-on-write overlay. While online it
 installs bubblewrap, Ubuntu's own AppArmor profile that admits bubblewrap to user namespaces as on an Ubuntu desktop,
-and the hardware-enablement kernel, which offers Landlock's abstract-socket scope. It then restarts on that kernel,
-loses its online card and runs the module from the committed source. RESULTS_DIR/sandbox-vm.json records the guest,
-its kernel, bubblewrap and Landlock versions, the module's output and whether every case ran and passed: a case
-skipped for any reason but being macOS-only, as Seatbelt's are, fails the run. The VM is deleted afterwards. Requires
-what the installation lane requires.
+the hardware-enablement kernel, which offers Landlock's abstract-socket scope, and Git and the GitHub CLI, which a
+worker reaches GitHub with. It then restarts on that kernel, loses its online card and runs the module from the
+committed source. RESULTS_DIR/sandbox-vm.json records the guest, its kernel, bubblewrap and Landlock versions, the
+module's output and whether every case ran and passed: a case skipped for any reason but being macOS-only, as
+Seatbelt's are, fails the run. The VM is deleted afterwards. Requires what the installation lane requires.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ import time
 CHECKOUT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CHECKOUT))
 from scripts import installation_vm as vm  # noqa: E402 (the lane's machine)
-PACKAGES = ("bubblewrap", "apparmor-profiles", "linux-generic-hwe-24.04")
+PACKAGES = ("bubblewrap", "apparmor-profiles", "linux-generic-hwe-24.04", "git", "gh")
 COMMANDS = ("cp /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/",
             "apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict")
 MODULE = "tests.test_session_sockets"
@@ -61,7 +61,8 @@ def run(results: Path, commit: str, cache: Path) -> int:
         record["image"] = vm.base_image(cache)
         source = work / "source.tar"
         subprocess.run(["git", "archive", "--format=tar", "-o", str(source), commit], cwd=CHECKOUT, check=True)
-        vm.note("booting the VM; it installs bubblewrap, its AppArmor profile and the hardware-enablement kernel")
+        vm.note("booting the VM; it installs bubblewrap, its AppArmor profile, the hardware-enablement kernel, Git and "
+                "the GitHub CLI")
         machine = vm.Machine(work, cache / vm.IMAGE, packages=PACKAGES, commands=COMMANDS)
         machine.start()
         machine.wait_ready(time.monotonic() + 1800)

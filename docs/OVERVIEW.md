@@ -152,6 +152,7 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   [run from a source checkout](OPERATIONS.md#run-from-a-source-checkout),
   [service lifecycle](OPERATIONS.md#service-lifecycle),
   [macOS privacy prompts](OPERATIONS.md#macos-privacy-prompts),
+  [stored sign-ins and agents](OPERATIONS.md#stored-sign-ins-and-agents),
   [validation runs](OPERATIONS.md#validation-runs), [voice input](OPERATIONS.md#voice-input).
 - [Setup](SETUP.md): installation to first conversation.
   [Prerequisites](SETUP.md#prerequisites), [install the application](SETUP.md#install-the-application),

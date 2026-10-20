@@ -651,8 +651,18 @@ def task_scratch(extra_env: dict) -> Path:
     return scratch
 
 
+#: A worker's Git reaches GitHub over HTTPS, signed in by the GitHub CLI with the task's `GH_TOKEN`, since its sandbox
+#: hides the operator's SSH keys and Git credentials (`platform.credential_places`): a remote named over SSH is
+#: rewritten, and the helpers the operator's own Git settings name are cleared for GitHub.
+GITHUB_GIT = (("url.https://github.com/.insteadOf", "git@github.com:"),
+              ("url.https://github.com/.insteadOf", "ssh://git@github.com/"),
+              ("credential.https://github.com.helper", ""),
+              ("credential.https://github.com.helper", "!gh auth git-credential"))
+
+
 def task_tool_env(env: dict, scratch: Path) -> dict:
-    """Tool caches live in the task's scratch folder and share its lifetime.
+    """Tool caches live in the task's scratch folder and share its lifetime, and so do the GitHub CLI's settings, as
+    the sandbox hides the operator's; Git reaches GitHub as `GITHUB_GIT` says.
 
     Keep Corepack's installed managers readable at their original location before moving XDG caches.
     """
@@ -663,7 +673,10 @@ def task_tool_env(env: dict, scratch: Path) -> dict:
     for key in ("NPM_CONFIG_CACHE", "NPM_CONFIG_STORE_DIR"):
         env.pop(key, None)
     env.update(XDG_CACHE_HOME=str(cache), npm_config_cache=str(cache / "npm"),
-               npm_config_store_dir=str(cache / "pnpm"), PIP_CACHE_DIR=str(cache / "pip"))
+               npm_config_store_dir=str(cache / "pnpm"), PIP_CACHE_DIR=str(cache / "pip"), GH_CONFIG_DIR=str(cache / "gh"),
+               GIT_CONFIG_COUNT=str(len(GITHUB_GIT)),
+               **{f"GIT_CONFIG_{part}_{n}": value for n, pair in enumerate(GITHUB_GIT)
+                  for part, value in zip(("KEY", "VALUE"), pair)})
     return env
 
 
@@ -1316,7 +1329,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         try:
             task = ({"project": extra_env["ALTITUDE_PROJECT"], "slug": extra_env["ALTITUDE_TASK"]}
                     if extra_env and extra_env.get("ALTITUDE_PROJECT") and extra_env.get("ALTITUDE_TASK") else None)
-            token = github_token(worker_env)
+            token = github_token(launch_env(extra_env, retain_user_bus=True))  # the operator's own settings
             data = _driver_input({**launch, "engine": engine, "command": cmd, "input": content, "cwd": str(cwd),
                                   "model": model, "resume": resume, "worker_id": worker_id, "task": task,
                                   "sends": str(paths["sends"]),

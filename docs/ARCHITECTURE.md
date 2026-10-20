@@ -1546,13 +1546,15 @@ may signal only processes in its own sandbox, never its supervisor,
 and write only under its own roots (a task worker's worktree, the worktree's Git directories except their
 [read-only parts](#isolation-and-landing) and its scratch folder; a coordinator turn's runtime folder and Altitude's
 home), the job's own engine folder and its own temporary folder, and never reads
-Altitude's credentials, the common browsers' profiles or the operator's own Codex folder, Claude folder and Claude
-state file (`engines.operator_places`), apart from the entries its launch reopens read-only. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
+Altitude's credentials, the common browsers' profiles, the operator's stored credentials (below) or the
+operator's own Codex folder, Claude folder and Claude state file (`engines.operator_places`), apart from the entries
+its launch reopens read-only. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
 or the launcher's job folders, which hold each job's piped input and relay its output;
 launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
 whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
-Events, which script running apps with only macOS's Automation consent in the way. It reaches Unix sockets only
+Events, which script running apps with only macOS's Automation consent in the way, and the keychain services, which
+hand the sign-ins command-line tools keep there to any program that asks. It reaches Unix sockets only
 inside its own roots and temporary folder, a coordinator turn's broker socket and the system's name and log services,
 never one another program keeps in the shared temporary folders. On Linux the job sees only its own processes and a
 device folder with its own terminals, and cannot write the control groups. Its per-user runtime folder is empty, so
@@ -1570,11 +1572,32 @@ Every job, on either engine, has a temporary folder of its own as its TMPDIR: a 
 name in /tmp, short enough that a socket made in it stays within the platforms' path limits, so a job neither meets
 nor leaves sockets and files in the shared temporary folders. The user manager (Linux) or the job's supervisor
 (macOS) removes it when the job ends, also after an altd restart. A confined job thereby loses the desktop session:
-its windows, the SSH and keyring agents, terminal multiplexers and editor servers. On a machine whose GitHub SSH key
-lives only in an agent, a worker's own fetch over SSH stops working; landing, which altd does, is unaffected.
+its windows, the SSH and keyring agents, terminal multiplexers and editor servers.
 Still reachable from a job: system-wide sockets under /run, among them a container engine's socket when the
 operator's account may use it, and sockets kept inside the home folder; on Linux, abstract sockets for every job on
 a kernel older than 6.12. A Codex coordinator turn's own profile refuses sockets in the shared temporary folders too.
+
+The operator's stored credentials are the places in the home where other programs keep
+sign-ins and keys (`platform.credential_places`): `~/.ssh`, `~/.gnupg`, the GitHub, hub and GitLab CLIs' folders,
+Git's credential files, `~/.netrc`, the AWS, Azure and Google Cloud CLIs' folders, `~/.kube`, Docker's and Podman's
+registry logins, the npm, PyPI, Cargo, RubyGems and Terraform token files, rclone's folder, Vault's token, the
+1Password CLI's folder, `pass`'s store and the GNOME keyring's and macOS keychain's files, each at its default
+location. Each is hidden from every job in Altitude's
+sandbox whether present or not, also where it leads when it is a link, as the engines' places of the operator's own
+are; a Codex coordinator's profile denies the ones present when its turn starts. Only the named files are hidden where
+a folder also holds tools (`~/.docker`, `~/.cargo`). On Linux a place created while a job runs, inside a folder the
+job's home shows read-only, stays readable to that job until it ends. Shell start-up files, Git's settings and shell
+histories stay readable. A confined job therefore has no SSH key, GPG key, cloud or cluster sign-in, or registry
+token of the operator's: it reaches no host over SSH and signs no commit, and the operator's private registries
+named in the home answer it unauthenticated. On macOS a Codex coordinator runs under Codex's own profile, which
+decides its keychain access; that turn has no network of its own. A task worker reaches GitHub over
+HTTPS (`engines.GITHUB_GIT`): Git's environment rewrites a GitHub remote named `git@github.com:` or
+`ssh://git@github.com/` to HTTPS and clears the operator's credential helpers for GitHub in favor of the GitHub
+CLI, which signs in with the worker's `GH_TOKEN` and keeps its settings in the task's scratch folder
+(`GH_CONFIG_DIR`). The worker's fetches and pushes, landing's among them, therefore carry the GitHub CLI sign-in's
+permissions; an operator Git setting that sends GitHub's HTTPS address to SSH (`insteadOf` or `pushInsteadOf`)
+takes precedence, and the worker's pushes then fail. Repairs run outside every sandbox and keep the operator's full
+access.
 
 Every Claude job Altitude starts has a Claude folder of its own (`CLAUDE_CONFIG_DIR`), so no job writes
 the operator's `~/.claude`, `~/.claude.json` or the GitHub CLI's configuration, which another run or
@@ -1655,8 +1678,8 @@ applies can read. The engine and its tools
 hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex shell snapshot) can hold it
 too. A launcher without a sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. A Codex coordinator turn keeps
 Codex's own sandbox inside the same job boundary (on macOS the two Seatbelt profiles cannot nest); its profile denies
-the per-user runtime folder, the shared temporary folders apart from its own, Altitude's credentials and, on macOS,
-the private places and the job folders. Both engines use the same door; private worker records and output identify both engines' sessions
+the per-user runtime folder, the shared temporary folders apart from its own, Altitude's credentials, the operator's
+stored credentials present when its turn starts and, on macOS, the private places and the job folders. Both engines use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
 recorded coalition has members. Unknown states, bus failures and query timeouts

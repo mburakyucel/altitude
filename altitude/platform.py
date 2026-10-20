@@ -1603,9 +1603,10 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
     Every job has a temporary folder of its own (`_job_temporary`), its TMPDIR, removed when the job ends.
     `writable` confines the job with Altitude's own sandbox, Seatbelt on macOS and bubblewrap on Linux: it may signal
     only its own processes and write only under these roots and its temporary folder, except under `read_only`,
-    never reads Altitude's credentials or the engines' places of the operator's own (`engines.operator_places`),
-    except a `read_only` path inside one, and reaches no Unix socket of the desktop session; `sockets` are the ones
-    outside its roots it may reach. Without it, file confinement is left to the engine.
+    never reads Altitude's credentials, the operator's stored credentials (`credential_places`) or the engines' places
+    of the operator's own (`engines.operator_places`), except a `read_only` path inside one, and reaches no Unix
+    socket of the desktop session; `sockets` are the ones outside its roots it may reach. Without it, file confinement
+    is left to the engine.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
     creates the child. This lets nested bwrap initialize without weakening altd's ``NoNewPrivileges=yes`` boundary.
@@ -1633,13 +1634,13 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
 
 
 def _operator_places(places=None) -> list[str]:
-    """The engines' folders and files of the operator's own that no job in Altitude's sandbox sees (`places`, by
-    default every engine's), resolved, present or not; a place ending in * stands for every name in its folder that
-    starts with it, and is followed by where each such name present now that is a link leads. On macOS each is also
-    spelled through the data volume's other name, as `secret_places` spells them."""
+    """The folders and files of the operator's own that no job in Altitude's sandbox sees (`places`, by default their
+    stored credentials and every engine's places), resolved, present or not; a place ending in * stands for every name
+    in its folder that starts with it, and is followed by where each such name present now that is a link leads. On
+    macOS each is also spelled through the data volume's other name, as `secret_places` spells them."""
     from .engines import common
     found = []
-    for place in common.operator_places() if places is None else places:
+    for place in (*credential_places(), *common.operator_places()) if places is None else places:
         if not place.endswith("*"):
             found.append(os.path.realpath(place))
             continue
@@ -2377,9 +2378,12 @@ XCODE_SELECT = "/usr/bin/xcode-select"
 #: Seatbelt rules shared by every Altitude profile. Three per-user paths run programs as the operator's account,
 #: outside the caller's sandbox: Apple's Simulator service, whose devices run what any client asks (its helpers and
 #: each booted device share the prefix), LaunchServices, which opens any app, and Apple Events, which script any running
-#: app, held otherwise only by macOS's Automation consent.
+#: app, held otherwise only by macOS's Automation consent. The keychain services are refused too: they hand the sign-ins
+#: command-line tools keep there to any program that asks, without a prompt.
 SERVICE_ESCAPES = ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator.")'
-                   ' (xpc-service-name-prefix "com.apple.CoreSimulator."))(deny lsopen)(deny appleevent-send)')
+                   ' (xpc-service-name-prefix "com.apple.CoreSimulator.")'
+                   ' (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))'
+                   '(deny lsopen)(deny appleevent-send)')
 CAFFEINATE = "/usr/bin/caffeinate"
 #: launchctl's status when the domain has no such job.
 NOT_FOUND = 113
@@ -2753,6 +2757,24 @@ def secret_places() -> tuple[str, ...]:
     return _volume_spellings(found) if _darwin() else tuple(dict.fromkeys(found))
 
 
+#: Where the operator's other programs keep stored sign-ins and keys in the home, on either platform: SSH and GPG keys,
+#: the GitHub, hub and GitLab CLIs, Git's credential store, netrc logins, the AWS, Azure and Google Cloud CLIs,
+#: Kubernetes, Docker's and Podman's registry logins, npm, PyPI, Cargo, RubyGems and Terraform tokens, rclone's
+#: remotes, Vault's token, the 1Password CLI, pass, and the GNOME keyring's and macOS keychain's files, each at its
+#: default location.
+CREDENTIAL_HOME = (".ssh", ".gnupg", ".config/gh", ".config/hub", ".config/glab-cli", ".git-credentials",
+                   ".config/git/credentials", ".netrc", ".aws", ".azure", ".config/gcloud", ".kube",
+                   ".docker/config.json", ".config/containers/auth.json", ".npmrc", ".pypirc", ".cargo/credentials",
+                   ".cargo/credentials.toml", ".gem/credentials", ".terraform.d/credentials.tfrc.json", ".config/rclone",
+                   ".vault-token", ".config/op", ".password-store", ".local/share/keyrings", "Library/Keychains")
+
+
+def credential_places() -> tuple[str, ...]:
+    """The operator's stored credentials in the home (`CREDENTIAL_HOME`), present or not, which no job in Altitude's
+    sandbox sees (`job_command`), hidden as the engines' places of the operator's own are."""
+    return tuple(str(Path.home() / place) for place in CREDENTIAL_HOME)
+
+
 def _volume_spellings(paths) -> tuple[str, ...]:
     """Each macOS path as Seatbelt may match it: as named, and through the data volume's other name."""
     return tuple(dict.fromkeys(spelling for path in paths for spelling in
@@ -2962,7 +2984,8 @@ def seatbelt_profile(writable: list[str], read_only: list[str] = (), *, temporar
     neither reads nor writes a `hidden` folder or file, or any path a hidden * place starts, apart from reading the
     `read_only` paths inside a hidden folder, as named and resolved, each also through the data volume; these rules
     come before the private places' refusal, which stays last. launchd refuses service control to every sandboxed
-    process, and the profile refuses the services and Apple Events that would run a program outside it."""
+    process, and the profile refuses the keychain and the services and Apple Events that would run a program outside
+    it."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
     rules = []
     for root in dict.fromkeys((*writable, temporary, user, "/private/tmp", "/private/var/tmp", "/dev")):
@@ -3712,9 +3735,7 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
         f"(allow file-read* {paths('literal', [os.path.join(temp, 'xcrun_db')])})",
         f"(allow file-write-data file-read-metadata {paths('literal', [os.path.realpath(output)])})",
         f'(deny network-bind (local ip "*:{port}"))(deny network-outbound (remote ip "*:{port}"))',
-        unix_socket_rule(own),
-        '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))',
-        private_rule(), SERVICE_ESCAPES])
+        unix_socket_rule(own), private_rule(), SERVICE_ESCAPES])
 
 
 def validation_command(roots: tuple[Path, ...], output: Path, port: int, argv: list[str],
