@@ -1,7 +1,8 @@
 # Project agents: proposal
 
 Status: approved by the operator on 2026-10-19 with one addition: Altitude ships built-in agents,
-including the Weekly improvement review, that you turn on with one press. Step 1 is being built. In
+including the Weekly improvement review, that you turn on with one press. Steps 1 and 2 ([The Weekly
+improvement review](#the-weekly-improvement-review)) are built. In
 the interface the feature is called **Agents**; one of them is "an agent", and one time it works is "a run". This
 replaces the earlier scheduled-only proposal: a schedule is one kind of trigger, not the definition.
 
@@ -217,18 +218,94 @@ copies the brief as it is then, so a later release never rewrites an agent you h
 ## The Weekly improvement review
 
 By the operator's decision of 2026-10-19 the Weekly review becomes a built-in agent of Altitude's own
-project (step 2), where it runs today. Its section in the project's settings moves to the Agents page:
-**Turn on** opens the same terms sheet before it agrees, and its agent page shows Next (with "if 2 more
-tasks finish"), Run now with its reason when it cannot run yet, Pause, its runs as "3 suggestions",
-"Nothing to suggest" or "Skipped", and what it does, what it reads and its totals with **Latest**. It
-has no Edit or Retire, because its brief and model are Altitude's and proved by its eval.
+project (step 2), where it runs today. Its section in the project's settings is removed; everything it
+held moves to the Agents page and the review's own agent page. Other projects are unchanged.
 
 Its run stays its own kind: a tool-free reading of a code-built summary of conversations under the
 terms you agreed to, far cheaper than an agent run, with its suggestion cards in chat and Needs you
-unchanged. What it shares from step 1 is the clock: its Monday 08:00 claim becomes one case of the
-schedule rule (the latest due time not yet claimed, never before it was turned on, waiting while
-Altitude activates a change), with its tests for a late turn-on, a missed week and a pending
-activation unchanged. When agents gain suggestions (step 6), they use its card.
+unchanged. It does not count toward the agents' weekly budget or their one run at a time, and it never
+appears in Work's Current rows; its running line in chat already shows it. Its Monday 08:00 claim is
+already one case of the shared schedule rule (step 1). It has no Edit or Retire, because its brief and
+model are Altitude's and proved by its eval. Turning it on and off stays yours alone, as it is today: L3's
+`alt improve` verbs are unchanged, `alt agent` neither lists nor switches it, and L3's persona sends you to
+its page. When agents gain suggestions
+(step 6), they use its card.
+
+**On the Agents page** (States 39 to 42):
+
+- **Built in, until it is yours.** The first Built in row: **Weekly improvement review** over "Mondays at
+  08:00 · Suggests fixes for friction that keeps coming back in this project's tasks" with **Turn on**.
+  Turn on opens its terms sheet (PhoneWeeklyTerms: a bottom sheet at 390px with full-width buttons, Turn
+  on above Cancel; State 40: centered at 1440px): **Turn on the Weekly improvement review for altitude?**, the sheet's existing
+  text, **Cancel** (focused) and the primary **Turn on**. Cancel, Escape and the scrim change nothing.
+  Turn on closes the sheet, agrees to those terms and turns it on; the row's Turn on shows its spinner
+  until the list reads it as yours, and a refusal returns the button with "Not turned on: <reason>"
+  under the row ("The terms changed while the sheet was open; read them again.").
+- **Yours** once it was ever turned on or has ever run (an agreement given earlier through Get
+  suggestions now counts). It is then the first row of your agents: **Weekly improvement review** over
+  "Mondays at 08:00 · <news>" with a chevron opening its page. The news is "Reading 6 tasks" or "L3 is
+  checking 3" with the running dot, "Paused" or "Paused: its terms changed" with the pause mark, else the
+  latest ended run as "3 suggestions 2 d ago", "Nothing to suggest 9 d ago", "Couldn't finish 2 d ago" or
+  "Stopped by you 1 d ago", else "Never run". Work's **Agents · N** counts it.
+
+**Its page**, `/projects/altitude/agents/weekly` (DesktopWeekly, PhoneWeekly, States 43 to 50): the back
+button names the project and the title is **Weekly improvement review**. Loading shows a spinner named
+"Loading Weekly improvement review…"; a failed read says "Could not load the Weekly improvement review."
+with **Retry**.
+
+- **Status card.** On and idle: "Next: Monday, Oct 26" (", if 2 more tasks finish" while fewer than five
+  have) with **Run now** and **Pause**, and Run now's line under it: "Reads the 6 tasks finished since
+  Oct 19." When Run now cannot run it looks disabled and has no line under the card; its reason ("Run now
+  needs 5 finished tasks since Oct 19; 3 so far." or "Claude's allowance is inside Altitude's reserve.")
+  is its accessible description and shows under the card when pressed. Run now pressed shows "Starting…"
+  in the button with Pause unavailable until the run is read; a refusal returns the buttons with its
+  reason in red ("Another review just ended; ask again."). Running: "Reading 6 tasks" or "L3 is checking
+  3" with a spinner and only **Stop**; Pause returns when the run ends, so Pause never changes a running
+  line. Stop shows "Stopping…" until the end is read, or returns with "Not stopped. Try again." Paused:
+  "Paused" with **Resume** and **Run now**. Pause and Resume change the line and buttons at once; a
+  refusal returns them with "Not saved: <reason>" and **Retry**.
+- **Terms.** Whenever the record's agreement is not to the current terms, whatever its switch says (paused
+  by you before the terms changed, never switched, or turned off by the change), the line reads "Paused:
+  its terms changed" and Resume and Run now open the terms sheet first; its Turn on agrees and completes
+  the press. Once agreed, the line no longer mentions terms.
+- **Recent runs**, newest first, the last ten, no Show older. "3 suggestions" (or "1 suggestion") with the
+  found dot, its start "Oct 19, 08:00" and "4 min", over the suggestion titles joined by "; " in at most
+  two lines; "Nothing to suggest" over "6 tasks read."; "Couldn't finish" with the failure dot over its
+  reason; "Stopped by you" over "It was reading 7 tasks."; "Skipped" over "3 tasks had finished; it needs
+  5." Each ended run opens its card or line in the project's chat (`/projects/altitude#improvement-<run>`),
+  with a chevron; a skip has no page and no chevron. None: "No runs yet."
+- **What it does.** "Finds friction that keeps coming back in this project's tasks and suggests fixes,
+  as cards in chat you can make into tasks.", then muted what is sent ("Counts and short chat quotes ·
+  Claude Sonnet 5.5 on your plan · capped per run, plus one L3 check") and, once a run has ended with a
+  card or nothing to suggest, its totals: "4 runs · 7 suggestions · 3 became tasks · 2 dismissed ·
+  Latest", Latest underlined and opening the latest card (absent when no run had one).
+
+**In chat** (State 51): when its terms change, the quiet line "**Weekly improvement review** paused: its
+terms changed. Open" replaces "Improvement suggestions are off until you agree to the new terms in
+settings.", Open going to its page. A refusal that named the settings now says "Agree to the Weekly
+improvement review's terms on the Agents page first.", true whether it is still in Built in or already
+yours. Suggestion cards, ending lines and Needs you are
+otherwise unchanged; ending lines gain the anchor Recent runs opens.
+
+### How step 2 is built
+
+- **Record.** Unchanged: the improvement record keeps the agreement, the Weekly switch (Pause and
+  Resume are its off and on) and the runs. It is yours when the record has an agreement, a switch or a
+  run; its terms are out of date whenever the agreement is not to the current version.
+- **Views.** `improve.settings` is replaced by the review's list row (or Built in row) and its page,
+  read from the same record. The page reuses the step-1 agent page's parts (status card, run rows,
+  loading and failure) with the terms sheet as one gate on Turn on, Resume and Run now. `GET /api/agents/<project>` carries the row for Altitude's own project,
+  `GET /api/agents/<project>/weekly` the page. Presses keep `POST /api/improve` (the switch with
+  the terms version, Run now with it, Stop) from a paired device.
+- **Removed.** The settings section (`ImprovementSettings.tsx`, its SPEC §3.15 bullet, the `#improvement`
+  settings anchor and their tests); the sheet moves to the agent page.
+- **Docs.** SPEC §3.15 and §3.17, ARCHITECTURE's improvement review and project agents, CLI's
+  improvement suggestions, the L3 persona (its page, not settings; the switch is yours), the changelog.
+- **Tests.** Yours and Built in from each record shape; terms out of date when paused before a change,
+  never switched, or turned off by it, and cleared once agreed; every status line, Run now reason and
+  Recent runs row; the switch and Run now through the sheet, stale terms refused; the API; and phone and desktop
+  walkthroughs of States 39 to 51, the sheet and the page with fictional fixtures. No native behavior changes, so
+  the Mac owes nothing new.
 
 ## What we considered from elsewhere
 
@@ -300,8 +377,8 @@ Approving the design approves the recommendations; any can be changed first.
 
 Boards in this folder at 390×844 (phone) and 1440×900 (desktop), written by `gen.py`: `DesktopWork`,
 `PhoneWork` (the project's task list), `DesktopAgents`, `PhoneAgents` (all agents), `DesktopAgent`,
-`PhoneAgent` (one agent), `DesktopRun`, `PhoneRun` (one run), `DesktopWeekly`, `PhoneWeekly` (the
-Weekly review as a built-in agent), `DesktopEdit`, `PhoneEdit` (the form),
+`PhoneAgent` (one agent), `DesktopRun`, `PhoneRun` (one run), `DesktopWeekly`, `PhoneWeekly`, `PhoneWeeklyTerms` (the
+Weekly review as a built-in agent, its terms sheet), `DesktopEdit`, `PhoneEdit` (the form),
 `DesktopChat`, `PhoneChat`, `DesktopMonitor`, `PhoneMonitor`, `PhoneRetire`, and every state at both
 widths: `States` and `PhoneStates`. The boards draw the full design; the steps say when each part
 arrives.
@@ -445,7 +522,7 @@ shares Monitor's loading and failed read; no agents, no section.
 | --- | --- | --- |
 | Agents page | Loading / read failed | A spinner named Loading agents…; "Could not load agents." and Retry |
 | Agents page | No agents of your own | The line, the budget select and **New agent**, then every built-in agent |
-| Built in | Turning on / refused / Altitude's project | A spinner in Turn on; the button returns with its reason; the Weekly review listed first, its Turn on opening its terms (step 2) |
+| Built in | Turning on / refused / Altitude's project | A spinner in Turn on; the button returns with its reason; the Weekly review listed first, its Turn on opening its terms (step 2, [above](#the-weekly-improvement-review)) |
 | Budget | Saving / refused / spent | The choice shows at once with Saving…; refused: back to the saved value, "Not saved: <reason>" and Retry; spent: "2 h used this week · agents wait until Monday" in amber |
 | Status | New / Run now pending / refused | "Not on yet" with Run now and Turn on; "Starting…" until the run is read; refused: Run now again with its reason ("Only 12 min of this week's budget is left.") |
 | Status | Waiting / running / Stop pressed | "Waiting for a free task slot" or "Waiting for Review each merge" with Stop; Running with Stop and Pause; "Stopping…" until the end is read |

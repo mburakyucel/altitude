@@ -1,15 +1,16 @@
 import { useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { sendProjectAgent, useProjectAgents, useSaveAgentBudget } from "../data/api";
-import type { AgentClock, ProjectAgentSummary, ProjectAgents } from "../data/api";
+import { sendProjectAgent, sendWeekly, useProjectAgents, useSaveAgentBudget } from "../data/api";
+import type { AgentClock, ProjectAgentSummary, ProjectAgents, WeeklyTerms } from "../data/api";
 import { durationText, newsAgo, refusal, zoned } from "../data/projectAgents";
-import { AgentFrame, Chevron, PauseMark } from "../components/ProjectAgentParts";
+import { AgentFrame, Chevron, PauseMark, WeeklyTermsSheet } from "../components/ProjectAgentParts";
 import { BusyLabel, StatusMark } from "../components/StatusMark";
 
 /*
  * All agents of a project (design/wireframes/project-agents/PROPOSAL.md, "All agents"): one card of whole-row links,
- * the weekly budget and New agent, the retired agents behind their count, then the built-in agents to turn on.
+ * the weekly budget and New agent, the retired agents behind their count, then the built-in agents to turn on. In
+ * Altitude's own project the Weekly improvement review leads the agents once it is the operator's, else Built in.
  */
 
 function AgentRow({ project, agent, clock }: { project: string; agent: ProjectAgentSummary; clock: AgentClock }) {
@@ -46,16 +47,20 @@ function Budget({ project, budget }: { project: string; budget: ProjectAgents["b
   </>;
 }
 
-/** Built in: Turn on spins until the agent reads as on, when its row leaves; a refusal returns the button with why. */
-function BuiltIn({ project, builtins, clock }: { project: string; builtins: ProjectAgents["builtins"]; clock: AgentClock }) {
+/** Built in: Turn on spins until the agent reads as on, when its row leaves; a refusal returns the button with why.
+ * The Weekly improvement review's Turn on shows its terms first and agrees to the version shown. */
+function BuiltIn({ project, builtins, terms, clock }: { project: string; builtins: ProjectAgents["builtins"]; terms?: WeeklyTerms; clock: AgentClock }) {
   const client = useQueryClient();
   const [turning, setTurning] = useState<string | null>(null);
   const [refused, setRefused] = useState<{ key: string; message: string } | null>(null);
-  const turnOn = async (key: string) => {
+  // The open sheet keeps the terms it showed: a read behind it never changes its text or the version Turn on sends.
+  const [sheet, setSheet] = useState<WeeklyTerms | null>(null);
+  const turnOn = async (key: string, agreed?: string) => {
+    setSheet(null);
     setTurning(key);
     setRefused(null);
     try {
-      await sendProjectAgent(project, "builtin", { key });
+      await (key === "weekly" ? sendWeekly(project, { action: "weekly", on: true }, agreed) : sendProjectAgent(project, "builtin", { key }));
       await client.refetchQueries({ queryKey: ["project", project, "agents"], exact: true });
     } catch (failure) {
       setRefused({ key, message: (failure as Error).message });
@@ -70,11 +75,13 @@ function BuiltIn({ project, builtins, clock }: { project: string; builtins: Proj
         <span><strong>{item.name}</strong><small>{zoned(item.line, clock)}</small>
           {refused?.key === item.key ? <small role="alert" className="text-danger">{refusal("Not turned on", refused.message)}</small> : null}
         </span>
-        <button type="button" className="btn" disabled={turning !== null} onClick={() => void turnOn(item.key)}>
+        <button type="button" className="btn" disabled={turning !== null} aria-haspopup={item.key === "weekly" ? "dialog" : undefined}
+          onClick={() => item.key === "weekly" && terms ? setSheet(terms) : void turnOn(item.key)}>
           <BusyLabel busy={turning === item.key} label="Turn on" working={`Turning on ${item.name}`} />
         </button>
       </div>)}
     </div>
+    {sheet ? <WeeklyTermsSheet terms={sheet} onAgree={() => void turnOn("weekly", sheet.version)} onClose={() => setSheet(null)} /> : null}
   </section>;
 }
 
@@ -83,6 +90,7 @@ export default function ProjectAgentsPage() {
   const agents = useProjectAgents(name);
   const [retired, setRetired] = useState(false);
   const data = agents.data;
+  const weekly = data?.weekly;
   // Back returns to the tab that opened the agents: Work unless chat did.
   const tab = (useLocation().state as { tab?: string } | null)?.tab === "chat" ? "" : "?tab=work";
   return <AgentFrame back={{ to: `/projects/${name}${tab}`, label: name }} title="Agents">
@@ -92,7 +100,7 @@ export default function ProjectAgentsPage() {
         <button type="button" className="btn agents-retry" onClick={() => void agents.refetch()}>Retry</button></div>
         : <>
           <div className="settings-group">
-            {data.agents.map((agent) => <AgentRow key={agent.id} project={name} agent={agent} clock={data.clock} />)}
+            {[...weekly?.agent ? [weekly.agent] : [], ...data.agents].map((agent) => <AgentRow key={agent.id} project={name} agent={agent} clock={data.clock} />)}
             <Budget project={name} budget={data.budget} />
             <div className="settings-row agents-new"><Link className="btn" to={`/projects/${name}/agents/new`}>New agent</Link></div>
           </div>
@@ -102,7 +110,7 @@ export default function ProjectAgentsPage() {
             <h2 id="agents-retired">Retired agents</h2>
             <div className="settings-group">{data.retired.map((agent) => <AgentRow key={agent.id} project={name} agent={agent} clock={data.clock} />)}</div>
           </section> : null}
-          <BuiltIn project={name} builtins={data.builtins} clock={data.clock} />
+          <BuiltIn project={name} builtins={[...weekly?.builtin ? [weekly.builtin] : [], ...data.builtins]} terms={weekly?.terms} clock={data.clock} />
         </>}
   </AgentFrame>;
 }

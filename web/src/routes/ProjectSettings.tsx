@@ -4,7 +4,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
 import { ApiError, forgetProject, overviewQuery, useOverview, useProject, useProjectDefaults, useProjectRemove, useSetDefault } from "../data/api";
 import type { Overview, ProjectDefaults } from "../data/api";
-import { ImprovementSection } from "../components/ImprovementSettings";
 import { Overlay } from "../shell/Overlay";
 import { managedProjects } from "../shell/projects";
 import { useViewport } from "../shell/breakpoints";
@@ -180,7 +179,6 @@ export default function ProjectSettings() {
             <L3Section name={name} data={defaults.data} />
             <RoutingSection name={name} data={defaults.data} />
           </>}
-      {managed ? <ImprovementSection name={name} /> : null}
       {/* Removal does not depend on reading the model settings. */}
       {managed ? <ProjectSection name={name} /> : null}
     </div>

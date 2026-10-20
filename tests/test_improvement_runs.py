@@ -49,7 +49,7 @@ class RunCase(AltitudeCase):
         self.engine = self.patch(engines, "improvement_review", side_effect=review)
 
     def agree(self):
-        """The operator's Turn on, as the settings sheet records it."""
+        """The operator's Turn on, as the terms sheet records it."""
         with S.project_lock(self.project):
             record = improve._load(self.project)
             improve._agree_locked(record, improve.terms(self.project)["version"], self.now.isoformat())
@@ -538,6 +538,28 @@ class TestCard(RunCase):
         self.assertEqual([(row["project"], row["id"]) for row in overview["suggestions"]], [(self.project, run["id"])])
         self.assertEqual(server.project_view(self.project)["improvements"][0]["id"], run["id"])
 
+    def test_a_link_to_an_older_review_reads_the_conversation_back_to_its_line(self):
+        run = self.started()
+        for n in range(4):
+            self.operator(f"Later message {n}", 1 + n)
+            l3.chat_log(self.project, "assistant", f"Later FYI {n}", trigger="report", turn_id=f"{n:012x}")
+        texts = lambda rows: [r["text"] for r in rows]
+        self.assertNotIn(run["id"], [r.get("improvement") for r in l3.chat_history(self.project, 2)])
+        reached = l3.chat_history(self.project, 2, run["id"])
+        self.assertEqual(reached[0]["improvement"], run["id"])
+        self.assertEqual(texts(reached[1:]), texts(l3.chat_history(self.project, None))[-8:])
+        self.assertEqual(texts(l3.chat_history(self.project, 2, "0" * 12)), texts(l3.chat_history(self.project, None)))
+        httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        connection = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+        connection.request("GET", f"/api/chat/{self.project}?limit=2&reach={run['id']}")
+        response = connection.getresponse()
+        history = json.loads(response.read())["history"]
+        connection.close()
+        self.assertEqual((response.status, texts(history)), (200, texts(reached)))
+
 
 class TestCoordinatorVerbs(RunCase):
     def verb(self, *args: str) -> dict:
@@ -578,7 +600,7 @@ class TestPastSuggestions(RunCase):
     """Past suggestions, the feature's own measure: the runs that posted or found nothing, the suggestions they showed,
     how many became tasks and how many the operator dismissed."""
     def test_past_suggestions_sum_runs_suggestions_tasks_and_dismissals(self):
-        self.assertNotIn("past", improve.settings(self.project, now=NOW))
+        self.assertIsNone(improve.page(self.project, now=NOW)["what"]["past"])
         self.patch(improve, "CUTOFF", NOW - timedelta(days=60))
         improve_eval.load({"project": self.project, "now": NOW.isoformat(), "tasks": [
             *(finished_task(n, 13 + n) for n in range(1, 7)), *(finished_task(20 + n, n) for n in range(1, 7))]})
@@ -596,10 +618,10 @@ class TestPastSuggestions(RunCase):
         improve.execute(self.project, second)
         improve.post(self.project, second, [1], [], now=NOW)
         improve.resolve(self.project, f"{second}/1", "dismissed", self.operator("Dismiss it", 3), "no", now=NOW)
-        self.assertEqual(improve.settings(self.project, now=NOW)["past"],
+        self.assertEqual(improve.page(self.project, now=NOW)["what"]["past"],
                          {"line": "2 runs · 2 suggestions · 1 became a task · 1 dismissed", "latest": second})
 
     def test_a_review_with_nothing_to_suggest_counts_as_a_run_without_a_card(self):
         self.started()
-        self.assertEqual(improve.settings(self.project, now=NOW)["past"],
+        self.assertEqual(improve.page(self.project, now=NOW)["what"]["past"],
                          {"line": "1 run · 0 suggestions · 0 became tasks · 0 dismissed", "latest": None})

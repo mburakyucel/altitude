@@ -717,52 +717,10 @@ export function useSaveSuggestion() {
     ]), suggestionReads);
 }
 
-/**
- * A project's Improvement suggestions settings (improve.settings): the sheet's terms, whether the operator agreed to
- * them, the Weekly switch and its line, and Get suggestions now with its line and any reason it is unavailable, or
- * the running review in its place. Unavailable projects have no section.
- */
-export const ImprovementSettingsSchema = z
-  .object({
-    available: z.boolean(),
-    terms: z.object({ version: z.string(), title: z.string(), body: z.string(), sent: z.string() }).optional(),
-    agreed: z.boolean().optional(),
-    weekly: z.boolean().optional(),
-    line: z.string().optional(),
-    now: z.object({ line: z.string(), unavailable: z.string().nullable() }).optional(),
-    running: z.object({ id: z.string(), line: z.string() }).optional(),
-    past: z.object({ line: z.string(), latest: z.string().nullable() }).optional(),
-  })
-  .passthrough();
-export type ImprovementSettings = z.infer<typeof ImprovementSettingsSchema>;
-
-/**
- * Kept under the project's key, so the press refetch and the change stream refresh it with the project. While Weekly
- * saves, its line is empty: Altitude writes it from the saved schedule.
- */
-export function useImprovementSettings(project: string) {
-  const saving = useSaving<WeeklyChange>(["project", project, "improvement"]);
-  const select = useCallback((data: ImprovementSettings) => saving.reduce((view, change) => ({ ...view, weekly: change.on, line: "" }), data), [saving]);
-  return useQuery({
-    queryKey: ["project", project, "improvement"],
-    queryFn: async () => ImprovementSettingsSchema.parse(await api(`/api/improve/${encodeURIComponent(project)}`)),
-    enabled: Boolean(project),
-    refetchInterval: pollInterval,
-    select,
-  });
-}
-
-type WeeklyChange = { on: boolean; terms?: string };
-/** Weekly on or off; the save ends once the project's read shows it, which the change stream also refreshes. */
-export function useSaveWeekly(project: string) {
-  return useSave<WeeklyChange, unknown>(["project", project, "improvement"],
-    ({ on, terms }) => sendImprovementSetting(project, { action: "weekly", on }, terms),
-    (client) => client.refetchQueries({ queryKey: ["project", project] }));
-}
-
-/** Weekly on or off, or Get suggestions now; `terms` is the sheet version the operator's Turn on agreed to. */
-export async function sendImprovementSetting(project: string, change: { action: "weekly"; on: boolean } | { action: "run" }, terms?: string) {
-  return api<{ ok: boolean }>("/api/improve", {
+/** Turn on, Pause and Resume of the Weekly improvement review, or its Run now; `terms` is the sheet version the
+ * operator's Turn on agreed to. */
+export async function sendWeekly(project: string, change: { action: "weekly"; on: boolean } | { action: "run" }, terms?: string) {
+  return api<{ ok: boolean; run?: string }>("/api/improve", {
     method: "POST",
     body: JSON.stringify({ project, ...change, request_id: crypto.randomUUID().replaceAll("-", ""), ...(terms ? { terms } : {}) }),
   });
@@ -777,13 +735,19 @@ export const ProjectAgentSummarySchema = z.object({
   cue: z.enum(["running", "paused"]).nullable(), retired_line: z.string().nullable(),
 });
 export type ProjectAgentSummary = z.infer<typeof ProjectAgentSummarySchema>;
+const BuiltInSchema = z.object({ key: z.string(), name: z.string(), line: z.string() });
+/** What the Weekly improvement review's sheet shows; Turn on sends its version back. */
+const WeeklyTermsSchema = z.object({ version: z.string(), title: z.string(), body: z.string(), sent: z.string() });
+export type WeeklyTerms = z.infer<typeof WeeklyTermsSchema>;
 export const ProjectAgentsSchema = z.object({
   /** The machine's zone label and its UTC offset in minutes now: schedule times are written in this clock. */
   clock: z.object({ zone: z.string(), offset: z.number() }),
   budget: z.object({ minutes: z.number(), choices: z.array(z.number()), used: z.number(), spent: z.boolean() }),
   agents: z.array(ProjectAgentSummarySchema),
   retired: z.array(ProjectAgentSummarySchema),
-  builtins: z.array(z.object({ key: z.string(), name: z.string(), line: z.string() })),
+  builtins: z.array(BuiltInSchema),
+  /** Altitude's own project: the Weekly improvement review, the operator's agent or a Built in row (improve.agent). */
+  weekly: z.object({ terms: WeeklyTermsSchema, agent: ProjectAgentSummarySchema.nullable(), builtin: BuiltInSchema.nullable() }).nullish(),
   offers: z.array(ProjectAgentOfferSchema),
 });
 export type ProjectAgents = z.infer<typeof ProjectAgentsSchema>;
@@ -820,6 +784,23 @@ export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
   session: z.object({ engine: z.string(), session_id: z.string(), attempt: z.number() }).nullable(),
 });
 export type ProjectAgentRunDetail = z.infer<typeof ProjectAgentRunDetailSchema>;
+const WeeklyActionSchema = z.enum(["run", "pause", "resume", "turn_on", "stop"]);
+export type WeeklyAction = z.infer<typeof WeeklyActionSchema>;
+/** The Weekly improvement review's page (improve.page): its status, recent runs and skipped weeks, and what it does. */
+export const WeeklyReviewSchema = z.object({
+  name: z.string(), terms: WeeklyTermsSchema, agreed: z.boolean(),
+  status: z.object({
+    line: z.string(), actions: z.array(WeeklyActionSchema), run: z.string().nullable(), spinning: z.boolean(), paused: z.boolean(),
+    /** Run now's line under the card, or why it cannot run; absent while a review runs. */
+    now: z.object({ line: z.string().nullable(), unavailable: z.string().nullable() }).nullable(),
+  }),
+  runs: z.array(z.object({
+    id: z.string().nullable(), state: z.enum(["posted", "nothing", "failed", "stopped", "skipped"]), outcome: z.string(), tone: ToneSchema,
+    at: z.string(), minutes: z.number().nullable(), line: z.string(),
+  })),
+  what: z.object({ text: z.string(), sent: z.string(), past: z.object({ line: z.string(), latest: z.string().nullable() }).nullable() }),
+});
+export type WeeklyReview = z.infer<typeof WeeklyReviewSchema>;
 
 const agentsKey = (project: string) => ["project", project, "agents"];
 type BudgetChange = { minutes: number };
@@ -856,6 +837,16 @@ export function useProjectAgentRun(project: string, id: string, n: number) {
     queryFn: async () => ProjectAgentRunDetailSchema.parse(await api(`/api/agents/${project}/${id}/runs/${n}`)),
     enabled: Boolean(project && id),
     refetchInterval: (query) => ["waiting", "running"].includes(query.state.data?.state ?? "") ? 2_000 : pollInterval(),
+  });
+}
+
+/** The Weekly improvement review's page, read every two seconds while it runs. */
+export function useWeeklyReview(project: string) {
+  return useQuery({
+    queryKey: [...agentsKey(project), "weekly"],
+    queryFn: async () => WeeklyReviewSchema.parse(await api(`/api/agents/${project}/weekly`)),
+    enabled: Boolean(project),
+    refetchInterval: (query) => query.state.data?.status.run != null ? 2_000 : pollInterval(),
   });
 }
 
@@ -1933,10 +1924,12 @@ export function useDigest() {
   });
 }
 
-export function useChat(project: string, limit = 60, enabled = true) {
+/** The project's conversation; `reach` names an improvement review whose line the history reads back to. */
+export function useChat(project: string, limit = 60, enabled = true, reach?: string) {
   return useQuery({
     queryKey: ["chat", project],
-    queryFn: async () => ChatViewSchema.parse(await api(`/api/chat/${project}?limit=${limit}`)),
+    queryFn: async () => ChatViewSchema.parse(await api(`/api/chat/${project}?${new URLSearchParams({
+      limit: String(limit), ...(reach ? { reach } : {}) })}`)),
     refetchInterval: (query) => {
       const view = query.state.data;
       return view?.active || view?.busy || view?.queued?.length ? 2_000 : 20_000;

@@ -2284,8 +2284,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _improve_post(self, body: dict) -> None:
         """The operator's presses on improvement suggestions: Stop on the running line, Make a task, Dismiss, Undo
-        and Try again on the card; Weekly and Get suggestions now in settings, with `terms` when the sheet's Turn on
-        agreed. Each carries a request id, so a repeated press returns its first receipt."""
+        and Try again on the card; the Weekly switch (Turn on, Pause and Resume) and Run now on the review's agent
+        page, with `terms` when the sheet's Turn on agreed. Each carries a request id, so a repeated press returns its
+        first receipt."""
         try:
             if body.keys() - {"project", "action", "ref", "request_id", "on", "terms"} \
                     or body.get("action") not in ("stop", "accept", "dismiss", "undo", "retry", "weekly", "run"):
@@ -2322,13 +2323,18 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True, **result})
 
     def _agents_get(self, parts: list[str], q: dict) -> None:
-        """The Agents page, an agent's page, a run's page and a run's session (`project_agents`)."""
+        """The Agents page, an agent's page, a run's page and a run's session (`project_agents`), and the Weekly
+        improvement review's page (`improve.page`)."""
         project = parts[0]
         try:
             config.project(project)
             if len(parts) == 1:
                 return self._json(project_agents.view(project))
             agent = parts[1]
+            if parts[1:] == ["weekly"]:
+                if (weekly := improve.page(project)) is None:
+                    return self._json({"error": "This project has no Weekly improvement review."}, 404)
+                return self._json(weekly)
             if len(parts) == 2:
                 return self._json(project_agents.agent_view(project, agent, runs=max(1, int(q.get("runs", ["10"])[0]))))
             if len(parts) in (4, 5) and parts[2] == "runs" and parts[3].isdigit():
@@ -2580,12 +2586,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "Project is not managed."}, 404)
             if api == "project" and len(parts) > 2:
                 return self._json(project_view(parts[2]), compress=True)
-            if api == "improve" and len(parts) == 3:
-                try:
-                    config.project(parts[2])
-                    return self._json(improve.settings(parts[2]))
-                except KeyError:
-                    return self._json({"error": "Project is not managed."}, 404)
             if api == "agents" and len(parts) > 2:
                 return self._agents_get(parts[2:], q)
             if parts == ["api", "project-model-settings"]:
@@ -2622,7 +2622,7 @@ class Handler(BaseHTTPRequestHandler):
             if api == "chat" and len(parts) > 2:
                 project = parts[2]
                 config.project(project)  # a removed or unknown project's conversation is refused
-                lifecycle = l3.chat_state(project, int(q.get("limit", ["60"])[0]))
+                lifecycle = l3.chat_state(project, int(q.get("limit", ["60"])[0]), q.get("reach", [None])[0])
                 return self._json({**lifecycle, "l3": l3.info(project)})
             return self._json({"error": "unknown api"}, 404)
         except images.ImageError as exc:

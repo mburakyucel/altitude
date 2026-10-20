@@ -33,9 +33,11 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
   const file = route.endsWith("/file");
   const captures = route.includes("/captures/");
   const repair = route === "/repairs/:id";
-  const agents = route.startsWith("/projects/:name/agents");
+  // The Weekly improvement review's page exists only in Altitude's own project, which its fixture stands for.
+  const weekly = route === "/projects/:name/agents/weekly";
+  const agents = route.startsWith("/projects/:name/agents") && !weekly;
   test.use({ serviceScript: shown ? "shown-files-service.py" : captures ? "captures-service.py" : file ? "file-references-service.py"
-    : repair ? "repairs-service.py" : agents ? "project-agents-service.py" : "" });
+    : repair ? "repairs-service.py" : weekly ? "weekly-review-service.py" : agents ? "project-agents-service.py" : "" });
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request, browserName }, info) => {
     const project = await fixtureProject(request, route === "/projects" || route === "/chat");
     // The reader opens the fixture's own reply and question; other task routes take the project's first task.
@@ -219,6 +221,10 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("button", { name: "Remove…", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
+    } else if (weekly) {
+      await expect(page.getByRole("heading", { level: 1, name: "Weekly improvement review", exact: true })).toBeVisible();
+      await expect(page.locator("a.agents-back")).toBeVisible();
+      await expect(main.getByRole("heading", { name: "Recent runs", exact: true })).toBeVisible();
     } else if (agent) {
       const title = route.endsWith("/agents") ? "Agents" : route.endsWith("/new") ? "New agent" : route.endsWith("/edit") ? "Edit"
         : route.endsWith("/runs/:n") ? /^Run · / : agent.name;

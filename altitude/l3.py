@@ -550,24 +550,27 @@ def _project_message_prompt(selected):
             + json.dumps(messages, ensure_ascii=False) + "\n[/project-message]\n\n")
 
 
-def chat_history(project: str, limit: int | None = 60) -> list[dict]:
+def chat_history(project: str, limit: int | None = 60, reach: str | None = None) -> list[dict]:
     """Saved chat rows, oldest first. `limit` bounds human conversation and system rows separately, so a
-    burst of server-triggered rows never pushes the latest human messages out of view."""
+    burst of server-triggered rows never pushes the latest human messages out of view. `reach` names an
+    improvement review whose line must be included: every row back to it is read, whatever the limit."""
     path = config.project_dir(project) / "chat.jsonl"
     if not path.exists():
         return []
     result, counts = [], {True: 0, False: 0}
     for line in reversed(path.read_text().splitlines()):
-        if limit is not None and min(counts.values()) >= limit:
+        if limit is not None and reach is None and min(counts.values()) >= limit:
             break
         try:
             row = json.loads(line)
         except ValueError:
             continue
         human = human_chat(row)
-        if limit is None or counts[human] < limit:
+        if limit is None or reach is not None or counts[human] < limit:
             counts[human] += 1
             result.append(row)
+        if reach is not None and row.get("improvement") == reach:
+            reach = None
     return result[::-1]
 
 
@@ -807,8 +810,8 @@ def _created_only(project: str, turn_id: str) -> dict:
         return {kind: list(values) for kind, values in (_created.get(turn_id) or {}).items()}
 
 
-def chat_state(project: str, limit: int = 60) -> dict:
-    """History, queue, and lifecycle fields from one turn-boundary snapshot."""
+def chat_state(project: str, limit: int = 60, reach: str | None = None) -> dict:
+    """History, queue, and lifecycle fields from one turn-boundary snapshot; `reach` as for `chat_history`."""
     turn_lock = lock(project)
     with _lifecycle_guard(project):
         turn = _active.get(project)
@@ -820,7 +823,7 @@ def chat_state(project: str, limit: int = 60) -> dict:
                 row["send_now_reason"] = ("Sending into the current turn" if sending else unavailable
                                           or ("Runs next after system work" if turn and turn["trigger"] != "chat"
                                               else "Runs next after this turn" if turn else "Runs next"))
-        return {"history": chat_history(project, limit), "queued": waiting,
+        return {"history": chat_history(project, limit, reach), "queued": waiting,
                 "active": _turn_identity(turn), "busy": turn_lock.locked(),
                 "send_now_reason": unavailable}
 
