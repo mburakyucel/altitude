@@ -7,6 +7,7 @@ the same instruction file the coding agents read.
 
 Altitude does not accept outside contributions yet: pull requests are limited to the project's
 collaborators. Issues are open to everyone; use them to report problems and propose changes.
+Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License and contributor agreement
 
@@ -67,9 +68,9 @@ you to inspect. A run for any outside contributor's pull request starts only onc
 approves it. Nothing merges without the check, and there is no local bypass. See
 [CI and candidate identity](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 
-In the PR, describe the problem and resulting behavior, answer the seven review questions in at
-most fifteen lines, and include the relevant validation. Record material findings and their
-dispositions. Describe what the evidence does and does not establish; do not replace behavioral
+The [pull request template](.github/PULL_REQUEST_TEMPLATE.md) lays out the PR body: the
+resulting behavior, material boundaries or trade-offs, what is removed and the relevant validation,
+with material review findings and their dispositions. Describe what the evidence does and does not establish; do not replace behavioral
 assertions with a line-coverage percentage. Add user-visible changes to
 [Unreleased](CHANGELOG.md) in the same PR. Ordinary development does not restart deployed
 services; see [operations](docs/OPERATIONS.md). [Release checkpoints](docs/RELEASING.md)

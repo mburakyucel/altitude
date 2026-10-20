@@ -1,5 +1,9 @@
 # <img src="web/public/altitude-mark.svg" alt="" width="32" height="32"> Altitude
 
+[![Checks](https://github.com/mburakyucel/altitude/actions/workflows/hosted-checks.yml/badge.svg?branch=main&event=push)](https://github.com/mburakyucel/altitude/actions/workflows/hosted-checks.yml?query=branch%3Amain+event%3Apush)
+[![Release](https://img.shields.io/github/v/release/mburakyucel/altitude?label=release)](https://github.com/mburakyucel/altitude/releases)
+[![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)](LICENSE)
+
 ## Be the lead, not the bottleneck.
 
 Altitude runs Claude Code and Codex like an engineering team on your computer.
