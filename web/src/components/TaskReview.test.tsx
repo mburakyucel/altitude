@@ -202,6 +202,36 @@ describe("Adversarial review", () => {
     expect(card("second").getByText(/The change misses the landing gate/)).toBeVisible();
   });
 
+  it("each delivery keeps its own card, iterations and open findings, and a merged one starts the next delivery's review", async () => {
+    const merged = { merged_head: "merged1", merged_pr: 41, can_withdraw: false, can_again: false };
+    const stepOne = ReviewSchema.parse({ ...completed, id: "step-one", ...merged, result: { ...completed.result!, text: "Step one keeps the landing gate." } });
+    const stepOneAgain = ReviewSchema.parse({ ...completed, id: "step-one-again", previous: "step-one", ...merged });
+    const delivered = withReviews(stepOne, stepOneAgain);
+    // Altitude offers a request once the merged delivery's review can no longer repeat.
+    const app = setup({ ...delivered, review: { ...delivered.review, subjects: { ...delivered.review.subjects,
+      changes: { ...delivered.review.subjects.changes!, available: true } } } });
+    await screen.findByText("Pagination is sound once expired cursors are handled.");
+    expect(document.getElementById("review-step-one")).toBeNull();
+    expect(card("step-one-again").getByText("Review 2", { exact: false })).toBeVisible();
+    expect(card("step-one-again").getByText(/merged in PR #41/)).toBeVisible();
+    // After the merge, the box offers the next delivery's first review, naming no earlier one.
+    const box = within(within(await openDetails(app.user)).getByRole("region", { name: "Implementation review" }));
+    expect(box.getByText(/merged in PR #41/)).toBeVisible();
+    await app.user.click(box.getByRole("button", { name: "Request" }));
+    expect(app.posts()).toEqual([expect.not.objectContaining({ review_id: expect.anything() })]);
+    await app.settled();
+    // The next delivery's review gets its own card; step one's stays where it was, with its earlier iteration.
+    const stepTwo = ReviewSchema.parse({ ...completed, id: "step-two", result: { ...completed.result!, text: "Step two doubles safely." }, unresolved: ["one"], can_again: false,
+      dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs a fixture." }, completed.dispositions[1]] });
+    await app.update(withReviews(stepOne, stepOneAgain, stepTwo));
+    await app.user.keyboard("{Escape}");
+    expect(await card("step-two").findByText("1 open, blocks merge")).toBeVisible();
+    expect(card("step-two").queryByText(/Review 2|merged in PR/)).toBeNull();
+    expect(card("step-one-again").queryByText(/open in an earlier review/)).toBeNull();
+    await app.user.click(card("step-two").getByRole("button", { name: "Show implementation review details" }));
+    expect(card("step-two").queryByText("Earlier reviews")).toBeNull();
+  });
+
   it("an earlier review an additional one left in the merge gate stays visible, inspectable and skippable", async () => {
     const original = ReviewSchema.parse({ ...completed, id: "original", requested_by: "operator", unresolved: ["one"], can_again: false,
       dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs the storage owner's decision." }, completed.dispositions[1]] });

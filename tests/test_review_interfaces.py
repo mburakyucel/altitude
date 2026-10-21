@@ -57,10 +57,19 @@ class TestReviewInterfaces(AltitudeCase):
                 self.assertEqual(result, {"id": "review"})
                 request.assert_called_once_with(self.project, self.slug, actor="l2", expected_attempt=2,
                                                 request_id="submission", focus="Failure paths", source_id="chat-message",
-                                                previous="prior", additional=False, subject=subject, engine=None, model=None)
+                                                previous="prior", additional=False, following=False, subject=subject,
+                                                engine=None, model=None)
         with mock.patch.object(reviews, "request", return_value={"id": "review"}) as request:
             self.cli("task", "review", "request", "--subject", "proposal", "--additional", "--focus", "The new addendum")
         self.assertEqual((request.call_args.kwargs["additional"], request.call_args.kwargs["previous"]), (True, None))
+        # The step after a waiting PR names --next on its proposal review and on a skip.
+        with mock.patch.object(reviews, "request", return_value={"id": "review"}) as request:
+            self.cli("task", "review", "request", "--subject", "proposal", "--next")
+        self.assertTrue(request.call_args.kwargs["following"])
+        with mock.patch.object(reviews, "skip", return_value={"id": "review"}) as skip:
+            self.cli("task", "review", "skip", "--subject", "proposal", "--next", "--reason", "Copy only.")
+        skip.assert_called_once_with(self.project, self.slug, subject="proposal", reason="Copy only.", following=True,
+                                     actor="l2", expected_attempt=2)
         with mock.patch.object(reviews, "request", return_value={"id": "review"}) as request:
             self.cli("task", "review", "request", "--previous", "prior", "--engine", config.ENGINES[-1], "--model", "chosen-model")
         self.assertEqual((request.call_args.kwargs["engine"], request.call_args.kwargs["model"]), (config.ENGINES[-1], "chosen-model"))

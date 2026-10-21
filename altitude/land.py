@@ -1072,13 +1072,14 @@ def record(project: str, slug: str, attempt: int | None, op: str, fields: object
 
 
 def _record_merged_head(project: str, slug: str, head: str) -> None:
-    """The merged head consumes the task's current reviews."""
+    """The merge closes the current delivery with its reviews; the next step's reviews become the current delivery's."""
     from . import reviews
     with S.project_lock(project):
         current = S.load_task(project, slug)
         current["review_merged_head"] = head
         for review in reviews._current_reviews(current):
-            review["merged_head"] = head
+            if not review.pop("next", False):
+                review.update(merged_head=head, merged_pr=(current.get("delivery") or {}).get("number"))
         S.save_task(project, current)
 
 

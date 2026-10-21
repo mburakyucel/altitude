@@ -823,27 +823,135 @@ class TestReviews(AltitudeCase):
         self.assertEqual(admitted["state"], "requested")
         self.assertEqual(len(S.load_task(self.project, self.slug)["reviews"]), 1)
 
+    def deliver(self, number):
+        """Record PR `number` as the waiting delivery at the current head."""
+        task = S.load_task(self.project, self.slug)
+        task.update(prs=[*task.get("prs", []), number], delivery={"number": number, "head": self.pair()["head_sha"], "at": S.now()})
+        S.save_task(self.project, task)
+
+    def merge(self, number):
+        """Deliver PR `number` and merge it as `alt land` does: the merge closes the delivery with its reviews."""
+        from altitude import land
+        self.deliver(number)
+        land._record_merged_head(self.project, self.slug, self.pair()["head_sha"])
+
+    def step(self, text, value):
+        """One step of a multi-step task: its proposal review and its changes review, both assessed."""
+        proposal = T.message(self.project, self.slug, "l2", text)
+        proposed = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"])
+        self.commit("value.py", f"VALUE = {value}\n")
+        changed = self.run_review(self.request())
+        self.assess(proposed)
+        self.assess(changed)
+        return proposal, proposed, changed
+
     def test_next_delivery_can_request_review_after_merged_checkpoint(self):
         completed = self.run_review()
         self.commit("value.py", "VALUE = 2\n")
         self.assess(completed)
-        task = S.load_task(self.project, self.slug)
-        task["review_merged_head"] = self.pair()["head_sha"]
-        task["reviews"][-1]["merged_head"] = task["review_merged_head"]
-        S.save_task(self.project, task)
-        with self.assertRaises(T.TransitionError):
+        self.merge(41)
+        with self.assertRaisesRegex(T.TransitionError, "already merged"):
             self.request(actor=T.OPERATOR_MESSAGE_ROLE)
         self.commit("value.py", "VALUE = 4\n")
         reviews.require_merge(self.project, self.slug, self.pair())
-        saved = reviews.view(self.project, self.slug)["subjects"]["changes"]["latest"]
-        self.assertEqual(saved["id"], completed["id"])
-        self.assertTrue(saved["can_again"])
-        self.assertFalse(saved["can_withdraw"])
-        later = self.request(actor=T.OPERATOR_MESSAGE_ROLE, previous=completed["id"])
+        box = reviews.view(self.project, self.slug)["subjects"]["changes"]
+        self.assertEqual((box["latest"]["id"], box["latest"]["merged_pr"], box["available"]), (completed["id"], 41, True))
+        self.assertFalse(box["latest"]["can_again"])
+        self.assertFalse(box["latest"]["can_withdraw"])
+        # A merged delivery's review is never replaced: the next delivery's request starts its own.
+        with self.assertRaisesRegex(T.TransitionError, "belongs to a merged delivery"):
+            self.request(actor=T.OPERATOR_MESSAGE_ROLE, previous=completed["id"])
+        later = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
         self.assertNotEqual(later["id"], completed["id"])
-        self.assertEqual(later["state"], "requested")
+        self.assertEqual((later["state"], later["previous"]), ("requested", None))
         with self.assertRaises(T.TransitionError):
             reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_two_deliveries_each_keep_their_own_reviews_and_merge_gate(self):
+        first_proposal, first_proposed, first_changed = self.step("Step 1: add the value", 2)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        self.merge(41)
+        # Step 2 requests both kinds without --previous or --additional; step 1's reviews stay as they were.
+        second_proposal = T.message(self.project, self.slug, "l2", "Step 2: double the value")
+        proposed = self.request(subject="proposal")
+        self.assertEqual((proposed["previous"], proposed["additional"]), (None, False))
+        proposed = self.run_review(proposed, proposal_id=second_proposal["id"])
+        self.commit("value.py", "VALUE = 4\n")
+        changed = self.run_review(self.request())
+        self.assertEqual(changed["previous"], None)
+        saved = {r["id"]: r for r in S.load_task(self.project, self.slug)["reviews"]}
+        self.assertEqual(len(saved), 4)
+        for review in (first_proposed, first_changed):
+            self.assertEqual((saved[review["id"]]["merged_pr"], saved[review["id"]]["state"]), (41, "completed"))
+        # The second PR's gate holds only its own reviews: unassessed, they refuse; step 1's are never asked again.
+        with self.assertRaisesRegex(T.TransitionError, "must finish and receive the owner's dispositions") as refused:
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertNotIn(first_proposed["id"], str(refused.exception))
+        self.assertNotIn(first_changed["id"], str(refused.exception))
+        self.assess(proposed)
+        self.assess(changed)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        # Coverage and "earlier version" compare each step with its own proposal and head.
+        history = {r["id"]: r for r in reviews.view(self.project, self.slug)["history"]}
+        for review, coverage in ((first_proposed, "assessed"), (first_changed, "current"), (proposed, "assessed"), (changed, "current")):
+            self.assertEqual((history[review["id"]]["coverage"], history[review["id"]]["earlier"]), (coverage, False))
+        self.assertEqual(history[first_proposed["id"]]["reconciled"]["proposal_id"], first_proposal["id"])
+        self.assertEqual(history[proposed["id"]]["reconciled"]["proposal_id"], second_proposal["id"])
+        self.commit("value.py", "VALUE = 5\n")
+        history = {r["id"]: r for r in reviews.view(self.project, self.slug)["history"]}
+        self.assertTrue(history[changed["id"]]["earlier"])
+        self.assertFalse(history[first_changed["id"]]["earlier"])
+        # Only the latest review of each delivery repeats; a merged one never does.
+        self.assertEqual([r["id"] for r in history.values() if r["can_again"]], [proposed["id"], changed["id"]])
+
+    def test_the_step_after_a_waiting_pr_reviews_its_proposal_outside_that_merge_gate(self):
+        with self.assertRaisesRegex(T.TransitionError, "No PR waits to merge"):
+            self.request(subject="proposal", following=True)
+        self.step("Step 1: add the value", 2)
+        self.deliver(41)
+        with self.assertRaisesRegex(T.TransitionError, "changes review the branch itself"):
+            self.request(following=True)
+        proposal = T.message(self.project, self.slug, "l2", "Step 2: double the value")
+        following = self.request(subject="proposal", following=True, request_id="step-two")
+        self.assertTrue(following["next"])
+        self.assertIn("step after PR #41", next(m["text"] for m in T.task_messages(self.project, self.slug)
+                                                 if m.get("review_id") == "step-two"))
+        # Waiting and unrun, it neither holds PR #41's merge nor the held PR's review card, nor waits for step 1's.
+        reviews.require_merge(self.project, self.slug, self.pair())
+        reviews.require_resolved(S.load_task(self.project, self.slug))
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(reviews.status(self.project, task, "proposal")["id"], "step-two")
+        self.assertEqual(reviews.status(self.project, task, "changes")["state"], "completed")
+        following = self.run_review(following, proposal_id=proposal["id"])
+        with self.assertRaisesRegex(T.TransitionError, "belongs to the current delivery"):
+            self.request(previous=self.request(subject="proposal")["id"], following=True)
+        # Its open finding gates its own step, not PR #41.
+        reviews.assess(self.project, self.slug, following["id"], actor="l2", expected_attempt=1,
+                       dispositions=[{"finding_id": "f1", "disposition": "open", "reason": "Step 2 decides the fallback."}],
+                       reason="The fallback is step 2's design choice.")
+        self.assertEqual(reviews.status(self.project, S.load_task(self.project, self.slug), "proposal")["open"], 1)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        self.merge(41)
+        # The merge makes it the current delivery's review, where its open finding gates step 2's PR.
+        saved = next(r for r in S.load_task(self.project, self.slug)["reviews"] if r["id"] == "step-two")
+        self.assertNotIn("next", saved)
+        self.assertNotIn("merged_head", saved)
+        self.commit("value.py", "VALUE = 4\n")
+        with self.assertRaisesRegex(T.TransitionError, "step-two.*unresolved findings: f1"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_a_later_step_question_never_rests_on_a_merged_review(self):
+        self.step("Step 1: add the value", 2)
+        self.merge(41)
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(reviews.status(self.project, task, "proposal"), {"subject": "proposal", "id": None, "state": "none"})
+        # A skip for the next step belongs to that step too.
+        self.commit("value.py", "VALUE = 4\n")
+        self.deliver(42)
+        skipped = reviews.skip(self.project, self.slug, actor="l2", subject="proposal", reason="Copy only.",
+                               expected_attempt=1, following=True)
+        self.assertTrue(skipped["next"])
+        self.assertEqual(reviews.status(self.project, S.load_task(self.project, self.slug), "proposal")["id"], skipped["id"])
 
     def test_naming_an_earlier_review_is_refused_with_the_latest(self):
         # Owner report (2026-10-20): naming an earlier review answered with the later additional review,
