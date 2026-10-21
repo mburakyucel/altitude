@@ -1,9 +1,11 @@
 # Third-party notices
 
-The built web UI shipped in the Altitude archive bundles the packages below. The copyright notices
-are the packages' own. The packages in the first table are distributed under the MIT License,
-reproduced below; the punctuation model and the components compiled into its WebAssembly runtime
-follow under their own licences.
+The built web UI shipped in the Altitude archive bundles the packages below, the production
+dependencies of `web/`; `web/src/thirdPartyNotices.test.ts` fails when one is missing or its licence
+text is not reproduced here. The copyright notices are the packages' own. The packages in the first
+table are distributed under the MIT License, reproduced below; the fonts, two packages, the
+punctuation model and the components compiled into its WebAssembly runtime follow under their own
+licences.
 Development-only tools (Vite, TypeScript, Vitest, Playwright, Tailwind and their dependencies)
 are not shipped in the archive.
 
@@ -11,11 +13,24 @@ are not shipped in the archive.
 | --- | --- |
 | react, react-dom, scheduler | Copyright (c) Meta Platforms, Inc. and affiliates. |
 | @tanstack/react-query, @tanstack/query-core | Copyright (c) 2021-present Tanner Linsley |
-| react-router | Copyright (c) React Training LLC 2015-2019, Copyright (c) Remix Software Inc. 2020-2021 |
-| cookie-es | Copyright (c) Pooya Parsa, Copyright (c) 2012-2014 Roman Shtylman |
+| react-router | Copyright (c) React Training LLC 2015-2019, Copyright (c) Remix Software Inc. 2020-2021, Copyright (c) Shopify Inc. 2022-2023 |
+| cookie-es | Copyright (c) Pooya Parsa, Copyright (c) 2012-2014 Roman Shtylman, Copyright (c) 2015 Douglas Christopher Wilson, Copyright (c) 2015 Nathan Friedly |
 | zod | Copyright (c) 2025 Colin McDonnell |
 | @xterm/xterm | Copyright (c) 2017-2019, The xterm.js authors, Copyright (c) 2014-2016, SourceLair Private Company, Copyright (c) 2012-2013, Christopher Jeffrey |
 | @xterm/addon-fit | Copyright (c) 2019, The xterm.js authors |
+| react-markdown | Copyright (c) Espen Hovlandsdal |
+| bail, ccount, character-entities, character-entities-html4, character-entities-legacy, character-reference-invalid, comma-separated-tokens, decode-named-character-reference, devlop, estree-util-is-identifier-name, hast-util-from-parse5, hast-util-parse-selector, hast-util-raw, hast-util-sanitize, hast-util-to-jsx-runtime, hast-util-to-parse5, hast-util-whitespace, hastscript, html-url-attributes, html-void-elements, is-alphabetical, is-alphanumerical, is-decimal, is-hexadecimal, longest-streak, markdown-table, mdast-util-find-and-replace, mdast-util-from-markdown, mdast-util-gfm, mdast-util-gfm-autolink-literal, mdast-util-gfm-footnote, mdast-util-gfm-strikethrough, mdast-util-gfm-table, mdast-util-gfm-task-list-item, mdast-util-mdx-expression, mdast-util-mdx-jsx, mdast-util-mdxjs-esm, mdast-util-to-hast, mdast-util-to-markdown, mdast-util-to-string, micromark, micromark-core-commonmark, micromark-extension-gfm, micromark-extension-gfm-autolink-literal, micromark-extension-gfm-footnote, micromark-extension-gfm-strikethrough, micromark-extension-gfm-table, micromark-extension-gfm-tagfilter, micromark-extension-gfm-task-list-item, micromark-factory-destination, micromark-factory-label, micromark-factory-space, micromark-factory-title, micromark-factory-whitespace, micromark-util-character, micromark-util-chunked, micromark-util-classify-character, micromark-util-combine-extensions, micromark-util-decode-numeric-character-reference, micromark-util-decode-string, micromark-util-edit-map, micromark-util-encode, micromark-util-html-tag-name, micromark-util-normalize-identifier, micromark-util-resolve-all, micromark-util-sanitize-uri, micromark-util-subtokenize, micromark-util-symbol, micromark-util-types, parse-entities, property-information, rehype-raw, rehype-sanitize, remark-gfm, remark-parse, remark-rehype, remark-stringify, space-separated-tokens, stringify-entities, trim-lines, trough, unified, unist-util-is, unist-util-position, unist-util-stringify-position, unist-util-visit, unist-util-visit-parents, vfile, vfile-location, vfile-message, web-namespaces, zwitch | Copyright (c) Titus Wormer |
+| mdast-util-phrasing | Copyright (c) 2017 Titus Wormer, Copyright (c) 2017 Victor Felder |
+| parse5 | Copyright (c) 2013-2019 Ivan Nikulin |
+| style-to-object, style-to-js | Copyright (c) 2017, 2020 Menglin "Mark" Xu |
+| inline-style-parser | Copyright (c) 2012 TJ Holowaychuk |
+| debug | Copyright (c) 2014-2017 TJ Holowaychuk, Copyright (c) 2018-2021 Josh Junon |
+| ms | Copyright (c) 2020 Vercel, Inc. |
+| dequal | Copyright (c) Luke Edwards |
+| escape-string-regexp, is-plain-obj | Copyright (c) Sindre Sorhus |
+| extend | Copyright (c) 2014 Stefan Thomas |
+| csstype | Copyright (c) 2017-2018 Fredrik Nicol |
+| @types/react, @types/debug, @types/estree, @types/estree-jsx, @types/hast, @types/mdast, @types/ms, @types/unist (type declarations) | Copyright (c) Microsoft Corporation. |
 | onnxruntime-web and its WebAssembly runtime (built from onnxruntime v1.30.0) | Copyright (c) Microsoft Corporation |
 | SafeInt (in the WebAssembly runtime) | Copyright (c) Microsoft Corporation |
 | GSL: Guidelines Support Library (in the WebAssembly runtime) | Copyright (c) 2015 Microsoft Corporation |
@@ -40,6 +55,145 @@ NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPO
 NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## Fonts and packages under other licences
+
+| Package | Copyright | Licence |
+| --- | --- | --- |
+| @fontsource/ibm-plex-sans (IBM Plex Sans) | Copyright 2019 IBM Corp. All rights reserved. | SIL Open Font License 1.1, below |
+| @fontsource/ibm-plex-mono (IBM Plex Mono) | Copyright 2017 IBM Corp. All rights reserved. | SIL Open Font License 1.1, below |
+| entities | Copyright (c) Felix Böhm. All rights reserved. | BSD 2-Clause, below |
+| @ungap/structured-clone | Copyright (c) 2021, Andrea Giammarchi, @WebReflection | ISC, below |
+
+### SIL Open Font License 1.1
+
+```text
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+```
+
+### BSD 2-Clause License
+
+```text
+Redistribution and use in source and binary forms, with or without modification, are permitted
+provided that the following conditions are met:
+
+Redistributions of source code must retain the above copyright notice, this list of conditions and
+the following disclaimer.
+
+Redistributions in binary form must reproduce the above copyright notice, this list of conditions
+and the following disclaimer in the documentation and/or other materials provided with the
+distribution.
+
+THIS IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED
+WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+THE USE OF THIS, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### ISC License
+
+```text
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
+OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+```
 
 ## WebAssembly runtime components under other licences
 
