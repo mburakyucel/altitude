@@ -954,6 +954,32 @@ class TestReviews(AltitudeCase):
         with self.assertRaisesRegex(T.TransitionError, "step-two.*unresolved findings: f1"):
             reviews.require_merge(self.project, self.slug, self.pair())
 
+    def test_a_merge_closes_replaced_reviews_too_and_records_once(self):
+        # Implementation review (2026-10-21): a merge stamped only unreplaced reviews, so a step's repeated review
+        # came back as the next step's latest, and a second record of the same merge consumed the next step's reviews.
+        first = self.run_review()
+        self.assess(first)
+        self.commit("value.py", "VALUE = 2\n")
+        again = self.run_review(self.request(previous=first["id"]))
+        self.assess(again)
+        self.deliver(41)
+        replaced = self.request(subject="proposal", following=True, request_id="next-one")
+        reviews.withdraw(self.project, self.slug, "next-one", actor="l2", reason="Refocus it.", expected_attempt=1)
+        following = self.request(subject="proposal", following=True, previous=replaced["id"], request_id="next-two")
+        from altitude import land
+        land._record_merged_head(self.project, self.slug, self.pair()["head_sha"])
+        land._record_merged_head(self.project, self.slug, self.pair()["head_sha"])
+        saved = {r["id"]: r for r in S.load_task(self.project, self.slug)["reviews"]}
+        self.assertEqual([saved[r["id"]].get("merged_pr") for r in (first, again)], [41, 41])
+        for review in (replaced, following):
+            self.assertEqual((saved[review["id"]].get("next"), saved[review["id"]].get("merged_head")), (None, None))
+        self.commit("value.py", "VALUE = 4\n")
+        fresh = self.request(request_id="step-two")
+        self.assertEqual((fresh["id"], fresh["previous"]), ("step-two", None))
+        self.assertEqual(reviews.status(self.project, S.load_task(self.project, self.slug), "changes")["id"], "step-two")
+        self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["changes"]["latest"]["id"], "step-two")
+        self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]["id"], "next-two")
+
     def test_a_later_step_question_never_rests_on_a_merged_review(self):
         self.step("Step 1: add the value", 2)
         self.merge(41)
