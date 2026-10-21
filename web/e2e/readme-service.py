@@ -206,7 +206,8 @@ def seed() -> dict:
     # Weekly allowance readings are illustrative; no provider is asked.
     readings = {"claude": 42, "codex": 36}
     route.engine_readouts = lambda: [{"engine": name, "label": config.ENGINE_LABELS[name], "week": readings[name],
-                                      "known": True, "stale": False, "at": S.now()} for name in config.ENGINES]
+                                      "known": True, "stale": False, "at": S.now(), "reserve": config.RESERVE}
+                                     for name in config.ENGINES]
     S.regen_state_md(PROJECT)
     return {"fake": fake, "repo": repo, "repos": repos, "say": say, "said": said, "ran": ran, "live": live}
 
