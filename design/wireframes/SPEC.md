@@ -227,7 +227,7 @@ hard-codes one, and one configured engine means one row.
 | State dot | running (accent: a running L2, a task blocked waiting on L3, or a landed report L3 is handling); waits for the operator (`--data-claimed`: a decision in the queue); blocked by a fault or stopped (`--danger`); idle, nothing active (`--text-muted` at 45%) |
 | Needs you badge | unanswered operator questions plus operational attention items across projects; hidden at known zero; unknown or stale reads are explicit |
 | Unmanaged folders line | "1 folder found — add it" or "N folders found — add them" for folders in the projects folder that are not managed; click opens First run for the picked folder; hidden at zero |
-| Engine readout | one row per engine: name, "N% of week", a 4px meter; the meter turns `--danger` past the 70% reserve line; "not installed" in muted text with an empty meter when the engine's executable is missing, else "no reading" in muted text when `quota.known` is false; "reading 2h old" appended when `stale` |
+| Engine readout | one row per engine: name, "N% of week", a 4px meter; the meter turns `--danger` at Altitude's reserve (the `reserve` the readout row carries, 90%), where optional work stops starting; "not installed" in muted text with an empty meter when the engine's executable is missing, else "no reading" in muted text when `quota.known` is false; "reading 2h old" appended when `stale` |
 | New tasks | "New tasks · Auto", "New tasks · Fable · High", or "New tasks · Fable unavailable · Auto meanwhile" with a chevron, under the engine readout because quota belongs to the account; tinted while a choice is active; opens global model and effort Settings (§3.6.1); disabled while the overview loads |
 | Operator row | name from configuration; theme toggle (light default, dark, persisted per browser) |
 
@@ -2013,8 +2013,15 @@ their existing recovery, answer and navigation controls remain visible.
 Anatomy: **Monitor** title; on phone the **New tasks** control (§3.6.1) beside the same quota;
 **Altitude update** (§3.13); **Seats**, one card per configured engine in the API's order and under
 its label; **Routing now**; **Sessions (N)**; **Agents (N)**. Each seat shows the windows it reports, their
-percentages and reset times in relative and clock terms, a meter with the 70% reserve line, the
-plan when supplied, and "reading 3m old". Exact reading times appear on hover.
+percentages and reset times in relative and clock terms, a meter with the reserve line, the
+plan when supplied, and "reading 3m old". The reserve line sits at the `reserve` `/api/monitor` sends (90%), the
+share of a window from which Altitude skips optional work; a window's fill turns `--danger` there, and a
+card-coloured gap keeps the mark visible over the fill. Under the **Seats** heading, before the cards, one muted
+line names it: "Past the mark at 90%, or without a current reading, Altitude skips optional work such as agent
+runs and the Weekly review." (a stale or missing reading also skips it). Model allowance meters draw no reserve
+line and never turn `--danger`, because the reserve reads only the seat's shared windows; a rejected model still
+says "Unavailable: <reason>". Session context meters draw no reserve line and turn `--danger` when their
+session's context state is warn or act. Exact reading times appear on hover.
 Below a hairline, **Model allowances** lists each model the seat's routing can launch, as
 "<model> · 7-day": its own meter, percentage and reset ("reset time not reported" when absent) when
 the provider sends a model-specific row, otherwise "No reading for this model. The shared windows

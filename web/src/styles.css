@@ -1446,6 +1446,8 @@
   width: 2px;
   margin-left: -1px;
   background: var(--text-secondary);
+  /* A card-coloured gap keeps the mark visible over a red fill as well as the track. */
+  box-shadow: 0 0 0 1px var(--card);
 }
 .monitor-routes,
 .monitor-sessions {

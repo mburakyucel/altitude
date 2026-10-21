@@ -15,8 +15,8 @@ const agoEpoch = (minutes: number) => Math.floor(Date.now() / 1000) - minutes * 
 const inHours = (hours: number) => Math.floor(Date.now() / 1000) + hours * 3600 + 60;
 
 // The engine rows the seam sends: the Monitor takes every display name from here.
-const claudeRow = { engine: "claude", label: "Claude", week: 74, known: true, stale: false, at: ago(3) };
-const codexRow = { engine: "codex", label: "Codex", week: 71, known: true, stale: false, at: ago(6) };
+const claudeRow = { engine: "claude", label: "Claude", week: 74, known: true, stale: false, at: ago(3), reserve: 90 };
+const codexRow = { engine: "codex", label: "Codex", week: 71, known: true, stale: false, at: ago(6), reserve: 90 };
 const engines = [claudeRow, codexRow];
 
 function overviewWith(rows = engines) {
@@ -61,6 +61,7 @@ const codexSeat = {
 
 const monitor = {
   seats: [claudeSeat, codexSeat],
+  reserve: 90,
   routing: [
     { role: "l3", project: "altitude", pin: null, current: "claude", engine: "claude",
       why: "staying on claude: codex has 4.0 points more weekly headroom, under the 15-point switch margin" },
@@ -141,14 +142,43 @@ describe("Monitor", () => {
     expect(codex.getByText("Pro")).toBeInTheDocument();
     expect(codex.getByText("71%")).toBeInTheDocument();
     expect(codex.getByText("reading 6m old")).toBeInTheDocument();
-    // SPEC.md §3.14: the 70% reserve line is drawn on every seat window, and only there.
+    // SPEC.md §3.14: the router's reserve line is drawn on every seat window, and only there.
     expect(document.querySelectorAll(".meter-reserve")).toHaveLength(3);
-    expect(document.querySelectorAll(".meter-reserve")[0]).toHaveStyle({ left: "70%" });
-    expect(screen.getByText(/70% reserve line/)).toBeInTheDocument();
+    expect(document.querySelectorAll(".meter-reserve")[0]).toHaveStyle({ left: "90%" });
+    expect(screen.getByText("Past the mark at 90%, or without a current reading, Altitude skips optional work such as agent runs and the Weekly review.")).toBeInTheDocument();
     expect(screen.queryByText("Stale")).not.toBeInTheDocument();
     // Deletion first: the raw worker list (ids, paths, a provider name spelled in the web) is gone.
     expect(screen.queryByText(/workers/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/aaaaaaaa/)).not.toBeInTheDocument();
+  });
+
+  it("draws the line, turns danger and names the figure at the reserve the router sends", async () => {
+    mockFetch({ ...monitor, reserve: 72 });
+    renderApp({ route: "/monitor" });
+
+    await screen.findByRole("region", { name: "Claude" });
+    const fills = (name: string) => [...seat(name).getAllByText(/^\d+%$/)].map((n) => n.closest(".monitor-window")?.querySelector(".meter-fill"));
+    for (const line of document.querySelectorAll(".meter-reserve")) expect(line).toHaveStyle({ left: "72%" });
+    // Claude 5-hour 12% and Codex 71% sit below 72%; Claude 7-day 74% is past it.
+    expect(fills("Claude").map((fill) => fill?.getAttribute("data-danger"))).toEqual(["false", "true"]);
+    expect(fills("Codex")[0]).toHaveAttribute("data-danger", "false");
+    expect(screen.getByText("Past the mark at 72%, or without a current reading, Altitude skips optional work such as agent runs and the Weekly review.")).toBeInTheDocument();
+  });
+
+  it("keeps the reserve line off model and context meters; context turns danger at its own warning", async () => {
+    const models = [{ model: "fable", label: "Fable", seven_day: 95, seven_day_resets: inHours(30), rejected: null }];
+    const sessions = [{ ...monitor.sessions[0], context_percent: 26, context_state: "warn" },
+      { ...monitor.sessions[1], context_percent: 80, context_state: "ok" }];
+    mockFetch({ ...monitor, seats: [{ ...claudeSeat, models }, codexSeat], sessions });
+    renderApp({ route: "/monitor" });
+
+    const list = await screen.findByRole("list", { name: "Claude models" });
+    expect(list.querySelector(".meter-reserve")).toBeNull();
+    expect(list.querySelector(".meter-fill")).toHaveAttribute("data-danger", "false");
+    const rows = document.querySelectorAll(".monitor-session");
+    expect(rows[0]?.querySelector(".meter-fill")).toHaveAttribute("data-danger", "true");
+    expect(rows[1]?.querySelector(".meter-fill")).toHaveAttribute("data-danger", "false");
+    expect(document.querySelectorAll(".monitor-session .meter-reserve")).toHaveLength(0);
   });
 
   it("shows each window's reset time in human terms, and an absent window as absent", async () => {
@@ -399,6 +429,7 @@ describe("Monitor", () => {
         { ...claudeSeat, quota: { known: false, why: "Waiting for the daemon's quota refresh" } },
         { ...codexSeat, quota: { known: false, why: "Codex binary not found" } },
       ],
+      reserve: 90,
       routing: [
         { role: "l3", project: "altitude", pin: "codex", current: null, engine: null,
           why: "forced codex is unavailable: weekly window exhausted" },

@@ -58,7 +58,7 @@ const overview = {
   queue: [decision],
   wip: { per_project: {}, machine: 0, waiting: [] },
   quota: { known: false },
-  engines: [{ engine: "alpha", label: "Alpha", week: 52, known: true, stale: false, at: ago(1) }],
+  engines: [{ engine: "alpha", label: "Alpha", week: 52, known: true, stale: false, at: ago(1), reserve: 90 }],
   roots: ["~/Projects"],
   operator: "Ada",
 };

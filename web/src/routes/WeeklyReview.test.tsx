@@ -10,7 +10,7 @@ const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOSt
 
 const overview = {
   projects: [{ name: "harbor", managed: true }], queue: [], wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false },
-  engines: [{ engine: "alpha", label: "Alpha", week: null, known: false, stale: false, at: null }],
+  engines: [{ engine: "alpha", label: "Alpha", week: null, known: false, stale: false, at: null, reserve: 90 }],
   new_tasks: { models: [{ engine: "alpha", model: "swift", label: "Swift" }], efforts: { alpha: [{ value: "low", label: "Low" }] }, value: null, only: [] },
 };
 const terms = { version: "0123456789ab", title: "Turn on the Weekly improvement review for harbor?",

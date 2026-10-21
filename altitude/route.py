@@ -110,8 +110,9 @@ def seats() -> list[dict]:
 
 def engine_readouts() -> list[dict]:
     """One row per configured engine for the shell's engine readout: display name, whether it is installed, weekly
-    percent used, whether the reading is current, and when it was taken (ISO). ``week`` is None with no reading at
-    all; ``stale`` keeps an old figure and says so. The rail renders these rows without knowing which is which."""
+    percent used, whether the reading is current, when it was taken (ISO), and the reserve (`config.RESERVE`) past
+    which `reserve` skips optional work. ``week`` is None with no reading at all; ``stale`` keeps an old figure and
+    says so. The rail renders these rows without knowing which is which."""
     from . import engines
     readings = _readings()
     claude, codex = readings["claude"], readings["codex"]
@@ -127,7 +128,8 @@ def engine_readouts() -> list[dict]:
         week, observed, data = weeks[engine]
         rows.append({"engine": engine, "label": config.ENGINE_LABELS[engine], "week": week,
                      "installed": engines.installation(engine)["available"] is not False,
-                     "known": bool(data.get("known")), "stale": bool(data.get("stale")), "at": observed})
+                     "known": bool(data.get("known")), "stale": bool(data.get("stale")), "at": observed,
+                     "reserve": config.RESERVE})
     return rows
 
 

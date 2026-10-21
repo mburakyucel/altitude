@@ -57,9 +57,6 @@ export function modelName(model: string): string {
   return MODEL_NAMES[model] ?? MODEL_NAMES[family] ?? model;
 }
 
-/** The reserve line every quota meter draws: past this share of the window the meter turns danger. */
-export const RESERVE_PERCENT = 70;
-
 /** An age the way the shell says it (SPEC.md §4.5): "just now", "5 min ago", "2h", "yesterday", "3d". */
 export function ageText(value: unknown): string {
   const then = when(value);

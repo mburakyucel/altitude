@@ -292,7 +292,7 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .seats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .monitor-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.monitor-row .muted{margin-left:auto}
 .window{margin-top:18px}.window .monitor-row{justify-content:space-between}
-.reserve{position:relative;overflow:visible;margin:8px 0}.reserve:after{content:"";position:absolute;left:70%;top:-3px;bottom:-3px;width:1px;background:var(--text-secondary)}
+.reserve{position:relative;overflow:visible;margin:8px 0}.reserve:after{content:"";position:absolute;left:90%;top:-3px;bottom:-3px;width:1px;background:var(--text-secondary)}
 .stale .meter{opacity:.5}.route-content .card{padding:18px}
 .routing{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 18px;padding:12px 0;border-bottom:1px solid var(--hairline)}
 .routing p{grid-column:1/-1;font-size:13px;color:var(--text-muted);margin:0;overflow-wrap:anywhere}
@@ -374,7 +374,7 @@ def rail(selected, needs=3, first_run=False):
         engines = (
             '<div class="engines">'
             '<div class="erow"><div class="t"><b>Claude</b><span>21% of week</span></div><div class="meter"><i style="width:21%"></i></div></div>'
-            '<div class="erow"><div class="t"><b>Codex</b><span>71% of week</span></div><div class="meter hot"><i style="width:71%"></i></div></div>'
+            '<div class="erow"><div class="t"><b>Codex</b><span>92% of week</span></div><div class="meter hot"><i style="width:92%"></i></div></div>'
             f'<span class="muted" style="display:block;font-size:11px;margin:8px 0 4px">New tasks</span><span class="newtasks"><span><b>Auto</b> · Default effort</span>{I("chev-d","i sm")}</span>'
             '</div>'
         )
@@ -1147,8 +1147,8 @@ def seat(label, stale=False, empty=False):
     return f'<article class="card{" stale" if stale else ""}"><div class="monitor-row"><h3>{label}</h3>' + ('<span class="chip held">Stale</span>' if stale else '') + f'<span class="muted">reading {"2h" if stale else "3m"} old</span></div>{windows}</article>'
 
 monitor_content = (
-    '<h1>Monitor</h1><h2>Seats</h2><div class="seats">' + seat("Claude Code") + seat("Codex", stale=True) + '</div>'
-    '<p class="muted">The mark on each meter is the 70% reserve line.</p>'
+    '<h1>Monitor</h1><h2>Seats</h2><p class="muted">Past the mark at 90%, or without a current reading, Altitude skips optional work such as agent runs and the Weekly review.</p>'
+    '<div class="seats">' + seat("Claude Code") + seat("Codex", stale=True) + '</div>'
     '<h2>Routing now</h2><div class="card">'
     '<div class="routing"><span>L3 · altitude · Auto</span><b>Claude Code</b><p>More weekly headroom in the current readings.</p></div>'
     '<div class="routing"><span>L3 · harbor · pinned to Codex</span><b>Codex</b><p>Pinned for this project.</p></div>'

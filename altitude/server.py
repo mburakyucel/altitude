@@ -2615,7 +2615,7 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as exc:
                     return self._json({"error": str(exc)}, 400)
             if api == "monitor":
-                return self._json({"seats": route.seats(), "routing": monitor.routing(),
+                return self._json({"seats": route.seats(), "reserve": config.RESERVE, "routing": monitor.routing(),
                                    "sessions": monitor.sessions(), "agents": monitor.agents(), "clock": schedule.zone()})
             if api == "digest":
                 return self._json({"text": digest.text()})

@@ -141,6 +141,40 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   await page.unroute("**/api/monitor*");
 });
 
+test("Monitor draws each window's mark at the router's reserve, danger past it", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const { reserve } = await (await request.get("/api/monitor")).json() as { reserve: number };
+  expect(reserve, "the service sends its configured reserve").toBe(90);
+  const now = Math.floor(Date.now() / 1000);
+  await overlay(page, "/api/monitor", (body) => ({
+    ...body,
+    seats: seatsWith(body, () => ({ known: true, five_hour: 40, seven_day: 93, at: now,
+      five_hour_resets: now + 2 * 3600, seven_day_resets: now + 30 * 3600 })),
+  }));
+  // The rail's readouts carry the same reserve: one engine below it, one past it.
+  await overlay(page, "/api/overview", (body) => ({
+    ...body,
+    engines: (body.engines as Json[]).map((row, i) => ({ ...row, installed: true, known: true, stale: false,
+      week: i === 0 ? 40 : 93, at: new Date().toISOString() })),
+  }));
+  const card = page.locator(".monitor-seat").first();
+  const fill = (name: string) => card.locator(".monitor-window", { hasText: name }).locator(".meter-fill");
+  const label = page.getByText(`Past the mark at ${reserve}%, or without a current reading, Altitude skips optional work such as agent runs and the Weekly review.`, { exact: true });
+
+  await walk.open("/monitor");
+  await walk.state("01-below-and-past-reserve", { visible: [label, fill("5-hour"), fill("7-day")], hidden: [page.getByText(/reserve line/)] });
+  await expect(card.locator(".meter-reserve").first()).toHaveAttribute("style", new RegExp(`left: ${reserve}%`));
+  await expect(fill("5-hour")).toHaveAttribute("data-danger", "false");
+  await expect(fill("7-day")).toHaveAttribute("data-danger", "true");
+  if (info.project.name === "desktop") {
+    const rail = page.getByRole("list", { name: "Engines", exact: true }).locator(".meter-fill");
+    await expect(rail.nth(0)).toHaveAttribute("data-danger", "false");
+    await expect(rail.nth(1)).toHaveAttribute("data-danger", "true");
+  }
+  await walk.state("02-reserve-label", { action: async () => { await label.scrollIntoViewIfNeeded(); }, visible: [label], hidden: [] });
+  await fitsInViewport(page);
+});
+
 test("Monitor retains each partial window through fresh, stale and missing readings", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const baseline = await (await request.get("/api/monitor")).json();
