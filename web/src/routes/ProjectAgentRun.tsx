@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useParams } from "react-router";
-import { sendProjectAgent, useOverview, useProject, useProjectAgentRun, useSuggestionChanges, withSuggestions } from "../data/api";
-import type { ProjectAgentRunDetail, TaskRow, TaskView } from "../data/api";
+import { sendProjectAgent, taskMap, useOverview, useProject, useProjectAgentRun, useSuggestionChanges, withSuggestions } from "../data/api";
+import type { ProjectAgentRunDetail, TaskView } from "../data/api";
 import { runCost, runTime } from "../data/projectAgents";
 import { clockText, dayText } from "../data/observed";
 import { AgentFrame, RunDot } from "../components/ProjectAgentParts";
@@ -65,7 +65,7 @@ function Live({ project, agent, run, onRead }: { project: string; agent: string;
 function Suggested({ project, run }: { project: string; run: NonNullable<ProjectAgentRunDetail["suggested"]> }) {
   const view = useProject(project);
   const changes = useSuggestionChanges();
-  const tasks = useMemo(() => new Map<string, TaskRow>([...(view.data?.tasks ?? []), ...(view.data?.archive ?? [])].map((row) => [row.slug, row])), [view.data]);
+  const tasks = useMemo(() => taskMap(view.data), [view.data]);
   return <SuggestedTasks project={project} run={withSuggestions(run, project, changes)} tasks={tasks} />;
 }
 

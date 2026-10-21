@@ -964,7 +964,8 @@ def execute(project: str, run_id: str) -> None:
             _end(project, run, "nothing")
         else:
             run["state"] = "checking"
-            run["check"] = l3.queue_locked(project, check_turn(run), trigger="improvement-check")["id"]
+            run["check"] = l3.queue_locked(project, check_turn(run), trigger="improvement-check",
+                                           until=run["deadline"])["id"]
         _save(project, record)
 
 

@@ -444,19 +444,22 @@ run ended. A post writes nothing to chat.
 alt agent list
 alt agent show AGENT [--run N]
 alt agent new --name NAME --brief - [--schedules 'weekdays 07:00; fri 17:00'|none] [--events|--no-events]
-              [--tell found|every|never] [--limit 10|20|60] [--engine ENGINE --model MODEL --effort EFFORT] [--on]
-alt agent set AGENT [the same flags] [--default-model]
+              [--tell found|every|never] [--limit 10|20|60]
+              [--engine ENGINE --model MODEL --effort EFFORT | --default-model] [--on]
+alt agent set AGENT [the same flags, without --on]
 alt agent on|pause|resume|retire|stop AGENT
 alt agent run AGENT [TEXT|-]
 alt agent send AGENT TEXT|- [--key KEY]
-alt agent offer [AGENT] [the same flags]
+alt agent offer [AGENT] [the same flags as new]
 ```
 
 These read and change a project's [agents](ARCHITECTURE.md#project-agents). `AGENT` is an agent's id
 or the name of exactly one agent that is not retired. On the operator's CLI, `new` saves an agent that
 runs only with Run now until it is turned on (`--on` turns it on at once), `set` saves a new version
-from the flags it names, `run` asks for a run now and `stop` ends a waiting or running run. `--events` gives
-an agent the trigger "When it's sent an event". Refusals read as the page says them after "Not saved: ",
+from the flags it names and refuses `--on` (`on` turns an agent on), `run` asks for a run now and `stop`
+ends a waiting or running run. `--events` gives an agent the trigger "When it's sent an event", and
+`--default-model` gives it the model a new task gets, in place of `--engine`, `--model` and `--effort`. A
+refusal prints "alt agent: <reason>" with exit status 1, the reason as the page says it after "Not saved: ",
 such as a Run now that does not fit the week's budget.
 
 `send` sends an agent with the event trigger an event: a text of at most 4,000 characters, from the argument

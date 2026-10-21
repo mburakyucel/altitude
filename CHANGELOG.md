@@ -13,28 +13,21 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Repairs show in Work: an Altitude repairs section under your current tasks holds the repair running and those
   that ended in the last three days, and a repair's page reads like a task's, its steps in one conversation.
   Settings → About keeps Repair… and links All repairs; Monitor no longer lists a repair.
-- Projects have agents: briefs Altitude runs on a schedule or when you press Run now, each in a fresh copy
-  of the project, telling you in chat what they found. Agents… in the project menu lists them, with three
-  built-in agents to turn on (a dependency check, a build health check and a weekly summary of what
-  landed), New agent to write your own and a weekly time budget. A run only reads and reports: it cannot
-  push, open pull requests, file issues or message anyone, and it stops at its limit of 10, 20 or 60
-  minutes. Ask L3 for an agent or a change and it drafts one for you to save.
-- In the Altitude project, the Weekly improvement review is a built-in agent: turn it on from Agents with the
-  same terms as before, then its own page shows when it runs next, Run now or why it cannot run yet, Pause,
-  its recent runs opening their cards in chat, and what it reads. Its section in the project's settings is
-  gone; its runs stay as cheap as before and do not use the agents' budget.
-- Monitor shows agents: a running agent is listed among Sessions with its context and minutes used, and a new
-  Agents section at the end lists each agent with what it does next and how its last run went, opening its page.
-- Agents can run when they're sent an event: your own scripts on this computer send one a short line with
-  `alt agent send`, such as "PR #812 merged", and events that arrive during a run go to its next run together.
-  An agent's page shows the command and example scripts for each merged pull request, each new issue or a
-  failing command. An agent that pauses itself after three runs that couldn't finish now waits in Needs you with
-  Resume, without alerting your devices.
-- Agent runs can suggest tasks: a run that found something may propose up to three, L3 checks each against the
-  project first, and those it keeps wait under Suggestions in Needs you with Make a task and Dismiss, as the Weekly
-  improvement review's do. The run's page shows its suggestions under the report, with what L3 set aside and why.
-  An agent has at most three waiting at a time, and a task made from one says where it came from in Work ("from
-  Review each merge"). An accepted suggestion whose task was not made leaves Needs you a week after your press.
+- Projects have agents: briefs Altitude runs on a schedule, when your own scripts on this computer send one an
+  event with `alt agent send` (such as "PR #812 merged", with example scripts on its page), or when you press Run now, each in a fresh copy of the
+  project, telling you in chat what they found. Agents… in the project menu lists them, with three built-in agents
+  to turn on (a dependency check, a build health check and a weekly summary of what landed), New agent to write
+  your own and a weekly time budget. A run only reads and reports: it cannot push, open pull requests, file issues
+  or message anyone, and it stops at its limit of 10, 20 or 60 minutes, which is the most it is charged. Pause
+  stops an agent at once, including a run waiting to start. Ask L3 for an agent or a change and it drafts one for
+  you to save. A run that found something may suggest up to three tasks; L3 checks each against the project
+  first, and those it keeps wait under Suggestions in Needs you with Make a task and Dismiss, showing the task
+  each became, and on the run's page under its report with what L3 set aside and why; a task made from one says
+  which agent suggested it in Work. A run's report shows where each of its links goes. An agent that pauses itself
+  after three runs that couldn't finish waits in Needs you with Resume, without alerting your devices. Monitor
+  lists running agents among Sessions and each agent with what it does next and how its last run went. In the
+  Altitude project, the Weekly improvement review is a built-in agent with its own page in place of its settings
+  section, as cheap as before and outside the agents' budget.
 
 ## v0.11.0 — 2026-10-20
 

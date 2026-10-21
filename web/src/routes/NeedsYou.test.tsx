@@ -121,7 +121,7 @@ function mockFetch(initialQueue: unknown[], decideStatus = 200) {
 
 describe("an agent that paused itself", () => {
   const paused = { project: "harbor", slug: null, kind: "agent", id: "agent:flaky-tests", agent: "flaky-tests", title: "Flaky tests", run: 7,
-    question: "3 runs in a row couldn't finish. The last: `make test-e2e` is not a target.", asked_by: "altitude", asked: ago(120), since: ago(120) };
+    question: "3 runs in a row couldn't finish. The last: 'make test-e2e' is not a target.", asked_by: "altitude", asked: ago(120), since: ago(120) };
 
   function serve(resume: () => Response | Promise<Response>) {
     let queue: unknown[] = [paused, l2Asks];
@@ -152,8 +152,7 @@ describe("an agent that paused itself", () => {
     expect(within(card).getByText("Agent paused itself")).toHaveClass("kind-label");
     expect(card.querySelector(".decision-kind")).toHaveAttribute("data-tone", "danger");
     expect(within(card).getByRole("link", { name: "Flaky tests" })).toHaveAttribute("href", "/projects/harbor/agents/flaky-tests");
-    expect(card).toHaveTextContent("3 runs in a row couldn't finish. The last: make test-e2e is not a target.");
-    expect(within(card).getByText("make test-e2e").tagName).toBe("CODE");
+    expect(card).toHaveTextContent("3 runs in a row couldn't finish. The last: 'make test-e2e' is not a target.");
     expect(within(card).getByRole("link", { name: "Open the last run" })).toHaveAttribute("href", "/projects/harbor/agents/flaky-tests/runs/7");
     expect(within(card).queryByRole("link", { name: "Open L2 chat" })).toBeNull();
   });

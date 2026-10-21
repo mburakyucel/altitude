@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { ApiError, imageSendRefused, sendCreateTask, sendImageChat, streamChat, useChatDequeue, useSendNow, useWaitsForTool } from "../data/api";
+import { ApiError, imageSendRefused, sendCreateTask, sendImageChat, streamChat, taskMap, useChatDequeue, useSendNow, useWaitsForTool } from "../data/api";
 import { SendNow, SendNowError } from "../components/SendNow";
-import type { ChatMessage, ChatSent, ChatView, ProjectView, TaskRow } from "../data/api";
+import type { ChatMessage, ChatSent, ChatView, ProjectView } from "../data/api";
 import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
@@ -208,11 +208,7 @@ export default function Conversation({
   const view = chat.data;
   const enter = useEntrance(Boolean(view));
   const activeId = view?.active?.id ?? null;
-  const tasks = useMemo(() => {
-    const map = new Map<string, TaskRow>();
-    for (const row of [...(project.data?.tasks ?? []), ...(project.data?.archive ?? [])]) map.set(row.slug, row);
-    return map;
-  }, [project.data]);
+  const tasks = useMemo(() => taskMap(project.data), [project.data]);
 
   const turns = useMemo(() => turnsOf(view?.history ?? []), [view?.history]);
   const improvements = project.data?.improvements;

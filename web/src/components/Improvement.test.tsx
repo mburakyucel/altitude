@@ -325,4 +325,21 @@ describe.each([390, 1440])("an agent run's suggested tasks at %ipx", (width) => 
     await user.click(within(shown).getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(presses(fetchMock)).toEqual([expect.objectContaining({ action: "dismiss", ref: "agent:0a1b2c3d4e5f/7/1" })]));
   });
+
+  it("Needs you shows the task a suggestion became with its title and status, as the run page does", async () => {
+    setViewport(width);
+    const { fetchMock } = serve([]);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).includes("/api/overview")) return base(input, init);
+      return json({ projects: [{ name: "altitude", managed: true, counts: {} }], queue: [],
+        suggestions: [{ ...agentCard([agentSuggestion(1), agentSuggestion(2, { state: "accepted", task: "cite-answers" })]), project: "altitude" }],
+        wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false }, engines: [], roots: [] });
+    });
+    renderApp({ route: "/" });
+    const shown = within(await screen.findByRole("region", { name: "Suggestions" })).getByRole("article");
+    const task = await within(shown).findByRole("link", { name: /^Stop re-asking merge approval · / });
+    expect(task).toHaveAttribute("href", "/projects/altitude/tasks/cite-answers");
+    expect(within(shown).queryByText("Status unavailable")).toBeNull();
+  });
 });

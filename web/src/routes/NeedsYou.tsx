@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { useOverview } from "../data/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { taskMap, useOverview, useProject } from "../data/api";
 import { useDecisionSurface } from "../data/pending";
 import type { Attention, Decision, Overview } from "../data/api";
 import { AgentCard, DecisionCard, StepCard } from "../components/DecisionCard";
@@ -41,8 +41,6 @@ export function projectOrder(queue: Attention[], selected: string | null): strin
   return selected && projects.includes(selected) ? [selected, ...projects.filter((project) => project !== selected)] : projects;
 }
 
-const NO_TASKS = new Map();
-
 /**
  * Improvement cards waiting for a decision or a task, after everything that needs you and grouped by project. They
  * are suggestions, not questions: never counted in the summary or badge and never alerting a device.
@@ -54,16 +52,22 @@ function Suggestions({ suggestions, selected }: { suggestions: Overview["suggest
   return (
     <section className="needs-suggestions" aria-label="Suggestions">
       <h2 className="needs-suggestions-label">Suggestions</h2>
-      {order.map((project) => (
-        <section className="needs-project" key={project} aria-label={`Suggestions for ${project}`}>
-          <h3 className="text-card-title font-semibold">{project}</h3>
-          <div className="needs-project-cards">
-            {suggestions.filter((run) => run.project === project).map((run) => (
-              <ImprovementCard key={run.id} project={project} run={run} tasks={NO_TASKS} linked />
-            ))}
-          </div>
-        </section>
-      ))}
+      {order.map((project) => <ProjectSuggestions key={project} project={project}
+        runs={suggestions.filter((run) => run.project === project)} />)}
+    </section>
+  );
+}
+
+/** One project's suggestion cards, whose task cards read the project's tasks as its chat and run pages do. */
+function ProjectSuggestions({ project, runs }: { project: string; runs: Overview["suggestions"] }) {
+  const view = useProject(project);
+  const tasks = useMemo(() => taskMap(view.data), [view.data]);
+  return (
+    <section className="needs-project" aria-label={`Suggestions for ${project}`}>
+      <h3 className="text-card-title font-semibold">{project}</h3>
+      <div className="needs-project-cards">
+        {runs.map((run) => <ImprovementCard key={run.id} project={project} run={run} tasks={tasks} linked />)}
+      </div>
     </section>
   );
 }

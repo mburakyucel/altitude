@@ -1,9 +1,10 @@
 # Project agents: proposal
 
 Status: approved by the operator on 2026-10-19 with one addition: Altitude ships built-in agents,
-including the Weekly improvement review, that you turn on with one press. Steps 1, 2 ([The Weekly
-improvement review](#the-weekly-improvement-review)), 3 ([Monitor](#monitor-step-3)) and 4 ([Events you
-send](#events-you-send-step-4)) are built. In
+including the Weekly improvement review, that you turn on with one press. Steps 1 to 5 are built
+([The Weekly improvement review](#the-weekly-improvement-review), [Monitor](#monitor-step-3), [Events you
+send](#events-you-send-step-4) and [Suggestions](#suggestions-step-5)); the rollout converged after step 5,
+and step 6, acting, is #1109. How each step is built lives in `docs/ARCHITECTURE.md` and SPEC §3.17. In
 the interface the feature is called **Agents**; one of them is "an agent", and one time it works is "a run". This
 replaces the earlier scheduled-only proposal: a schedule is one kind of trigger, not the definition.
 
@@ -285,26 +286,6 @@ improvement review's terms on the Agents page first.", true whether it is still 
 yours. Suggestion cards, ending lines and Needs you are
 otherwise unchanged; ending lines gain the anchor Recent runs opens.
 
-### How step 2 is built
-
-- **Record.** Unchanged: the improvement record keeps the agreement, the Weekly switch (Pause and
-  Resume are its off and on) and the runs. It is yours when the record has an agreement, a switch or a
-  run; its terms are out of date whenever the agreement is not to the current version.
-- **Views.** `improve.settings` is replaced by the review's list row (or Built in row) and its page,
-  read from the same record. The page reuses the step-1 agent page's parts (status card, run rows,
-  loading and failure) with the terms sheet as one gate on Turn on, Resume and Run now. `GET /api/agents/<project>` carries the row for Altitude's own project,
-  `GET /api/agents/<project>/weekly` the page. Presses keep `POST /api/improve` (the switch with
-  the terms version, Run now with it, Stop) from a paired device.
-- **Removed.** The settings section (`ImprovementSettings.tsx`, its SPEC §3.15 bullet, the `#improvement`
-  settings anchor and their tests); the sheet moves to the agent page.
-- **Docs.** SPEC §3.15 and §3.17, ARCHITECTURE's improvement review and project agents, CLI's
-  improvement suggestions, the L3 persona (its page, not settings; the switch is yours), the changelog.
-- **Tests.** Yours and Built in from each record shape; terms out of date when paused before a change,
-  never switched, or turned off by it, and cleared once agreed; every status line, Run now reason and
-  Recent runs row; the switch and Run now through the sheet, stale terms refused; the API; and phone and desktop
-  walkthroughs of States 39 to 51, the sheet and the page with fictional fixtures. No native behavior changes, so
-  the Mac owes nothing new.
-
 ## What we considered from elsewhere
 
 Managing agents that wake up on their own is a different problem from steering one task, and schedulers
@@ -522,7 +503,7 @@ is not a session: it shows only in Agents. The Weekly improvement review's run i
 rather than a session, so it never appears here; its row below says Running.
 
 **Agents (N).** After Sessions, a section with the heading "Agents (N)" lists, across projects,
-every agent that is not retired and is any of: on with a schedule; waiting or running; paused itself
+every agent that is not retired and is any of: on with a schedule or the event trigger; waiting or running; paused itself
 (until you resume or retire it); or had a run in the last seven days. In Altitude's own project the
 Weekly improvement review is listed once it is yours, on the same terms. An agent with no schedule
 that has not run for seven days, or one you paused that has not run for seven days, drops off. Projects come in Monitor's project order, each
@@ -565,34 +546,6 @@ Monitor reads both sections in its one read, so they share its skeleton while lo
 keeps its refresh, so a run that starts or ends moves between Sessions and Agents on the next read.
 A running agent shows in both places on purpose: the session row says how its session is doing, the
 agent row what the agent does next.
-
-### How step 3 is built
-
-- **Readings.** The project tick (every 30 seconds) already looks at each running run's worker. It
-  also reads the run's session through the passive reader a running task's uses: `usage.capture`
-  takes the folder its cursor and the job live in, which defaults to the task's, and the tick passes
-  the run's folder and a run-shaped record as `project_agents.session` builds one. The tick keeps
-  `context: {percent, at}` on the run, saved under the project lock only when the reading changed.
-  The run's final tokens stay as `reconcile` records them at its end.
-- **Views.** `monitor.sessions()` adds a row of kind `agent` per running run: project, agent id and
-  name, run number, engine, model, context and its reading time, limit and minutes so far.
-  `monitor.agents()` returns the Agents rows: project, id, name, what comes next and its cue, and the
-  latest run that ran (outcome, end time, minutes, tokens). It reuses `project_agents` and `improve`
-  helpers (`_active`, the schedule's next time, the budget, the news's latest run), and the
-  agent page's status order. `GET /api/monitor` gains `agents` and the computer's clock. A read writes
-  nothing; the Weekly review's row is read only where its record exists, so no other project asks
-  git anything.
-- **Removed.** The unused `agents` placeholder in the web's Monitor schema.
-- **Docs.** SPEC §3.14 (the Agent session row and the Agents section), ARCHITECTURE's Monitor and
-  project agents, the changelog.
-- **Tests.** Which agents are listed (on with or without a schedule, waiting, running, paused itself
-  past seven days, paused by you, ran within and beyond seven days, retired, the Weekly review yours
-  or not, its terms changed); the order of what comes next when several apply (paused with a run
-  running, new with Run now pending, paused with the budget used); every line including the budget
-  and the zone; the latest line for each outcome, skips never shown, missing minutes or tokens and no
-  runs; the session row with and without a context reading and stale; the reading kept on the run
-  and saved only when it changed; the API; and phone and desktop walkthroughs of the Monitor states
-  below with fictional fixtures. No native behavior changes, so the Mac owes nothing new.
 
 ### Events you send (step 4)
 
@@ -726,59 +679,6 @@ button until the agent reads as on, and then the card leaves. If the agent was r
 window, the button returns with "Not resumed: Flaky tests is retired." beneath, and the card leaves
 on the next read. The card also leaves when the agent is edited or retired: saving a change makes it
 paused by you, and the status reads "Paused". Run now does not clear it.
-
-### How step 4 is built
-
-- **Definition.** It gains `events`, true or false. Agents saved before this step have it false.
-  `definition()`, `triggers()`, `_changes()`, offers and `alt agent new|set|offer --events` accept
-  and say it. The built-in agents keep their schedules.
-- **Send.** `alt agent send AGENT [TEXT|-] [--key KEY]` is a change of the operator's CLI only, made
-  as `new` and `set` are, under the project lock in one write. It refuses on L3's socket and in every
-  worker, and agent runs already have no `alt` verbs. It checks the key, then the refusals, then
-  creates the waiting run, adds the event to the waiting run, or adds it to the agent's `pending`
-  (at most 50 in either). The event is `{text, key, at}`. The agent's `received` keys are its latest
-  1,000; dropping or skipping events removes theirs. The agent keeps its latest event for Run now.
-  There is no event log, offset or reader. A send is one locked write that either happened or did
-  not, so a restart loses nothing and repeats nothing. `alt agent run` takes an optional text, the
-  run's one event, which does not become the latest.
-- **Runs.** A run gains `events`. When a run ends, `reconcile` starts the agent's next run with its
-  `pending` events if the agent is still on. Pause and Retire clear `pending`. `_end` counts event
-  runs, and schedule runs that events joined, toward pausing itself. Run now and skips still do not
-  count. The run template quotes the events as data after the brief.
-- **Needs you.** `T.decisions`' queue gains a row of kind `agent` for each agent that paused itself,
-  with the agent's id and name and the last run's number and reason, and no `alert_key`, so it never
-  alerts. The queue's rows become a union told apart by kind: `isStep` checks `kind === "step"`, a
-  new `isAgentRow` checks `"agent"`, and every reader that means a task's decision (Work's Current
-  and the project header, the task card and page, alerts, task status) takes rows through one
-  `isTaskDecision` guard, a row with a slug. The card is its own component beside `StepCard`,
-  grouped by `agent:<id>`, and `attentionSummary` counts "paused agent". Resume presses the existing `resume` change. Saving a
-  definition on an agent that paused itself marks it paused by you.
-- **Removed.** The step-1 **+ Add a schedule** button, and its branch in the form and the boards.
-- **Docs.**
-  - SPEC: the form's triggers, the agent and run pages, Needs you.
-  - ARCHITECTURE's project agents: events you send, `received`, `pending`.
-  - CLI: `alt agent send`, `--events`.
-  - OPERATIONS: sending events, with the three examples and the line about others' text.
-- **Recipes.** `project_agents.recipes(project, agent)` writes the three examples, and the agent's
-  API and OPERATIONS show the same text.
-  - The changelog.
-- **Tests.**
-  - A send in each state: none, waiting, running, paused, new, retired, no trigger, too long,
-    budget spent, 50 waiting. Keys: checked before refusals, a repeat ignored, the 1,001st dropping
-    the oldest, and a key given back by Pause, Retire, pausing itself and a skip.
-  - Refusal outside the operator's CLI: L3's socket, an L2 worker, a run.
-  - The next run starting with pending events, a schedule run joined, and skips carrying their
-    events. Three failing event runs pause the agent.
-  - Run now with and without a latest event, and `alt agent run` with a text. The input quoted and
-    at most 50 events. Every words rule and name form.
-  - Each recipe under `sh -n`, and the two `gh` recipes run with stand-in `gh` and `alt` commands,
-    checking what they send. These run on the Mac too through `alt task validate`.
-  - The Needs you row: its count beside an operator step's in the same project, no alert, never in
-    Work or a task card, and Resume, edit and retire clearing it.
-  - The API and the offer.
-  - Phone and desktop walkthroughs of the states below, with fictional fixtures.
-  - No native behavior changes, and the recipes run in tests on both platforms; which scheduler runs
-    them is yours, so the Mac owes nothing new.
 
 ### Suggestions (step 5)
 
@@ -916,67 +816,6 @@ A run gains no new ability: it still cannot open a task, message anyone or use `
 reaches a run only on public pages it chooses to read, as it has since step 1. Events carry only what
 your own scripts send (step 4). No step adds a reader of strangers' text.
 
-### How step 5 is built
-
-- **Answer.** `project_agents.report` also returns the run's `Suggest:` blocks. They are made plain by
-  the improvement review's plain-text helper and credential redaction, bounded, cut to the agent's free
-  room, and numbered from 1. A run keeps `suggestions: [{n, title, explanation}]`, then `check` (the
-  queued L3 turn) and `post: {shown, drops, at}` as a Weekly run does, and
-  `decisions: [{n, from, to, at, by, turn?, message?, reason?}]`. `post` gates what shows; a lapse counts
-  from `post.at`. The tick posts a check past its `check_by` with everything set aside.
-- **One suggestion model.** The improvement review's check, post, suggestion states, button table, lapse
-  and "opening" reading move to one module, `suggestions.py`, that both records use. Each owner keeps
-  its own run lifecycle and what follows a post:
-  - The Weekly review's deadline is two hours from its start, covering reading and checking; its post
-    writes the card into chat with L3's drops, and a missed deadline fails the run.
-  - An agent run's check has two hours from the run's end; its post writes nothing to chat, and a missed
-    deadline posts every suggestion as set aside.
-  - A run with suggestions queues the `improvement-check` turn with an agent ref. `alt improve post`
-    takes either kind of run ref; L3 reads an agent run's suggestions with `alt agent show --run`.
-  - Presses go to `POST /api/improve` with a ref: `<run>/<n>` for a review, and `agent:<agent>/<run>/<n>`
-    for a run. One handler serves both, with request ids and 409s.
-  - Receipts live in the record the ref names: the improvement record's `presses`, or the agents record's.
-    A request id is a fresh random id per press, so one record's receipts are enough to replay it.
-  - Accepting queues an `improvement-task` turn whose text depends on the ref's kind (the safety rules
-    above for agent refs).
-  - `alt task new --improvement REF` takes either kind and records it on the task as `improvement`.
-  - `alt improve resolve REF` records a typed answer for either kind.
-  - L3's persona paragraph covers both kinds.
-- **Reading.**
-  - The project view's `improvements` gains agent runs with kept suggestions, and the overview's
-    `suggestions` lists both kinds.
-  - The web's `ImprovementCard` takes its header, muted line and footer from the run's kind. Its
-    `Suggestion` part is unchanged.
-  - The run page renders its run's suggestions with the same part, its checking line and Set aside.
-- **Prompt.** The run template gains the `Suggest:` shape, when to use it and the agent's free room.
-  **Before you** gains the earlier suggestions with their outcomes.
-- **Task origin.** The task card's muted line ends with "from <agent>" when the task's `improvement` names
-  a suggestion: the agent's name for a run, "Weekly improvement review" for a review.
-- **Removed.** The improvement-only check, post and state code the shared module replaces. Review refs
-  keep their form, so there is no compatibility reader.
-- **Docs.**
-  - SPEC: §3.17 (the card, the run page, Needs you, the form's line) and §3.5 (the origin).
-  - ARCHITECTURE's project agents and improvement review.
-  - CLI: refs for `post`, `resolve` and `--improvement`.
-  - L3's persona.
-  - The changelog.
-- **Tests.**
-  - Answers with zero to four `Suggest:` blocks; over-long text, links, markdown and credentials;
-    blocks after Nothing or Couldn't finish.
-  - The three-waiting cap, counting checks in flight and suggestions for seven days after their check,
-    an agent whose suggestions are always set aside, and its prompt line.
-  - The check: queued once per run with suggestions, a post keeping and setting aside, a post naming a
-    number twice or none refused, the deadline setting all aside, and nothing in Needs you before it posts.
-  - Each press and typed answer on an agent ref, and refs for pruned or unknown runs. One task per
-    suggestion; both agent turns' text; lapse at seven days; an accepted suggestion without its task
-    leaving Needs you seven days after the press, for both kinds.
-  - **Before you** listing outcomes.
-  - Needs you's order, without counting or alerting, whatever Tell me says. The run page's checking,
-    kept and set-aside states.
-  - The origin line for both kinds.
-  - The review's existing tests unchanged.
-  - Phone and desktop walkthroughs of the states below, with fictional fixtures.
-
 ### States
 
 | Surface | State | What appears |
@@ -1017,16 +856,15 @@ your own scripts send (step 4). No step adds a reader of strangers' text.
 
 ## Steps
 
-Each step is its own held pull request and comes back to you before it is built.
+Each step was its own held pull request and came back to you before it was built.
 
-1. **Agents on a schedule or run by hand, reporting only (this task's increment).** The three built-in
+1. **Agents on a schedule or run by hand, reporting only.** The three built-in
    agents with Turn on; the record and its
    versions; schedule triggers on the shared clock with **+ Add a schedule**; Run now; runs under their
    agent with the run page, the previous report as input, the restricted launch and no `alt` verbs; the
    weekly budget, per-run limit and reserve; pausing itself after three failures, said in chat; the
    Agents page, agent page, form and retire; Work's run rows and Agents row, the menu's Agents…; chat
-   lines; L3's verbs and offer cards; docs and tests. It merges after the separate change that hides
-   sign-ins from sandboxed jobs.
+   lines; L3's verbs and offer cards; docs and tests.
 2. **The Weekly review as a built-in agent** of Altitude's own project, its settings section moved to
    its agent page.
 3. **Monitor.** Runs among Sessions and the Agents section.
@@ -1039,53 +877,11 @@ Each step is its own held pull request and comes back to you before it is built.
    on the improvement suggestion card under Suggestions in Needs you, with Make a task and Dismiss;
    tasks made from one show "from <agent>" in Work.
 6. **Acting.** A per-agent choice to open pull requests, each held for your merge as a review card, and
-   to list issues for L3 to file.
+   to list issues for L3 to file. Not built; it is #1109.
 
-## How the first step is built
+## Mac verification
 
-- **Record.** `<project>/project-agents.json` holds each agent (name, brief, triggers, model and effort,
-  tell, limit, state, the reason it paused), the weekly budget, every change with the brief as it was
-  (who, when, source message or press), per trigger the last claimed due time, and the runs (id,
-  version, trigger key, state, times, usage, report line). Each run's report, prompt and session
-  folder live in `project-agents/<id>/<run>/`. The code says "project agent" throughout, never a bare
-  "agent", which already names a task's worker session and the engines' own agent definitions.
-- **Built-ins.** `templates/project-agents/<key>.md` holds each built-in agent: a short header (name,
-  schedule, Tell me) over its brief. Turn on copies it into the record with `builtin: <key>`, which
-  only hides that key from Built in while the agent is not retired.
-- **Clock.** One function returns the latest due time not yet claimed; `improve.weekly` uses it in place
-  of its own Monday arithmetic, which is removed. The project tick claims due triggers durably, then
-  creates their runs; while Altitude waits to activate a change, a claim waits for a later tick, as
-  Weekly's does. A claim for an agent with a run waiting or running is recorded as a skip.
-- **Run.** A worker job of its own kind (`project-agent-run`), launched by the dispatcher's worker path
-  with the run template (`templates/project-agent-run.md`: the brief, the trigger, the previous report,
-  the result shape, the limit), the L1 persona, the agent's model pin, Claude restricted as reviews run
-  and nothing of the operator's engine folder linked, and no GitHub token. It counts toward the
-  machine's task cap and starts only in a free slot, tasks first. Its door answers only the engine
-  sign-in. Dispatch checks the budget against the run's whole limit and the routed engine's reserve
-  before launch (`route.improvement_reserve` becomes one engine-parameterised check, used by both). The
-  daemon stops a run at its limit; its final answer is read and validated as its report.
-- **Chat.** The result line is written by Altitude from the run record and posted as Tell me allows.
-  `alt agent offer` stores a definition on L3's reply; the press, a paired-device request with an id,
-  saves exactly that definition.
-- **Interfaces.** `alt agent list|show|offer|pause|resume|retire|run|stop` on L3's socket;
-  `alt agent new|set` for the operator's own CLI only; `GET /api/agents/<project>` and `POST /api/agents`
-  presses with a request id from a paired device; the project view's run rows and Agents row.
-- **Docs.** ARCHITECTURE (a Project agents section), CLI, OPERATIONS (configuring agents), SPEC (Work,
-  the project menu, a new Agents section, chat lines and the offer card), the L3 persona's verbs, the
-  changelog.
-- **Tests.** The schedule rule (due, missed, turned on late, paused, waiting, running, activation wait)
-  with Weekly's cases unchanged; budget fit and reserve skips on each engine, unknown readings included;
-  the wait order and six-hour skip; run creation and its inputs; the launch's restricted settings, empty
-  linked folder and missing GitHub token; the door refusing every request but sign-in; the limit stop;
-  pausing after three triggered failures and not after Run now; versions; built-ins turned on, hidden
-  while active and back after Retire; that task lists, counts, the
-  Weekly review's finished tasks and recovery never see a run; offers (saved only by the press, refused
-  when stale, lapsed); L3 authority; the API; and phone and desktop walkthroughs of every step-1 state
-  with fictional fixtures; engine calls stay at the fixture seam.
-
-### Mac verification
-
-The schedule lives in the service's own timer, so no launchd job is added. The Mac still owes: a run
-launches under Seatbelt with no GitHub token in its job's input and nothing of the operator's engine
-folder linked, its door refuses everything but sign-in, and the limit stop ends its job. These are
-listed in the pull request for L3 to file.
+The schedule lives in the service's own timer, so no launchd job is added. The Mac still owes, on #1098:
+a run launches under Seatbelt with no GitHub token in its job's input and nothing of the operator's engine
+folder linked, its door refuses everything but sign-in, the limit stop ends its job, and schedules read
+the Mac's local time.

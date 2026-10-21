@@ -138,6 +138,7 @@ distinct from the fictional local UI harness.
 | `/projects/:name/tasks/:slug/report` | the task's full report, with its digest at `#digest` | new |
 | `/projects/:name/agents` | the project's agents (§3.17) | new |
 | `/projects/:name/agents/new`, `/projects/:name/agents/:id[/edit]` | the agent form; one agent's page and its form (§3.17) | new |
+| `/projects/:name/agents/weekly` | the Weekly improvement review's page, in Altitude's own project (§3.17) | new |
 | `/projects/:name/agents/:id/runs/:n` | one agent run's page (§3.17) | new |
 | `/monitor` | Monitor | unchanged |
 | `/repairs/:id` | one repair's page in a task's form (§3.15); Work is lit, or no tab before any project exists | new |
@@ -285,7 +286,7 @@ links; no headings, no tables. A task card (§3.5) sits under an L3 reply whose 
 and Create task (below) under the latest reply that offered one. An improvement review shows at its
 run's row as a line or one card, and a running review as a line with Stop at the end
 ([improvement suggestions](improvement-review/PROPOSAL.md#where-suggestions-appear)). When a change of
-terms turns Weekly off, one line says so and links to the project's settings (§3.15).
+terms turns Weekly off, one line says so and links to its page on the Agents page (§3.17).
 System turns render as system lines (§3.4). Hovering a row shows its time in the gutter; on the
 phone a long-press shows it. The phone layout is portrait 390 wide only; landscape is unsupported.
 The conversation scrolls inside the fixed shell, shrinks above the keyboard, and follows its newest
@@ -2035,14 +2036,14 @@ is one engine call, never a session. Session rows are readings, not links. Sessi
 information on this page; there is no raw worker process list.
 
 **Agents (N)** comes last and lists, across projects, every agent that is not retired and is on with a
-schedule, has a run waiting or running, paused itself, or had a run in the last seven days; in Altitude's own
+schedule or the event trigger, has a run waiting or running, paused itself, or had a run in the last seven days; in Altitude's own
 project the Weekly improvement review once it is the operator's, on the same terms. Projects come in Monitor's
 order, each project's agents in its Agents page's order. No such agent: no section and no heading. One card
 holds whole-row links to each agent's page, separated by hairlines, each with a chevron: the title
 "<project> / <agent name>" in semibold; what comes next, the first that applies: a pulsing dot and "Running",
 "Waiting", "Not on yet", a pause mark and "Paused itself", "Paused" or "Paused: its terms changed", "Waits
 until Monday" (the project's weekly budget is used), "Next tomorrow at 07:00" (the computer's zone after the
-time when the browser is in another), "Only when you run it"; then, muted, "Last: <outcome> · <when> ·
+time when the browser is in another), "When it's sent an event", "Only when you run it"; then, muted, "Last: <outcome> · <when> ·
 <minutes> min · <tokens> tokens" for the latest run that ran, its missing parts left out and skips never
 shown, or "No runs yet.". On desktop what comes next sits right-aligned on the title's line and never wraps;
 on the phone each row stacks the title, what comes next in the secondary tone, and Last.
@@ -2590,7 +2591,9 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   you · For “PR #812 merged”, the latest", "… · your text", "… · No event yet"), then each event it took on its
   own muted line (its time · its first line), the model once it starts and usage once it ends; waiting, what it
   waits for ("Waiting for a free task slot", "Waiting for Review each merge") with **Stop**; running, the live
-  session read only with **Stop**; ended, the outcome and report with **Brief it ran** and **Session** folded. No composer.
+  session read only with **Stop**; ended, the outcome and report with **Brief it ran** and **Session** folded. A link
+  in the report reads as its label with its address after it, "the advisory (https://…)", since a label can hide
+  where an untrusted report's link goes. No composer.
   A run that suggested tasks shows **Suggested tasks** under its report: "L3 is checking 2 suggestions" with a spinner
   until L3 posts or its two hours pass; then each kept suggestion as on the [improvement
   card](improvement-review/PROPOSAL.md#where-suggestions-appear), its number and title, explanation, **Make a task** and **Dismiss**,

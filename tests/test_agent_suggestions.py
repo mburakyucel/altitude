@@ -2,10 +2,10 @@
 anything is shown, the deadline that sets an unfinished check aside, the three waiting per agent, the presses and
 typed answers on agent refs, the one task each makes and its origin, Needs you and the run page, and what the next
 run reads of them. Projects are fictional; the run's engine is scripted at the engine seam."""
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from tests.test_project_agents import NOW, AgentCase
-from altitude import improve, l3, project_agents as A, server, suggestions, tasks as T
+from altitude import improve, l3, project_agents as A, server, state as S, suggestions, tasks as T
 
 FOUND = """Found: the uploader retries forever.
 
@@ -143,6 +143,19 @@ class TestCheck(SuggestionCase):
             suggestions.post(self.project, f"agent:{self.id}/1", [1], [(2, "x")], now=NOW + timedelta(hours=3))
 
 
+    def test_a_check_turn_that_waited_past_its_deadline_is_set_aside_and_never_runs(self):
+        run = self.finished()
+        [check] = self.checks()
+        self.assertEqual(check["until"], run["check_by"])
+        late = NOW + timedelta(hours=2, minutes=6)
+        self.patch(S, "now", return_value=A._at(late))  # L3 was busy until after the deadline
+        self.assertEqual(l3._eligible(self.project, l3._queue_rows(l3.queue_path(self.project))), [])
+        l3.deliver_queued(self.project)  # the project tick drains L3 before it sets checks aside
+        self.assertEqual(self.checks(), [])
+        A.tick(self.project, late)
+        self.assertTrue(self.card(now=late)["unfinished"])
+
+
 class TestRoom(SuggestionCase):
     def test_suggestions_hold_room_for_a_week_after_their_check_unless_decided(self):
         self.posted()  # one kept, one set aside: one room left
@@ -230,8 +243,9 @@ class TestDecisions(SuggestionCase):
 
 class TestNeedsYou(SuggestionCase):
     def test_the_overview_lists_both_kinds_newest_first(self):
-        self.posted()
-        later = {"kind": "review", "id": "0123456789ab", "posted": (NOW + timedelta(days=1)).isoformat(),
+        posted = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=1)  # the overview reads the clock
+        self.posted(at=posted)
+        later = {"kind": "review", "id": "0123456789ab", "posted": (posted + timedelta(days=1)).isoformat(),
                  "suggestions": [{"waits": True}]}
         self.patch(improve, "waiting", return_value=[later])
         listed = [c for c in server.overview()["suggestions"] if c["project"] == self.project]

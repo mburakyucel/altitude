@@ -281,6 +281,15 @@ class TestPosting(RunCase):
         self.assertEqual(self.queued(), [])
         self.assertEqual(self.chat()[-1]["text"], "Improvement suggestions failed · L3 did not finish checking.")
 
+    def test_the_check_turn_carries_the_run_deadline(self):
+        run = self.checking()
+        [turn] = self.queued()
+        self.assertEqual(datetime.fromisoformat(turn["until"]), datetime.fromisoformat(run["deadline"]))
+        self.patch(S, "now", return_value=(datetime.fromisoformat(run["deadline"]) + timedelta(seconds=1))
+                   .isoformat(timespec="seconds"))
+        self.assertEqual(l3._eligible(self.project, l3._queue_rows(l3.queue_path(self.project))), [],
+                         "a check that waited past the run's deadline never runs")
+
     def test_the_tick_posts_an_ending_a_restart_interrupted(self):
         run = self.checking()
         with mock.patch.object(l3, "chat_log", side_effect=OSError("disk full")), self.assertRaises(OSError):

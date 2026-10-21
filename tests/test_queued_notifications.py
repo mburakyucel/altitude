@@ -1,6 +1,6 @@
 """A queued turn that every provider refuses before any output stays queued with its identity: a system notification
 keeps its place, and an operator chat keeps its turn and is answered first beneath its message. A notification that
-later state already answers never runs."""
+later state already answers, or whose deadline passed, never runs."""
 from datetime import datetime, timedelta, timezone
 
 from tests.support import AltitudeCase
@@ -120,6 +120,25 @@ class TestQueuedNotifications(AltitudeCase):
         [row] = [row for row in l3.chat_history(self.project, None)
                  if row["role"] == "user" and row["trigger"] == "owner-message"]
         self.assertEqual(row["slug"], slug)
+
+    def test_a_turn_queued_with_a_deadline_runs_before_it_and_is_dropped_after(self):
+        now = datetime.now(timezone.utc)
+        with S.project_lock(self.project):
+            l3.queue_locked(self.project, "Fictional check in time.", trigger="improvement-check",
+                            until=(now + timedelta(hours=1)).isoformat(timespec="seconds"))
+            late = l3.queue_locked(self.project, "Fictional check too late.", trigger="improvement-check",
+                                   until=(now - timedelta(minutes=1)).isoformat(timespec="seconds"))
+        self.assertEqual([row["text"] for row in l3._eligible(self.project, self.queue())],
+                         ["Fictional check in time."], "a turn past its deadline is never claimed")
+
+        l3.deliver_queued(self.project)
+
+        self.assertTrue(any("Fictional check in time." in prompt for prompt in self.prompts))
+        self.assertFalse(any("Fictional check too late." in prompt for prompt in self.prompts))
+        self.assertEqual(self.queue(), [])
+        [event] = [event for event in S.read_project_log(self.project, limit=0) if event["kind"] == "l3-notice-dropped"]
+        self.assertEqual((event["message_id"], event["trigger"], event["reason"]),
+                         (late["id"], "improvement-check", "Its deadline passed before it ran."))
 
     def dropped(self) -> list[tuple]:
         return [(event["message_id"], event["slug"]) for event in S.read_project_log(self.project, limit=0)

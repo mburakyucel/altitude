@@ -32,8 +32,9 @@ One engine is enough, and each integration is
 
 - **Self-healing.** When something breaks, it gets repaired and the work picks up where it stopped.
 - **Self-improving.** Altitude learns from its own finished work and fixes what slowed it down.
-- **Agents on a schedule.** Give a project standing briefs, like a morning dependency check, and hear what
-  they found. Three come built in.
+- **Agents that keep watch.** Give a project standing briefs that run on a schedule or when your own scripts
+  send an event, like a morning dependency check or a look at each merge. Hear what they found and decide on
+  the tasks they suggest. Three come built in.
 - **Parallel without collisions.** Many tasks at once, each on its own copy of the code.
 - **Balanced quotas.** By default, each task goes to the engine that has used less of its week, so both are
   used evenly.
