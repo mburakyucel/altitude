@@ -28,6 +28,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   lists running agents among Sessions and each agent with what it does next and how its last run went. In the
   Altitude project, the Weekly improvement review is a built-in agent with its own page in place of its settings
   section, as cheap as before and outside the agents' budget.
+- The third-party notices in the archive now cover everything the web UI ships: the IBM Plex fonts with the SIL
+  Open Font License, and the markdown packages that render shown documents with their copyrights and the BSD
+  2-Clause and ISC texts two of them use. A test keeps the notices in step with the web dependencies.
 
 ## v0.11.0 — 2026-10-20
 

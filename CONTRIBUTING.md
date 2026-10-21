@@ -16,7 +16,9 @@ Altitude is licensed under the [Functional Source License, Version 1.1, ALv2 Fut
 competing commercial product or service; internal use inside a company, private forks with
 internal integrations, education and research are expressly permitted. Each version becomes
 Apache-2.0 two years after its release. The release archive ships the license and the
-[third-party notices](THIRD_PARTY_NOTICES.md) for the bundled web packages.
+[third-party notices](THIRD_PARTY_NOTICES.md) for the bundled web packages. A pull request that
+adds or updates a web dependency keeps its copyright, and any new licence text, in the notices; the web
+tests fail when a shipped package or its licence text is missing.
 
 Contributions are accepted only under the [contributor license agreement](CLA.md), which lets
 the maintainer relicense the project later. A collaborator agrees once by writing "I have read the
