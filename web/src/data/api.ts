@@ -1019,9 +1019,14 @@ export const ReviewSchema = z.object({
   earlier: z.boolean().default(false), waiting: z.enum(["reviewer", "owner", "resume"]).nullish(),
   cancel_requested: z.boolean().nullish(), withdrawn_by: z.string().nullish(), withdrawal_reason: z.string().nullish(),
   can_withdraw: z.boolean(), can_cancel: z.boolean(), can_again: z.boolean(),
+  /** The delivery a review belongs to: the PR whose merge closed it, the step after the PR that waits, or the current one. */
+  merged_head: z.string().nullish(), merged_pr: z.number().nullish(), next: z.boolean().default(false),
 }).passthrough();
 export type Review = z.infer<typeof ReviewSchema>;
-/** `open` counts the open findings of every review of the kind still in the merge gate, earlier ones included. */
+/** One delivery's reviews share this key: its merged head, "next" or "current". */
+export const deliveryOf = (review: Review) => review.merged_head ?? (review.next ? "next" : "current");
+/** `latest` is the kind's latest unmerged review (a finished task's last one otherwise); `open` counts the open findings of
+ * every review of the kind in its delivery's merge gate, earlier ones included. */
 const ReviewSubjectSchema = z.object({ available: z.boolean(), why: z.string(), latest: ReviewSchema.nullable(), open: z.number().default(0) });
 /** A kind appears while a request could start or once it has a review; finished tasks keep only what was reviewed. */
 export const TaskReviewSchema = z.object({
@@ -2257,14 +2262,17 @@ const skipsProject = (data: ProjectView, skips: ReviewSkip[]): ProjectView => sk
 function skipsTask(data: TaskView, project: string, skips: ReviewSkip[]): TaskView {
   const mine = skips.filter((skip) => skip.project === project && skip.slug === data.slug);
   if (!mine.length || !data.review) return data;
-  // The task read lists every review, so a skip comes off its counts only while that review still reads unskipped.
+  // The task read lists every review, so a skip comes off its counts only while that review still reads unskipped,
+  // and only from the counts of its own delivery.
   const history = data.review.history;
-  const counted = (skip: ReviewSkip) => history.some((entry) => entry.id === skip.id && entry.state !== "withdrawn");
-  const line = (question: Decision) => skippedLine(question, project, mine, counted);
+  const within = (id: string | null | undefined) => { const entry = history.find((item) => item.id === id); return entry && deliveryOf(entry); };
+  const counted = (delivery: string | undefined) => (skip: ReviewSkip) =>
+    history.some((entry) => entry.id === skip.id && entry.state !== "withdrawn" && deliveryOf(entry) === delivery);
+  const line = (question: Decision) => skippedLine(question, project, mine, counted(within(question.review?.id)));
   const review = (entry: Review) => { const skip = mine.find((item) => item.id === entry.id); return skip ? skippedReview(entry, skip) : entry; };
   const subjects = Object.fromEntries(Object.entries(data.review.subjects).map(([subject, entry]) => [subject, entry && {
     ...entry, latest: entry.latest && review(entry.latest),
-    open: Math.max(0, entry.open - mine.filter((skip) => skip.subject === subject && counted(skip)).reduce((sum, skip) => sum + skip.unresolved, 0)),
+    open: Math.max(0, entry.open - mine.filter((skip) => skip.subject === subject && counted(within(entry.latest?.id))(skip)).reduce((sum, skip) => sum + skip.unresolved, 0)),
   }]));
   return {
     ...data,

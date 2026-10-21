@@ -48,6 +48,7 @@
         "properties": {
           "summary": {"type": ["string", "null"]},
           "severity": {"type": ["string", "null"]},
+          "pr": {"type": ["integer", "null"], "description": "the delivered PR whose review raised the finding, in a task that ships several"},
           "disposition": {"type": "string", "enum": ["fixed", "dismissed", "open"]},
           "reason": {"type": ["string", "null"]}
         }

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, taskReview, useReviewSkipRefusals, useSkipReview } from "../data/api";
+import { ApiError, deliveryOf, taskReview, useReviewSkipRefusals, useSkipReview } from "../data/api";
 import type { Decision, Review, ReviewAction, ReviewSubject, TaskView } from "../data/api";
 import { InlineProse, ProseAt } from "./Prose";
 import { Stamp } from "./Stamp";
@@ -72,6 +72,7 @@ function counts(review: Review, iteration: number): React.ReactNode[] {
     else if (total) parts[parts.length - 1] += total === 1 ? ", resolved" : total === 2 ? ", both resolved" : ", all resolved";
     if (review.earlier) parts.push("earlier version");
   }
+  if (review.merged_pr) parts.push(`merged in PR #${review.merged_pr}`);
   return parts;
 }
 
@@ -170,11 +171,17 @@ export function ReviewFeedback({ controls }: { controls: ReviewControls }) {
   </p>;
 }
 
-const iterations = (task: TaskView, subject: ReviewSubject) => task.review?.history.filter((entry) => entry.subject === subject) ?? [];
+/** A review's iterations: its kind's reviews of the same delivery, oldest first. */
+const iterations = (task: TaskView, review: Review) =>
+  task.review?.history.filter((entry) => entry.subject === review.subject && deliveryOf(entry) === deliveryOf(review)) ?? [];
 
-/** Open findings an earlier review of the kind still holds in the merge gate, e.g. under an additional review. */
-const earlierOpen = (task: TaskView, review: Review) =>
-  (task.review?.subjects[review.subject]?.open ?? 0) - (review.state === "withdrawn" ? 0 : review.unresolved.length);
+/** Open findings an earlier review of the kind still holds in its delivery's merge gate, e.g. under an additional review;
+ * `open` counts the delivery of the kind's latest unmerged review. */
+const earlierOpen = (task: TaskView, review: Review) => {
+  const entry = task.review?.subjects[review.subject];
+  return !entry?.latest || deliveryOf(entry.latest) !== deliveryOf(review) ? 0
+    : entry.open - (review.state === "withdrawn" ? 0 : review.unresolved.length);
+};
 const earlierNote = (open: number) => open > 0 ? <span className="review-open">{open} open in an earlier review, blocks merge</span> : null;
 const join = (...parts: React.ReactNode[]) => parts.filter(Boolean).map((part, index) => <span key={index}>{index ? " · " : ""}{part}</span>);
 
@@ -188,7 +195,7 @@ export function ReviewBoxes({ task, controls, view }: { task: TaskView; controls
     const latest = entry.latest;
     const label = !latest || latest.state === "withdrawn" ? "Request" : latest.state === "completed" ? "Review again" : "Try again";
     return <section key={subject} className="review-box" aria-label={NAME[subject]}>
-      <Summary review={latest} iteration={iterations(task, subject).length} name={NAME[subject]}
+      <Summary review={latest} iteration={latest ? iterations(task, latest).length : 0} name={NAME[subject]}
         empty={latest ? undefined : entry.available ? "Not reviewed yet" : entry.why}
         held={latest ? earlierOpen(task, latest) > 0 : false}
         extra={latest ? join(earlierNote(earlierOpen(task, latest)), <button type="button" className="link" onClick={() => view(latest.id)}>View</button>) : null}
@@ -258,7 +265,7 @@ export function ReviewCard({ review, task, controls, target, onRead }: { review:
   const [open, setOpen] = useState(target);
   const body = useId();
   useEffect(() => { if (target) setOpen(true); }, [target]);
-  const all = iterations(task, review.subject);
+  const all = iterations(task, review);
   const earlier = all.slice(0, all.findIndex((entry) => entry.id === review.id));
   const action = review.can_cancel ? <button type="button" className="link" disabled={controls.disabled} onClick={() => controls.run("cancel", review)}>Stop</button>
     : review.can_again && (review.state === "failed" || review.state === "cancelled") ? <button type="button" className="link" disabled={controls.disabled} onClick={() => controls.run("request", review, review.subject)}>Try again</button> : null;
@@ -314,7 +321,9 @@ export function ReviewStatus({ review, opens }: { review: ReviewLine; opens: boo
   </>;
 }
 
-/** The latest review of each kind, the only ones the conversation shows. */
+/** The latest review of each kind in each delivery, the only ones the conversation shows. */
 export function latestReviews(task: TaskView): Set<string> {
-  return new Set(SUBJECTS.map((subject) => task.review?.subjects[subject]?.latest?.id).filter((id): id is string => Boolean(id)));
+  const latest = new Map<string, string>();
+  for (const review of task.review?.history ?? []) latest.set(`${review.subject} ${deliveryOf(review)}`, review.id);
+  return new Set(latest.values());
 }

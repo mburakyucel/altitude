@@ -208,6 +208,80 @@ test("only a kind's latest review shows, with earlier iterations inside it", asy
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
 });
 
+test("each delivery keeps its own review cards, and after a merge the boxes start the next delivery", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const task = await fixtureTask(request, project.name);
+  const reviewed = (id: string, subject: string, at: string, text: string) => ({ id, subject, requested_by: "l2", requested_at: at, state: "completed",
+    engine_label: "Engine B", model: "Default", same_engine: false, fallback_reason: "", focus: "", coverage: "assessed", earlier: false,
+    can_cancel: false, can_withdraw: false, can_again: false, unresolved: [], snapshot, reconciled: { ...snapshot, reason: "Assessed." },
+    result: { text, findings: [findings[1]!] }, dispositions: [{ finding_id: "empty", disposition: "fixed", reason: "Kept the cursor." }] });
+  const merged = { merged_head: "9ba1df6", merged_pr: 41 };
+  const history: Record<string, unknown>[] = [
+    { ...reviewed("plan-one", "proposal", "2026-09-22T10:22:00Z", "The cursor plan holds once empty pages keep their cursor."), ...merged },
+    { ...reviewed("code-one", "changes", "2026-09-22T11:10:00Z", "Cursor validation matches the approved plan."), ...merged },
+    { ...reviewed("plan-two", "proposal", "2026-09-22T13:05:00Z", "Expiry errors fit the plan; no material problems remain."), can_withdraw: true, can_again: true,
+      result: { text: "Expiry errors fit the plan; no material problems remain.", findings: [] }, dispositions: [] },
+  ];
+  const messages = [
+    { id: "step-one", role: "l2", text: "Step 1: validate cursors before applying the page limit.", at: "2026-09-22T10:20:00Z" },
+    { id: "a1", role: "system", text: "Review requested", at: "2026-09-22T10:22:00Z", review_id: "plan-one" },
+    { id: "a2", role: "system", text: "Review requested", at: "2026-09-22T11:10:00Z", review_id: "code-one" },
+    { id: "landed", role: "l2", text: "PR #41 merged. Step 2 next: return the agreed error for expired cursors.", at: "2026-09-22T12:40:00Z" },
+    { id: "a3", role: "system", text: "Review requested", at: "2026-09-22T13:05:00Z", review_id: "plan-two" },
+  ];
+  const posts: Record<string, unknown>[] = [];
+  // As the server does, each box reads its kind's latest unmerged review; right after the merge, step 2 has no commits yet.
+  let committed = false;
+  const latest = (subject: string) => [...history].reverse().find((row) => row.subject === subject && !row.merged_head) ?? null;
+  await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`, (route) => route.fulfill({ json: {
+    ...task, title: "Keep pagination stable", state: "running", question: null, questions: [], question_group: null, messages, prs: [41],
+    report_json: { landed: { prs: [{ number: 41, title: "Validate cursors", merged: true, merge_sha: "9ba1df6" }, { number: 42, title: "Expired cursor error", merged: true, merge_sha: "4c2e9a0" }],
+      main_runs: [], deploy: "not-applicable" }, blocked: "",
+      review: [{ pr: 41, summary: "Empty pages may lose the cursor", severity: "low", disposition: "fixed", reason: "Kept the cursor." },
+        { pr: 42, summary: "The expiry error omits the retry hint", severity: "low", disposition: "fixed", reason: "Added the hint." }] },
+    review: { history, subjects: { proposal: { available: true, why: "", latest: latest("proposal"), open: 0 },
+      changes: { available: committed && !latest("changes"), why: committed ? "" : "This PR already merged. Its next step can be reviewed once it has new commits.",
+        latest: latest("changes"), open: 0 } } },
+  } }));
+  await page.route("**/api/task/review", async (route) => {
+    const body = route.request().postDataJSON();
+    posts.push(body);
+    const row = { ...reviewed("code-two", "changes", "2026-09-22T14:00:00Z", ""), state: "requested", result: null, dispositions: [], reconciled: null, snapshot: null,
+      coverage: "unknown", waiting: "owner", requested_by: "operator", can_withdraw: true };
+    history.push(row);
+    messages.push({ id: "a4", role: "system", text: "Review requested", at: row.requested_at, review_id: "code-two" });
+    await route.fulfill({ json: { ok: true, review: row } });
+  });
+  const walk = walkthrough(page, info);
+  await walk.open(`/projects/${project.name}/tasks/${task.slug}`);
+  const card = (id: string) => page.locator(`[data-review-id="${id}"]`);
+  await walk.state("01-each-delivery-its-own-cards", { visible: [card("plan-one").getByText(/merged in PR #41/), card("code-one").getByText(/merged in PR #41/),
+    card("plan-two").getByText("Expiry errors fit the plan; no material problems remain.")], hidden: [card("plan-two").getByText(/Review 2|merged in PR/)] });
+  const openDetails = () => page.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }).click();
+  await openDetails();
+  const details = page.getByRole("dialog", { name: "Task details" });
+  const implementation = details.getByRole("region", { name: "Implementation review" });
+  await walk.state("02-details-after-merge", { visible: [implementation.getByText("This PR already merged. Its next step can be reviewed once it has new commits."),
+    details.getByRole("region", { name: "Proposal review" }).getByRole("button", { name: "Review again" })],
+    hidden: [implementation.getByRole("button"), details.getByText(/merged in PR/)] });
+  committed = true;
+  await page.reload();
+  await openDetails();
+  await walk.state("03-details-next-step-committed", { visible: [implementation.getByText("Not reviewed yet"), implementation.getByRole("button", { name: "Request" })], hidden: [] });
+  await implementation.getByRole("button", { name: "Request" }).click();
+  await expect.poll(() => posts.length).toBe(1);
+  expect(posts[0]).toMatchObject({ action: "request", subject: "changes" });
+  expect(posts[0]).not.toHaveProperty("review_id");
+  await expect(details).toBeHidden();
+  await walk.state("04-next-delivery-requested", { visible: [card("code-two").getByText("Queued. L2 starts it after its current step."), card("code-one").getByText(/merged in PR #41/)],
+    hidden: [card("code-two").getByText(/Review 2/)] });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  // The report names each finding's PR.
+  await walk.open(`/projects/${project.name}/tasks/${task.slug}/report`);
+  const findingsList = page.getByRole("region", { name: "Review" });
+  await walk.state("05-report-findings-by-pr", { visible: [findingsList.getByText(/^PR #41 · Empty pages may lose the cursor/), findingsList.getByText(/^PR #42 · The expiry error omits/)], hidden: [] });
+});
+
 test("review loading and uncertain receipt preserve listening and draft", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const task = await fixtureTask(request, project.name);
