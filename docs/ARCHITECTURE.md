@@ -2947,7 +2947,7 @@ way to create a task from the web: the L3 turn creates it through `alt task new`
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
 under the reply. An issue filed during a turn through `alt issue new`, or the issue an
 `alt incident new|publish` newly created, is recorded the same way as `issues: [{title, url}]`; a turn
-that fails after creating either carries them on its error row. When L3 is unsure whether the operator wants work started, its chat turn runs
+that fails after creating either carries them on its error row. When L3 thinks the work might not be necessary, its chat turn gives its reasoning and runs
 `alt task offer '<title>'` instead of asking; altd keeps the title on that reply's assistant row
 (`offer`) when the turn created no task, and the conversation draws the Create task button with the
 title under the latest such reply (spec §3.3); the reply text carries no Create task wording of its own. A press posts `{project, offer_turn}` to `POST /api/chat`, and altd
