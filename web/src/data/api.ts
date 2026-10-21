@@ -714,21 +714,27 @@ export const withSuggestions = <Card extends SuggestionCard>(run: Card, project:
 /** Needs you lists a card while a suggestion waits for a decision, or for its task a week after the press (suggestions.item). */
 const waitsInNeedsYou = (run: SuggestionCard) => run.suggestions.some((suggestion) => suggestion.state === "undecided" || suggestion.state === "accepted" && suggestion.waits);
 
+/** The card a suggestion belongs to, from the read that shows it: a review's in its project, an agent run's on its page. */
+function cardOf(client: QueryClient, project: string, ref: string): SuggestionCard | undefined {
+  const id = ref.slice(0, ref.lastIndexOf("/"));
+  const agent = /^agent:([^/]+)\/(\d+)$/.exec(id);
+  if (agent) return client.getQueryData<ProjectAgentRunDetail>([...agentsKey(project), agent[1], "runs", Number(agent[2])])?.suggested ?? undefined;
+  return client.getQueryData<ProjectView>(["project", project])?.improvements.find((item) => item.id === id);
+}
+
 /**
- * Needs you's runs with the choices on their way. Undo in chat brings back a run Needs you had dropped, taken from the
- * project read and placed where Altitude lists it (by project, newest run first); a run with nothing left waiting leaves.
+ * Needs you's runs with the choices on their way. Undo in chat or on a run's page brings back a run Needs you had
+ * dropped, placed where Altitude lists it (by project, newest post first); a run with nothing left waiting leaves.
  */
 function waitingRuns(client: QueryClient, overview: Overview, changes: SuggestionChange[]): Overview["suggestions"] {
   const order = overview.projects.map((project) => project.name);
   const runs = [...overview.suggestions];
   for (const change of changes) {
     if (change.action !== "undo" || runs.some((run) => run.project === change.project && change.ref.startsWith(`${run.id}/`))) continue;
-    const listed = client.getQueryData<ProjectView>(["project", change.project])?.improvements ?? [];
-    const run = listed.find((item) => change.ref.startsWith(`${item.id}/`));
+    const run = cardOf(client, change.project, change.ref);
     if (!run) continue;
-    const age = (id: string) => listed.findIndex((item) => item.id === id);
     const before = runs.findIndex((item) => order.indexOf(item.project) > order.indexOf(change.project)
-      || item.project === change.project && age(item.id) < age(run.id));
+      || item.project === change.project && (item.posted ?? "") < (run.posted ?? ""));
     runs.splice(before < 0 ? runs.length : before, 0, { ...run, project: change.project });
   }
   return runs.map((run) => ({ ...withSuggestions(run, run.project, changes), project: run.project })).filter(waitsInNeedsYou);

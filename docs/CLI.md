@@ -432,10 +432,11 @@ operator message than the one it was recorded from. When the operator presses Ma
 records the acceptance and queues a turn (trigger `improvement-task`) naming the suggestion; L3 creates
 its task with `alt task new --improvement`, and the press is the task's authority.
 
-The same verbs serve a project agent run's [suggested tasks](ARCHITECTURE.md#suggested-tasks), in any
-project. RUN is a review's id or `agent:<agent>/<run>` for an agent run, and REF is `RUN/N`. L3 reads an
-agent run's suggestions with `alt agent show AGENT --run N` (`candidates`) and posts its check with
-`post`, before the check's deadline two hours after the run ended; a post writes nothing to chat.
+`post`, `resolve` and `alt task new --improvement` also serve a project agent run's [suggested
+tasks](ARCHITECTURE.md#suggested-tasks), in any project: there RUN is `agent:<agent>/<run>`, and REF is
+`RUN/N` for either kind. `status` reads reviews only; L3 reads an agent run's suggestions with `alt agent
+show AGENT --run N` (`candidates`) and posts its check before the check's deadline, two hours after the
+run ended. A post writes nothing to chat.
 
 ## Project agents
 

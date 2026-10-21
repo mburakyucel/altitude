@@ -1267,7 +1267,7 @@ def parser() -> argparse.ArgumentParser:
 
         def exit(self, status=0, message=None):
             raise ValueError(message or "use alt improve run, stop, status [--run RUN], "
-                                        "post RUN [--keep N,N] [--drop N:REASON …], or resolve RUN/N accepted|dismissed --reason TEXT")
+                                        "post RUN [--keep N,N] [--drop N:REASON …], or resolve REF accepted|dismissed --reason TEXT")
 
     def numbers(text: str) -> list[int]:
         try:

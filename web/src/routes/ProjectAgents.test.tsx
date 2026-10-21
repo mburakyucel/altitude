@@ -50,7 +50,8 @@ const transcript = { project: "harbor", slug: "dependency-check/runs/2", engine:
 
 type Reply = Response | Promise<Response>;
 /** The server: reads from mutable state; every press is recorded and answered by `press`. */
-function serve(options: { agents?: () => Reply; agent?: (runs: number) => Reply; run?: () => Reply; press?: (body: Record<string, unknown>) => Reply } = {}) {
+function serve(options: { agents?: () => Reply; agent?: (runs: number) => Reply; run?: () => Reply; press?: (body: Record<string, unknown>) => Reply;
+  improve?: () => Reply } = {}) {
   const state = { agents: list(), agent: detail(), run: runDetail() };
   const presses: Record<string, unknown>[] = [];
   const reads: string[] = [];
@@ -61,7 +62,7 @@ function serve(options: { agents?: () => Reply; agent?: (runs: number) => Reply;
     if (url === "/api/project/harbor") return json({ name: "harbor", tasks: [] });
     if (url === "/api/improve") {
       presses.push(JSON.parse(String(init!.body)));
-      return json({ ok: true });
+      return options.improve ? options.improve() : json({ ok: true });
     }
     if (url === "/api/agents" && init?.method === "POST") {
       const body = JSON.parse(String(init.body));
@@ -536,6 +537,19 @@ describe("One run", () => {
     expect(within(section).getByText("Dismissed", { exact: false })).toBeVisible();
     expect(without(presses.at(-1)!)).toEqual({ project: "harbor", action: "dismiss", ref: "agent:dependency-check/2/1" });
     expect(await within(section).findByRole("button", { name: "Undo" })).toBeEnabled();
+  });
+
+  it("suggested tasks: Undo on the run page brings its card back to Needs you at the press", async () => {
+    const save = deferred();
+    const { state } = serve({ improve: () => save.promise });
+    state.run = runDetail({ suggested: suggested({ suggestions: [{ ...kept(1, "Bump left-pad to 1.3.1"), state: "dismissed", undo: true, waits: false }] }) });
+    const { user, router } = renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    await user.click(within(await screen.findByRole("region", { name: "Suggested tasks" })).getByRole("button", { name: "Undo" }));
+    await act(async () => { await router.navigate("/"); });
+    const back = within(await screen.findByRole("region", { name: "Suggestions" })).getByRole("article", { name: "Suggested tasks from Dependency check" });
+    expect(within(back).getByRole("button", { name: "Dismiss" })).toBeDisabled();
+    await act(async () => save.resolve(json({ error: "Altitude is busy." }, 503)));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Suggestions" })).toBeNull());
   });
 
   it("suggested tasks: a check that missed its deadline says why once on the fold, opening to the titles", async () => {

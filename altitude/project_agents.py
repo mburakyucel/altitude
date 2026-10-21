@@ -52,7 +52,11 @@ ID = re.compile(r"[0-9a-f]{12}")
 #: runs with suggestions its next run reads, and how long L3's check of a run's suggestions may take.
 SUGGEST, SUGGESTED_RUNS, CHECK = 3, 5, timedelta(hours=2)
 SUGGEST_LINE = re.compile(r"\**Suggest:\**\s*(.*)")
-SECRET = re.compile(r"-----BEGIN[A-Z ]*-----|\b(?:gh[pousr]_|sk-|xox[bp]-)[A-Za-z0-9_-]{8,}|\b[A-Za-z0-9+/=_-]{40,}")
+#: A suggestion's credentials: a key block, a known token prefix, or a long run of mixed case and digits (a commit hash
+#: or a path keeps its words). And its links: a markdown link keeps its label; a scheme or a leading www. goes.
+SECRET = re.compile(r"-----BEGIN[A-Z ]*-----|\b(?:gh[pousr]_|sk-|xox[bp]-)[A-Za-z0-9_-]{8,}"
+                    r"|\b(?=[\w+=-]*[A-Z])(?=[\w+=-]*[a-z])(?=[\w+=-]*\d)[A-Za-z0-9+=_-]{32,}")
+LINK = re.compile(r"\b[a-z][a-z0-9+.-]*://|\b(?:mailto|javascript|data|file):|\bwww\.", re.I)
 
 
 class Refused(ValueError):
@@ -904,7 +908,7 @@ def _plain(text: str, limit: int) -> str:
     """A suggestion's words as plain text: one line, with no link, emphasis, code mark or heading, a credential
     hidden, and cut at a word."""
     text = SECRET.sub("[hidden]", " ".join(str(text or "").split()))
-    text = re.sub(r"\b[a-z][a-z0-9+.-]*://", "", text).replace("`", "").replace("**", "")
+    text = LINK.sub("", re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)).replace("`", "").replace("**", "")
     text = re.sub(r"^(?:#+|[-*>]|\d+[.)])\s+", "", text).strip()
     return text if len(text) <= limit else text[:limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
 

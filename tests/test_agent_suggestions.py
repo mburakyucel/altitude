@@ -76,6 +76,15 @@ class TestAnswers(SuggestionCase):
         _, _, _, [long] = A.report("Found: one.\n\nSuggest: " + "title " * 40)
         self.assertLessEqual(len(long["title"]), improve.TITLE)
 
+    def test_a_suggestion_keeps_hashes_and_paths_and_loses_every_link(self):
+        sha, path = "0123456789abcdef0123456789abcdef01234567", "tests/fixtures/improvement/develop/brewlog"
+        token = "Ab3dEf6hIj9lMn2pQr5tUv8xYz1bCd4fGh7"
+        _, _, _, [found] = A.report(f"Found: one.\n\nSuggest: Revert {sha}\nIn {path}, see HTTPS://host.test/a, "
+                                    f"www.host.test/b, [the run](host.test/c), mailto:me@host.test and {token}.")
+        self.assertEqual(found["title"], f"Revert {sha}")
+        self.assertEqual(found["explanation"],
+                         f"In {path}, see host.test/a, host.test/b, the run, me@host.test and [hidden].")
+
     def test_only_a_run_that_found_something_suggests(self):
         for first in ("Nothing: all current.", "Couldn't finish: the host was down."):
             with self.subTest(first=first):
