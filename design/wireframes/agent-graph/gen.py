@@ -11,27 +11,46 @@ HEAD = '''<!doctype html>
 TAIL = '''</div><script>if(location.search.indexOf('dark')>=0)document.querySelector('.root').dataset.theme='dark'</script></body></html>
 '''
 CHEVR = '<svg class="i sm chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>'
+GO = '<svg class="go" viewBox="0 0 20 20" aria-hidden="true"><path d="M8 5l5 5-5 5"/></svg>'
 LIST = '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/></svg>'
 GRAPH = '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="18" cy="19" r="2"/><path d="M6.5 6.5l3.3 3.3M17.3 7.2l-3.2 2.9M16.6 17.6l-2.6-3.4"/></svg>'
 P = "harbor"
+PANEL = 480          # the work panel's width with Graph chosen: the task page's live-panel width
+W = PANEL - 36       # the graph inside the panel's padding
+R = 150              # half-circle radius of the ring
+GAP = 132            # the least distance between neighbours along the ring
+LMIN = 0             # a plain circle until the work needs a racetrack
 
 
 def board(name, w, h, body):
     (out / f"{name}.html").write_text(HEAD.format(title=name, w=w, h=h) + body + TAIL)
 
 
-# ---- the fictional project: what the work panel's reads already say, plus the one new live field ----
-# (title, second line, state, pulse, helpers [(state, description)], after, kind)
+# ---- the fictional project, as the work panel's reads already describe it ----
+# (title, attention, meta, state, live, active helpers, after, kind)
 TASKS = [
-    ("Add offline sync for the field app", "L2 working", "running", True,
-     [("running", "Survey sync conflict cases"), ("running", "Write the migration tests")], None, "task"),
-    ("Fix the login redirect loop", "Your turn", "waiting", False, [], None, "task"),
-    ("Rework the export pipeline", "L2 working", "running", False, [("done", "Check the CSV encodings")], None, "task"),
-    ("Ship the export dashboard", "Planned", "idle", False, [], 2, "task"),
-    ("Upgrade the payment SDK", "The task session ended before completion", "danger", False, [], None, "task"),
-    ("Update the onboarding copy", "Queued", "idle", False, [], None, "task"),
-    ("Dependency check", "Agent run", "running", True, [], None, "run"),
+    ("Add offline sync for the field app", "", "L2 working · Opus on Claude · started 12 min ago", "running", True, 2, None, "task"),
+    ("Fix the login redirect loop", "Your turn · 1 question", "L2 working · Opus on Claude · started 2 hr ago", "waiting", False, 0, None, "task"),
+    ("Rework the export pipeline", "", "L2 working · Opus on Codex · started 41 min ago", "running", True, 1, None, "task"),
+    ("Ship the export dashboard", "", "Planned · Waiting for “Rework the export pipeline” to finish.", "idle", False, 0, 2, "task"),
+    ("Upgrade the payment SDK", "", "The task session ended before completion. Waiting for the coordinator to check the blocker.",
+     "danger", False, 0, None, "task"),
+    ("Update the onboarding copy", "", "Queued · waits for a free task slot", "idle", False, 0, None, "task"),
+    ("Dependency check", "", "Agent run · 4 of 20 min", "running", True, 0, None, "run"),
 ]
+
+
+def ordered(tasks):
+    """The ring starts with the tasks whose turn is yours, then follows the list's order."""
+    return sorted(tasks, key=lambda t: t[3] != "waiting")
+
+
+def state_line(attention, meta):
+    """The row's attention text whole, else the row's meta to its first " · ", or its first sentence."""
+    if attention:
+        return attention
+    head = meta.split(" · ")[0]
+    return head.split(". ")[0].rstrip(".")
 
 
 def toggle(on="graph"):
@@ -40,20 +59,17 @@ def toggle(on="graph"):
     return f'<span class="tgl" role="radiogroup" aria-label="Show work as">{b("list", "List", LIST)}{b("graph", "Graph", GRAPH)}</span>'
 
 
-def wp_head(on="graph", count="7 current · 3 done this week"):
-    return (f'<div class="wh2"><div><h2>Work</h2><span class="ct">{count}</span></div>{toggle(on)}</div>')
-
-
-R, GAP = 150, 132  # ring radius; the least distance between neighbours along the ring
+def wp_head(on="graph", count="7 current · 3 done this week", switch=True):
+    return f'<div class="wh2"><div><h2>Work</h2><span class="ct">{count}</span></div>{toggle(on) if switch else ""}</div>'
 
 
 def track_height(n):
-    """The racetrack's straight sides: none up to seven tasks, then just long enough to keep GAP between neighbours."""
-    return max(0.0, (GAP * n - 2 * math.pi * R) / 2)
+    """The ring's straight sides: LMIN up to the ring's natural capacity, then long enough to keep GAP."""
+    return max(LMIN, (GAP * n - 2 * math.pi * R) / 2)
 
 
 def ring_positions(n, cx, cy):
-    # Clockwise from the top, in the list's order, evenly spaced along a racetrack around the coordinator.
+    # Clockwise from the top, evenly spaced along a racetrack around the coordinator.
     L = track_height(n)
     top, bottom = cy - L / 2, cy + L / 2
     segs = [("arc", top, -math.pi / 2, 0), ("line", 1, top, bottom), ("arc", bottom, 0, math.pi),
@@ -67,64 +83,62 @@ def ring_positions(n, cx, cy):
             if d <= length + 1e-9:
                 if kind == "arc":
                     a = s0 + d / R
-                    pts.append((cx + R * math.cos(a), c + R * math.sin(a), a))
+                    pts.append((cx + R * math.cos(a), c + R * math.sin(a)))
                 else:
-                    y = s0 + (d if e > s0 else -d)
-                    pts.append((cx + c * R, y, 0 if c > 0 else math.pi))
+                    pts.append((cx + c * R, s0 + (d if e > s0 else -d)))
                 break
             d -= length
     return pts
 
 
-def constellation(tasks=TASKS, w=444, l3="Answering", l3_pulse=True, focus=None, still=False, fading=True):
-    # The height follows the work: the ring, the satellites above it and the labels under its lowest node.
-    h = int(2 * R + track_height(len(tasks)) + 130) if tasks else 190
-    cx, cy = w / 2, (R + track_height(len(tasks)) / 2 + 44) if tasks else 50
-    pts = ring_positions(len(tasks), cx, cy)
+def constellation(tasks=TASKS, l3="Answering", l3_live=True, focus=None, still=False, stale=False, unknown=()):
+    tasks = ordered(tasks)
+    n = len(tasks)
+    L = track_height(n)
+    h = int(2 * R + L + 140) if n else 110
+    cx, cy = W / 2, (R + L / 2 + 40) if n else 40
+    pts = ring_positions(n, cx, cy)
     edges, nodes = [], []
-    for i, ((title, line, state, pulse, helpers, after, kind), (x, y, a)) in enumerate(zip(tasks, pts)):
+    where = {t[0]: i for i, t in enumerate(tasks)}
+    for i, ((title, attention, meta, state, live, helpers, after, kind), (x, y)) in enumerate(zip(tasks, pts)):
         edges.append(f'<line class="spoke" x1="{cx:.0f}" y1="{cy:.0f}" x2="{x:.0f}" y2="{y:.0f}"/>')
-        if after is not None:
-            ax, ay, _ = pts[after]
-            dx, dy = x - ax, y - ay
-            d = math.hypot(dx, dy)
-            ux, uy = dx / d, dy / d
+        if after is not None and TASKS[after][0] in where:
+            ax, ay = pts[where[TASKS[after][0]]]
             # bow toward the coordinator, so the arc leaves each node on its inner side, away from the labels
             mx, my = (ax + x) / 2, (ay + y) / 2
-            qx, qy = mx + (cx - mx) * 0.45, my + (cy - my) * 0.45
+            qx, qy = mx + (cx - mx) * 0.5, my + (cy - my) * 0.5
+
             def toward(px, py, r):
                 vx, vy = qx - px, qy - py
                 vd = math.hypot(vx, vy) or 1
                 return px + vx / vd * r, py + vy / vd * r
-            sx, sy = toward(ax, ay, 25)
-            ex, ey = toward(x, y, 27)
+            sx, sy = toward(ax, ay, 24)
+            ex, ey = toward(x, y, 26)
             edges.append(f'<path class="dep" d="M{sx:.0f},{sy:.0f} Q{qx:.0f},{qy:.0f} {ex:.0f},{ey:.0f}" marker-end="url(#arrow)"/>')
-        live = " breathe" if pulse and not still else (" still-live" if pulse else "")
-        foc = " focus" if focus == i else ""
-        shape = " run" if kind == "run" else ""
-        badge = '<b class="gq">1</b>' if state == "waiting" else ""
-        sat = ""
-        for j, (hs, desc) in enumerate(helpers):
-            # satellites sit on the node's upper rim, clear of its label below
-            ha = -math.pi / 2 + (j - (len(helpers) - 1) / 2) * 0.8
-            hx, hy = 20 + 31 * math.cos(ha) - 7, 20 + 31 * math.sin(ha) - 7
-            fade = " fade" if hs != "running" and fading else ""
-            sat += (f'<span class="sat s-{hs}{fade}" style="left:{hx:.0f}px;top:{hy:.0f}px" title="{desc}" '
-                    f'aria-label="Helper: {desc}, {"running" if hs == "running" else hs}"></span>')
-        hcount = sum(1 for hs, _ in helpers if hs == "running")
-        hl = f' · {hcount}&nbsp;helper{"s" if hcount != 1 else ""}' if hcount else ""
+        cue = "" if stale or not live else (" breathe" if not still else " halo")
+        helpers = 0 if stale or title in unknown else helpers
+        pips = "".join(f'<span class="pip" style="left:{20 + 25 * math.cos(-math.pi / 2 + (j - (helpers - 1) / 2) * 0.62) - 5:.0f}px;'
+                       f'top:{20 + 25 * math.sin(-math.pi / 2 + (j - (helpers - 1) / 2) * 0.62) - 5:.0f}px"></span>'
+                       for j in range(helpers))
+        line = state_line(attention, meta)
+        active = f'{helpers} helper{"s" if helpers != 1 else ""} active' if helpers else ""
+        hl = f' · {active.replace(" helper", "&nbsp;helper")}' if helpers else ""
+        badge = '<b class="gq">1</b>' if attention.startswith("Your turn") else ""
+        extra = "helper activity unknown" if title in unknown else ""
+        name = " · ".join(filter(None, (title, attention, meta, active, extra)))
         nodes.append(
-            f'<a class="gn s-{state}{live}{foc}{shape}" href="#" style="left:{x - 20:.0f}px;top:{y - 20:.0f}px" '
-            f'aria-label="{title} · {line}">'
-            f'<span class="disc"></span>{badge}{sat}'
-            f'<span class="gl"><span class="gt">{title}</span><span class="gm">{line}{hl}</span></span></a>')
-    coord = (f'<a class="gn coord{" breathe" if l3_pulse and not still else (" still-live" if l3_pulse else "")}{" focus" if focus == "l3" else ""}" href="#" '
-             f'style="left:{cx - 30:.0f}px;top:{cy - 30:.0f}px" aria-label="L3 · {l3} · message L3">'
-             f'<span class="disc">L3</span><span class="gl"><span class="gt">Coordinator</span><span class="gm">{l3}</span></span></a>')
-    svg = (f'<svg class="edges" width="{w}" height="{h}" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" '
+            f'<a class="gn s-{state}{cue}{" focus" if focus == i else ""}{" run" if kind == "run" else ""}" href="#" '
+            f'style="left:{x - 20:.0f}px;top:{y - 20:.0f}px" aria-label="{name}" title="{name}">'
+            f'<span class="disc"></span>{badge}{pips}'
+            f'<span class="gl"><span class="gt">{" ".join(title.split()[:-1])} <span class="nw">{title.split()[-1]}{GO}</span></span><span class="gm">{line}{hl}</span></span></a>')
+    hub_cue = "" if stale or not l3_live else (" breathe" if not still else " halo")
+    hub = (f'<div class="hub{hub_cue}" style="left:{cx - 22:.0f}px;top:{cy - 22:.0f}px" aria-hidden="true">'
+           f'<span class="disc">L3</span><span class="hl">{"" if stale else l3}</span></div>')
+    svg = (f'<svg class="edges" width="{W}" height="{h}" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" '
            f'markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>'
            + "".join(edges) + '</svg>')
-    return f'<div class="graph" style="width:{w}px;height:{h}px" role="group" aria-label="Current work as a graph">{svg}{coord}{"".join(nodes)}</div>'
+    return (f'<div class="graph" style="width:{W}px;height:{h}px" role="group" aria-label="Current work as a graph">'
+            f'{svg}{hub}{"".join(nodes)}</div>')
 
 
 def foot():
@@ -132,19 +146,17 @@ def foot():
             f'<div class="wagents">Agents · 2{CHEVR}</div>')
 
 
-def list_rows():
-    def row(title, meta, dot, attention=""):
+DOTS = {"running": "", "waiting": "held", "danger": "bad", "idle": "idle"}
+
+
+def list_rows(live=False):
+    def row(title, attention, meta, state, on, helpers, *_):
         att = f'<div class="ta">{attention}</div>' if attention else ""
-        return (f'<a class="trow" href="#"><span class="dot {dot}"></span><div style="flex:1">'
-                f'<div class="tt">{title}</div>{att}<div class="tm">{meta}</div></div>{CHEVR}</a>')
-    return ('<div class="sh">Current <span>(7)</span></div>'
-            + row("Add offline sync for the field app", "L2 working · Opus on Claude · started 12 min ago", "")
-            + row("Fix the login redirect loop", "L2 working · Opus on Claude · started 2 h ago", "held", "Needs you · 1 question")
-            + row("Rework the export pipeline", "L2 working · Opus on Codex · started 41 min ago", "")
-            + row("Ship the export dashboard", "Planned · Waiting for Rework the export pipeline.", "idle")
-            + row("Upgrade the payment SDK", "The session ended before it finished.", "bad")
-            + row("Update the onboarding copy", "Queued", "idle")
-            + row("Dependency check", "Agent run", ""))
+        pips = (f'<span class="lpips">{"".join("<i></i>" for _ in range(helpers))}{helpers} helper{"s" if helpers != 1 else ""} active</span>'
+                if live and helpers else "")
+        return (f'<a class="trow" href="#"><span class="dot {DOTS[state]}{" lbreathe" if live and on else ""}"></span><div style="flex:1">'
+                f'<div class="tt">{title}</div>{att}<div class="tm">{meta}</div>{pips}</div>{CHEVR}</a>')
+    return '<div class="sh">Current <span>(7)</span></div>' + "".join(row(*t) for t in TASKS)
 
 
 RAIL = ('<aside class="rail"><div class="brand"><span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-10 4 6 2-3 4 7"/></svg></span>Altitude</div>'
@@ -174,75 +186,69 @@ def pane():
             f'<div class="convo"><div class="col">{CONVO}</div><div style="height:22px"></div>{composer()}<div style="height:18px"></div></div></main>')
 
 
-def desk(panel, width=480, h=900):
-    return (f'<div style="display:grid;grid-template-columns:260px minmax(0,1fr) {width}px;height:{h}px">{RAIL}{pane()}'
+def desk(panel, h=900, panel_w=PANEL):
+    return (f'<div style="display:grid;grid-template-columns:260px minmax(0,1fr) {panel_w}px;height:{h}px">{RAIL}{pane()}'
             f'<aside class="work g-work">{panel}</aside></div>')
 
 
-# ---- 1. recommended: constellation in the work panel ----
+# ---- the constellation in the work panel, the list it toggles with, and the overlay below 1280 ----
 board("DesktopGraph", 1440, 900, desk(wp_head() + constellation() + foot()))
-board("DesktopList", 1440, 900, desk(wp_head("list") + list_rows() + foot(), width=340))
-
-# below 1280 the panel is the overlay the header's panel button opens, 480 wide in graph view
+board("DesktopList", 1440, 900, desk(wp_head("list") + list_rows() + foot(), panel_w=340))
 board("DesktopOverlay", 1100, 900,
       '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:900px">' + RAIL + pane() + '</div>'
-      '<div class="scrim"></div><aside class="work g-work ov">' + wp_head() + constellation() + foot() + '</aside>')
+      f'<div class="scrim"></div><aside class="work g-work ov" style="width:{PANEL}px">' + wp_head() + constellation() + foot() + '</aside>')
 
 
 # ---- states sheet ----
-def st(label, note, body, w=480):
-    return f'<div class="st" style="width:{w}px"><div class="lab">{label}<span>{note}</span></div>{body}</div>'
-
-
-def small(tasks, **kw):
-    return constellation(tasks, **kw)
+def st(label, note, body):
+    return f'<div class="st" style="width:{PANEL}px"><div class="lab">{label}<span>{note}</span></div>{body}</div>'
 
 
 T = TASKS
-many = [(f"Task {n}: {t}", line, s, p, hs, None, k) for n, (t, line, s, p, hs, _, k) in enumerate(T * 2, 1)][:13]
+many = [(f"Task {n}: {t[0]}", *t[1:6], None, t[7]) for n, t in enumerate(T * 2, 1)][:13]
 long_title = [("Make every validation capture land beside its review so reviewers never chase artifacts across folders",
-               "L2 working", "running", True, [], None, "task")] + T[1:3]
+               "", "L2 working · Opus on Claude · started 3 min ago", "running", True, 0, None, "task")] + T[1:3]
 states = [
-    st("Loading", "The first read: one skeleton disc in the coordinator's place, no guessed nodes.",
-       '<div class="graph" style="width:444px;height:200px"><span class="skeleton-disc"></span></div>'),
-    st("No current work", "Only the coordinator, idle. The list's empty line stays as the one sentence.",
-       constellation([], l3="Ready", l3_pulse=False) + '<p class="muted gempty">No current tasks. Ask L3 to start something.</p>'),
-    st("Read failed, nothing saved", "The same error and Retry the list shows; no graph is drawn.",
+    st("Loading", "The first read: one skeleton disc where L3 goes, no guessed nodes.",
+       f'<div class="graph" style="width:{W}px;height:110px"><span class="skeleton-disc" style="left:{W / 2 - 22:.0f}px"></span></div>'),
+    st("No current work", "L3 alone, and the list's own empty line.",
+       constellation([], l3="Ready", l3_live=False) + '<p class="muted gempty">No current tasks. Ask L3 to start something.</p>'),
+    st("Read failed, nothing saved", "The list's error and Retry; no graph.",
        '<p class="err">Could not read the project’s work. <a class="u" href="#">Retry</a></p>'),
-    st("Saved after a failed refresh", "Nodes stay clickable; the count says saved and the notice offers Retry.",
-       '<p class="err">Showing saved work. <a class="u" href="#">Retry</a></p>' + small(T[:4], still=True, l3="Ready", l3_pulse=False)),
-    st("A helper finishes", "Its satellite turns green, then fades out a minute later; failed is red, stopped muted.",
-       small(T[2:3] + T[0:1])),
-    st("Keyboard focus", "Tab follows the list's order: coordinator, then each task and its helpers. Enter opens.",
-       small(T[:4], focus=1)),
-    st("Reduced motion", "No pulse, glide or fade. A live node keeps a static halo instead of breathing.",
-       small(T[:4], still=True)),
-    st("Long title", "Two lines, then an ellipsis; the full title is the link's accessible name.",
-       small(long_title)),
-    st("Thirteen current tasks", "Past seven, the ring stretches into a racetrack that keeps its spacing; the panel scrolls.",
+    st("Saved after a failed refresh", "Nodes stay and open; no halo, helper or L3 word claims anything is live.",
+       '<p class="err">Showing saved work. <a class="u" href="#">Retry</a></p>' + constellation(T[:4], stale=True)),
+    st("Keyboard focus", "Tab: the switch, then each task in ring order. Enter opens. L3 is not a stop.",
+       constellation(T[:4], focus=0)),
+    st("Reduced motion", "No breathing, glide or fade: live nodes keep a static halo.",
+       constellation(T[:4], still=True)),
+    st("Long title", "Two lines and an ellipsis; the full row text is the accessible name.",
+       constellation(long_title)),
+    st("Helper activity unknown", "No pips and no count; the accessible name says so. Nothing guesses zero.",
+       constellation(T[2:3] + T[0:1], unknown=("Rework the export pipeline",))),
+    st("Thirteen current tasks", "The ring stretches into a taller racetrack that keeps its spacing; the panel scrolls.",
        constellation(many)),
 ]
-board("States", 1040, 3000,
+board("States", 1150, 3000,
       '<div style="padding:28px;display:flex;flex-wrap:wrap;gap:24px;align-content:flex-start">' + "".join(states) + '</div>')
 
 
-# ---- alternatives, in the same panel, for comparison ----
+# ---- the brief's other directions and the review's, in the same panel, for comparison ----
 def altitude_map():
     rows = [
         ("You", [("Fix the login redirect loop", "waiting")]),
         ("Coordinator", [("L3 · Answering", "running")]),
-        ("Tasks", [("Add offline sync", "running"), ("Rework export", "running"), ("Payment SDK", "danger"),
+        ("Tasks", [("Offline sync", "running"), ("Rework export", "running"), ("Payment SDK", "danger"),
                    ("Export dashboard", "idle"), ("Onboarding copy", "idle")]),
-        ("Helpers", [("Sync conflicts", "running"), ("Migration tests", "running"), ("CSV encodings", "done")]),
+        ("Helpers", [("2 on Offline sync", "running"), ("1 on Rework export", "running")]),
     ]
     out_ = '<div class="amap">'
     for label, items in rows:
         out_ += f'<div class="arow2"><span class="alab">{label}</span><div class="aitems">'
         for i, (t, s) in enumerate(items):
-            x = 8 + i * 17 if label == "Tasks" else 30 + i * 22
+            x = 10 + i * 20 if label == "Tasks" else 30 + i * 36
             out_ += f'<span class="anode s-{s}" style="left:{x}%"><span class="disc"></span><span class="gt">{t}</span></span>'
         out_ += '</div></div>'
-    out_ += '<div class="aaxis"><span>queued</span><span>working</span><span>review</span><span>merging</span></div></div>'
+    out_ += '<div class="aaxis"><span>queued</span><span>working</span><span>merging</span></div></div>'
     return out_
 
 
@@ -254,11 +260,12 @@ def pipeline():
     for name, items in cols:
         body += f'<div class="pcol"><div class="ph3">{name} <span>{len(items)}</span></div>'
         for t, s in items:
-            h = '<span class="psat"></span><span class="psat"></span>' if t == "Offline sync" else ""
-            body += f'<span class="pnode s-{s}"><span class="dot"></span>{t}{h}</span>'
+            pips = '<span class="psat"></span><span class="psat"></span>' if t == "Offline sync" else ""
+            body += f'<span class="pnode s-{s}"><span class="dot"></span>{t}{pips}</span>'
         body += '</div>'
     return body + '</div>'
 
 
 board("AltAltitudeMap", 1440, 900, desk(wp_head() + altitude_map() + foot()))
 board("AltPipeline", 1440, 900, desk(wp_head() + pipeline() + foot()))
+board("AltLiveList", 1440, 900, desk(wp_head(switch=False) + list_rows(live=True) + foot(), panel_w=340))
