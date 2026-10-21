@@ -56,7 +56,7 @@ function mockFetch(data: unknown = overview) {
     if (url.includes("/api/chat/")) return jsonResponse({ history: [], active: null, busy: false });
     if (url.includes("/api/project/")) return jsonResponse({ name: "altitude", tasks: [] });
     if (url.includes("/api/task/")) return jsonResponse({ slug: "fix-audio", messages: [] });
-    if (url.includes("/api/monitor")) return jsonResponse({ quota: { known: false }, sessions: [], agents: [], clock: { zone: "UTC", offset: 0 } });
+    if (url.includes("/api/monitor")) return jsonResponse({ quota: { known: false }, reserve: 90, sessions: [], agents: [], clock: { zone: "UTC", offset: 0 } });
     return jsonResponse({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);

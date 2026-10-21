@@ -60,9 +60,9 @@ guide coordination; overlapping files do not hold dispatch.
 Owners rebase before landing and keep edits in shared documents to their own sections.
 
 Inspect routing, usage windows and observed sessions in **Monitor**. Missing or stale readings
-remain explicit. The mark on each usage meter is Altitude's reserve, 90% of the window: past it, or
-while a reading is missing, optional work on that engine (project agent runs and the Weekly
-improvement review) is skipped so tasks keep the remaining allowance; tasks still start past it.
+remain explicit. The mark on each seat window's meter is Altitude's reserve, 90% of the window: past
+it, or while a reading is missing or stale, optional work on that engine (project agent runs and the
+Weekly improvement review) is skipped so tasks keep the remaining allowance; tasks still start past it.
 **Settings → This project**, opened from the project's three dots, sets independent model and effort
 defaults for L3 and L2 on each engine. These settings preserve running task attempts;
 L3 defaults apply on its next turn, while L2 defaults apply on fresh dispatch. Unset effort is native
