@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, engines, improve, improve_eval, l3, route, server, state as S, tasks as T
+from altitude import config, engines, improve, improve_eval, l3, route, server, state as S, suggestions, tasks as T
 
 # The coordinator verbs start a review at the clock's time, so the fictional work finished just before it.
 NOW = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=1)
@@ -304,15 +304,15 @@ class TestDecisions(RunCase):
         run = self.posted()
         ref = f"{run['id']}/1"
         dismiss = self.operator("Dismiss the first one", 1)
-        self.assertEqual(improve.resolve(self.project, ref, "dismissed", dismiss, "not now", now=NOW)["state"], "dismissed")
-        self.assertEqual(improve.resolve(self.project, ref, "dismissed", dismiss, "not now", now=NOW)["state"], "dismissed")
+        self.assertEqual(suggestions.resolve(self.project, ref, "dismissed", dismiss, "not now", now=NOW)["state"], "dismissed")
+        self.assertEqual(suggestions.resolve(self.project, ref, "dismissed", dismiss, "not now", now=NOW)["state"], "dismissed")
         with self.assertRaisesRegex(ValueError, "is dismissed; it cannot become dismissed"):
-            improve.resolve(self.project, ref, "dismissed", self.operator("Dismiss again", 2), "again", now=NOW)
+            suggestions.resolve(self.project, ref, "dismissed", self.operator("Dismiss again", 2), "again", now=NOW)
         accept = self.operator("Actually make a task for it", 3)
-        self.assertEqual(improve.resolve(self.project, ref, "accepted", accept, "owner rules only", now=NOW)["state"],
+        self.assertEqual(suggestions.resolve(self.project, ref, "accepted", accept, "owner rules only", now=NOW)["state"],
                          "accepted")
         with self.assertRaisesRegex(ValueError, "is accepted; it cannot become dismissed"):
-            improve.resolve(self.project, ref, "dismissed", self.operator("No, drop it", 4), "drop", now=NOW)
+            suggestions.resolve(self.project, ref, "dismissed", self.operator("No, drop it", 4), "drop", now=NOW)
         decisions = improve._find(improve._load(self.project), run["id"])["decisions"]
         self.assertEqual([(d["from"], d["to"], d["message"]) for d in decisions],
                          [("undecided", "dismissed", dismiss), ("dismissed", "accepted", accept)])
@@ -321,23 +321,23 @@ class TestDecisions(RunCase):
         run = self.posted()
         ref = f"{run['id']}/1"
         later, dismiss = self.operator("Make a task for it", 2), self.operator("Dismiss the first one", 3)
-        improve.resolve(self.project, ref, "dismissed", dismiss, "not now", now=NOW)
+        suggestions.resolve(self.project, ref, "dismissed", dismiss, "not now", now=NOW)
         for message in (dismiss, later):
             with self.assertRaisesRegex(ValueError, "a change needs the operator's newer message"):
-                improve.resolve(self.project, ref, "accepted", message, "owner rules only", now=NOW)
-        self.assertEqual(improve.resolve(self.project, ref, "accepted", self.operator("Actually do it", 4), "all",
+                suggestions.resolve(self.project, ref, "accepted", message, "owner rules only", now=NOW)
+        self.assertEqual(suggestions.resolve(self.project, ref, "accepted", self.operator("Actually do it", 4), "all",
                                          now=NOW)["state"], "accepted")
 
     def test_answers_need_a_shown_number_and_a_later_operator_message(self):
         run = self.posted()
         later = self.operator("Make a task for both", 1)
         with self.assertRaisesRegex(ValueError, "was not shown"):
-            improve.resolve(self.project, f"{run['id']}/2", "accepted", later, "both", now=NOW)
+            suggestions.resolve(self.project, f"{run['id']}/2", "accepted", later, "both", now=NOW)
         earlier = self.operator("Earlier words", -1)
         with self.assertRaisesRegex(ValueError, "after the suggestions"):
-            improve.resolve(self.project, f"{run['id']}/1", "accepted", earlier, "x", now=NOW)
+            suggestions.resolve(self.project, f"{run['id']}/1", "accepted", earlier, "x", now=NOW)
         with self.assertRaisesRegex(ValueError, "after the suggestions"):
-            improve.resolve(self.project, f"{run['id']}/1", "accepted", "0123456789ab", "x", now=NOW)
+            suggestions.resolve(self.project, f"{run['id']}/1", "accepted", "0123456789ab", "x", now=NOW)
 
     def test_a_week_without_a_decision_lapses_and_only_acceptance_remains(self):
         run = self.posted()
@@ -346,8 +346,8 @@ class TestDecisions(RunCase):
         self.assertEqual(improve.status(self.project, now=week)["runs"][0]["suggestions"][1]["state"],
                          "dropped by L3: being handled")
         with self.assertRaisesRegex(ValueError, "is not decided; it cannot become dismissed"):
-            improve.resolve(self.project, f"{run['id']}/1", "dismissed", self.operator("Dismiss", 200), "x", now=week)
-        self.assertEqual(improve.resolve(self.project, f"{run['id']}/1", "accepted", self.operator("Make it", 201),
+            suggestions.resolve(self.project, f"{run['id']}/1", "dismissed", self.operator("Dismiss", 200), "x", now=week)
+        self.assertEqual(suggestions.resolve(self.project, f"{run['id']}/1", "accepted", self.operator("Make it", 201),
                                          "all of it", now=week)["state"], "accepted")
 
     def test_an_accepted_suggestion_makes_exactly_one_task(self):
@@ -355,7 +355,7 @@ class TestDecisions(RunCase):
         ref = f"{run['id']}/1"
         with self.assertRaisesRegex(T.TransitionError, "is not accepted"):
             T.new(self.project, "Cite answered questions", "Brief.", improvement=ref)
-        improve.resolve(self.project, ref, "accepted", self.operator("Make a task", 1), "owner rules only", now=NOW)
+        suggestions.resolve(self.project, ref, "accepted", self.operator("Make a task", 1), "owner rules only", now=NOW)
         task = T.new(self.project, "Cite answered questions", "Brief.", improvement=ref)
         self.assertEqual(task["improvement"], ref)
         with self.assertRaisesRegex(T.TransitionError, f"already has task {task['slug']}"):
@@ -364,7 +364,7 @@ class TestDecisions(RunCase):
 
     def test_later_reviews_see_earlier_outcomes(self):
         run = self.posted()
-        improve.resolve(self.project, f"{run['id']}/1", "dismissed", self.operator("Dismiss it", 1), "not wanted", now=NOW)
+        suggestions.resolve(self.project, f"{run['id']}/1", "dismissed", self.operator("Dismiss it", 1), "not wanted", now=NOW)
         self.assertEqual(improve.earlier(self.project, NOW),
                          [{"title": "Owners re-ask settled merge questions", "state": "dismissed"},
                           {"title": "Docks list rebuilt by hand", "state": "dropped by L3: being handled"}])
@@ -410,8 +410,8 @@ class TestCard(RunCase):
     def test_make_a_task_queues_one_turn_and_the_card_follows_it(self):
         run = self.posted()
         ref = f"{run['id']}/1"
-        accepted = improve.decide(self.project, ref, "accept", "a" * 32, now=NOW)
-        self.assertEqual(improve.decide(self.project, ref, "accept", "a" * 32, now=NOW), accepted)
+        accepted = suggestions.decide(self.project, ref, "accept", "a" * 32, now=NOW)
+        self.assertEqual(suggestions.decide(self.project, ref, "accept", "a" * 32, now=NOW), accepted)
         [turn] = self.tasks()
         self.assertIn(f"--improvement {ref}", turn["text"])
         self.assertNotIn("Owners re-ask", turn["text"])  # the reviewer's wording never enters the conversation
@@ -419,25 +419,38 @@ class TestCard(RunCase):
         self.assertEqual((card["suggestions"][0]["state"], card["suggestions"][0]["opening"]), ("accepted", True))
         self.assertEqual(len(improve.waiting(self.project, now=NOW)), 1)  # until its task exists
         with self.assertRaisesRegex(ValueError, "L3 is still opening its task"):
-            improve.retry(self.project, ref, "b" * 32, now=NOW)
+            suggestions.retry(self.project, ref, "b" * 32, now=NOW)
         with self.assertRaisesRegex(ValueError, "This suggestion is accepted now"):
-            improve.decide(self.project, ref, "dismiss", "c" * 32, now=NOW)
+            suggestions.decide(self.project, ref, "dismiss", "c" * 32, now=NOW)
         # L3's turn ended without a task: Try again queues the same single turn once.
         l3.unqueue_locked(self.project, turn["id"])
         self.assertFalse(improve.view(self.project, now=NOW)[0]["suggestions"][0]["opening"])
-        improve.retry(self.project, ref, "d" * 32, now=NOW)
-        improve.retry(self.project, ref, "d" * 32, now=NOW)
+        suggestions.retry(self.project, ref, "d" * 32, now=NOW)
+        suggestions.retry(self.project, ref, "d" * 32, now=NOW)
         self.assertEqual(len(self.tasks()), 1)
         task = T.new(self.project, "Cite answered questions", "Brief.", improvement=ref)
         self.assertEqual(improve.view(self.project, now=NOW)[0]["suggestions"][0]["task"], task["slug"])
         self.assertEqual(improve.waiting(self.project, now=NOW), [])
         with self.assertRaisesRegex(ValueError, "already has its task"):
-            improve.retry(self.project, ref, "e" * 32, now=NOW)
+            suggestions.retry(self.project, ref, "e" * 32, now=NOW)
+
+    def test_an_accepted_suggestion_without_its_task_leaves_needs_you_a_week_after_the_last_press(self):
+        run = self.posted()
+        suggestions.decide(self.project, f"{run['id']}/1", "accept", "a" * 32, now=NOW)
+        self.assertEqual(len(improve.waiting(self.project, now=NOW + timedelta(days=6))), 1)
+        self.assertEqual(improve.waiting(self.project, now=NOW + timedelta(days=7)), [])
+        self.assertEqual(improve.view(self.project, now=NOW + timedelta(days=7))[0]["suggestions"][0]["state"], "accepted")
+        # Try again is a press too: the card waits another week from it.
+        [turn] = self.tasks()
+        l3.unqueue_locked(self.project, turn["id"])
+        suggestions.retry(self.project, f"{run['id']}/1", "b" * 32, now=NOW + timedelta(days=8))
+        self.assertEqual(len(improve.waiting(self.project, now=NOW + timedelta(days=14))), 1)
+        self.assertEqual(improve.waiting(self.project, now=NOW + timedelta(days=15)), [])
 
     def test_two_try_again_presses_at_once_queue_one_turn(self):
         run = self.posted()
         ref = f"{run['id']}/1"
-        improve.decide(self.project, ref, "accept", "a" * 32, now=NOW)
+        suggestions.decide(self.project, ref, "accept", "a" * 32, now=NOW)
         [turn] = self.tasks()
         l3.unqueue_locked(self.project, turn["id"])
         pending, raced = l3.pending, []
@@ -446,11 +459,11 @@ class TestCard(RunCase):
             # The other press runs between this press's read and its lock.
             if not raced:
                 raced.append(row_id)
-                improve.retry(project, ref, "b" * 32, now=NOW)
+                suggestions.retry(project, ref, "b" * 32, now=NOW)
             return pending(project, row_id)
         self.patch(l3, "pending", racing)
         with self.assertRaisesRegex(ValueError, "L3 is still opening its task"):
-            improve.retry(self.project, ref, "c" * 32, now=NOW)
+            suggestions.retry(self.project, ref, "c" * 32, now=NOW)
         self.assertEqual(len(self.tasks()), 1)
 
     def test_a_request_id_makes_one_press_across_runs_and_actions(self):
@@ -460,10 +473,10 @@ class TestCard(RunCase):
         second = {**first, "id": "1" * 12, "decisions": []}
         record["runs"].append(second)
         improve._save(self.project, record)
-        improve.decide(self.project, f"{first['id']}/1", "dismiss", "a" * 32, now=NOW)
-        for again in (lambda: improve.decide(self.project, f"{second['id']}/1", "dismiss", "a" * 32, now=NOW),
-                      lambda: improve.decide(self.project, f"{first['id']}/1", "undo", "a" * 32, now=NOW),
-                      lambda: improve.retry(self.project, f"{first['id']}/1", "a" * 32, now=NOW)):
+        suggestions.decide(self.project, f"{first['id']}/1", "dismiss", "a" * 32, now=NOW)
+        for again in (lambda: suggestions.decide(self.project, f"{second['id']}/1", "dismiss", "a" * 32, now=NOW),
+                      lambda: suggestions.decide(self.project, f"{first['id']}/1", "undo", "a" * 32, now=NOW),
+                      lambda: suggestions.retry(self.project, f"{first['id']}/1", "a" * 32, now=NOW)):
             with self.assertRaisesRegex(ValueError, "already saved for another change"):
                 again()
         self.assertEqual(improve.view(self.project, now=NOW)[1]["suggestions"][0]["state"], "undecided")
@@ -471,7 +484,7 @@ class TestCard(RunCase):
     def test_the_task_turn_running_counts_as_opening(self):
         run = self.posted()
         ref = f"{run['id']}/1"
-        improve.decide(self.project, ref, "accept", "a" * 32, now=NOW)
+        suggestions.decide(self.project, ref, "accept", "a" * 32, now=NOW)
         [turn] = self.tasks()
         l3.unqueue_locked(self.project, turn["id"])
         l3._active[self.project] = {"id": "0badc0ffee00", "trigger": "improvement-task", "queue_ids": [turn["id"]]}
@@ -485,26 +498,26 @@ class TestCard(RunCase):
     def test_dismiss_and_undo_until_it_lapses(self):
         run = self.posted()
         ref = f"{run['id']}/1"
-        improve.decide(self.project, ref, "dismiss", "a" * 32, now=NOW)
+        suggestions.decide(self.project, ref, "dismiss", "a" * 32, now=NOW)
         [card] = improve.view(self.project, now=NOW)
         self.assertEqual((card["suggestions"][0]["state"], card["suggestions"][0]["undo"]), ("dismissed", True))
         self.assertEqual(improve.waiting(self.project, now=NOW), [])
         with self.assertRaisesRegex(ValueError, "already saved for another change"):
-            improve.decide(self.project, ref, "undo", "a" * 32, now=NOW)
-        self.assertEqual(improve.decide(self.project, ref, "undo", "b" * 32, now=NOW)["state"], "undecided")
+            suggestions.decide(self.project, ref, "undo", "a" * 32, now=NOW)
+        self.assertEqual(suggestions.decide(self.project, ref, "undo", "b" * 32, now=NOW)["state"], "undecided")
         self.assertEqual(len(improve.waiting(self.project, now=NOW)), 1)
-        improve.decide(self.project, ref, "dismiss", "c" * 32, now=NOW)
+        suggestions.decide(self.project, ref, "dismiss", "c" * 32, now=NOW)
         week = NOW + timedelta(days=7)
         self.assertFalse(improve.view(self.project, now=week)[0]["suggestions"][0]["undo"])
         with self.assertRaisesRegex(ValueError, "This suggestion is dismissed now"):
-            improve.decide(self.project, ref, "undo", "d" * 32, now=week)
+            suggestions.decide(self.project, ref, "undo", "d" * 32, now=week)
         # A typed answer still accepts it, and an Undo a week later reads as not decided.
-        improve.decide(self.project, ref, "undo", "e" * 32, now=NOW + timedelta(days=6))
+        suggestions.decide(self.project, ref, "undo", "e" * 32, now=NOW + timedelta(days=6))
         self.assertEqual(improve.view(self.project, now=week)[0]["suggestions"][0]["state"], "not decided")
         self.assertEqual(improve.waiting(self.project, now=week), [])
         with self.assertRaisesRegex(ValueError, "This suggestion is not decided now"):
-            improve.decide(self.project, ref, "accept", "f" * 32, now=week)
-        self.assertEqual(improve.resolve(self.project, ref, "accepted", self.operator("Make it after all", 200),
+            suggestions.decide(self.project, ref, "accept", "f" * 32, now=week)
+        self.assertEqual(suggestions.resolve(self.project, ref, "accepted", self.operator("Make it after all", 200),
                                          "all of it", now=week)["state"], "accepted")
 
     def test_presses_reach_the_record_through_the_web(self):
@@ -610,14 +623,14 @@ class TestPastSuggestions(RunCase):
         first = improve.start(self.project, self.operator("Get improvement suggestions"), now=then)["run"]
         improve.execute(self.project, first)
         improve.post(self.project, first, [1], [], now=then)
-        improve.resolve(self.project, f"{first}/1", "accepted", self.operator("Make a task", 1), "all of it",
+        suggestions.resolve(self.project, f"{first}/1", "accepted", self.operator("Make a task", 1), "all of it",
                         now=then + timedelta(hours=1))
         status = S.task_dir(self.project, "dock-1") / "status.json"
         S.write_json(status, {**S.read_json(status, {}), "improvement": f"{first}/1"})
         second = improve.start(self.project, self.operator("Again please", 2), now=NOW)["run"]
         improve.execute(self.project, second)
         improve.post(self.project, second, [1], [], now=NOW)
-        improve.resolve(self.project, f"{second}/1", "dismissed", self.operator("Dismiss it", 3), "no", now=NOW)
+        suggestions.resolve(self.project, f"{second}/1", "dismissed", self.operator("Dismiss it", 3), "no", now=NOW)
         self.assertEqual(improve.page(self.project, now=NOW)["what"]["past"],
                          {"line": "2 runs · 2 suggestions · 1 became a task · 1 dismissed", "latest": second})
 

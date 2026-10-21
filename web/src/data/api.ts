@@ -500,23 +500,27 @@ const ContainerLifecycleSchema = z.object({
 });
 export type ContainerLifecycle = z.infer<typeof ContainerLifecycleSchema>;
 
-/** One improvement review as chat and Needs you show it (improve.view): its running line, ending or card. */
+/** One suggested task as its card draws it (suggestions.item); target, Seen in and count are the review's alone. */
 export const ImprovementSuggestionSchema = z.object({
   ref: z.string(),
   n: z.number(),
-  target: z.string(),
+  target: z.string().optional(),
   title: z.string(),
   explanation: z.string(),
   /** Each cited task once; a cited project chat has no slug. */
-  seen: z.array(z.object({ slug: z.string().nullable(), title: z.string() })),
-  count: z.string().nullable(),
+  seen: z.array(z.object({ slug: z.string().nullable(), title: z.string() })).default([]),
+  count: z.string().nullish(),
   state: z.enum(["undecided", "accepted", "dismissed", "not decided"]),
   task: z.string().nullable(),
   undo: z.boolean(),
   opening: z.boolean(),
+  /** Undecided, or accepted without its task for a week after the press: Needs you lists its card. */
+  waits: z.boolean(),
 });
 export type ImprovementSuggestion = z.infer<typeof ImprovementSuggestionSchema>;
+/** One improvement review as chat and Needs you show it (improve.view): its running line, ending or card. */
 export const ImprovementRunSchema = z.object({
+  kind: z.literal("review"),
   id: z.string(),
   state: z.enum(["reading", "checking", "posted", "nothing", "stopped", "failed"]),
   started: z.string(),
@@ -530,6 +534,25 @@ export const ImprovementRunSchema = z.object({
   details: z.array(z.tuple([z.string(), z.string()])),
 });
 export type ImprovementRun = z.infer<typeof ImprovementRunSchema>;
+/** An agent run's suggested tasks (project_agents.suggested): what L3 is checking, kept and set aside. */
+export const AgentSuggestionsSchema = z.object({
+  kind: z.literal("agent"),
+  /** The run's ref, agent:<agent>/<n>; its suggestions' refs extend it. */
+  id: z.string(),
+  agent: z.string(), n: z.number(), name: z.string(),
+  /** What fired the run, as its page says it. */
+  line: z.string().nullable(),
+  at: z.string(), posted: z.string().nullable(),
+  /** How many L3 is checking; nothing is shown before it posts. */
+  checking: z.number(),
+  suggestions: z.array(ImprovementSuggestionSchema),
+  /** A check past its deadline sets all aside with no reason of L3's: `unfinished` says why once. */
+  set_aside: z.array(z.object({ n: z.number(), title: z.string(), reason: z.string().nullable() })),
+  unfinished: z.boolean(),
+});
+export type AgentSuggestions = z.infer<typeof AgentSuggestionsSchema>;
+/** A card of suggested tasks: a Weekly review's or an agent run's. */
+export type SuggestionCard = ImprovementRun | AgentSuggestions;
 
 /**
  * A project agent's definition (design/wireframes/project-agents/PROPOSAL.md): its brief, schedules in the machine's
@@ -564,7 +587,8 @@ export const OverviewSchema = z
     projects: z.array(ProjectRowSchema),
     queue: z.array(z.union([StepSchema, AgentRowSchema, DecisionSchema])),
     /** Improvement cards waiting for a decision or a task: listed after the queue, never counted with it. */
-    suggestions: z.array(ImprovementRunSchema.extend({ project: z.string() })).default([]),
+    suggestions: z.array(z.discriminatedUnion("kind", [ImprovementRunSchema, AgentSuggestionsSchema])
+      .and(z.object({ project: z.string() }))).default([]),
     wip: WipSchema,
     quota: SeatQuotaSchema,
     engines: z.array(EngineReadoutSchema).default([]),
@@ -601,6 +625,8 @@ export const TaskRowSchema = z
     live: z.unknown().nullish(),
     progress_tail: z.unknown().nullish(),
     has: z.record(z.string(), z.boolean()).nullish(),
+    /** Who suggested the task: an agent's name or the Weekly improvement review. */
+    origin: z.string().nullish(),
   })
   .passthrough();
 
@@ -679,30 +705,36 @@ export type SuggestionChange = { project: string; ref: string; action: "dismiss"
 const SUGGESTION_SAVES = ["suggestion"];
 const suggestionReads = ({ project }: SuggestionChange) => [["overview"], ["project", project]];
 
-/** A run as Altitude will save it: a dismissed suggestion folds with Undo, an undone one waits for a decision again. */
-const withSuggestions = (run: ImprovementRun, project: string, changes: SuggestionChange[]): ImprovementRun => {
+/** A card as Altitude will save it: a dismissed suggestion folds with Undo, an undone one waits for a decision again. */
+export const withSuggestions = <Card extends SuggestionCard>(run: Card, project: string, changes: SuggestionChange[]): Card => {
   const mine = changes.filter((change) => change.project === project && change.ref.startsWith(`${run.id}/`));
   return mine.length ? { ...run, suggestions: run.suggestions.map((suggestion) => mine.reduce((shown, change) => change.ref !== shown.ref ? shown
     : change.action === "dismiss" ? { ...shown, state: "dismissed" as const, undo: true } : { ...shown, state: "undecided" as const, undo: false }, suggestion)) } : run;
 };
-/** Needs you lists a run while a suggestion waits for a decision or its task (improve.waiting). */
-const waitsInNeedsYou = (run: ImprovementRun) => run.suggestions.some((suggestion) => suggestion.state === "undecided" || suggestion.state === "accepted" && !suggestion.task);
+/** Needs you lists a card while a suggestion waits for a decision, or for its task a week after the press (suggestions.item). */
+const waitsInNeedsYou = (run: SuggestionCard) => run.suggestions.some((suggestion) => suggestion.state === "undecided" || suggestion.state === "accepted" && suggestion.waits);
+
+/** The card a suggestion belongs to, from the read that shows it: a review's in its project, an agent run's on its page. */
+function cardOf(client: QueryClient, project: string, ref: string): SuggestionCard | undefined {
+  const id = ref.slice(0, ref.lastIndexOf("/"));
+  const agent = /^agent:([^/]+)\/(\d+)$/.exec(id);
+  if (agent) return client.getQueryData<ProjectAgentRunDetail>([...agentsKey(project), agent[1], "runs", Number(agent[2])])?.suggested ?? undefined;
+  return client.getQueryData<ProjectView>(["project", project])?.improvements.find((item) => item.id === id);
+}
 
 /**
- * Needs you's runs with the choices on their way. Undo in chat brings back a run Needs you had dropped, taken from the
- * project read and placed where Altitude lists it (by project, newest run first); a run with nothing left waiting leaves.
+ * Needs you's runs with the choices on their way. Undo in chat or on a run's page brings back a run Needs you had
+ * dropped, placed where Altitude lists it (by project, newest post first); a run with nothing left waiting leaves.
  */
 function waitingRuns(client: QueryClient, overview: Overview, changes: SuggestionChange[]): Overview["suggestions"] {
   const order = overview.projects.map((project) => project.name);
   const runs = [...overview.suggestions];
   for (const change of changes) {
     if (change.action !== "undo" || runs.some((run) => run.project === change.project && change.ref.startsWith(`${run.id}/`))) continue;
-    const listed = client.getQueryData<ProjectView>(["project", change.project])?.improvements ?? [];
-    const run = listed.find((item) => change.ref.startsWith(`${item.id}/`));
+    const run = cardOf(client, change.project, change.ref);
     if (!run) continue;
-    const age = (id: string) => listed.findIndex((item) => item.id === id);
     const before = runs.findIndex((item) => order.indexOf(item.project) > order.indexOf(change.project)
-      || item.project === change.project && age(item.id) < age(run.id));
+      || item.project === change.project && (item.posted ?? "") < (run.posted ?? ""));
     runs.splice(before < 0 ? runs.length : before, 0, { ...run, project: change.project });
   }
   return runs.map((run) => ({ ...withSuggestions(run, run.project, changes), project: run.project })).filter(waitsInNeedsYou);
@@ -725,6 +757,7 @@ export function useSaveSuggestion() {
       client.refetchQueries({ queryKey: ["project", project], exact: true }),
       client.refetchQueries({ queryKey: ["overview"], exact: true }),
       client.invalidateQueries({ queryKey: ["chat", project] }),
+      client.invalidateQueries({ queryKey: agentsKey(project) }),
     ]), suggestionReads);
 }
 
@@ -798,6 +831,8 @@ export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
   brief: z.string(),
   report: z.string().nullable(),
   session: z.object({ engine: z.string(), session_id: z.string(), attempt: z.number() }).nullable(),
+  /** The run's suggested tasks, when it made any. */
+  suggested: AgentSuggestionsSchema.nullable(),
 });
 export type ProjectAgentRunDetail = z.infer<typeof ProjectAgentRunDetailSchema>;
 const WeeklyActionSchema = z.enum(["run", "pause", "resume", "turn_on", "stop"]);

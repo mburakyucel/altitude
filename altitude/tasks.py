@@ -1696,7 +1696,7 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         improvement: str | None = None) -> dict:
     """`offer_turn` names the coordinator reply whose Create task press this creation answers (SPEC.md §3.3);
     a reply produces at most one task, however often its turn is retried. `improvement` names the accepted
-    improvement suggestion ("<run>/<n>") the task carries out; a suggestion has at most one task."""
+    suggestion (`suggestions.parse`) the task carries out; a suggestion has at most one task."""
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
     if wait is not None and after is not None:
@@ -1730,9 +1730,9 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         if offer_turn and (existing := offered_task(project, offer_turn)):
             raise TransitionError(f"this reply already created task {existing}; one Create task press makes one task")
         if improvement:
-            from . import improve
+            from . import suggestions
             try:
-                improve.require_accepted_locked(project, improvement)
+                suggestions.require_accepted_locked(project, improvement)
             except ValueError as exc:
                 raise TransitionError(str(exc)) from exc
         refs = image_store.lookup(project, image_ids) if image_ids else []

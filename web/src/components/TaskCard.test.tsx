@@ -60,3 +60,12 @@ describe("blocked task card facts", () => {
       .toEqual({ dot: "running", meta: "Coordinator review" });
   });
 });
+
+describe("a task made from a suggested task", () => {
+  it("ends its line with where the suggestion came from", () => {
+    expect(taskCardFacts({ slug: "retry-limit", state: "done", prs: [811], origin: "Review each merge" }, undefined, "atlas"))
+      .toEqual({ dot: "idle", meta: "Done · PR #811 merged · from Review each merge" });
+    expect(taskCardFacts({ slug: "cite-answers", state: "rejected", origin: "Weekly improvement review" }, undefined, "atlas").meta)
+      .toBe("Rejected · from Weekly improvement review");
+  });
+});

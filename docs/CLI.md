@@ -403,8 +403,8 @@ alt improve run
 alt improve stop
 alt improve status [--run RUN]
 alt improve post RUN [--keep N,N] [--drop N:REASON ...]
-alt improve resolve RUN/N accepted|dismissed --reason TEXT
-alt task new --title TITLE --improvement RUN/N -
+alt improve resolve REF accepted|dismissed --reason TEXT
+alt task new --title TITLE --improvement REF -
 ```
 
 These are L3's verbs for an [improvement review](ARCHITECTURE.md#improvement-review) of the Altitude
@@ -431,6 +431,12 @@ message, not the suggestion, is the task's authority. Changing a recorded answer
 operator message than the one it was recorded from. When the operator presses Make a task, Altitude
 records the acceptance and queues a turn (trigger `improvement-task`) naming the suggestion; L3 creates
 its task with `alt task new --improvement`, and the press is the task's authority.
+
+`post`, `resolve` and `alt task new --improvement` also serve a project agent run's [suggested
+tasks](ARCHITECTURE.md#suggested-tasks), in any project: there RUN is `agent:<agent>/<run>`, and REF is
+`RUN/N` for either kind. `status` reads reviews only; L3 reads an agent run's suggestions with `alt agent
+show AGENT --run N` (`candidates`) and posts its check before the check's deadline, two hours after the
+run ended. A post writes nothing to chat.
 
 ## Project agents
 

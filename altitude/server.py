@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_agents, project_setup, push, qr, repair, reviews, route, schedule, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_agents, project_setup, push, qr, repair, reviews, route, schedule, speech, state as S, storage, suggestions, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -466,14 +466,14 @@ def improvement_verb(project: str, options: argparse.Namespace) -> dict:
     if options.action == "status":
         return improve.status(project, options.run)
     if options.action == "post":
-        return improve.post(project, options.run, options.keep, options.drop)
+        return suggestions.post(project, options.run, options.keep, options.drop)
     message = l3.chat_turn(project)
     if not any(row["id"] == message for row in T._decision_messages(project, "", "project")):
         raise ValueError("this applies only to the operator's own chat message")
     if options.action == "stop":
         return improve.stop(project, message)
     if options.action == "resolve":
-        return improve.resolve(project, options.ref, options.outcome, message, options.reason)
+        return suggestions.resolve(project, options.ref, options.outcome, message, options.reason)
     receipt = improve.start(project, message)
     if not receipt.get("replayed"):
         spawn(f"improve:{project}", improve.execute, project, receipt["run"])
@@ -2311,9 +2311,9 @@ class Handler(BaseHTTPRequestHandler):
             if action == "stop":
                 result = improve.stop(project, request_id, ref)
             elif action == "retry":
-                result = improve.retry(project, ref, request_id)
+                result = suggestions.retry(project, ref, request_id)
             else:
-                result = improve.decide(project, ref, action, request_id)
+                result = suggestions.decide(project, ref, action, request_id)
         except KeyError as exc:
             return self._json({"error": exc.args[0]}, 404)
         except ValueError as exc:
@@ -3343,8 +3343,11 @@ def overview() -> dict:
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     # Improvement suggestions waiting for the operator: listed after Needs you's questions, never counted with them.
-    suggestions = [{"project": p["name"], **run} for p in projects if p["managed"] for run in improve.waiting(p["name"])]
-    return {"projects": projects, "queue": digest.queue(), "suggestions": suggestions, "wip": digest.wip(), "quota": monitor.quota(),
+    # Each project's cards, the Weekly review's and its agents' runs alike, newest first.
+    waiting = [{"project": p["name"], **card} for p in projects if p["managed"]
+               for card in sorted([*improve.waiting(p["name"]), *project_agents.waiting(p["name"])],
+                                  key=lambda card: card["posted"], reverse=True)]
+    return {"projects": projects, "queue": digest.queue(), "suggestions": waiting, "wip": digest.wip(), "quota": monitor.quota(),
             "lifecycle": platform.container_lifecycle(),
             "deployment": "container" if platform.containerized() else "native",
             "engines": route.engine_readouts(), "new_tasks": new_tasks_view(),
@@ -3961,13 +3964,14 @@ def project_view(name: str) -> dict:
         t = task_wait_view(name, t)
         d = S.task_dir(name, t["slug"])
         prog = (d / "progress.md").read_text()[-1500:] if (d / "progress.md").exists() else ""
-        tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
+        tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "origin": suggestions.origin(name, t.get("improvement")), "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
     order = {"blocked": 0, "running": 1, "reported": 2, "queued": 3}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
             "design_viewer": design_viewer_url(name), "repository": project_repository(name),
             # Done this week, newest first (#296: by finish time, never by slug).
-            "archive": sorted(({k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True)
+            "archive": sorted(({**{k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")},
+                                "origin": suggestions.origin(name, t.get("improvement"))} for t in S.list_tasks(name, True)
                                if t["state"] in ("done", "rejected") and (t["updated"] or "") >= week),
                               key=lambda t: t["updated"], reverse=True),
             "decisions": T.decisions(name), "log": [event for event in S.read_project_log(name, 40)

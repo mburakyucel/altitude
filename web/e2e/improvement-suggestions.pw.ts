@@ -130,7 +130,7 @@ test("posted cards, endings and the running line take their presses and appear u
   await expect(dismiss(checks)).toBeDisabled();
   await saved();
   await walk.state("07-accepted-l3-opening-a-task", {
-    visible: [opening(reask), make(checks), chat.getByText("Task for an improvement suggestion", { exact: true })],
+    visible: [opening(reask), make(checks), chat.getByText("Task for a suggestion", { exact: true })],
     hidden: [make(reask), dismiss(reask), saving(reask)],
   });
 

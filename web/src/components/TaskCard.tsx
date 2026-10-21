@@ -48,8 +48,16 @@ export interface TaskCardFacts {
   meta: string;
 }
 
-/** Everything the card shows besides the title, from the task row and the overview. */
+/**
+ * Everything the card shows besides the title, from the task row and the overview. A task made from a suggested task
+ * ends its line with where the suggestion came from (SPEC.md §3.5).
+ */
 export function taskCardFacts(task: TaskRow, overview: Overview | undefined, project: string, decision?: Attention): TaskCardFacts {
+  const facts = stateFacts(task, overview, project, decision);
+  return task.origin ? { ...facts, meta: `${facts.meta} · from ${task.origin}` } : facts;
+}
+
+function stateFacts(task: TaskRow, overview: Overview | undefined, project: string, decision?: Attention): TaskCardFacts {
   const state = task.state ?? "";
   const held = state === "blocked" && Boolean(task.resume_after);
   const fault = str(task["fault"]);

@@ -1401,7 +1401,7 @@ A resumed session keeps native continuity. When another provider handled interve
 Altitude supplies only the cross-provider missed-message handoff: human user/assistant rows
 newer than the selected session's `last_turn` whose engine differs, up to 20 from the latest 60
 human rows; Altitude's improvement messages name no engine, so every session receives them. Server-triggered
-turns, including an improvement review's checking turn (trigger `improvement-check`) and a Make a task turn
+turns, including a checking turn for suggested tasks (trigger `improvement-check`) and a Make a task turn
 (trigger `improvement-task`), never enter it. It uses the same text bound and historical label. A fresh session receives only fresh
 context, and a native resume with no missed rows receives neither block, avoiding duplicate
 injection. A limit or access rejection after text or tool activity never causes the same turn

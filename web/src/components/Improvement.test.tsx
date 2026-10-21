@@ -1,7 +1,7 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
-import type { ImprovementRun, ImprovementSuggestion } from "../data/api";
+import type { AgentSuggestions, ImprovementRun, ImprovementSuggestion } from "../data/api";
 
 /*
  * Improvement suggestions in chat and Needs you (improvement-review/PROPOSAL.md, "States and exact text"): the
@@ -22,12 +22,13 @@ function suggestion(n: number, fields: Partial<ImprovementSuggestion> = {}): Imp
     ],
     count: "Questions re-asked without your input in 3 of 14 tasks",
     state: "undecided", task: null, undo: false, opening: false, ...fields,
+    waits: fields.waits ?? ((fields.state ?? "undecided") === "undecided" || fields.state === "accepted" && !fields.task),
   };
 }
 
 function posted(suggestions: ImprovementSuggestion[]): ImprovementRun {
   return {
-    id: "0123456789ab", state: "posted", started: ago(40), ended: ago(30), posted: ago(30), tasks: 14, window: "Oct 5–12",
+    kind: "review", id: "0123456789ab", state: "posted", started: ago(40), ended: ago(30), posted: ago(30), tasks: 14, window: "Oct 5–12",
     reason: null, suggestions,
     details: [["Read", "14 tasks that finished Oct 5–12; their questions, reviews, landings and conversations"],
       ["L3 dropped", "Suggestion 3: already owned by an open task"], ["Model", "Claude Sonnet 5.5"],
@@ -289,5 +290,39 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     renderApp({ route: "/" });
     expect(await screen.findByText("Nothing needs you.")).toBeVisible();
     expect(screen.queryByRole("region", { name: "Suggestions" })).toBeNull();
+  });
+});
+
+/** An agent run's card (project-agents/PROPOSAL.md, "Suggestions"): its suggestions have no target, Seen in or count. */
+function agentCard(suggestions: ImprovementSuggestion[]): AgentSuggestions {
+  return { kind: "agent", id: "agent:0a1b2c3d4e5f/7", agent: "0a1b2c3d4e5f", n: 7, name: "Review each merge",
+    line: "For “PR #810 merged” and 2 more", at: ago(30), posted: ago(10), checking: 0, suggestions, set_aside: [], unfinished: false };
+}
+const agentSuggestion = (n: number, fields: Partial<ImprovementSuggestion> = {}) => suggestion(n, {
+  ref: `agent:0a1b2c3d4e5f/7/${n}`, target: undefined, seen: [], count: null,
+  title: "Add a test for the uploader's retry limit", explanation: "A case beside the other retry tests that checks the limit of 5.", ...fields });
+
+describe.each([390, 1440])("an agent run's suggested tasks at %ipx", (width) => {
+  it("Needs you shows the agent's card uncounted: its name, what fired it, the suggestion and Open the run", async () => {
+    setViewport(width);
+    const { fetchMock } = serve([]);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).includes("/api/overview")) return base(input, init);
+      return json({ projects: [{ name: "altitude", managed: true, counts: {} }], queue: [],
+        suggestions: [{ ...agentCard([agentSuggestion(1)]), project: "altitude" }],
+        wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false }, engines: [], roots: [] });
+    });
+    const { user } = renderApp({ route: "/" });
+    expect(await screen.findByText("Nothing needs you.")).toBeVisible();
+    const shown = within(screen.getByRole("region", { name: "Suggestions" })).getByRole("article", { name: "Suggested tasks from Review each merge" });
+    expect(within(shown).getByRole("heading", { name: "Review each merge" })).toBeVisible();
+    expect(within(shown).getByText("For “PR #810 merged” and 2 more")).toBeVisible();
+    expect(within(shown).getByRole("heading", { name: "1. Add a test for the uploader's retry limit" })).toBeVisible();
+    expect(shown.querySelector(".chip")).toBeNull();
+    expect(within(shown).queryByText(/^Seen in/)).toBeNull();
+    expect(within(shown).getByRole("link", { name: "Open the run" })).toHaveAttribute("href", "/projects/altitude/agents/0a1b2c3d4e5f/runs/7");
+    await user.click(within(shown).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(presses(fetchMock)).toEqual([expect.objectContaining({ action: "dismiss", ref: "agent:0a1b2c3d4e5f/7/1" })]));
   });
 });

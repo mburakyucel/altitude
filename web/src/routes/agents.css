@@ -127,3 +127,12 @@
 .wp-agents:hover { background: var(--hairline); }
 .wp-agents > svg { flex: none; color: var(--text-muted); }
 .shell[data-phone] .wp-agents { min-height: 44px; }
+/* The run page's Suggested tasks: the improvement card's parts under the report, what L3 set aside folded last. */
+.agent-suggested { margin-top: 12px; }
+.agent-checking { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.agent-aside { margin-top: 12px; border-top: 1px solid var(--hairline); }
+.agent-aside[data-first] { margin-top: 4px; border-top: 0; }
+.agent-aside > summary { min-height: 40px; font-size: 13px; }
+.agent-aside-body { display: flex; flex-direction: column; gap: 8px; padding: 0 0 4px 20px; }
+.agent-aside-body > p { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.agent-aside-body .irc-title { font-size: 14px; font-weight: 500; color: var(--text-muted); }

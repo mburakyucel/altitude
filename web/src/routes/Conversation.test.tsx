@@ -1015,10 +1015,10 @@ describe("Conversation", () => {
 
   it.each([390, 1440])("shows an improvement review's card and ending on their own rows beside a waiting message at %ipx", async (width) => {
     setViewport(width);
-    const run = { id: "0123456789ab", state: "posted", started: ago(4), ended: ago(2), posted: ago(2), tasks: 14, window: "Oct 5–12", reason: null,
+    const run = { kind: "review", id: "0123456789ab", state: "posted", started: ago(4), ended: ago(2), posted: ago(2), tasks: 14, window: "Oct 5–12", reason: null,
       details: [], suggestions: [{ ref: "0123456789ab/2", n: 2, target: "How agents work", title: "Owners re-ask settled questions",
         explanation: "Owners ask again after an answer.", seen: [{ slug: "persist-paths", title: "Persist paths" }], count: null,
-        state: "undecided", task: null, undo: false, opening: false }] };
+        state: "undecided", task: null, undo: false, opening: false, waits: true }] };
     mockFetch({
       project: { ...project, improvements: [run, { ...run, id: "ba9876543210", state: "failed", posted: null, reason: "L3 did not finish checking", suggestions: [] }] },
       chat: {

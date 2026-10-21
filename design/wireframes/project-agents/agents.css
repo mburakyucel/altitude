@@ -129,3 +129,26 @@ a.agentsrow{display:flex;align-items:center;justify-content:space-between;color:
 .rhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:12px 0 4px;font-size:13px}
 .rhead .btn.sm{height:28px;font-size:12.5px;padding:0 10px}
 .m .rhead .btn.sm,.phonesheet .rhead .btn.sm{height:44px}
+/* suggestion card (step 5): the improvement card's layout */
+.scard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-card);padding:14px 18px 12px;display:flex;flex-direction:column;color:var(--text-primary)}
+.scard .hd{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.scard .hd b{font-size:15px;font-weight:600}
+.scard .hd time{font-size:12px;color:var(--text-muted);white-space:nowrap}
+.scard .win{font-size:13px;color:var(--text-muted);margin-top:2px;line-height:1.5}
+.scard .sg{border-top:1px solid var(--hairline);margin-top:12px;padding-top:12px;display:flex;flex-direction:column;gap:6px}
+.scard .sg .t{font-size:15px;font-weight:600;line-height:1.4}
+.scard .sg p{margin:0;font-size:14px;line-height:1.55;color:var(--text-secondary)}
+.scard .acts{display:flex;gap:8px;align-items:center;margin-top:4px}
+.scard .acts .acc{color:var(--accent);border-color:var(--accent)}
+.scard .ok{margin-top:4px}.scard .err{margin-top:2px}
+.scard .sg.dim{flex-direction:row;align-items:center;gap:10px;flex-wrap:wrap}
+.scard .sg.dim .t{color:var(--text-muted);font-weight:500;font-size:14px}
+.scard .sg.dim .meta{font-size:13px;color:var(--text-muted)}
+.scard .sg.dim .meta a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.scard .ft{border-top:1px solid var(--hairline);margin-top:12px;padding-top:10px;font-size:12px}
+.scard .ft a{color:var(--text-secondary);text-decoration:underline;text-underline-offset:2px}
+.scard .tcard{max-width:none;margin-top:4px}
+.scard .bare{border-top:0;margin-top:0;padding-top:0}
+.m .scard .acts .btn{height:44px;padding:0 16px;font-size:15px}
+.nsec{margin:22px 0 10px;color:var(--text-muted);font-size:13px;font-weight:600;letter-spacing:.02em}
+.fold .i.open{transform:rotate(90deg)}

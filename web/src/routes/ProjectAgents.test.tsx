@@ -36,7 +36,13 @@ const detail = (over: Record<string, unknown> = {}) => ({ id: "dependency-check"
   definition_line: "Weekdays at 07:00 · Tells you when it finds something · Default model · Stops after 20 min", runs: [run(2), skipped], more: false, send: null, ...over });
 const runDetail = (over: Record<string, unknown> = {}) => ({ ...run(2), agent: { id: "dependency-check", name: "Dependency check" }, model: "Swift",
   limit: 20, brief: "Check whether any **dependency** has a security fix.", report: "Two packages have security fixes:\n\n- `left-pad` 1.3.1\n- `is-odd` 3.0.2",
-  session: { engine: "alpha", session_id: "0123456789abcdef", attempt: 0 }, ...over });
+  session: { engine: "alpha", session_id: "0123456789abcdef", attempt: 0 }, suggested: null, ...over });
+const kept = (n: number, title: string) => ({ ref: `agent:dependency-check/2/${n}`, n, title, explanation: "Bump it to the fixed release and run the tests.",
+  seen: [], count: null, state: "undecided", task: null, undo: false, opening: false, waits: true });
+const suggested = (over: Record<string, unknown> = {}) => ({ kind: "agent", id: "agent:dependency-check/2", agent: "dependency-check", n: 2,
+  name: "Dependency check", line: "On its schedule", at: ago(60 * 48), posted: ago(60 * 47), checking: 0,
+  suggestions: [kept(1, "Bump left-pad to 1.3.1")], set_aside: [{ n: 2, title: "Bump is-odd to 3.0.2", reason: "#214 already bumps it" }],
+  unfinished: false, ...over });
 const transcript = { project: "harbor", slug: "dependency-check/runs/2", engine: "alpha", session_id: "0123456789abcdef", attempt: 0, cursor: "epoch:1",
   lower: "", next: "", more: false, reset: false, has_earlier: false, has_engine_records: false, deleted: [], redaction: "",
   events: [{ seq: 0, id: "r-0", order: "00000000", version: 1, source: "alpha", kind: "message", type: "assistant", role: "assistant", at: ago(5),
@@ -44,7 +50,8 @@ const transcript = { project: "harbor", slug: "dependency-check/runs/2", engine:
 
 type Reply = Response | Promise<Response>;
 /** The server: reads from mutable state; every press is recorded and answered by `press`. */
-function serve(options: { agents?: () => Reply; agent?: (runs: number) => Reply; run?: () => Reply; press?: (body: Record<string, unknown>) => Reply } = {}) {
+function serve(options: { agents?: () => Reply; agent?: (runs: number) => Reply; run?: () => Reply; press?: (body: Record<string, unknown>) => Reply;
+  improve?: () => Reply } = {}) {
   const state = { agents: list(), agent: detail(), run: runDetail() };
   const presses: Record<string, unknown>[] = [];
   const reads: string[] = [];
@@ -53,6 +60,10 @@ function serve(options: { agents?: () => Reply; agent?: (runs: number) => Reply;
     reads.push(url);
     if (url === "/api/overview") return json(overview);
     if (url === "/api/project/harbor") return json({ name: "harbor", tasks: [] });
+    if (url === "/api/improve") {
+      presses.push(JSON.parse(String(init!.body)));
+      return options.improve ? options.improve() : json({ ok: true });
+    }
     if (url === "/api/agents" && init?.method === "POST") {
       const body = JSON.parse(String(init.body));
       presses.push(body);
@@ -500,6 +511,59 @@ describe("One run", () => {
       `${clockText(minute(0))} · PR #810 merged`, `${clockText(minute(0))} · PR #811 merged`, `${clockText(minute(2))} · PR #812 merged`]);
   });
 
+  it("suggested tasks: L3 is checking with a spinner and no buttons while it checks", async () => {
+    const { state } = serve();
+    state.run = runDetail({ suggested: suggested({ checking: 2, suggestions: [], set_aside: [], posted: null }) });
+    renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    const section = await screen.findByRole("region", { name: "Suggested tasks" });
+    expect(within(section).getByText("L3 is checking 2 suggestions")).toBeVisible();
+    expect(section.querySelector(".spinner")).not.toBeNull();
+    expect(within(section).queryByRole("button")).toBeNull();
+  });
+
+  it("suggested tasks: what L3 kept with its buttons, what it set aside folded with each reason, and Dismiss folding at the press", async () => {
+    const { state, presses } = serve();
+    state.run = runDetail({ suggested: suggested() });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    const section = await screen.findByRole("region", { name: "Suggested tasks" });
+    expect(within(section).getByRole("heading", { name: "1. Bump left-pad to 1.3.1" })).toBeVisible();
+    const fold = within(section).getByText("Set aside · 1").closest("details")!;
+    expect(fold).not.toHaveAttribute("open");
+    await user.click(within(section).getByText("Set aside · 1"));
+    expect(within(fold).getByText("2. Bump is-odd to 3.0.2")).toBeVisible();
+    expect(within(fold).getByText("#214 already bumps it")).toBeVisible();
+    state.run = runDetail({ suggested: suggested({ suggestions: [{ ...kept(1, "Bump left-pad to 1.3.1"), state: "dismissed", undo: true, waits: false }] }) });
+    await user.click(within(section).getByRole("button", { name: "Dismiss" }));
+    expect(within(section).getByText("Dismissed", { exact: false })).toBeVisible();
+    expect(without(presses.at(-1)!)).toEqual({ project: "harbor", action: "dismiss", ref: "agent:dependency-check/2/1" });
+    expect(await within(section).findByRole("button", { name: "Undo" })).toBeEnabled();
+  });
+
+  it("suggested tasks: Undo on the run page brings its card back to Needs you at the press", async () => {
+    const save = deferred();
+    const { state } = serve({ improve: () => save.promise });
+    state.run = runDetail({ suggested: suggested({ suggestions: [{ ...kept(1, "Bump left-pad to 1.3.1"), state: "dismissed", undo: true, waits: false }] }) });
+    const { user, router } = renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    await user.click(within(await screen.findByRole("region", { name: "Suggested tasks" })).getByRole("button", { name: "Undo" }));
+    await act(async () => { await router.navigate("/"); });
+    const back = within(await screen.findByRole("region", { name: "Suggestions" })).getByRole("article", { name: "Suggested tasks from Dependency check" });
+    expect(within(back).getByRole("button", { name: "Dismiss" })).toBeDisabled();
+    await act(async () => save.resolve(json({ error: "Altitude is busy." }, 503)));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Suggestions" })).toBeNull());
+  });
+
+  it("suggested tasks: a check that missed its deadline says why once on the fold, opening to the titles", async () => {
+    const { state } = serve();
+    state.run = runDetail({ suggested: suggested({ suggestions: [], unfinished: true,
+      set_aside: [{ n: 1, title: "Bump left-pad to 1.3.1", reason: null }, { n: 2, title: "Bump is-odd to 3.0.2", reason: null }] }) });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    const section = await screen.findByRole("region", { name: "Suggested tasks" });
+    await user.click(within(section).getByText("Set aside · 2 · L3 did not finish checking"));
+    expect(within(section).getByText("1. Bump left-pad to 1.3.1")).toBeVisible();
+    expect(within(section).getByText("2. Bump is-odd to 3.0.2")).toBeVisible();
+    expect(within(section).queryByRole("button")).toBeNull();
+  });
+
   it("shows Loading this run… then Could not load this run. with Retry", async () => {
     let fail = true;
     const hold = deferred();
@@ -530,6 +594,7 @@ describe.each([390, 1440])("the form at %ipx", (width) => {
     expect(within(schedule).queryByText("Istanbul")).toBeNull();
     expect(screen.getByRole("radio", { name: "When it finds something" })).toBeChecked();
     expect(screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual(["When it finds something", "Every run", "Never"]);
+    expect(screen.getByText("Suggested tasks wait in Needs you whatever you choose.")).toBeVisible();
     expect(screen.getByRole("button", { name: /^Model and effort for this agent: Default/ })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Each run stops after" })).toHaveDisplayValue("20 min");
     expect(screen.getByRole("button", { name: "Create agent" })).toHaveAttribute("aria-disabled", "true");

@@ -2358,9 +2358,10 @@ only the suggestion; L3 checks its cited places and creates its task. While that
 of a typed acceptance, is queued or running (`l3.pending`), the suggestion reads "L3 is opening a
 task"; when it ended without a task, Try again queues the same turn once more, refused when another Try
 again queued it first. The overview lists under
-`suggestions` every posted run with a suggestion undecided or accepted without its task; Needs you
-shows them under Suggestions, newest first, after what needs the operator and not counted with it,
-each heading linking to its card in the project's chat.
+`suggestions` every posted run with a suggestion that waits ([suggested tasks](#suggested-tasks)); Needs
+you shows them under Suggestions, after what needs the operator and not counted with it, each heading
+linking to its card in the project's chat. The states, presses, typed answers and task rule are the
+shared [suggested tasks](#suggested-tasks) model.
 
 The review is a built-in agent of Altitude's own project, read from the same record. `improve.agent`
 is its Agents page entry in `GET /api/agents/<project>` (`weekly`): the first Built in row until the
@@ -2444,7 +2445,9 @@ limit. Run now is refused with the same budget reason.
 (`route.pick_engine`). It runs in its own detached checkout of the fetched main branch
 (`.claude/worktrees/project-agent-<agent>-<n>`) as a worker job of its own kind (`engines.start_project_agent_run`):
 the helper role, the repository's rules and the run template (`templates/project-agent-run.md`: the brief, what
-fired it with the events it took quoted as data, oldest first, the previous report quoted as data, what the run may do, the limit and the report's shape). Unlike a task
+fired it with the events it took quoted as data, oldest first, the previous report quoted as data, the agent's earlier
+suggested tasks with what became of each, what the run may do, the limit, the report's shape and the room left for
+suggested tasks). Unlike a task
 worker it links nothing of the operator's engine folder (their settings, instructions, skills, plugins or rules),
 runs in the engine's restricted mode where it has one (only Altitude's own settings apply, and its file tools stay
 in its working directories), writes only its own checkout's Git state (no objects or branches of the shared
@@ -2459,7 +2462,8 @@ only when the reading changed, for its row in [Monitor](#monitor-and-live-sessio
 
 **Reports.** The run's final answer (`engines.worker_answer`) is its report: a first line of `Found:`, `Nothing:`
 or `Couldn't finish:` with one sentence of at most 200 characters, then the full report, at most 20,000 characters.
-An answer in another shape couldn't finish ("Its answer was not in the report's shape"). A run ends found
+An answer in another shape couldn't finish ("Its answer was not in the report's shape"). A run that found something
+may also [suggest tasks](#suggested-tasks), which leave its report. A run ends found
 something, nothing found, couldn't finish, stopped by the operator, stopped at its limit, or skipped, and its copy
 and scratch folder are removed. Its record keeps the outcome, minutes used, tokens and session. Each ending
 writes at most one assistant chat row (trigger `project-agent`) after the record is saved, once, as Tell me allows:
@@ -2486,6 +2490,42 @@ version it ran and its report; `/<agent>/runs/<n>/transcript` its session throug
 reader, read only. The project view carries `project_agents`: the runs waiting or running, shown in Work under
 Current; the number of agents not retired, with the Weekly improvement review once it is the operator's; and the
 offers.
+
+### Suggested tasks
+
+The [Weekly improvement review](#improvement-review) and [project agent](#project-agents) runs both suggest tasks
+for the operator to decide, through one model in `suggestions.py`; each owner keeps its runs in its own record. A
+suggestion is named by its ref: `<run>/<n>` for a review and `agent:<agent>/<run>/<n>` for an agent run. A run
+holds `suggestions`, L3's check as `post: {shown, drops, at}` and the operator's `decisions`, and nothing is
+shown before the post. Both kinds share the states (undecided, accepted, dismissed, and not decided seven days
+after the post), the presses on `POST /api/improve` with request ids whose receipts live in the record the ref
+names, typed answers (`alt improve resolve REF`), Try again and the one task per accepted suggestion (`alt task
+new --improvement REF`, recorded on the task as `improvement`). A suggestion waits in Needs you while undecided,
+or accepted without its task for seven days after the last press (Make a task or Try again); after that it shows
+only where its run does. A task made from one carries `origin` in the project view's task rows, the agent's name or
+"Weekly improvement review", which ends its card's line ("· from Review each merge").
+
+A run of an agent that found something may end its answer with up to three `Suggest:` blocks, each a title line
+and the explanation under it (`project_agents.report`). Altitude takes them out of the report, makes them plain
+(no links, emphasis, code marks or headings, and text that looks like a credential as "[hidden]") and cuts them at
+a word to 90 and 300 characters; blocks after Nothing or Couldn't finish are ignored. An agent has at most three
+waiting (`project_agents.room`): a suggestion waits while L3 checks it and for seven days after the check, kept or
+set aside, unless the operator decides it. A run keeps only as many as fit, and its template says the room left,
+or to suggest none. A run with suggestions queues one L3 turn (trigger `improvement-check`) naming only the run;
+L3 reads them with `alt agent show <agent> --run <n>` (`candidates`) and posts with `alt improve post
+agent:<agent>/<run>`, naming every number once. The check has two hours from the run's end: the tick posts a
+check past it with every suggestion set aside ("L3 did not finish checking") and removes its queued turn. A post
+writes nothing to chat. Make a task queues an `improvement-task` turn written for a source that read the project
+and the web: L3 briefs the task from what it verified, quoting the suggestion only as the claim that started it.
+Both turns tell L3 to run only their one command, an instruction as L3's reading of issue text is; enforcing a
+turn's commands is #1108.
+
+The run page (`suggested` on `/<agent>/runs/<n>`) shows a run's suggestions as Suggested tasks under its report:
+"L3 is checking N suggestions" while L3 checks, then the kept suggestions on the improvement card's suggestion
+part, then Set aside · N folded with L3's reasons, or "Set aside · N · L3 did not finish checking". The overview's
+`suggestions` lists agent runs with a waiting suggestion beside the review's cards, newest post first within each
+project. Needs you shows each as a card headed by the agent's name and the run's time, with what fired it and
+Open the run, never counted and never alerting a device, whatever Tell me says.
 
 ### Image input
 

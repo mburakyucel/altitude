@@ -32,3 +32,7 @@ Your final answer is the report. Its first line is exactly one of these, followe
 Then a blank line, then the full report in plain text: what you checked, what you found with the evidence
 (commands, excerpts, links), and what you would do about it. Use "Found" only for something the operator should act
 on or know about.
+
+## Suggested tasks
+
+{suggest}

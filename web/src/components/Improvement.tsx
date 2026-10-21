@@ -2,7 +2,7 @@ import { Fragment, useState } from "react";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, sendImprovement, useSaveSuggestion, useSuggestionChanges, useSuggestionRefusals } from "../data/api";
-import type { ImprovementRun, ImprovementSuggestion, SuggestionChange, TaskRow } from "../data/api";
+import type { AgentSuggestions, ImprovementRun, ImprovementSuggestion, SuggestionCard, SuggestionChange, TaskRow } from "../data/api";
 import { clockText, dayText, stampText } from "../data/observed";
 import { Icon } from "./Choice";
 import { Stamp } from "./Stamp";
@@ -14,6 +14,8 @@ import { TaskCards } from "./TaskCard";
  * project's chat and, while it waits for a decision or a task, under Suggestions in Needs you. Every state is read
  * from the record; a press saves, then waits for the fresh record before its spinner leaves. Dismiss and Undo are the
  * operator's own choice, so the suggestion folds or unfolds at the press, in chat and Needs you alike (SPEC.md §1.1).
+ * An agent run's suggested tasks (project-agents/PROPOSAL.md, "Suggestions") use the same suggestion part, on the
+ * same card in Needs you and as Suggested tasks on the run page.
  */
 
 type Action = "stop" | "accept" | "retry";
@@ -36,6 +38,7 @@ function usePress(project: string) {
       queryClient.refetchQueries({ queryKey: ["project", project] }),
       queryClient.refetchQueries({ queryKey: ["overview"] }),
       queryClient.invalidateQueries({ queryKey: ["chat", project] }),
+      queryClient.invalidateQueries({ queryKey: ["project", project, "agents"] }),
     ]).catch(() => undefined);
     setBusy(null);
   };
@@ -145,7 +148,8 @@ function Suggestion({ project, suggestion, tasks, busy, failed, press, choosing,
   const unsaved = refused && (refused.change.action === "dismiss" ? state === "undecided" : state === "dismissed" && suggestion.undo);
   const notSaved = unsaved ? <p className="irc-error text-danger" role="alert">Not saved: {refused.error.message}{" "}
     <button type="button" className="link" onClick={() => choose(refused.change.action)}>Retry</button></p> : null;
-  const chip = <span className="chip" data-tone={suggestion.target === "How agents work" ? "held" : undefined}>{suggestion.target}</span>;
+  // Only the review's suggestions name a target; an agent run's are for its own project.
+  const chip = suggestion.target ? <span className="chip" data-tone={suggestion.target === "How agents work" ? "held" : undefined}>{suggestion.target}</span> : null;
   const title = `${suggestion.n}. ${suggestion.title}`;
   if (state === "dismissed" || state === "not decided") {
     return (
@@ -164,7 +168,7 @@ function Suggestion({ project, suggestion, tasks, busy, failed, press, choosing,
   const saving = busy === `${ref}:accept`;
   return (
     <section className="irc-sg" aria-label={title}>
-      <div>{chip}</div>
+      {chip ? <div>{chip}</div> : null}
       <h4 className="irc-title">{title}</h4>
       <p className="irc-text">{suggestion.explanation}</p>
       <SeenIn project={project} seen={suggestion.seen} />
@@ -200,18 +204,47 @@ function Suggestion({ project, suggestion, tasks, busy, failed, press, choosing,
   );
 }
 
-/** A posted review's card. In Needs you its header links to the card in the project's chat, without Details. */
-export function ImprovementCard({ project, run, tasks, linked = false }: {
-  project: string;
-  run: ImprovementRun;
-  tasks: Map<string, TaskRow>;
-  linked?: boolean;
-}) {
+/** A card's suggestions, each with its buttons; one press at a time across them. */
+function Suggestions({ project, run, tasks }: { project: string; run: SuggestionCard; tasks: Map<string, TaskRow> }) {
   const press = usePress(project);
   const choice = useSaveSuggestion();
   const choosing = useSuggestionChanges();
   const refusals = useSuggestionRefusals();
+  return <>
+    {run.suggestions.map((suggestion) => (
+      <Suggestion key={suggestion.ref} project={project} suggestion={suggestion} tasks={tasks} {...press}
+        choosing={choosing.some((change) => change.project === project && change.ref === suggestion.ref)}
+        refused={refusals.get(`${project}/${suggestion.ref}`)} choose={(action) => choice.mutate({ project, ref: suggestion.ref, action })} />
+    ))}
+  </>;
+}
+
+const runPath = (project: string, run: AgentSuggestions) => `/projects/${encodeURIComponent(project)}/agents/${run.agent}/runs/${run.n}`;
+
+/**
+ * A card of suggested tasks. A posted review's card: in Needs you its header links to the card in the project's chat,
+ * without Details. An agent run's card, in Needs you: the agent and the run's time, what fired it and Open the run.
+ */
+export function ImprovementCard({ project, run, tasks, linked = false }: {
+  project: string;
+  run: SuggestionCard;
+  tasks: Map<string, TaskRow>;
+  linked?: boolean;
+}) {
   const [details, setDetails] = useState(false);
+  if (run.kind === "agent") {
+    return (
+      <article className="irc" data-improvement={run.id} aria-label={`Suggested tasks from ${run.name}`}>
+        <header className="irc-head">
+          <h3 className="irc-name">{run.name}</h3>
+          <Stamp at={run.at} className="irc-time" />
+        </header>
+        {run.line ? <p className="irc-window">{run.line}</p> : null}
+        <Suggestions project={project} run={run} tasks={tasks} />
+        <footer className="irc-foot"><Link className="irc-open" to={runPath(project, run)}>Open the run</Link></footer>
+      </article>
+    );
+  }
   return (
     <article className="irc" id={linked ? undefined : `improvement-${run.id}`} data-improvement={run.id} aria-label={`Improvement suggestions, ${run.tasks} tasks from ${run.window}`}>
       <header className="irc-head">
@@ -220,11 +253,7 @@ export function ImprovementCard({ project, run, tasks, linked = false }: {
         <Stamp at={run.posted} className="irc-time" />
       </header>
       <p className="irc-window">{run.tasks} tasks from {run.window}</p>
-      {run.suggestions.map((suggestion) => (
-        <Suggestion key={suggestion.ref} project={project} suggestion={suggestion} tasks={tasks} {...press}
-          choosing={choosing.some((change) => change.project === project && change.ref === suggestion.ref)}
-          refused={refusals.get(`${project}/${suggestion.ref}`)} choose={(action) => choice.mutate({ project, ref: suggestion.ref, action })} />
-      ))}
+      <Suggestions project={project} run={run} tasks={tasks} />
       {linked ? null : (
         <footer className="irc-foot">
           <button type="button" className="link" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button>
@@ -232,5 +261,35 @@ export function ImprovementCard({ project, run, tasks, linked = false }: {
         </footer>
       )}
     </article>
+  );
+}
+
+/**
+ * The run page's Suggested tasks, under the report: "L3 is checking" until L3 posts or its deadline passes, then what it
+ * kept with the same buttons and states, and what it set aside folded with each reason. A check that missed its
+ * deadline gives its one reason on the fold.
+ */
+export function SuggestedTasks({ project, run, tasks }: { project: string; run: AgentSuggestions; tasks: Map<string, TaskRow> }) {
+  const reason = run.unfinished ? " · L3 did not finish checking" : "";
+  return (
+    <section className="irc agent-suggested" aria-label="Suggested tasks">
+      <h3 className="irc-name">Suggested tasks</h3>
+      {run.checking ? (
+        <p className="irc-meta agent-checking"><span className="spinner" aria-hidden />L3 is checking {run.checking} suggestion{run.checking === 1 ? "" : "s"}</p>
+      ) : <>
+        <Suggestions project={project} run={run} tasks={tasks} />
+        {run.set_aside.length ? (
+          <details className="agent-fold agent-aside" data-first={run.suggestions.length ? undefined : true}>
+            <summary>Set aside · {run.set_aside.length}{reason}</summary>
+            <div className="agent-aside-body">
+              {run.set_aside.map((item) => (
+                <p key={item.n}><span className="irc-title">{item.n}. {item.title}</span>
+                  {item.reason ? <span className="irc-meta">{item.reason}</span> : null}</p>
+              ))}
+            </div>
+          </details>
+        ) : null}
+      </>}
+    </section>
   );
 }
