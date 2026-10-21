@@ -138,7 +138,8 @@ function Form({ project, id, read, latest, start, offer, clock }: {
   const back = id ? `/projects/${project}/agents/${id}` : `/projects/${project}/agents`;
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && !saved.current && currentLocation.pathname !== nextLocation.pathname);
-  const set = (change: Partial<ProjectAgentDefinition>) => { setDraft({ ...draft, ...change }); setIncomplete(false); press.current = null; };
+  // After a press with a field missing, each missing field says so under it until it is filled.
+  const set = (change: Partial<ProjectAgentDefinition>) => { setDraft({ ...draft, ...change }); press.current = null; };
   const missing = !draft.name.trim() || !draft.brief.trim();
   const noDay = draft.schedules.findIndex((schedule) => !schedule.days.length);
   const save = async () => {
@@ -171,11 +172,14 @@ function Form({ project, id, read, latest, start, offer, clock }: {
   return <form ref={form} className="settings-card agent-form" noValidate onSubmit={(event) => { event.preventDefault(); if (!saving) void save(); }}>
     <label className="agent-label" htmlFor="agent-name">Name</label>
     <input id="agent-name" className="field" value={draft.name} placeholder="For example: Dependency check" aria-invalid={incomplete && !draft.name.trim() || undefined}
-      onChange={(event) => set({ name: event.target.value })} />
+      aria-describedby={incomplete && !draft.name.trim() ? "agent-name-missing" : undefined} onChange={(event) => set({ name: event.target.value })} />
+    {incomplete && !draft.name.trim() ? <p id="agent-name-missing" className="text-meta text-danger">Give it a name.</p> : null}
     <label className="agent-label" htmlFor="agent-brief">What it does</label>
-    <textarea id="agent-brief" className="field agent-brief-field" rows={5} value={draft.brief} aria-describedby="agent-brief-hint"
+    <textarea id="agent-brief" className="field agent-brief-field" rows={5} value={draft.brief}
+      aria-describedby={incomplete && !draft.brief.trim() ? "agent-brief-missing agent-brief-hint" : "agent-brief-hint"}
       placeholder="For example: check whether the build got slower this week, and say which step." aria-invalid={incomplete && !draft.brief.trim() || undefined}
       onChange={(event) => set({ brief: event.target.value })} />
+    {incomplete && !draft.brief.trim() ? <p id="agent-brief-missing" className="text-meta text-danger">Say what it does.</p> : null}
     <p id="agent-brief-hint" className="text-meta text-muted">Write it as you would brief a task. It can use anything in the repository.</p>
     <fieldset className="agent-fieldset">
       <legend className="agent-label">Runs when</legend>
@@ -213,7 +217,7 @@ function Form({ project, id, read, latest, start, offer, clock }: {
       </button>
       <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => navigate(back)}>Cancel</button>
     </div>
-    {incomplete && missing ? <p role="alert" className="text-meta text-danger">Give it a name and a brief.</p> : null}
+    {id ? null : <p className="text-meta text-muted">It starts off: try it with Run now, then turn it on.</p>}
     {error ? <p role="alert" className="text-meta text-danger">{refusal("Not saved", error)}
       {/* Once the agent changed in another window, this edit cannot be saved over it; Cancel opens the new version. */}
       {id && latest !== version ? null : <>{" "}<button type="button" className="link" onClick={() => void save()}>Retry</button></>}</p> : null}

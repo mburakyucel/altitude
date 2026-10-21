@@ -179,14 +179,14 @@ describe("Weekly improvement review", () => {
     expect(screen.getByRole("button", { name: "Run now" })).toBeEnabled();
   });
 
-  it("Stop says Stopping… until the end is read, or Not stopped. Try again.", async () => {
+  it("Stop says Stopping… until the end is read, or Not stopped.", async () => {
     let refuse = true;
     const hold = deferred();
     const { state, presses } = serve({ press: () => refuse ? json({ error: "broken" }, 500) : hold.promise });
     state.page = page({ status: { line: "Reading 6 tasks", actions: ["stop"], run: "cccccccccccc", spinning: true, paused: false, now: null } });
     const { user } = renderApp({ route: "/projects/harbor/agents/weekly" });
     await user.click(await screen.findByRole("button", { name: "Stop" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Not stopped. Try again.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not stopped.");
     refuse = false;
     await user.click(screen.getByRole("button", { name: "Stop" }));
     expect(await screen.findByRole("button", { name: "Stopping…" })).toBeDisabled();

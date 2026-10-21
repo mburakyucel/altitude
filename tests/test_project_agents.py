@@ -103,7 +103,7 @@ class TestDefinitions(AgentCase):
         self.assertEqual(schedule.when(schedule.upcoming([3], "07:00", NOW), NOW), "tomorrow at 07:00")
         self.assertEqual(schedule.when(schedule.upcoming([0], "08:00", NOW), NOW), "Monday at 08:00")
         weekdays, fridays = {"days": [0, 1, 2, 3, 4], "time": "07:00"}, {"days": [4], "time": "17:00"}
-        for d, said in (({"schedules": []}, "When you run it"),
+        for d, said in (({"schedules": []}, "Only when you run it"),
                         ({"schedules": [weekdays, fridays]}, "Weekdays at 07:00 and Fridays at 17:00"),
                         ({"schedules": [], "events": True}, "When it's sent an event"),
                         ({"schedules": [weekdays], "events": True}, "Weekdays at 07:00 and when it's sent an event"),
@@ -155,7 +155,7 @@ class TestSchedules(AgentCase):
         self.assertEqual([(r["state"], r["trigger"]["due"], r["trigger"]["late"]) for r in runs],
                          [("waiting", "2026-10-15T07:00:00+00:00", True)])
         self.assertEqual(A.agent_view(self.project, agent, now=tomorrow)["status"]["line"],
-                         "Waiting for a free task slot")
+                         "Waiting to start")
 
     def test_a_schedule_that_comes_due_while_the_last_run_goes_is_skipped(self):
         agent = self.agent(schedules=[{"days": [2], "time": "07:00"}, {"days": [2], "time": "08:30"}])
@@ -172,7 +172,7 @@ class TestSchedules(AgentCase):
         self.assertEqual(self.runs(), [], "no claim while Altitude is about to restart")
         A.claim(self.project, NOW)
         A.claim(self.project, NOW + timedelta(hours=6))
-        self.assertEqual([(r["state"], r["reason"]) for r in self.runs()], [("skipped", "No free slot for 6 hours")])
+        self.assertEqual([(r["state"], r["reason"]) for r in self.runs()], [("skipped", "Didn't start within 6 hours")])
 
     def test_old_runs_are_removed_beyond_the_newest_ten(self):
         agent = self.agent(on=False)
@@ -226,9 +226,9 @@ class TestStarting(AgentCase):
         self.assertIsNone(A.start_next(self.project, NOW))
         states = {r["agent"]: r["state"] for r in self.runs()}
         self.assertEqual(states, {second: "running", first: "waiting"})
-        self.assertEqual(A.agent_view(self.project, first, now=NOW)["status"]["line"], "Waiting for Second")
+        self.assertEqual(A.agent_view(self.project, first, now=NOW)["status"]["line"], "Waiting while Second runs")
         waiting = A.run_view(self.project, first, 1, now=NOW)
-        self.assertEqual((waiting["line"], waiting["model"], waiting["session"]), ("Waiting for Second", None, None))
+        self.assertEqual((waiting["line"], waiting["model"], waiting["session"]), ("Waiting while Second runs", None, None))
 
     def test_the_weekly_budget_counts_from_monday_and_a_run_needs_its_whole_limit(self):
         self.launching()
@@ -257,7 +257,7 @@ class TestStarting(AgentCase):
         route._usage.return_value = {"claude": (95.0, 10.0), "codex": (40.0, 10.0)}
         A.start_next(self.project, NOW)
         self.assertEqual((self.runs()[0]["state"], self.runs()[0]["reason"]),
-                         ("skipped", "Claude's weekly allowance is inside Altitude's reserve"))
+                         ("skipped", "Your Claude plan is close to its weekly limit"))
 
     def test_a_run_whose_worker_does_not_start_could_not_finish(self):
         self.launching()
@@ -627,10 +627,10 @@ class TestPages(AgentCase):
         call("POST", "/api/agents", {"action": "run", "agent": agent, "request_id": "c" * 32})
         server.spawn.assert_called_once_with(f"project-agents:{self.project}", A.start_next, self.project)
         page = call("GET", f"/api/agents/{self.project}")
-        self.assertEqual([(a["name"], a["news"]) for a in page["agents"]], [("What landed", "Waiting for a free task slot")])
+        self.assertEqual([(a["name"], a["news"]) for a in page["agents"]], [("What landed", "Waiting to start")])
         self.assertEqual(page["budget"]["choices"], [30, 60, 120, 300, 600])
         detail = call("GET", f"/api/agents/{self.project}/{agent}")
-        self.assertEqual(detail["runs"][0]["trigger_line"], "Run now by you")
+        self.assertEqual(detail["runs"][0]["trigger_line"], "Requested by you")
         self.assertEqual(call("GET", f"/api/agents/{self.project}/{agent}/runs/1")["state"], "waiting")
         self.assertEqual(call("GET", f"/api/agents/{self.project}/{agent}/runs/7", status=404)["error"], "There is no such run.")
         self.assertEqual(call("GET", f"/api/agents/{self.project}/000000000000", status=404)["error"], "There is no such agent.")
@@ -697,18 +697,18 @@ class TestMonitor(AgentCase):
         self.assertEqual(self.rows(), {
             "Scheduled": ("Next tomorrow at 07:00", None), "Tried before on": ("Not on yet", None),
             "By hand": ("Only when you run it", None), "Gave up": ("Paused itself", "paused"),
-            "Running one": ("Running", "running"), "Waiting one": ("Waiting", None)})
+            "Running one": ("Running", "running"), "Waiting one": ("Waiting", "waiting")})
         self.assertEqual([row["name"] for row in A.monitor_agents(self.project, now=NOW)],
                          ["Scheduled", "Tried before on", "By hand", "Gave up", "Running one", "Waiting one"],
                          "the Agents page's order")
         self.change("budget", minutes=30)
-        self.assertEqual(self.rows()["Scheduled"], ("Waits until Monday", None), "the running run holds its 20, by hand used 15, tried 4")
+        self.assertEqual(self.rows()["Scheduled"], ("Weekly budget used", None), "the running run holds its 20, by hand used 15, tried 4")
         self.assertIn("Gave up", self.rows(NOW + timedelta(days=30)), "paused itself stays listed until resumed")
         self.change("pause", agent=running)
         self.put(tried, 2, "waiting", NOW.isoformat())
         rows = self.rows()
         self.assertEqual((rows["Running one"], rows["Tried before on"], rows["Gave up"]),
-                         (("Running", "running"), ("Waiting", None), ("Paused itself", "paused")),
+                         (("Running", "running"), ("Waiting", "waiting"), ("Paused itself", "paused")),
                          "a run outranks paused and not on yet; paused outranks the spent budget")
 
     def test_paused_by_you_shows_only_while_it_ran_recently(self):
@@ -916,21 +916,21 @@ class TestEvents(AgentCase):
                           "actions": ["run", "pause"], "run": None, "spinning": False})
         self.change("run", agent=agent)
         self.assertEqual(self.runs()[0]["events"], [])
-        self.assertEqual(A.run_view(self.project, agent, 1, now=NOW)["trigger_line"], "Run now by you · No event yet")
+        self.assertEqual(A.run_view(self.project, agent, 1, now=NOW)["trigger_line"], "Requested by you · No event yet")
         self.change("stop", agent=agent)
         self.send(agent, "PR #812 merged", "pr-812")
         self.change("stop", agent=agent)
         self.assertEqual(self.record()["agents"][0]["received"], [], "a run stopped before it started read nothing")
         self.change("run", agent=agent)
         self.assertEqual(A.run_view(self.project, agent, 3, now=NOW)["trigger_line"],
-                         "Run now by you · For “PR #812 merged”, the latest")
+                         "Requested by you · For “PR #812 merged”, the latest")
         self.change("stop", agent=agent)
         with self.assertRaisesRegex(ValueError, "only from this computer's terminal"):
             self.change("run", agent=agent, text="PR #1 merged")
         result = self.alt("agent", "run", agent, "PR #900 merged", env={"ALTITUDE_PROJECT": self.project})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(A.run_view(self.project, agent, 4, now=NOW)["trigger_line"],
-                         "Run now by you · For “PR #900 merged”, your text")
+                         "Requested by you · For “PR #900 merged”, your text")
         self.assertEqual(self.record()["agents"][0]["latest"]["text"], "PR #812 merged", "a text of yours is not kept")
 
     def test_three_failing_event_runs_pause_the_agent_into_needs_you(self):
@@ -990,7 +990,21 @@ class TestEvents(AgentCase):
         self.patch(github_intake, "project_repo", return_value=("acme", "dock"))
         agent = self.events_agent()
         send = A.agent_view(self.project, agent, now=NOW)["send"]
-        self.assertEqual(send["command"], f'alt --project {self.project} agent send {agent} "what happened"')
+        self.assertEqual((send["command"], send["id"]),
+                         (f"alt --project {self.project} agent send 'Review each merge' \"what happened\"", agent))
+        # A quote in a name is quoted for the shell; a leading - would read as an option, and a name another agent shares
+        # would be refused as ambiguous, so those commands name the id.
+        def renamed(name):
+            view = A.agent_view(self.project, agent, now=NOW)
+            A.change(self.project, "set", {"agent": agent, "version": view["version"],
+                                           "definition": {**view["definition"], "name": name}}, by="operator", source="cli")
+            return A.agent_view(self.project, agent, now=NOW)["send"]["command"]
+        self.assertTrue(renamed("What's new").endswith("""agent send 'What'"'"'s new' "what happened\""""))
+        self.assertTrue(renamed("-x").endswith(f'agent send {agent} "what happened"'))
+        renamed("Review each merge")
+        self.events_agent(on=False)
+        self.assertEqual(A.agent_view(self.project, agent, now=NOW)["send"]["command"],
+                         f'alt --project {self.project} agent send {agent} "what happened"')
         merges, issues, failing = send["recipes"]
         self.assertEqual([r["what"] for r in send["recipes"]],
                          ["Each merged pull request: a script for cron every 10 minutes",

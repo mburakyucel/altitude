@@ -156,7 +156,7 @@ class TestWeekly(RunCase):
         self.usage.return_value = {"claude": (95.0, 10.0), "codex": (None, None)}
         self.assertIsNone(improve.weekly(self.project, now=self.monday + timedelta(minutes=2)))
         self.assertEqual(improve._load(self.project)["weeks"][self.monday.date().isoformat()]["skipped"],
-                         "Claude's weekly allowance is inside Altitude's reserve")
+                         "Your Claude plan is close to its weekly limit")
         self.usage.return_value = {"claude": (40.0, 10.0), "codex": (None, None)}
         improve.start(self.project, self.operator("Get improvement suggestions"), now=self.now)
         self.assertIsNone(improve.weekly(self.project, now=self.following + timedelta(minutes=1)))
@@ -307,7 +307,7 @@ class TestPage(RunCase):
         self.assertEqual((status["line"], status["actions"], status["run"]), ("Not on yet", ["run", "turn_on"], None))
         self.assertEqual(status["now"], {"line": None, "unavailable": f"Run now needs 5 finished tasks since {since}; 3 so far."})
         self.usage.return_value = {"claude": (95.0, 10.0), "codex": (None, None)}
-        self.assertEqual(self.status()["now"]["unavailable"], "Claude's weekly allowance is inside Altitude's reserve.")
+        self.assertEqual(self.status()["now"]["unavailable"], "Your Claude plan is close to its weekly limit.")
 
     def test_on_says_when_it_runs_next_and_running_offers_stop_only(self):
         self.load()

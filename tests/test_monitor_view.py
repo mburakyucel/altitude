@@ -225,7 +225,7 @@ class TestMonitorApi(AltitudeCase):
         self.patch(route, "_usage", return_value={"claude": (54.9, 0.0)})
         self.assertIsNone(route.reserve("claude"))
         self.patch(route, "_usage", return_value={"claude": (55.0, 0.0)})
-        self.assertEqual(route.reserve("claude"), "Claude's weekly allowance is inside Altitude's reserve.")
+        self.assertEqual(route.reserve("claude"), "Your Claude plan is close to its weekly limit.")
 
     def test_task_and_monitor_apis_expose_model_under_their_public_field_names(self):
         task = T.new(self.project, "Model API", "request")

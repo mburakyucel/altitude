@@ -139,7 +139,7 @@ test.describe(() => {
     const stopFailed = await hold(page, "**/api/improve", refuse(500, "broken"));
     await press(stop);
     await stopFailed();
-    await walk.state("47-stop-failed", { visible: [card.getByRole("alert").filter({ hasText: "Not stopped. Try again." }), stop, reading], hidden: [] });
+    await walk.state("47-stop-failed", { visible: [card.getByRole("alert").filter({ hasText: "Not stopped." }), stop, reading], hidden: [] });
     const stopping = await hold(page);
     await press(stop);
     await walk.state("47-stopping", { visible: [card.getByRole("button", { name: "Stopping…", exact: true }), reading], hidden: [] });

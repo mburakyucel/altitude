@@ -2350,14 +2350,14 @@ Seen in (each cited task once, opening in place, then the project chat), the cou
 across the run's tasks, and its state. Details name what was read and left out, L3's drops, the model,
 its usage of the call's token limit and when it ran. The presses go to `POST /api/improve` with a
 request id: Make a task (`accept`) and Dismiss on an undecided suggestion, Undo on a dismissed one
-until it lapses, Try again (`retry`) and Stop, which names the run its line showed. A request id makes
+until it lapses, Make a task again (`retry`) and Stop, which names the run its line showed. A request id makes
 one press in the project: the same press again returns its receipt and any other is refused. A press
 the record no longer allows is refused (409) and the card shows the fresh record. Make a task records the
 acceptance with the press as its authority and queues one L3 turn (trigger `improvement-task`) naming
 only the suggestion; L3 checks its cited places and creates its task. While that turn, or the chat turn
 of a typed acceptance, is queued or running (`l3.pending`), the suggestion reads "L3 is opening a
-task"; when it ended without a task, Try again queues the same turn once more, refused when another Try
-again queued it first. The overview lists under
+task"; when it ended without a task, it reads "Accepted · no task yet · Make a task", whose link (`retry`) queues the
+same turn once more, refused when another retry queued it first. The overview lists under
 `suggestions` every posted run with a suggestion that waits ([suggested tasks](#suggested-tasks)); Needs
 you shows them under Suggestions, after what needs the operator and not counted with it, each heading
 linking to its card in the project's chat. The states, presses, typed answers and task rule are the
@@ -2437,9 +2437,10 @@ each time brings them in again.
 by the tick and by Run now), under the provider admission, the machine launch lock and the restart lock that task
 launches take. A run starts only when the machine's running work (task slots held, adversarial reviews and
 running agent runs) plus the queued tasks and ready resumes waiting for a slot is below `config.machine_wip()`, so
-tasks always go first; a run that has waited six hours is skipped ("No free slot for 6 hours"). At its start a run
+tasks always go first; a run that has waited six hours is skipped ("Didn't start within 6 hours"). At its start a run
 is skipped when its engine is inside Altitude's reserve (`route.reserve`: the engine's weekly or short window at
-`config.RESERVE` or more, or unknown) or its whole limit does not fit the project's weekly budget (30 minutes to ten
+`config.RESERVE` or more, or unknown, read as "Your <engine> plan is close to its weekly limit", "… short-term
+limit" or "Your <engine> plan's use isn't known yet") or its whole limit does not fit the project's weekly budget (30 minutes to ten
 hours, two hours by default), counted from Monday 00:00 on this computer's clock with a running run holding its whole
 limit. Run now is refused with the same budget reason.
 
@@ -2488,8 +2489,9 @@ form). An offer lapses after seven days, and a change offer is refused once the 
 
 **Pages.** `GET /api/agents/<project>` is the Agents page (budget, agents, retired agents, built-ins not on,
 offers, and in Altitude's own project the [Weekly improvement review](#improvement-review) as `weekly`); `/<agent>`
-an agent's status with its note, actions, definition, recent runs and, with the event trigger, `send`: the command and
-the example scripts; `/weekly` the review's own page; `/<agent>/runs/<n>` a run's outcome, the events it took, the
+an agent's status with its note, actions, definition, recent runs and, with the event trigger, `send`: the command, naming the agent by its
+shell-quoted name or by its id when another agent not retired shares the name or the name starts with `-`, the id
+and the example scripts, which use the id; `/weekly` the review's own page; `/<agent>/runs/<n>` a run's outcome, the events it took, the
 version it ran and its report; `/<agent>/runs/<n>/transcript` its session through the transcript
 reader, read only. The project view carries `project_agents`: the runs waiting or running, shown in Work under
 Current; the number of agents not retired, with the Weekly improvement review once it is the operator's; and the
@@ -2503,9 +2505,9 @@ suggestion is named by its ref: `<run>/<n>` for a review and `agent:<agent>/<run
 holds `suggestions`, L3's check as `post: {shown, drops, at}` and the operator's `decisions`, and nothing is
 shown before the post. Both kinds share the states (undecided, accepted, dismissed, and not decided seven days
 after the post), the presses on `POST /api/improve` with request ids whose receipts live in the record the ref
-names, typed answers (`alt improve resolve REF`), Try again and the one task per accepted suggestion (`alt task
+names, typed answers (`alt improve resolve REF`), the retry of Make a task and the one task per accepted suggestion (`alt task
 new --improvement REF`, recorded on the task as `improvement`). A suggestion waits in Needs you while undecided,
-or accepted without its task for seven days after the last press (Make a task or Try again); after that it shows
+or accepted without its task for seven days after the last press (Make a task, first or again); after that it shows
 only where its run does. A task made from one carries `origin` in the project view's task rows, the agent's name or
 "Weekly improvement review", which ends its card's line ("· from Review each merge").
 
@@ -2527,7 +2529,7 @@ turn's commands is #1108.
 
 The run page (`suggested` on `/<agent>/runs/<n>`) shows a run's suggestions as Suggested tasks under its report:
 "L3 is checking N suggestions" while L3 checks, then the kept suggestions on the improvement card's suggestion
-part, then Set aside · N folded with L3's reasons, or "Set aside · N · L3 did not finish checking". The overview's
+part, then Not offered · N folded with L3's reasons, or "Not offered · N · not checked in time". The overview's
 `suggestions` lists agent runs with a waiting suggestion beside the review's cards, newest post first within each
 project. Needs you shows each as a card headed by the agent's name and the run's time, with what fired it and
 Open the run, never counted and never alerting a device, whatever Tell me says.

@@ -14,7 +14,7 @@ const definition = { name: "Dependency check", brief: "Check whether any depende
 const offer = (over: Record<string, unknown> = {}) => ({ id: "o1", turn_id: "t1", kind: "new", agent: null, agent_name: null, definition,
   line: "Weekdays at 07:00 · Tells you when it finds something", changes: [], on: true, state: "open", reason: null, result_agent: null, ...over });
 const runs = [{ agent: "dependency-check", name: "Dependency check", n: 3, state: "running" as const, line: "Agent run · 2 of 20 min" },
-  { agent: "merge-review", name: "Review each merge", n: 7, state: "waiting" as const, line: "Agent run · waiting for a free task slot" }];
+  { agent: "merge-review", name: "Review each merge", n: 7, state: "waiting" as const, line: "Agent run · waiting to start" }];
 const project = (agents: Record<string, unknown> | null = { runs, count: 4, offers: [] }) => ({ name: "harbor", l3: {}, busy: false,
   tasks: [{ slug: "fix-timer", state: "running", title: "Fix the timer", updated: ago(2) }], archive: [], decisions: [], incidents: [],
   ...(agents ? { project_agents: agents } : {}) });
@@ -80,7 +80,7 @@ describe.each([390, 1440])("agents in the project at %ipx", (width) => {
     const running = within(current).getByRole("link", { name: "Dependency check · Agent run · 2 of 20 min" });
     expect(running).toHaveAttribute("href", "/projects/harbor/agents/dependency-check/runs/3");
     expect(running.querySelector(".dot")).toHaveAttribute("data-state", "running");
-    const waiting = within(current).getByRole("link", { name: "Review each merge · Agent run · waiting for a free task slot" });
+    const waiting = within(current).getByRole("link", { name: "Review each merge · Agent run · waiting to start" });
     expect(waiting.querySelector(".dot")).toHaveAttribute("data-state", "idle");
     expect(within(panel).getByRole("heading", { name: "Current (3)" })).toBeInTheDocument();
     const agents = within(panel).getByRole("link", { name: "Agents · 4" });
