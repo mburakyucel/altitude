@@ -887,7 +887,9 @@ export function useProjectAgentRun(project: string, id: string, n: number) {
     queryKey: [...agentsKey(project), id, "runs", n],
     queryFn: async () => ProjectAgentRunDetailSchema.parse(await api(`/api/agents/${project}/${id}/runs/${n}`)),
     enabled: Boolean(project && id),
-    refetchInterval: (query) => ["waiting", "running"].includes(query.state.data?.state ?? "") ? 2_000 : pollInterval(),
+    // Read every two seconds while it waits, runs or L3 checks its suggestions.
+    refetchInterval: (query) => ["waiting", "running"].includes(query.state.data?.state ?? "")
+      || Boolean(query.state.data?.suggested?.checking) ? 2_000 : pollInterval(),
   });
 }
 
@@ -1694,6 +1696,11 @@ export function useSaveUpdates() {
 /** The overview as Altitude saved it: alerts count what the record asks, never what a send on its way hides. */
 export function useOverviewRecord() {
   return useQuery({ ...overviewQuery, refetchInterval: pollInterval });
+}
+
+/** A project's task rows, current and archived, by slug: what the task cards its chat and suggestions name read. */
+export function taskMap(view: ProjectView | undefined): Map<string, TaskRow> {
+  return new Map([...(view?.tasks ?? []), ...(view?.archive ?? [])].map((row) => [row.slug, row]));
 }
 
 export function useProject(name: string, enabled = true) {

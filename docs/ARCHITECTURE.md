@@ -2319,7 +2319,7 @@ it. The exact prompt and raw answer stay private in `<project>/improvements/<run
 
 A run is reading, then checking, then exactly one of posted, nothing, stopped or failed, with one
 deadline two hours after its start. With suggestions, Altitude queues one L3 turn (trigger
-`improvement-check`) naming only the run, so the unchecked wording never enters the conversation;
+`improvement-check`, with the run's deadline as its own, so it never runs later) naming only the run, so the unchecked wording never enters the conversation;
 L3 reads the candidates with `alt improve status --run`, opens their cited places and posts with
 `alt improve post <run> --keep … --drop n:reason`, naming every number once. Altitude, not L3, writes
 the chat message from the validated wording: a heading with the review's date and window, each kept
@@ -2428,8 +2428,10 @@ limit) and keeps nothing, or the event (`{text, key, at}`) starts a waiting run,
 the agent's `pending` while one runs. When a run ends, the agent's `pending` events become its next waiting run if it
 is still on; a schedule that comes due while events wait takes them into its run. The agent keeps its latest 1,000
 keys in `received` and its latest event, which Run now replays without its key, so a replay uses nothing up; `alt agent run AGENT TEXT` gives
-one run a text of its own instead. Pause, Retire, pausing itself, a skip and a Stop before the run starts drop the events no run read
-and give their keys back, so a script that sends the latest few each time brings them in again.
+one run a text of its own instead. Pause and Retire skip a run still waiting to start ("Paused before it started",
+"Retired before it started"). Pause, Retire, pausing itself, a skip, a Stop before the run's worker starts and a run
+that could not start drop the events no run read and give their keys back, so a script that sends the latest few
+each time brings them in again.
 
 **Starting.** A project starts one run at a time, its oldest waiting run first (`project_agents.start_next`, spawned
 by the tick and by Run now), under the provider admission, the machine launch lock and the restart lock that task
@@ -2465,7 +2467,9 @@ or `Couldn't finish:` with one sentence of at most 200 characters, then the full
 An answer in another shape couldn't finish ("Its answer was not in the report's shape"). A run that found something
 may also [suggest tasks](#suggested-tasks), which leave its report. A run ends found
 something, nothing found, couldn't finish, stopped by the operator, stopped at its limit, or skipped, and its copy
-and scratch folder are removed. Its record keeps the outcome, minutes used, tokens and session. Each ending
+and scratch folder are removed. Its record keeps the outcome, minutes used, tokens and session. Its minutes, on
+its row and against the budget, are at most its limit: the tick that notices its end stamps it, which can be hours
+late after Altitude or the computer was down. Each ending
 writes at most one assistant chat row (trigger `project-agent`) after the record is saved, once, as Tell me allows:
 found and couldn't finish unless Tell me is never, nothing found and stopped only with every run; a run that took
 events names them ("for “PR #809 merged”"). Three runs in a row on the agent's schedule or its events that couldn't
@@ -2513,8 +2517,9 @@ waiting (`project_agents.room`): a suggestion waits while L3 checks it and for s
 set aside, unless the operator decides it. A run keeps only as many as fit, and its template says the room left,
 or to suggest none. A run with suggestions queues one L3 turn (trigger `improvement-check`) naming only the run;
 L3 reads them with `alt agent show <agent> --run <n>` (`candidates`) and posts with `alt improve post
-agent:<agent>/<run>`, naming every number once. The check has two hours from the run's end: the tick posts a
-check past it with every suggestion set aside ("L3 did not finish checking") and removes its queued turn. A post
+agent:<agent>/<run>`, naming every number once. The check has two hours from the run's end: its turn is queued
+with that deadline (`l3.queue_locked` `until`), so the drain never runs it later, and the tick posts a check past it
+with every suggestion set aside ("L3 did not finish checking") and removes its queued turn. A post
 writes nothing to chat. Make a task queues an `improvement-task` turn written for a source that read the project
 and the web: L3 briefs the task from what it verified, quoting the suggestion only as the claim that started it.
 Both turns tell L3 to run only their one command, an instruction as L3's reading of issue text is; enforcing a
@@ -3951,7 +3956,7 @@ the same read and offer **L2 usage details**: the task total, observed helper co
 tokens, then per-helper parentage and owner attempt context. All helper detail stays behind the
 disclosure; expansion starts no collection or separate request. Archived evidence remains in task
 and report reads. No session is one muted sentence. Last, `agents` lists each project agent that is
-not retired and is on with a schedule, has a run waiting or running, paused itself, or ran in the last seven
+not retired and is on with a schedule or the event trigger, has a run waiting or running, paused itself, or ran in the last seven
 days, plus the Weekly improvement review once it is the operator's on the same terms (`monitor.agents`,
 `project_agents.monitor_agents`, `improve.monitor`): what comes next in the agent page's status order and the
 latest run that ran. `clock` is the computer's zone, so the page names it after a schedule's time when the

@@ -971,12 +971,12 @@ def queue_message(project: str, text: str, *, trigger: str, role: str = "server"
     return {**row, "position": waiting + 1}
 
 
-def queue_locked(project: str, text: str, *, trigger: str, slug: str | None = None) -> dict:
+def queue_locked(project: str, text: str, *, trigger: str, slug: str | None = None, until: str | None = None) -> dict:
     """queue_message for a caller already holding the project lock, so the notification lands together
-    with the record change it reports."""
+    with the record change it reports. A turn with `until` runs only before that time; the drain drops it after."""
     path = queue_path(project)
     row = {"at": S.now(), "id": uuid.uuid4().hex[:12], "trigger": trigger, "role": "server", "text": text,
-           **_slug_meta(slug)}
+           **_slug_meta(slug), **({"until": until} if until else {})}
     _write_queue(path, [*_without_superseded(_queue_rows(path), row), row])
     return row
 
@@ -1006,20 +1006,30 @@ def _without_superseded(rows: list[dict], new: dict) -> list[dict]:
     return [row for row in rows if (row.get("trigger"), row.get("slug")) != (new["trigger"], new.get("slug"))]
 
 
-def _drop_answered_blocks(project: str) -> None:
-    """A block notification whose task no longer has an open question (answered, withdrawn, or closed when the task
-    reported, finished or was rejected) has nothing left to ask, so the drain drops it and records that."""
+def _drop_stale(project: str) -> None:
+    """The drain drops, and records, a turn with nothing left to do: a block notification whose task no longer has an
+    open question (answered, withdrawn, or closed when the task reported, finished or was rejected), and a turn past
+    its `until`."""
     path = queue_path(project)
     with S.project_lock(project):
         rows = _queue_rows(path)
-        answered = [row for row in rows if row.get("trigger") == "block" and not any(
-            question["status"] == "open" for question in S.load_task(project, row["slug"]).get("questions", []))]
-        if not answered:
+        stale = []
+        for row in rows:
+            if _expired(row):
+                stale.append((row, "Its deadline passed before it ran."))
+            elif row.get("trigger") == "block" and not any(
+                    question["status"] == "open" for question in S.load_task(project, row["slug"]).get("questions", [])):
+                stale.append((row, "The task has no open question left."))
+        if not stale:
             return
-        _write_queue(path, [row for row in rows if row not in answered])
-        for row in answered:
-            S.project_log(project, "l3-notice-dropped", message_id=row["id"], trigger="block", slug=row["slug"],
-                          reason="The task has no open question left.")
+        _write_queue(path, [row for row in rows if row not in [item for item, _ in stale]])
+        for row, reason in stale:
+            S.project_log(project, "l3-notice-dropped", message_id=row["id"], trigger=row["trigger"],
+                          **_slug_meta(row.get("slug")), reason=reason)
+
+
+def _expired(row: dict) -> bool:
+    return bool(row.get("until")) and datetime.fromisoformat(row["until"]) <= datetime.fromisoformat(S.now())
 
 
 def _ci_storage_failure(project: str, task: dict, exc: Exception) -> dict:
@@ -1155,7 +1165,7 @@ def _queue_ready(project: str, row: dict) -> bool:
     if row.get("trigger") == "project-message":
         return False
     if row.get("trigger") != "ci-recheck":
-        return (row.get("retry_at") or "") <= S.now()
+        return (row.get("retry_at") or "") <= S.now() and not _expired(row)
     record = S.load_task(project, row["slug"]).get("ci_recheck") or {}
     delivery = record.get("delivery") or {}
     return (record.get("id") == row["id"] and record.get("status") == "notifying"
@@ -1396,7 +1406,7 @@ def deliver_queued(project: str) -> dict | None:
     for row in queued(project):
         if row.get("trigger") == "ci-recheck":
             queue_ci_recheck(project, row["slug"])
-    _drop_answered_blocks(project)
+    _drop_stale(project)
     if not path.exists():
         return None
     turn_lock = lock(project)

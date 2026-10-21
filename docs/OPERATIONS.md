@@ -232,10 +232,28 @@ resume waiting messages. Removing the last project opens First run; otherwise a 
 project is selected. `alt project remove <name>` uses the same checks. See
 [project lifecycle](CLI.md#project-lifecycle).
 
+## Project agents
+
+A [project agent](ARCHITECTURE.md#project-agents) is a brief Altitude runs for a project on a schedule, when your
+own scripts send it an event, or when you press Run now. Each run reads the project in its own fresh copy and the
+public web, and only reports. Open **Agents…** in the project's **More actions** menu:
+
+- **Turn on** a built-in agent (Dependency check, Build health or What landed) to use it as it is; **Edit**
+  changes it later.
+- **New agent** opens the form: a name, what it does, when it runs, what it tells you in chat, its model and how
+  long each run may take. A new agent starts off, so you can try it with **Run now** before you turn it on.
+- Ask L3 in chat to set one up; it drafts the agent as a card under its reply, and only your **Create agent**
+  press saves it.
+- From this computer's terminal, `alt agent new` saves one ([CLI](CLI.md#project-agents)).
+
+The weekly budget on the Agents page caps the time all of a project's runs take, counted from Monday. A run that
+finds something says so in chat as **Tell me** allows, keeps its report on its page, and may suggest up to three
+tasks, which L3 checks before they wait for you under Suggestions in Needs you.
+
 ## Sending agents events
 
-A [project agent](ARCHITECTURE.md#project-agents) with the trigger "When it's sent an event" runs on what your own
-scripts on this computer send it. Its page shows the command with its id filled in:
+An agent with the trigger "When it's sent an event" runs on what your own scripts on this computer send it. Its
+page shows the command with its id filled in:
 
 ```sh
 alt --project harbor agent send 3f9a2c1b0e4d "PR #812 merged"
@@ -250,7 +268,8 @@ in place of `alt agent send` starts a run now with your text, even before the ag
 
 A run has your code and the network, so send numbers and your own words, never text anyone else can write, such
 as an issue's title; the run reads the pull request or issue itself. These examples, which the agent's page also
-shows for its own id and repository, run from cron every few minutes; a line starting `#` holds the crontab entry.
+shows for its own id and repository (the two GitHub ones only when the project's origin is on GitHub), run from
+cron every few minutes; a line starting `#` holds the crontab entry.
 They use the GitHub CLI, signed in as you already are, and `PATH` finds `alt` and `gh` from cron on Linux and the
 Mac. Cron mails or logs what a refused send writes to standard error, as it is set up.
 

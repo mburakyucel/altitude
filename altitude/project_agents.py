@@ -94,8 +94,6 @@ def _load(project: str) -> dict:
     for key, empty in (("agents", []), ("versions", []), ("changes", []), ("runs", []), ("offers", []),
                        ("presses", {})):
         record.setdefault(key, empty)
-    for agent in record["agents"]:  # agents saved before events existed
-        agent.setdefault("events", False)
     return record
 
 
@@ -360,9 +358,10 @@ def _switch(state: str, allowed: tuple[str, ...]):
                 agent.update(on_since=at, failures=0)
             if state == "retired":
                 agent["retired"] = at
-                waiting = _active(record, agent["id"])
-                if waiting and waiting["state"] == "waiting":
-                    _end(record, waiting, "skipped", "Retired before it started", now)
+            waiting = _active(record, agent["id"])
+            if state != "on" and waiting and waiting["state"] == "waiting":
+                _end(record, waiting, "skipped", f"{'Paused' if state == 'paused' else 'Retired'} before it started",
+                     now)
             _note(record, agent, state, by, source, at)
         return {"agent": agent["id"], "state": agent["state"]}
     return apply
@@ -454,7 +453,6 @@ def _stop(record, fields, *, by, source, now):
     if by == "l3":
         _say(agent, f"{agent['id']}-stop-{run['n']}", f"Stopped {agent['name']}'s run", "muted")
     if run["state"] == "waiting" or not run.get("worker"):  # waiting, or still starting: its start stops the worker
-
         _end(record, run, "stopped", None, now)
         return {"agent": agent["id"], "n": run["n"]}
     run["stop"] = {"by": by, "source": source, "at": _at(now)}
@@ -575,10 +573,10 @@ def _end(record: dict, run: dict, state: str, reason: str | None, now: datetime,
     elif state == "failed" and tell != "never":
         _say(run, key, _fit(f"{name} couldn't finish{named}: ", reason or summary), "danger")
     elif state == "limit" and tell != "never":
-        _say(run, key, f"{name} stopped at its {agent['limit']}-minute limit.", "danger")
+        _say(run, key, f"{name} stopped at its {run['limit']}-minute limit.", "danger")
     elif state == "stopped" and tell == "every" and run.get("started"):
         _say(run, key, f"{name} stopped by you.", "muted")
-    if not run.get("started"):  # skipped or stopped while waiting: no run read its events
+    if not run.get("worker"):  # skipped, or stopped or failed before its worker started: no run read its events
         _give_back(agent, run.get("events") or [])
     if run["trigger"]["kind"] in ("schedule", "event") and state not in ("stopped", "skipped"):
         agent["failures"] = agent.get("failures", 0) + 1 if state in ("failed", "limit") else 0
@@ -623,7 +621,13 @@ def _minutes(run: dict, now: datetime) -> int:
     """A run's minutes against the budget: a running run holds its whole limit until it ends."""
     if run["state"] == "running" or not run.get("started"):
         return run.get("limit", 0) if run["state"] == "running" else 0
-    return math.ceil((_date(run["ended"]) - _date(run["started"])).total_seconds() / 60)
+    return _ran(run)
+
+
+def _ran(run: dict) -> int:
+    """An ended run's minutes, at most its limit: its end is stamped by the tick that notices it, which can come hours
+    later after Altitude or the computer was down."""
+    return min(run["limit"], math.ceil((_date(run["ended"]) - _date(run["started"])).total_seconds() / 60))
 
 
 def _used(record: dict, now: datetime) -> int:
@@ -826,8 +830,8 @@ def _line(text: str) -> str:
 
 def prompt(project: str, run: dict, agent: dict, worktree: Path, sha: str) -> str:
     """The run's prompt from `templates/project-agent-run.md`: the brief, what fired it, the previous report and
-    earlier suggestions as data, the limit, the report's shape and the room left for suggestions."""
-    record, now = _load(project), datetime.now(timezone.utc)
+    earlier suggestions as data, the limit, the report's shape and the room left for suggestions, as at its start."""
+    record, now = _load(project), _date(run["started"])
     version = next(v for v in record["versions"] if v["agent"] == agent["id"] and v["version"] == run["version"])
     previous = next((r for r in reversed(record["runs"])
                      if r["agent"] == agent["id"] and r["state"] in ("found", "nothing") and r["n"] < run["n"]), None)
@@ -913,6 +917,18 @@ def _plain(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
 
 
+def _shown(report: str) -> str:
+    """A report as its page shows it: a markdown link reads as its label and the address it goes to, since a model's
+    report is untrusted and a label can hide where a link leads. Code, which never renders as a link, stays as written."""
+    def show(match: re.Match) -> str:
+        if match[1]:
+            return match[1]
+        label, target = match[4], match[5] or match[6]
+        return target if label.strip() == target else f"{label} ({target})"
+    return re.sub(r"(^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\2[ \t]*$|\Z)|(`+)[\s\S]*?\3(?!`))"
+                  r"|!?\[([^\]]+)\]\((?:<([^>\n]+)>|([^\s)]+))\)", show, report, flags=re.M)
+
+
 def _report(project: str, run: dict) -> str:
     try:
         return (run_dir(project, run["agent"], run["n"]) / "report.md").read_text()
@@ -992,7 +1008,8 @@ def _finish(project: str, agent_id: str, n: int, state: str, reason: str | None,
         if kept := suggested[:room(record, agent_id, now)] if suggested else []:
             run.update(suggestions=[{"n": i, **s} for i, s in enumerate(kept, 1)], decisions=[],
                        check_by=_at(now + CHECK))
-            run["check"] = l3.queue_locked(project, check_turn(record, run), trigger="improvement-check")["id"]
+            run["check"] = l3.queue_locked(project, check_turn(record, run), trigger="improvement-check",
+                                           until=run["check_by"])["id"]
         _save(project, record)
     _remove_copy(project, agent_id, n)
 
@@ -1268,8 +1285,7 @@ def _run_row(run: dict) -> dict:
     """A run as Recent runs and its page show it. A run that read events names them: its line opens "For “PR #812
     merged”", and its page lists each event's time and first line."""
     trigger, events = run["trigger"], run.get("events") or []
-    minutes = (math.ceil((_date(run["ended"]) - _date(run["started"])).total_seconds() / 60)
-               if run.get("started") and run.get("ended") else None)
+    minutes = _ran(run) if run.get("started") and run.get("ended") else None
     label, line = event_name(events), run.get("summary") or run.get("reason")
     if label:
         line = f"For {label}" + (f"{': ' if run['state'] in ('found', 'nothing', 'failed') else ' · '}{line}" if line else "")
@@ -1303,7 +1319,7 @@ def run_view(project: str, agent_id: str, n: int, *, now: datetime | None = None
     return {**row, "agent": {"id": agent["id"], "name": agent["name"]},
             "model": config.model_label(run.get("engine_model") or run["model"]) if run.get("engine") else None,
             "limit": run.get("limit", version["definition"]["limit"]), "brief": version["definition"]["brief"],
-            "report": _report(project, run) or None if run["state"] in ("found", "nothing", "failed") else None,
+            "report": _shown(_report(project, run)) or None if run["state"] in ("found", "nothing", "failed") else None,
             "session": ({"engine": run["engine"], "session_id": run["session"], "attempt": 1}
                         if run.get("session") else None),
             "suggested": (suggested(project, record, run, suggestions.made(project), now)
@@ -1403,7 +1419,7 @@ def needs(project: str) -> list[dict]:
         last = next((r for r in reversed(record["runs"]) if r["agent"] == agent["id"]
                      and r["state"] in ("failed", "limit")), None)
         reason = (f"stopped at its {last['limit']}-minute limit" if last and last["state"] == "limit"
-                  else (last and (last.get("reason") or last.get("summary"))) or None)
+                  else last and improve._plain(last.get("reason") or last.get("summary") or "") or None)
         at = agent.get("paused_at") or (last or {}).get("ended") or agent["created"]
         rows.append({"project": project, "slug": None, "kind": "agent", "id": f"agent:{agent['id']}",
                      "agent": agent["id"], "title": agent["name"], "run": last and last["n"],

@@ -236,7 +236,7 @@ class TestStarting(AgentCase):
         self.change("budget", minutes=60)
         with A.S.project_lock(self.project):
             record = self.record()
-            last_week = {"agent": agent, "n": 99, "state": "nothing", "started": "2026-10-11T09:00:00+00:00",
+            last_week = {"agent": agent, "n": 99, "state": "nothing", "limit": 60, "started": "2026-10-11T09:00:00+00:00",
                          "ended": "2026-10-11T09:50:00+00:00", "trigger": {"kind": "now", "by": "operator"}}
             this_week = {**last_week, "n": 98, "started": "2026-10-13T09:00:00+00:00", "ended": "2026-10-13T09:15:00+00:00"}
             record["runs"] += [last_week, this_week]
@@ -367,6 +367,31 @@ class TestReports(AgentCase):
         stop.assert_called_once()
         self.assertEqual(self.runs()[0]["state"], "limit")
         self.assertEqual(self.lines()[0]["text"], "**Dependency check** stopped at its 10-minute limit.")
+
+    def test_the_limit_line_says_the_run_limit_after_the_agent_changed(self):
+        agent = self.started(limit=10)
+        self.change("set", agent=agent, version=1, definition=definition(limit=60))
+        self.patch(engines, "stop_l2_worker")
+        self.patch(engines, "owned_worker", return_value={"state": "working", "usage": {}})
+        A.reconcile(self.project, NOW + timedelta(minutes=10))
+        self.assertEqual(self.lines()[0]["text"], "**Dependency check** stopped at its 10-minute limit.")
+
+    def test_a_report_shows_where_its_links_go(self):
+        agent = self.started()
+        self.ended("Found: a fix is out.\n\nSee [the advisory](https://example.invalid/a1), "
+                   "[https://example.invalid/b](https://example.invalid/b) and [the notes](<docs/release notes.md>). "
+                   "Write it as `[x](y)`:\n\n```md\n[the notes](docs/notes.md)\n```")
+        A.reconcile(self.project, NOW + timedelta(minutes=5))
+        self.assertEqual(A.run_view(self.project, agent, 1)["report"],
+                         "See the advisory (https://example.invalid/a1), https://example.invalid/b and the notes "
+                         "(docs/release notes.md). Write it as `[x](y)`:\n\n```md\n[the notes](docs/notes.md)\n```")
+
+    def test_a_run_whose_end_is_noticed_late_is_charged_at_most_its_limit(self):
+        agent = self.started(limit=20)
+        self.ended("Nothing: no fixes.\n\nAll pinned packages are current.")
+        A.reconcile(self.project, NOW + timedelta(hours=5))  # Altitude was down while it finished
+        self.assertEqual(A.agent_view(self.project, agent, now=NOW)["runs"][0]["minutes"], 20)
+        self.assertEqual(A.view(self.project, now=NOW + timedelta(hours=5))["budget"]["used"], 20)
 
     def test_three_scheduled_runs_in_a_row_that_fail_pause_the_agent(self):
         agent = self.started(trigger="schedule")
@@ -837,6 +862,32 @@ class TestEvents(AgentCase):
         self.assertEqual(self.runs()[-1]["state"], "skipped")
         self.assertNotIn("pr-801", self.record()["agents"][0]["received"], "a skip gives its events' keys back")
 
+    def test_pause_skips_a_waiting_run_and_gives_its_keys_back(self):
+        self.launching()
+        agent = self.events_agent()
+        self.send(agent, "PR #800 merged", "pr-800")
+        self.change("pause", agent=agent)
+        run = self.runs(agent)[0]
+        self.assertEqual((run["state"], run["reason"]), ("skipped", "Paused before it started"))
+        self.assertEqual(self.record()["agents"][0]["received"], [], "no run read its event")
+        self.assertIsNone(A.start_next(self.project, NOW), "nothing starts for the paused agent")
+        self.assertEqual(engines.start_project_agent_run.call_count, 0)
+
+    def test_stop_while_a_run_is_starting_gives_its_keys_back(self):
+        self.launching()
+        agent = self.events_agent()
+        self.send(agent, "PR #800 merged", "pr-800")
+        self.patch(engines, "stop_l2_worker", return_value="stopped")
+
+        def launch(project, run, agent_row, choice):
+            self.change("stop", agent=agent, n=run["n"])  # pressed while its copy is being made
+            return {"worker": "worker-late", "session": "session-late", "engine_model": None, "sha": "0" * 40}
+        self.patch(A, "_launch", side_effect=launch)
+        A.start_next(self.project, NOW)
+        self.assertEqual(self.runs(agent)[0]["state"], "stopped")
+        self.assertEqual(self.record()["agents"][0]["received"], [], "its worker never read the event")
+        self.assertEqual(self.send(agent, "PR #800 merged", "pr-800")["sent"], True)
+
     def test_at_most_fifty_events_wait_for_one_run(self):
         agent = self.events_agent()
         for n in range(A.EVENTS):
@@ -890,14 +941,14 @@ class TestEvents(AgentCase):
             now = NOW + timedelta(hours=n)
             self.send(agent, f"PR #{n} merged", now=now)
             A.start_next(self.project, now)
-            self.ended("Couldn't finish: make test-e2e is not a target.")
+            self.ended("Couldn't finish: `make test-e2e` is not a target.")
             A.reconcile(self.project, now + timedelta(minutes=1))
         rows = T.decisions(self.project)
         self.assertEqual([r["kind"] for r in rows], ["step", "agent"])
         card = rows[1]
         self.assertEqual({k: card[k] for k in ("slug", "agent", "title", "run", "question")},
                          {"slug": None, "agent": agent, "title": "Review each merge", "run": 3,
-                          "question": "3 runs in a row couldn't finish. The last: make test-e2e is not a target."})
+                          "question": "3 runs in a row couldn't finish. The last: 'make test-e2e' is not a target."})
         self.assertNotIn("alert_key", card, "a paused agent never alerts a device")
         from altitude import digest
         with mock.patch.object(digest, "queue", return_value=rows):
@@ -984,9 +1035,3 @@ class TestEvents(AgentCase):
         options = A.parser().parse_args(["set", agent, "--no-events"])
         A.verb(self.project, options, by="operator", source="cli")
         self.assertFalse(self.record()["agents"][0]["events"])
-        with S.project_lock(self.project):  # an agent saved before events existed
-            record = self.record()
-            for item in [*record["agents"], *(v["definition"] for v in record["versions"])]:
-                item.pop("events", None)
-            S.write_json(A._path(self.project), record)
-        self.assertEqual(A.agent_view(self.project, agent, now=NOW)["definition"]["events"], False)

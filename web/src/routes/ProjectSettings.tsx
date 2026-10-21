@@ -156,7 +156,7 @@ function ProjectSection({ name }: { name: string }) {
   </section>;
 }
 
-/** One project's settings (SPEC.md §3.15): L3, Auto defaults, Routing, Improvement suggestions and the project itself. */
+/** One project's settings (SPEC.md §3.15): L3, Routing and the project itself. */
 export default function ProjectSettings() {
   const { name = "" } = useParams();
   const { phone } = useViewport();
