@@ -917,13 +917,12 @@ class TestReviews(AltitudeCase):
         self.deliver(41)
         with self.assertRaisesRegex(T.TransitionError, "changes review the branch itself"):
             self.request(following=True)
-        # While PR #41 waits, L2 names which step a new proposal review or skip belongs to; the operator's request is
-        # the waiting PR's own, and the implementation review still judges the branch.
-        with self.assertRaisesRegex(T.TransitionError, r"PR #41 waits to merge. Add --next .* or --additional"):
-            self.request(subject="proposal")
-        with self.assertRaisesRegex(T.TransitionError, r"PR #41 waits to merge. Add --next to skip"):
-            reviews.skip(self.project, self.slug, actor="l2", subject="proposal", reason="Copy only.", expected_attempt=1)
-        self.assertEqual(self.request()["id"], self.request()["id"])
+        # A proposal review without --next while PR #41 waits is that PR's own, and its request says so.
+        own = self.request(subject="proposal", additional=True, request_id="own")
+        self.assertNotIn("next", own)
+        self.assertEqual(own["notice"], "This belongs to PR #41, which waits to merge. For the step after it, "
+                                        "withdraw it and request with --next.")
+        reviews.withdraw(self.project, self.slug, "own", actor="l2", reason="Meant for step 2.", expected_attempt=1)
         proposal = T.message(self.project, self.slug, "l2", "Step 2: double the value")
         following = self.request(subject="proposal", following=True, request_id="step-two")
         self.assertTrue(following["next"])

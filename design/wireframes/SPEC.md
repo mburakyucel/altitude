@@ -578,8 +578,7 @@ details and preserves the draft, reading position and listening state.
 
 The conversation shows one card per kind for each delivery, at that delivery's latest request's
 anchor; earlier iterations of the same delivery fold inside it. A delivery is the work one merge
-closes; a proposal review L2 requests while a PR waits names whether it belongs to the step after that
-PR or to the PR itself. So a
+closes; a proposal review L2 requests for the step after a PR that waits belongs to that step. So a
 task that ships several PRs keeps each step's cards where they happened, each merged one ending its
 counts with "merged in PR #N", and its "Review 2" and earlier reviews never mix steps. The card's
 sentence reads:

@@ -1982,10 +1982,9 @@ naming a merged delivery's review is refused. Replacement, waiting, open finding
 stay within one delivery, so each PR's merge considers only its own reviews; an operator's request
 belongs to the current delivery and gates its merge. While a PR waits to merge, `--next` requests the
 proposal review for the step after it, and `skip --next` records that step's skip: they stay out of the
-waiting PR's merge gate and become the current delivery's when that PR merges. L2's proposal request or
-skip names its step while a PR waits: one with neither `--next` nor, for a request, `--previous` or
-`--additional` is refused, since it would otherwise put the next step's review into the waiting PR's gate
-and under its number. `--next` needs a waiting PR and applies to proposals only, since changes review the
+waiting PR's merge gate and become the current delivery's when that PR merges. A proposal request or skip
+without `--next` while a PR waits is that PR's own, and the command's `notice` says so, so a forgotten
+flag shows at once. `--next` needs a waiting PR and applies to proposals only, since changes review the
 branch itself; repeating a next-step review with `--previous` keeps it there. Only a merge through
 `alt land` closes a delivery: a step abandoned unmerged withdraws or replaces its reviews like any
 current ones. Task details and the question line read each kind's latest unmerged review, so after a

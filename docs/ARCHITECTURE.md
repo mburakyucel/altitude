@@ -1008,9 +1008,8 @@ each step's reviews apart. The merge `alt land` records stamps the current deliv
 merged head and PR number: they leave the gate, are never replaced or repeated, and keep their coverage
 against the version that merged. A review the owner requests with `--next` while a PR waits is the
 proposal review of the step after it: it stays out of that PR's gate and loses the mark when the PR
-merges, joining the current delivery. While a PR waits, an owner proposal request or skip without
-`--next`, `--previous` or `--additional` is refused, so the next step's review never silently joins the
-waiting PR's gate. Replacement (`--previous` naming the latest review of its kind),
+merges, joining the current delivery. A proposal request or skip without `--next` while a PR waits
+belongs to that PR, and the command's `notice` says so. Replacement (`--previous` naming the latest review of its kind),
 `--additional`, request waiting, skip and open findings all work within one delivery, and a question's
 review status and task details' boxes read the latest unmerged review of its kind with its delivery's
 open findings, so a later step's proposal never rests on an earlier step's review. A task with one PR is one delivery and sees no difference.

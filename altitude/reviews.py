@@ -246,12 +246,10 @@ def _target(task, subject, following):
     return "next"
 
 
-def _choose_step(task, subject, actor, chosen, verb):
-    """While a PR waits, L2's new proposal review or skip names its step: the waiting PR's proposal is already settled
-    by its code, so silence would put the next step's review into that PR's merge gate and under its number."""
-    if subject == "proposal" and actor == "l2" and not chosen and (number := _waiting_pr(task)):
-        raise T.TransitionError(f"PR #{number} waits to merge. Add --next to {verb} the proposal of the step after it"
-                                + (f", or --additional to add a review to PR #{number}'s own." if verb == "review" else "."))
+def _gate_notice(task, subject, following, remedy):
+    """A proposal review or skip without --next while a PR waits is that PR's; saying so lets a forgotten flag show."""
+    number = subject == "proposal" and not following and _waiting_pr(task)
+    return {"notice": f"This belongs to PR #{number}, which waits to merge. For the step after it, {remedy}."} if number else {}
 
 
 def _unresolved(review):
@@ -417,7 +415,6 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             # A replacement leaves the gate, so its silence cannot stand in for resolving known findings.
             raise T.TransitionError("Fix or dismiss the review's open findings with evidence before replacing it, "
                                     "or request an additional review that leaves them in the merge gate.")
-        _choose_step(task, subject, actor, following or bool(prior or additional), "review")
         if why := _eligible(project, task, subject):
             raise T.TransitionError(why)
         delivery = _target(task, subject, following)
@@ -483,7 +480,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             task.update(resume_request=request_id, resume_after=S.now())
         S.save_task(project, task)
         S.append_event(project, slug, "review-requested", review_id=request_id, by=requester)
-        return _project_review(row, task, None)
+        return {**_project_review(row, task, None), **_gate_notice(task, subject, following, "withdraw it and request with --next")}
 
 
 def _capture(project, task, review, context_ids, proposal_id=None, show=None):
@@ -849,7 +846,6 @@ def skip(project, slug, *, actor, subject, reason, expected_attempt=None, follow
         _owner(task, actor, expected_attempt, required=True)
         if not _open(task):
             raise T.TransitionError("Finished review history is read-only.")
-        _choose_step(task, subject, actor, following, "skip")
         delivery = _target(task, subject, following)
         if any(r.get("subject", "changes") == subject and r["state"] != "withdrawn" and _delivery(r) == delivery
                for r in task.get("reviews", [])):
@@ -863,7 +859,7 @@ def skip(project, slug, *, actor, subject, reason, expected_attempt=None, follow
         task.setdefault("reviews", []).append(row)
         S.save_task(project, task)
         S.append_event(project, slug, "review-skipped", review_id=identity, by=actor)
-        return _project_review(row, task, None)
+        return {**_project_review(row, task, None), **_gate_notice(task, subject, following, "skip again with --next")}
 
 
 def require_resolved(task):
