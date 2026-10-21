@@ -108,8 +108,8 @@ ENGINES = ("claude", "codex")
 #: verified tool-free mode, so the review is unavailable without Claude.
 IMPROVEMENT_MODELS = {"claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-5-5": (2.0, 10.0), "claude-opus-5-5": (4.0, 20.0)}
 IMPROVEMENT_MODEL = "claude-sonnet-5-5"
-#: Percent of an engine's weekly or short window from which an improvement review or a project agent run does not
-#: start: ordinary work comes first.
+#: Percent of an engine's weekly or short window from which optional work (an improvement review, a project agent
+#: run) does not start: ordinary work comes first. Every quota meter draws its line here.
 RESERVE = 90
 #: Display names, the way the shell shows an engine; nothing outside the seam spells one.
 ENGINE_LABELS = {"claude": "Claude", "codex": "Codex"}

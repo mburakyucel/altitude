@@ -8,7 +8,7 @@ const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
 const overview = { projects: [{ name: "harbor", managed: true }], queue: [], wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false },
-  engines: [{ engine: "alpha", label: "Alpha", week: null, known: false, stale: false, at: null }] };
+  engines: [{ engine: "alpha", label: "Alpha", week: null, known: false, stale: false, at: null, reserve: 90 }] };
 const definition = { name: "Dependency check", brief: "Check whether any dependency has a security fix.", schedules: [{ days: [0, 1, 2, 3, 4], time: "07:00" }],
   events: false, tell: "found", model: null, limit: 20 };
 const offer = (over: Record<string, unknown> = {}) => ({ id: "o1", turn_id: "t1", kind: "new", agent: null, agent_name: null, definition,

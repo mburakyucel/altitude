@@ -12,7 +12,7 @@ const overview = {
   fyis: [],
   wip: { per_project: {}, machine: 0, waiting: [] },
   quota: { known: false },
-  engines: [{ engine: "claude", label: "Claude", known: true }],
+  engines: [{ engine: "claude", label: "Claude", known: true, reserve: 90 }],
   now: new Date().toISOString(),
 };
 

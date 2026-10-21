@@ -446,6 +446,8 @@ export const EngineReadoutSchema = z
     known: z.boolean(),
     stale: z.boolean().nullish(),
     at: z.string().nullish(),
+    /** The router's reserve (config.RESERVE): past this share of a window optional work is skipped. */
+    reserve: z.number(),
   })
   .passthrough();
 
@@ -1137,6 +1139,8 @@ export const MonitorAgentSchema = z.object({
 export const MonitorSchema = z
   .object({
     seats: z.array(MonitorSeatSchema).nullish(),
+    /** The router's reserve (config.RESERVE): each seat meter's line, past which optional work is skipped. */
+    reserve: z.number(),
     routing: z.array(RoutingRowSchema).nullish(),
     sessions: z.array(SessionSchema),
     agents: z.array(MonitorAgentSchema),

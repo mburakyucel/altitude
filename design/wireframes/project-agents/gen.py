@@ -560,8 +560,8 @@ def seat(name, week, five):
 
 
 UPDATE = '<h2>Altitude update</h2><p class="muted" style="margin:0 0 4px">No update pending.</p>'
-SEATS = ('<h2>Seats</h2><div class="monseats">' + seat("Claude Code", 38, 12) + seat("Codex", 22, 4) + '</div>'
-         '<p class="muted" style="margin:6px 0 0">The mark on each meter is the 70% reserve line.</p>')
+SEATS = ('<h2>Seats</h2><p class="muted" style="margin:0 0 6px">Past the mark at 90%, or without a current reading, Altitude skips optional work such as agent runs and the Weekly review.</p>'
+         '<div class="monseats">' + seat("Claude Code", 38, 12) + seat("Codex", 22, 4) + '</div>')
 ROUTING = ('<h2>Routing now</h2><div class="card"><div class="monitor-row"><span>L3 · harbor · Auto</span><b style="flex:none">Claude Code</b></div>'
            '<p class="muted" style="margin:2px 0 10px">Most weekly headroom</p><div class="monitor-row"><span>L2 · new task</span><b style="flex:none">Claude Code</b></div>'
            '<p class="muted" style="margin:2px 0 0">Project harbor: most weekly headroom</p></div>')

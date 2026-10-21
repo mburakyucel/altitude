@@ -8,11 +8,11 @@ import { TokenUsage } from "../components/TokenUsage";
 import { RestartDetails } from "../shell/RestartBanner";
 import { RoleModelButton } from "../components/ModelMenu";
 import { useViewport } from "../shell/breakpoints";
-import { age, agoText, exactTime, localTimes, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, stampText, when } from "../data/observed";
+import { age, agoText, exactTime, localTimes, modelName, older, SESSION_STALE_MS, stampText, when } from "../data/observed";
 
 /**
  * Monitor (SPEC.md §3.14): one seat card per configured engine with its windows, their reset times
- * in human terms, the 70% reserve line and the age of the reading; where each role would go right now
+ * in human terms, the reserve line and the age of the reading; where each role would go right now
  * and why; the sessions the monitor knows, each with its task. Update status and the permitted
  * Restart action read the shared overview independently of the monitor readings.
  *
@@ -156,18 +156,18 @@ function seatFor(row: MonitorSeat): Seat {
   };
 }
 
-/** A meter with the reserve line drawn; past the line the fill turns danger, a stale figure is dimmed. */
-function Meter({ percent, reserve, stale }: { percent: number; reserve?: boolean; stale?: boolean }) {
+/** A meter, optionally with the router's reserve line drawn; a stale figure is dimmed. */
+function Meter({ percent, reserve, danger = false, stale }: { percent: number; reserve?: number; danger?: boolean; stale?: boolean }) {
   const p = Math.max(0, Math.min(100, percent));
   return (
     <div className="meter monitor-meter" data-stale={stale || undefined} aria-hidden>
-      <div className="meter-fill" data-danger={p >= RESERVE_PERCENT} style={{ width: `${p}%` }} />
-      {reserve ? <span className="meter-reserve" style={{ left: `${RESERVE_PERCENT}%` }} /> : null}
+      <div className="meter-fill" data-danger={danger} style={{ width: `${p}%` }} />
+      {reserve != null ? <span className="meter-reserve" style={{ left: `${reserve}%` }} /> : null}
     </div>
   );
 }
 
-function Window({ window, stale }: { window: SeatWindow; stale: boolean }) {
+function Window({ window, reserve, stale }: { window: SeatWindow; reserve: number; stale: boolean }) {
   if (window.percent == null) return <p className="monitor-muted">No {window.name} window reported.</p>;
   return (
     <div className="monitor-window" data-stale={stale || undefined}>
@@ -175,7 +175,7 @@ function Window({ window, stale }: { window: SeatWindow; stale: boolean }) {
         <span>{window.name}</span>
         <span>{Math.round(window.percent)}%</span>
       </div>
-      <Meter percent={window.percent} reserve stale={stale} />
+      <Meter percent={window.percent} reserve={reserve} danger={window.percent >= reserve} stale={stale} />
       {window.resets ? <p className="monitor-window-reset">{window.resets}</p> : null}
     </div>
   );
@@ -188,7 +188,7 @@ function ModelRow({ model, stale }: { model: SeatModel; stale: boolean }) {
         <span>{model.name} · 7-day</span>
         {model.percent != null ? <span>{Math.round(model.percent)}%</span> : null}
       </div>
-      {model.percent != null ? <Meter percent={model.percent} reserve stale={stale} /> : null}
+      {model.percent != null ? <Meter percent={model.percent} stale={stale} /> : null}
       {model.percent != null ? <p className="monitor-window-reset">{model.resets}</p> :
         <p className="monitor-muted">No reading for this model. The shared windows don't show whether it is available.</p>}
       {model.rejected ? <p className="m-0 text-[12px] text-danger">Unavailable: {model.rejected}</p> : null}
@@ -196,7 +196,7 @@ function ModelRow({ model, stale }: { model: SeatModel; stale: boolean }) {
   );
 }
 
-function SeatCard({ seat, label }: { seat: Seat; label: string }) {
+function SeatCard({ seat, label, reserve }: { seat: Seat; label: string; reserve: number }) {
   const figures = seat.windows != null || seat.models.some((model) => model.percent != null);
   return (
     <section className="card monitor-card monitor-seat" aria-label={label}>
@@ -211,7 +211,7 @@ function SeatCard({ seat, label }: { seat: Seat; label: string }) {
         ) : null}
       </div>
       {seat.windows ? (
-        seat.windows.map((window) => <Window key={window.name} window={window} stale={seat.stale} />)
+        seat.windows.map((window) => <Window key={window.name} window={window} reserve={reserve} stale={seat.stale} />)
       ) : figures ? (
         <p className="monitor-muted">No account windows reported.</p>
       ) : (
@@ -303,7 +303,7 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
         ) : null}
       </div>
       <p className="monitor-muted">{meta.join(" · ")}</p>
-      {context == null ? null : <Meter percent={context} stale={stale} />}
+      {context == null ? null : <Meter percent={context} danger={["warn", "act"].includes(str(session.context_state))} stale={stale} />}
       {session.kind === "l2" ? <TokenUsage usage={session.token_usage} running={session.state === "running"} engines={engines} disclosureLabel="L2 usage details" /> : null}
     </li>
   );
@@ -390,12 +390,15 @@ export default function Monitor() {
             <h2 id="monitor-seats" className="monitor-head">
               Seats
             </h2>
+            <p className="monitor-muted">
+              Past the mark at {monitor.data.reserve}%, or without a current reading, Altitude skips optional work such as
+              agent runs and the Weekly review.
+            </p>
             <div className="monitor-seats">
               {(monitor.data.seats ?? []).map((row) => (
-                <SeatCard key={row.engine} seat={seatFor(row)} label={row.label} />
+                <SeatCard key={row.engine} seat={seatFor(row)} label={row.label} reserve={monitor.data.reserve} />
               ))}
             </div>
-            <p className="monitor-muted">The mark on each meter is the {RESERVE_PERCENT}% reserve line.</p>
           </section>
           <RoutingCard rows={monitor.data.routing ?? []} label={label} />
           <section className="monitor-section" aria-labelledby="monitor-sessions">

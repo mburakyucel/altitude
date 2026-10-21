@@ -39,10 +39,10 @@ const overview = {
   wip: { per_project: {}, machine: 0, waiting: [] },
   quota: { known: true, seven_day: 52 },
   engines: [
-    { engine: "alpha", label: "Alpha", week: 52, known: true, stale: false, at: ago(1) },
-    { engine: "beta", label: "Beta", week: 78, known: false, stale: true, at: ago(3 * 60) },
-    { engine: "gamma", label: "Gamma", week: null, known: false, stale: false, at: null },
-    { engine: "delta", label: "Delta", installed: false, week: null, known: false, stale: false, at: null },
+    { engine: "alpha", label: "Alpha", week: 52, known: true, stale: false, at: ago(1), reserve: 90 },
+    { engine: "beta", label: "Beta", week: 78, known: false, stale: true, at: ago(3 * 60), reserve: 75 },
+    { engine: "gamma", label: "Gamma", week: null, known: false, stale: false, at: null, reserve: 90 },
+    { engine: "delta", label: "Delta", installed: false, week: null, known: false, stale: false, at: null, reserve: 90 },
   ],
   roots: ["~/Projects"],
   operator: "Ada",
@@ -56,7 +56,7 @@ function mockFetch(data: unknown = overview) {
     if (url.includes("/api/chat/")) return jsonResponse({ history: [], active: null, busy: false });
     if (url.includes("/api/project/")) return jsonResponse({ name: "altitude", tasks: [] });
     if (url.includes("/api/task/")) return jsonResponse({ slug: "fix-audio", messages: [] });
-    if (url.includes("/api/monitor")) return jsonResponse({ quota: { known: false }, sessions: [], agents: [], clock: { zone: "UTC", offset: 0 } });
+    if (url.includes("/api/monitor")) return jsonResponse({ quota: { known: false }, reserve: 90, sessions: [], agents: [], clock: { zone: "UTC", offset: 0 } });
     return jsonResponse({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);

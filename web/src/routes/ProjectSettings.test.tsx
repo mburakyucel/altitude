@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
-const engines = [{ engine: "alpha", label: "Alpha", week: null, known: false, stale: false, at: null },
-  { engine: "beta", label: "Beta", week: null, known: false, stale: false, at: null }];
+const engines = [{ engine: "alpha", label: "Alpha", week: null, known: false, stale: false, at: null, reserve: 90 },
+  { engine: "beta", label: "Beta", week: null, known: false, stale: false, at: null, reserve: 90 }];
 const overview = { projects: [{ name: "example", managed: true }, { name: "sample", managed: true }], queue: [], engines,
   wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } };
 const efforts = [{ value: "native", label: "Native" }, { value: "low", label: "Low" }, { value: "high", label: "High" }];

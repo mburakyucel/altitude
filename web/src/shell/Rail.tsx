@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { EngineReadout, Overview } from "../data/api";
-import { RESERVE_PERCENT, age } from "../data/observed";
+import { age } from "../data/observed";
 import { decisionsFor, dotFor, managedProjects, unmanagedFolders } from "./projects";
 import { BrandMark } from "./BrandMark";
 import { ThemeToggle } from "./theme";
@@ -27,7 +27,7 @@ function EngineRow({ row }: { row: EngineReadout }) {
         <span className="min-w-0 text-right text-muted">{readoutText(row)}</span>
       </div>
       <div className="meter" aria-hidden>
-        <div className="meter-fill" data-danger={week >= RESERVE_PERCENT} style={{ width: `${week}%` }} />
+        <div className="meter-fill" data-danger={week >= row.reserve} style={{ width: `${week}%` }} />
       </div>
     </li>
   );

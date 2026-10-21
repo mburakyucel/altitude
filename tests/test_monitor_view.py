@@ -211,11 +211,21 @@ class TestMonitorApi(AltitudeCase):
 
     def test_the_payload_names_the_seats_by_engine_and_the_routing_view(self):
         body = self.get("/api/monitor")
-        self.assertEqual(set(body), {"seats", "routing", "sessions", "agents", "clock"})
+        self.assertEqual(set(body), {"seats", "reserve", "routing", "sessions", "agents", "clock"})
         self.assertEqual([row["engine"] for row in body["seats"]], list(config.ENGINES))
         seat = next(row for row in body["seats"] if row["engine"] == "codex")
         self.assertEqual((seat["label"], seat["quota"]["why"]), ("Codex", "Codex binary not found"))
         self.assertIsNone(body["routing"][0]["engine"])
+
+    def test_every_meter_line_is_the_reserve_that_skips_optional_work(self):
+        # Monitor's seat meters and the rail's readouts draw their line where route.reserve starts skipping.
+        self.patch(config, "RESERVE", new=55)
+        self.assertEqual(self.get("/api/monitor")["reserve"], 55)
+        self.assertEqual({row["reserve"] for row in route.engine_readouts()}, {55})
+        self.patch(route, "_usage", return_value={"claude": (54.9, 0.0)})
+        self.assertIsNone(route.reserve("claude"))
+        self.patch(route, "_usage", return_value={"claude": (55.0, 0.0)})
+        self.assertEqual(route.reserve("claude"), "Claude's weekly allowance is inside Altitude's reserve.")
 
     def test_task_and_monitor_apis_expose_model_under_their_public_field_names(self):
         task = T.new(self.project, "Model API", "request")
