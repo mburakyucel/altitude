@@ -999,9 +999,19 @@ Proposal assessment records the proposal identity and dispositions, including an
 revised proposal when relevant. Later proposal/source/context changes require L2 assessment or deliberate review.
 The UI distinguishes reviewed evidence from later L2 assessment; proposal evidence never accepts an
 implementation. Request admission and final merge share a task lock. Landing checks every accepted
-request for assessment or authorized withdrawal after other pre-merge checks, including changes requests
+request of the current delivery for assessment or authorized withdrawal after other pre-merge checks, including changes requests
 followed by a proposal request. Review cannot release an operator hold or replace required checks.
 Only the operator can withdraw an operator request. No automatic rerun occurs after fixes.
+
+Each review belongs to one delivery, the work one merge closes, so a task that ships several PRs keeps
+each step's reviews apart. The merge `alt land` records stamps the current delivery's reviews with the
+merged head and PR number: they leave the gate, are never replaced or repeated, and keep their coverage
+against the version that merged. A review the owner requests with `--next` while a PR waits is the
+proposal review of the step after it: it stays out of that PR's gate and loses the mark when the PR
+merges, joining the current delivery. Replacement (`--previous` naming the latest review of its kind),
+`--additional`, request waiting, skip and open findings all work within one delivery, and a question's
+review status reads the latest unmerged review of its kind, so a later step's proposal never rests on
+an earlier step's review. A task with one PR is one delivery and sees no difference.
 
 ## Task lifecycle
 

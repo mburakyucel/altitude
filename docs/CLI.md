@@ -1914,7 +1914,7 @@ a phone, and offers up to two alternative directions as findings with severity `
 owner assesses each like any finding and shows the alternatives to the operator, who chooses. Task details shows a **Proposal review** and an
 **Implementation review** box with the latest review's verdict and counts, and one **Request**,
 **Review again** or **Try again** button when a new review can start; the conversation shows one card
-per kind ([design](../design/wireframes/SPEC.md#adversarial-review)). Viewing a review never invokes a
+per kind for each delivery ([design](../design/wireframes/SPEC.md#adversarial-review)). Viewing a review never invokes a
 reviewer. The reviewer is a separate invocation with the captured-input/read-only contract. It uses an
 eligible alternate configured engine when there is one and otherwise the task's own engine, the
 ordinary path. Engine/model, any fallback reason and account-allowance uncertainty are saved with each
@@ -1964,8 +1964,10 @@ alt task review cancel --review-id <id> --reason "The owner needs to stop"
 alt task review withdraw --review-id <id> --reason "Why this L2-requested review is unnecessary"
 # Record that a proposal or merge approval needs no review, and why (at most 120 characters):
 alt task review skip --subject proposal --reason "Small, reversible change."
-# Repeat a finished review; --previous names the review it replaces:
+# Repeat a finished review; --previous names this delivery's review it replaces:
 alt task review request --subject changes --previous <id> --focus "Review the later revision"
+# Review the proposal for the step after the PR that waits; that PR's merge gate leaves it out:
+alt task review request --subject proposal --next --focus "Challenge step 3's design"
 # Review new material while earlier reviews and their open findings stay in the merge gate:
 alt task review request --subject proposal --additional --focus "Challenge the security addendum"
 # Select the reviewer for one request, or re-select a request still waiting to run:
@@ -1973,10 +1975,21 @@ alt task review request --subject proposal --engine <engine> --model <model> --f
 alt task review request --previous <waiting-id> --model <model>
 ```
 
+Reviews follow deliveries. A delivery is the work one merge closes: the reviews current when `alt land`
+merges a PR belong to that PR, stay in history with its number, and leave the gate. The next request of
+either subject starts the next delivery's review without `--previous` or `--additional`, and `--previous`
+naming a merged delivery's review is refused. Replacement, waiting, open findings and the merge gate
+stay within one delivery, so each PR's merge considers only its own reviews; an operator's request
+belongs to the current delivery and gates its merge. While a PR waits to merge, `--next` requests the
+proposal review for the step after it, and `skip --next` records that step's skip: they stay out of the
+waiting PR's merge gate and become the current delivery's when that PR merges. `--next` needs a waiting
+PR and applies to proposals only, since changes review the branch itself; repeating a next-step review
+with `--previous` keeps it there. A task that ships one PR uses no flag.
+
 Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subject` defaults to
 `changes`. Commands fence mutations to the current owner attempt. Operator requests can only be
 skipped by the operator's **Skip review**, which asks no reason; L2's withdrawal of its own request
-names one. `skip` records the same withdrawn state for a kind with no review yet, so a proposal or merge
+names one. `skip` records the same withdrawn state for a kind with no review yet in its delivery, so a proposal or merge
 question shows "skipped by L2" with its reason (spec §3.8.3); a recorded review is never replaced by a
 skip, and merge requirements are unchanged. Open questions do not prevent either subject: a request can continue a
 question-blocked owner solely to prepare, run and assess review. Every open question, its revision, its card
@@ -2021,12 +2034,12 @@ merge while any current assessment has an open finding, and a new request cannot
 until a later `assess` by the current owner gives evidence-backed `fixed`/`dismissed` outcomes. That
 assessment then faces the ordinary freshness checks; withdrawal authority is unchanged.
 `--additional` requests another review of the subject that replaces none, for example of a proposal
-addendum. It needs every current review finished and assessed, cannot name `--previous`, and has its
+addendum. It needs every current review of its delivery finished and assessed, cannot name `--previous`, and has its
 own focus and requester. Earlier reviews keep their open findings, requester, focus and withdrawal
 authority, and still block merge however the additional review turns out. Repeating the
-additional review with `--previous` replaces only it. `--previous` names the subject's latest review;
-naming an earlier one is refused with the latest review's id, so the owner either names that one or
-requests an additional review. Repeating a request with the same identity or source returns its review.
+additional review with `--previous` replaces only it. `--previous` names the subject's latest review in
+its delivery; naming an earlier one is refused with the latest review's id, so the owner either names
+that one or requests an additional review. Repeating a request with the same identity or source returns its review.
 With no findings, use an empty array and an assessment reason. Commit fixes before
 assessing; an outcome explanation posted before or after the assessment leaves it current.
 For a held PR, reassess after reading the operator's merge approval, including any conditions.

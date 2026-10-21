@@ -233,6 +233,9 @@ test("each delivery keeps its own review cards, and a merged delivery's box star
   const latest = (subject: string) => [...history].reverse().find((row) => row.subject === subject) ?? null;
   await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`, (route) => route.fulfill({ json: {
     ...task, title: "Keep pagination stable", state: "running", question: null, questions: [], question_group: null, messages,
+    report_json: { landed: { prs: [{ number: 41, title: "Validate cursors", merged: true, merge_sha: "9ba1df6" }], main_runs: [], deploy: "not-applicable" }, blocked: "",
+      review: [{ pr: 41, summary: "Empty pages may lose the cursor", severity: "low", disposition: "fixed", reason: "Kept the cursor." },
+        { pr: 42, summary: "Expired cursors restart at page one", severity: "high", disposition: "fixed", reason: "Returns the agreed error." }] },
     review: { history, subjects: { proposal: { available: true, why: "", latest: latest("proposal"), open: 0 },
       changes: { available: latest("changes")?.state !== "requested", why: "", latest: latest("changes"), open: 0 } } },
   } }));
@@ -263,6 +266,10 @@ test("each delivery keeps its own review cards, and a merged delivery's box star
   await walk.state("03-next-delivery-requested", { visible: [card("code-two").getByText("Queued. L2 starts it after its current step."), card("code-one").getByText(/merged in PR #41/)],
     hidden: [card("code-two").getByText(/Review 2/)] });
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  // The report names each finding's PR.
+  await walk.open(`/projects/${project.name}/tasks/${task.slug}/report`);
+  const findingsList = page.getByRole("region", { name: "Review" });
+  await walk.state("04-report-findings-by-pr", { visible: [findingsList.getByText(/^PR #41 · Empty pages may lose the cursor/), findingsList.getByText(/^PR #42 · Expired cursors restart/)], hidden: [] });
 });
 
 test("review loading and uncertain receipt preserve listening and draft", async ({ page, request }, info) => {

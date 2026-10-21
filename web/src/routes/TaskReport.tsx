@@ -111,6 +111,7 @@ export default function TaskReport() {
           <ul>
             {review.map((finding, index) => (
               <li key={index}>
+                {typeof finding.pr === "number" ? `PR #${finding.pr} · ` : ""}
                 <InlineProse text={str(finding.summary) || str(finding.title) || line(finding)} />
                 {str(finding.severity) ? ` · ${str(finding.severity)}` : ""}
                 {str(finding.disposition) ? ` · ${str(finding.disposition)}` : ""}
