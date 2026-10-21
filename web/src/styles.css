@@ -2203,6 +2203,7 @@ a.irc-name { color: var(--accent-text); text-decoration: underline; text-underli
 .irc-sg .turn-tasks { margin-top: 4px; }
 .irc-foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--hairline); font-size: 12px; }
 .irc-foot > .link { color: var(--text-secondary); }
+.irc-open { display: inline-flex; align-items: center; min-height: 32px; font-size: 13px; color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
 .irc-details {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

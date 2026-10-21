@@ -35,9 +35,9 @@ describe("system line text (SPEC.md §3.4, §4.1)", () => {
     expect(lineText(turn({ trigger: "restart", inProgress: true }), null)).toBe("L3 is handling the restart");
     expect(lineText(turn({ trigger: "system-recovery", error: "engine timed out" }), null)).toBe("L3 could not handle a recovery");
     expect(handling("start")).toBe("the start");
-    expect(handling("improvement-check")).toBe("the improvement suggestions");
-    expect(handling("improvement-task")).toBe("a task for an improvement suggestion");
-    expect(kindLabel("improvement-task")).toBe("Task for an improvement suggestion");
+    expect(handling("improvement-check")).toBe("suggested tasks");
+    expect(handling("improvement-task")).toBe("a task for a suggestion");
+    expect(kindLabel("improvement-task")).toBe("Task for a suggestion");
     expect(handling("other")).toBe("a system event");
     expect(handling("owner-message", "Fix the timer")).toBe("an owner's message on Fix the timer");
   });

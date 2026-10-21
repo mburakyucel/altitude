@@ -30,6 +30,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   An agent's page shows the command and example scripts for each merged pull request, each new issue or a
   failing command. An agent that pauses itself after three runs that couldn't finish now waits in Needs you with
   Resume, without alerting your devices.
+- Agent runs can suggest tasks: a run that found something may propose up to three, L3 checks each against the
+  project first, and those it keeps wait under Suggestions in Needs you with Make a task and Dismiss, as the Weekly
+  improvement review's do. The run's page shows its suggestions under the report, with what L3 set aside and why.
+  An agent has at most three waiting at a time, and a task made from one says where it came from in Work ("from
+  Review each merge"). An accepted suggestion whose task was not made leaves Needs you a week after your press.
 
 ## v0.11.0 — 2026-10-20
 

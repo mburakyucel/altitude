@@ -211,7 +211,7 @@ EVENT_LINES = '<div class="evl"><p>10:02 · PR #810 merged</p><p>10:02 · PR #81
 
 
 def run_page(state="ended"):
-    meta = '<p class="muted" style="margin:0 0 16px;font-size:13.5px">On its weekday schedule · Sonnet{}</p>'
+    meta = '<p class="muted" style="margin:0 0 16px;font-size:13.5px">On its schedule · Sonnet{}</p>'
     if state == "events":
         return ('<p class="muted" style="margin:0 0 4px;font-size:13.5px">For “PR #810 merged” and 2 more · Sonnet · 7 min · 4.4M tokens</p>'
                 + EVENT_LINES + '<div class="card"><div class="runhead"><span class="d found"></span><b>Found something</b></div>'

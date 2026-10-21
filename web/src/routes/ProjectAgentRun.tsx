@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "react-router";
-import { sendProjectAgent, useOverview, useProjectAgentRun } from "../data/api";
-import type { ProjectAgentRunDetail, TaskView } from "../data/api";
+import { sendProjectAgent, useOverview, useProject, useProjectAgentRun, useSuggestionChanges, withSuggestions } from "../data/api";
+import type { ProjectAgentRunDetail, TaskRow, TaskView } from "../data/api";
 import { runCost, runTime } from "../data/projectAgents";
 import { clockText, dayText } from "../data/observed";
 import { AgentFrame, RunDot } from "../components/ProjectAgentParts";
+import { SuggestedTasks } from "../components/Improvement";
 import { InlineProse, Prose, ProseScope } from "../components/Prose";
 import { StatusMark } from "../components/StatusMark";
 import LiveSession from "./LiveSession";
@@ -12,7 +13,8 @@ import LiveSession from "./LiveSession";
 /*
  * One run (design/wireframes/project-agents/PROPOSAL.md, "One run"): what fired it, then its live session while it
  * waits or runs, else its outcome and report with the brief it ran and its session folded. A run has no message box,
- * review boxes, terminal or questions: its session is the task transcript component, read only.
+ * review boxes, terminal or questions: its session is the task transcript component, read only. A run that suggested
+ * tasks shows them under its report ("Suggestions").
  */
 
 function Session({ project, agent, run, active }: { project: string; agent: string; run: ProjectAgentRunDetail; active: boolean }) {
@@ -59,6 +61,14 @@ function Live({ project, agent, run, onRead }: { project: string; agent: string;
   </>;
 }
 
+/** The run's suggested tasks, with Dismiss and Undo on their way applied, and their tasks' cards from the project. */
+function Suggested({ project, run }: { project: string; run: NonNullable<ProjectAgentRunDetail["suggested"]> }) {
+  const view = useProject(project);
+  const changes = useSuggestionChanges();
+  const tasks = useMemo(() => new Map<string, TaskRow>([...(view.data?.tasks ?? []), ...(view.data?.archive ?? [])].map((row) => [row.slug, row])), [view.data]);
+  return <SuggestedTasks project={project} run={withSuggestions(run, project, changes)} tasks={tasks} />;
+}
+
 /** Ended: the outcome with its dot and the report, or the reason in its place; the brief and session folded. */
 function Ended({ project, agent, run }: { project: string; agent: string; run: ProjectAgentRunDetail }) {
   const [session, setSession] = useState(false);
@@ -67,6 +77,7 @@ function Ended({ project, agent, run }: { project: string; agent: string; run: P
       <p className="agent-report-head"><RunDot tone={run.tone} /><strong>{run.outcome}</strong></p>
       {run.report ? <Prose text={run.report} /> : run.line ? <p><InlineProse text={run.line} /></p> : null}
     </div>
+    {run.suggested ? <Suggested project={project} run={run.suggested} /> : null}
     <details className="agent-fold">
       <summary>Brief it ran</summary>
       <div className="agent-fold-body"><Prose text={run.brief} /></div>

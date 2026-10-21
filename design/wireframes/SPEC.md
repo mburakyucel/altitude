@@ -631,7 +631,8 @@ operator-stopped (confirmed Stop explains Continue; a stop request alone points 
 owner/daemon-parked without a question, review, fault or operator stop (a short reason, or "Work is paused; no reason is recorded.", idle dot);
 reported ("Waiting for the coordinator to check the task’s report.", running dot, or a review wait);
 done ("Done · PR #N merged", shown under Done this week); rejected ("Rejected", under Done this
-week).
+week). A task made from a suggested task ends its meta line with where it came from: "· from Review each merge",
+"· from Weekly improvement review".
 
 Open operator questions remain visible while running or queued, independently of execution.
 A fault keeps its red dot and cause even when a separate question also needs an answer. An
@@ -2581,6 +2582,11 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   own muted line (its time · its first line), the model once it starts and usage once it ends; waiting, what it
   waits for ("Waiting for a free task slot", "Waiting for Review each merge") with **Stop**; running, the live
   session read only with **Stop**; ended, the outcome and report with **Brief it ran** and **Session** folded. No composer.
+  A run that suggested tasks shows **Suggested tasks** under its report: "L3 is checking 2 suggestions" with a spinner
+  until L3 posts or its two hours pass; then each kept suggestion as on the [improvement
+  card](improvement-review/PROPOSAL.md#where-suggestions-appear), its number and title, explanation, **Make a task** and **Dismiss**,
+  without target, Seen in or count; then **Set aside · N**, folded, opening to each title with L3's reason, or
+  "Set aside · N · L3 did not finish checking" opening to the titles. It loads and fails with the page.
 - **The form** (`…/agents/new`, `…/:id/edit`): Name, What it does, Runs when, Tell me in chat, Model (§3.6.1)
   and Each run stops after. A new agent is saved not on. Runs when lists schedule rows (seven day toggles and a
   time) and the event row (a bolt, "When it’s sent an event" over "You send it from this computer; its page shows
@@ -2588,13 +2594,19 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   **On a schedule** and **When it’s sent an event** (items 44px tall on the phone; Escape or a press outside
   closes it and focus returns to the button); choosing the event adds its row and focuses its Remove. With the
   event row in the list the button adds a schedule at once. The hint "Events that arrive during a run go to its
-  next run together." follows the list while the event row is in it.
+  next run together." follows the list while the event row is in it. Under Tell me's choices one muted line reads
+  "Suggested tasks wait in Needs you whatever you choose."
 - **Needs you**: an agent that paused itself waits as a card after its project's questions: "Agent paused
   itself" in the danger tone with its age, the agent's name linking to its page with a chevron, "3 runs in a row
   couldn't finish. The last: <reason>", a bordered **Resume** and the link **Open the last run**. Resume spins
   until the agent reads as on and the card leaves; a refusal brings the button back with "Not resumed: <reason>"
   under it. Resume, a saved edit or Retire clears it. It counts as "1 paused agent" in the summary and the
   badge and never alerts a device.
+  Under **Suggestions**, a run whose kept suggestion waits shows as a card among the project's improvement cards,
+  newest first: the agent's name, bold, with the run's time; under it, muted, what fired the run; its kept
+  suggestions; and the underlined **Open the run**. It is never counted, never alerts a device and shows whatever Tell
+  me says. A suggestion waits while undecided, or accepted without its task for seven days after the press; deciding
+  it here or on the run page changes both.
 - **Chat**: one system line per ending as Tell me allows, led by the agent's name with **Open**; L3's offer card
   under its reply with **Create agent** or **Save change** and **Edit first**, created, refused and lapsed. A switch L3
   makes on your word adds one quiet line ("Paused Dependency check", "Resumed …", "Turned on …", "Retired …",

@@ -444,7 +444,7 @@ built-in turned on, the group is absent.
 ### One run
 
 `/projects/<name>/agents/<id>/runs/<n>`, **‹ Dependency check** back, the title "Run · Today 07:00".
-A line says what fired it ("On its weekday schedule", "Run now by you", "For “PR #812 merged”"), the model, and
+A line says what fired it ("On its schedule", "Run now by you", "For “PR #812 merged”"), the model, and
 minutes and tokens once it has ended. While running: "Running · 4 of 20 min" with **Stop**, then the
 live session as a task's (the same transcript component, read only). Ended: the outcome in semibold
 with its dot, then the full report as text (its one-line summary is what lists and chat show); under
@@ -847,7 +847,7 @@ decisions, not news, so they wait in Needs you.
 **The suggestion card** is the improvement card's layout without its improvement-only parts:
 
 - **Header:** the agent's name, bold, with the run's time on the right. Under it, muted, what fired the
-  run: "For “PR #810 merged” and 2 more", "On its weekday schedule" or "Run now by you". The finding
+  run: "For “PR #810 merged” and 2 more", "On its schedule" or "Run now by you". The finding
   is not repeated; the run page holds it.
 - **Each kept suggestion**, separated by a hairline: its number and title (15px semibold, wraps, never
   cut), then its explanation, then **Make a task** (bordered, accent text) and **Dismiss** (ghost). There
@@ -910,7 +910,7 @@ that text and work:
 Both turns' limits are instructions to L3, as its rule to treat GitHub issue text as data is today: L3 can
 still run its other verbs in them. What a misled L3 could do is what it can do on any turn, and nothing
 becomes work without your press or an operator decision. Enforcing a turn's commands in Altitude would
-cover every turn that reads strangers' text, issues included, so it is its own change.
+cover every turn that reads strangers' text, issues included, so it is its own change (#1108).
 
 A run gains no new ability: it still cannot open a task, message anyone or use `alt`. Strangers' text
 reaches a run only on public pages it chooses to read, as it has since step 1. Events carry only what

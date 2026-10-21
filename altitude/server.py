@@ -3970,7 +3970,8 @@ def project_view(name: str) -> dict:
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
             "design_viewer": design_viewer_url(name), "repository": project_repository(name),
             # Done this week, newest first (#296: by finish time, never by slug).
-            "archive": sorted(({k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True)
+            "archive": sorted(({**{k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")},
+                                "origin": suggestions.origin(name, t.get("improvement"))} for t in S.list_tasks(name, True)
                                if t["state"] in ("done", "rejected") and (t["updated"] or "") >= week),
                               key=lambda t: t["updated"], reverse=True),
             "decisions": T.decisions(name), "log": [event for event in S.read_project_log(name, 40)

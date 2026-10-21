@@ -198,6 +198,7 @@ function Form({ project, id, read, latest, start, offer, clock }: {
           <span>{option.label}</span>
         </label>)}
       </div>
+      <p className="text-meta text-muted">Suggested tasks wait in Needs you whatever you choose.</p>
     </fieldset>
     <div className="agent-form-pair">
       <div><span className="agent-label">Model</span><ChoiceButton label="Model and effort for this agent" value={draft.model} onChange={(model) => set({ model })} /></div>
