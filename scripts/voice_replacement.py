@@ -3,7 +3,7 @@
 
 Run it in a validation run, where it has a throwaway home of its own:
 
-    alt task validate -- python3 scripts/voice_replacement.py
+    alt task validate -- python3.12 scripts/voice_replacement.py
 
 It downloads this computer's pinned runtime and an earlier one from their public sources, checking every file
 against its SHA-256, then serves them from a loopback fixture that can fail or hold a download. The earlier runtime
@@ -15,8 +15,8 @@ open across it; a failed and a cancelled update; reuse of checked model files; d
 after its last reader exits; and each restart, a fresh process starting voice as the daemon does. Recordings are
 synthetic silence: this shows the runtime works, not microphone capture or word accuracy.
 
-Writes voice-replacement.json and voice-replacement.log to $VALIDATION_RESULTS, removes everything else it made,
-and exits non-zero when a check fails.
+Writes voice-replacement.json, voice-replacement.log and the speech worker's own logs to $VALIDATION_RESULTS,
+removes everything else it made, and exits non-zero when a check fails.
 """
 from __future__ import annotations
 
@@ -98,8 +98,10 @@ def in_use(pid: int) -> list[str]:
                 pass  # closed meanwhile
         text = "\n".join(names)
     else:
-        text = subprocess.run(["/usr/sbin/lsof", "-p", str(pid), "-Fn"], capture_output=True, text=True,
-                              timeout=30).stdout
+        listed = subprocess.run(["/usr/sbin/lsof", "-p", str(pid), "-Fn"], capture_output=True, text=True, timeout=30)
+        if listed.returncode or not listed.stdout:
+            raise AssertionError(f"lsof could not list the worker's files (exit {listed.returncode}): {listed.stderr}")
+        text = listed.stdout
     return sorted(set(re.findall(re.escape(speech.ROOT.name) + r"/(runtime-[0-9a-f]+)/", text)))
 
 
@@ -199,6 +201,7 @@ class Check:
         self.wheels = sorted(sha for name, _, _, sha in current if name.startswith("wheels/"))
         self.checks: list[str] = []
         self.log: list[str] = []
+        self.hosts: list[speech.Host] = []
         self.report: dict = {"passed": False, "runtime": self.key, "earlier": self.earlier.name,
                              "replacement": self.target.name, "checks": self.checks, "limits": LIMITS}
 
@@ -210,6 +213,8 @@ class Check:
             self.report["failure"] = f"{type(exc).__name__}: {exc}"
             raise
         finally:
+            for host in self.hosts:  # also after a failed check: no worker outlives the run
+                host.shutdown()
             self.fixture.release.set()
             self.fixture.shutdown()
             self.fixture.server_close()
@@ -226,7 +231,15 @@ class Check:
         self.say("PASS " + text)
 
     def host(self) -> speech.Host:
-        return speech.Host(self.log.append)
+        host = speech.Host(self.log.append)
+        self.hosts.append(host)
+        return host
+
+    def kept(self, view: dict, identity: str) -> None:
+        """Host voice is still selected with the same identity, so pages' replay stays valid."""
+        current = server.voice_view()
+        assert current["backend"] == "host" and current["selection"] == view["selection"], current
+        assert speech.installation_id() == identity
 
     def install_earlier(self) -> None:
         speech.manifest = lambda: (self.prior, "")
@@ -251,6 +264,7 @@ class Check:
         assert done.returncode == 0, done.stderr[-2000:]
         result = json.loads(done.stdout.splitlines()[-1])
         assert result["started"] is False, result
+        assert not any("automatic runtime update started" in line for line in result["log"]), result["log"]
         return result
 
     def replace(self, label: str, start, *, open_first: bool) -> None:
@@ -309,7 +323,7 @@ class Check:
         assert speech.runtime() == self.target and not self.earlier.exists(), speech.status()
         assert not (speech.ROOT / ".staging").exists()
         assert not samples, samples[:3]
-        assert speech.installation_id() == identity and server.voice_view()["selection"] == view["selection"]
+        self.kept(view, identity)
         assert host.audio(ident, DEVICE, 2, b"", True) == final
         requested = self.fixture.requests[mark:]
         assert sorted(requested) == self.wheels, (requested, self.wheels)
@@ -342,6 +356,7 @@ class Check:
         # 2. A failed automatic replacement, then the next restart.
         self.install_earlier()
         assert speech.runtime() == self.earlier
+        view, identity = server.voice_view(), speech.installation_id()
         mark = len(self.fixture.requests)
         self.fixture.fail = True
         host = self.host()
@@ -354,12 +369,15 @@ class Check:
         assert status["state"] == "ready" and status["update"]["state"] == "failed", status
         assert self.earlier.exists() and not self.target.exists() and not (speech.ROOT / ".staging").exists()
         assert record(host)["runtimes"] == [self.earlier.name]
+        self.kept(view, identity)
         host.shutdown()
-        self.check("a failed automatic replacement keeps the earlier runtime serving and removes its staging")
+        self.check("a failed automatic replacement keeps host voice selected and the earlier runtime serving, and "
+                   "removes its staging")
         mark = len(self.fixture.requests)
         result = self.restart("after-failure")
         assert len(self.fixture.requests) == mark and result["view"]["host"]["update"]["state"] == "failed", result
         assert result["recording"]["runtimes"] == [self.earlier.name], result
+        assert result["view"]["selection"] == view["selection"], result
         self.check("the next restart does not repeat the failed update; dictation stays on the earlier runtime")
 
         # 3. The page's Retry, cancelled while it downloads, then the next restart.
@@ -375,12 +393,14 @@ class Check:
         assert status["state"] == "ready" and status["update"]["state"] == "cancelled", status
         assert self.earlier.exists() and not self.target.exists() and not (speech.ROOT / ".staging").exists()
         assert record(host)["runtimes"] == [self.earlier.name]
+        self.kept(view, identity)
         host.shutdown()
-        self.check("cancelling Retry keeps the earlier runtime serving and removes its staging")
+        self.check("cancelling Retry keeps host voice selected and the earlier runtime serving, and removes its staging")
         mark = len(self.fixture.requests)
         result = self.restart("after-cancel")
         assert len(self.fixture.requests) == mark and result["view"]["host"]["update"]["state"] == "cancelled", result
         assert result["recording"]["runtimes"] == [self.earlier.name], result
+        assert result["view"]["selection"] == view["selection"], result
         self.check("the next restart does not repeat the cancelled update; dictation stays on the earlier runtime")
 
         # 4. The page's Retry with a recording already open.

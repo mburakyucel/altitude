@@ -11,11 +11,13 @@ from tests.support import AltitudeCase
 from altitude import platform, speech
 from scripts import voice_replacement as phase
 
-#: Holds a file of its runtime open, as the real worker maps its runtime's libraries, and hears silence.
+#: Holds a file of its runtime open, as the real worker maps its runtime's libraries, and hears silence. Its load
+#: takes half a second, as the real model's takes several, so the check sees a worker exit well before any deletion.
 FIXTURE_WORKER = r'''
-import json, sys
+import json, sys, time
 from pathlib import Path
 held = open(Path(sys.argv[1]) / "model" / "encoder.onnx", "rb")
+time.sleep(0.5)
 print(json.dumps({"ready": True}), flush=True)
 for line in sys.stdin:
     request = json.loads(line)

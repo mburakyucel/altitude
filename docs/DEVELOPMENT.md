@@ -1126,13 +1126,14 @@ installs it, and `speech.Host` drives the real worker, as the daemon does:
   Retry with a recording already open: host voice stays selected and ready, the recording keeps its
   final answer and replays it, the earlier runtime is deleted only after its worker exits, only the
   replacement's wheels are downloaded while the checked model files are reused, and no staging remains;
-- a failed automatic replacement and a cancelled Retry: the earlier runtime keeps serving and staging
-  is removed;
+- a failed automatic replacement and a cancelled Retry: host voice stays selected, the earlier runtime
+  keeps serving and staging is removed;
 - after each, a fresh process starting voice as the daemon does starts no update, downloads nothing
   and records on the runtime it should, read from the worker's mapped and open files.
 
-`voice-replacement.json` lists the checks, digests, transfer sizes, host and limits, and
-`voice-replacement.log` the run; nothing else stays. Recordings are synthetic silence, which shows
+`voice-replacement.json` lists the checks, digests, transfer sizes, host and limits,
+`voice-replacement.log` the run, and `speech-worker.log` and `speech-verification.log` the worker's own
+errors; nothing else stays. Recordings are synthetic silence, which shows
 the runtime works, not microphone capture or word accuracy, and no installed service restarts.
 `tests/test_voice_replacement.py` runs the same check against fixture runtimes in `make check` and
 holds the earlier runtime to the support set, so a pin change also updates it.
