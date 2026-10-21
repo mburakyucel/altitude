@@ -207,7 +207,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     engineLabel,
     selection,
     finished,
-    canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question) || task.transfer?.request?.status === "done")),
+    canMessage: state === "running" || state === "blocked" || state === "done" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question) || task.transfer?.request?.status === "done")),
     canStop: state === "running",
     canResume: (state === "blocked" || task["can_continue"] === true) && (!task.steering || task.steering.state === "idle") && task.question?.status !== "open",
     resumeHeld: Boolean(task.transfer?.resume_hold),
@@ -510,6 +510,9 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       else if (shownReviews.has(review.id) && !messages.slice(0, messages.indexOf(message)).some((entry) => entry.review_id === message.review_id)) {
         rows.push(<ReviewCard key={key} review={review} task={task} controls={reviewControls} target={reviewId === review.id} onRead={() => { following.current = false; }} />);
       }
+    } else if (!question && message.completion) {
+      // An earlier completion of a reopened task: its digest, where the task finished (SPEC.md §3.10).
+      rows.push(<Coordination key={key} text={message.digest ?? ""} label={message.text ? `Done · ${message.text}` : "Done"} at={message.at} enter={enter(`msg:${key}`)} onOpen={() => { following.current = false; }} />);
     } else if (!question && message.role === "system") {
       rows.push(<p key={key} className="text-meta text-muted" data-enter={enter(`msg:${key}`) || undefined}><InlineProse text={message.text} /></p>);
     } else if (!question) {
@@ -635,10 +638,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </div>
       {facts.canMessage ? <div className="convo-dock">
         <Composer active={active} conversation={conversation} value={draft} onChange={setDraft} onSubmit={(text, accepted, images, copy) => prepareSend()(text, accepted, images, copy)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
-        pill={<TaskModelButton transfer={transfer} />}
+        pill={task.state === "done" ? undefined : <TaskModelButton transfer={transfer} />}
         shows={shownCopy}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
-        ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
+        ariaLabel="Message the L2" placeholder={task.state === "done" ? "Message the L2 to reopen the task" : "Message the L2"} disabled={readOnly || denied}
         sendDisabled={transfer.stopping || (task.state === "queued" && task.transfer?.request?.status === "done") || ["stopping", "stop_unconfirmed"].includes(steering.state)}
         hint={task.state === "blocked" && steering.state === "idle" && !task.transfer?.resume_hold ? "Sending resumes the L2 with your message." : ""} />
         {steering.state === "stopped" ? <p className="text-meta text-muted">Send a correction to continue this session.</p>

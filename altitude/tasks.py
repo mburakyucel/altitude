@@ -35,7 +35,7 @@ TRANSITIONS = {
     "running": {"reported", "blocked", "rejected", "done"},
     "blocked": {"running", "queued", "rejected", "reported"},   # queued: resumed before any launch
     "reported": {"done", "running", "blocked", "rejected"},      # running: verifier says not done → resume
-    "done": set(),
+    "done": {"blocked"},                                         # the operator's message reopens it
     "rejected": set(),
 }
 
@@ -906,6 +906,33 @@ def continue_report(project: str, task: dict, *, actor: str, reason: str, check_
     return _move(project, task, "blocked", actor, reason=reason)
 
 
+def _reopen(project: str, task: dict, at: str) -> dict:
+    """Under the project lock, bring a done task back from the archive into the ordinary resume path. Its earlier
+    completion stays in the conversation as one system row carrying its digest; `reopened` tells the next resume to
+    restore the worktree if retention removed it and to tell the owner what it has."""
+    slug = task["slug"]
+    src, dst = S.archive_dir(project) / slug, S.tasks_dir(project) / slug
+    if src.is_dir():
+        src.rename(dst)
+    done = next((ev for ev in reversed(S.read_events(project, slug))
+                 if ev.get("kind") == "state" and ev.get("to") == "done"), {})
+    digest_path = dst / "digest.md"
+    digest = digest_path.read_text().strip() if digest_path.is_file() else ""
+    # The conversation sorts by time, so the row sits where the task finished: after its last row and before the
+    # operator's message, in the conversation's own time format.
+    finished = datetime.fromisoformat(done["at"]).isoformat(timespec="microseconds") if done.get("at") else at
+    last = max((row["at"] for row in _rows(dst / "conversation.jsonl", "task conversation")), default=finished)
+    _append_jsonl(dst / "conversation.jsonl", {
+        "id": uuid.uuid4().hex, "at": min(max(finished, last), at), "role": "system", "by": "altd", "completion": True,
+        "text": headline(digest) if digest else "", "digest": digest})
+    digest_path.unlink(missing_ok=True)
+    task.pop("cleaned", None)
+    task["reopened"] = {"at": at, "done_at": done.get("at")}
+    S.append_event(project, slug, "reopened", done_at=done.get("at"), digest=digest, by=OPERATOR_MESSAGE_ROLE)
+    return continue_report(project, task, actor=OPERATOR_MESSAGE_ROLE, reason="Reopened by your message",
+                           check_pr=False)
+
+
 def message(project: str, slug: str, role: str, text: str, *, by: str | None = None,
             expected_attempt: int | None = None, wake_blocked: bool = True,
             question_id: str | None = None, revision: int | None = None,
@@ -955,8 +982,11 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         allowed = ("running", "blocked", "reported")
         if role != "l2" and (task.get("questions") or not task.get("attempt")):
             allowed += ("queued",)  # prelaunch updates never release a planned wait
+        if role == OPERATOR_MESSAGE_ROLE:
+            allowed += ("done",)  # the operator's follow-up reopens a finished task
         if task.get("state") not in allowed:
-            raise TransitionError(f"{slug}: cannot message the L2 in {task.get('state')} state")
+            raise TransitionError(f"{slug}: cannot message the L2 in {task.get('state')} state"
+                                  + ("; only the operator's message reopens a done task" if task.get("state") == "done" else ""))
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
             raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
         if _ensure_question(project, task):
@@ -1012,6 +1042,9 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             row.update(images=refs, request_digest=request_digest)
         if role != "l2" and task.get("state") == "reported":
             task = continue_report(project, task, actor=role, reason="Follow-up message")
+        elif task.get("state") == "done":
+            task = _reopen(project, task, row["at"])
+            d = S.task_dir(project, slug)
         if row.get("images"):
             # One atomic record owns image-message admission, its receipt and pending delivery,
             # just as question acceptance does. A lost response cannot split conversation/inbox.
@@ -2044,6 +2077,7 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
             for row in claim.get("messages", []):
                 receipts[row["id"]] = {"at": S.now(), "agent_id": agent_id, "session_id": task.get("session_id")}
         task.pop("completion_requested", None)  # #302: a continued turn must supply its own final result.
+        task.pop("reopened", None)  # its notice reached this turn
         _clear_block(project, task)
         return _move(project, task, "running", actor, **ev)
 
