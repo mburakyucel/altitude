@@ -1104,7 +1104,7 @@ describe("Task on desktop", () => {
     stub({ ...running, messages: [
       { id: "c-1", at: ago(30), role: "system", by: "altd", completion: true, text: "Fixed the timer default.", digest: "Fixed the timer default.\n\nPR #202 merged." },
       { id: "c-2", at: ago(20), role: "system", by: "altd", completion: true, text: "", digest: "" },
-      { id: "m-9", at: ago(10), role: "burak", text: "Does the old default still apply anywhere?" },
+      { id: "m-9", at: ago(10), role: "operator", text: "Does the old default still apply anywhere?" },
     ] });
     const { user } = renderApp({ route });
 
