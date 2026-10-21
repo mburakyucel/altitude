@@ -3740,7 +3740,10 @@ The support set retains the preceding Linux onnxruntime 1.22 manifests for CPyth
 both load and warm up with the current worker and the exact pinned model. The supported-table test
 derives their identities from those prior wheel checksums and the unchanged model/decoder/numpy.
 There is no preceding macOS manifest for this transition, so no prior macOS runtime is admitted.
-Future pin changes review and test their preceding platform manifests explicitly. This is fixed-model compatibility, not general support for arbitrary
+Future pin changes review and test their preceding platform manifests explicitly. The
+[voice runtime replacement check](DEVELOPMENT.md#voice-runtime-replacement-check) runs a replacement
+from an earlier runtime with the real worker on either host; on a Mac only its own processes admit that
+runtime. This is fixed-model compatibility, not general support for arbitrary
 ONNX graphs: clients provide bounded PCM, never graph attributes or tensors. A release removes a
 digest if a relevant unsafe runtime is identified; an offline release cannot learn future revocations.
 
