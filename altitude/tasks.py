@@ -911,12 +911,13 @@ def _reopen(project: str, task: dict, at: str) -> dict:
     completion stays in the conversation as one system row carrying its digest; `reopened` tells the next resume to
     restore the worktree if retention removed it and to tell the owner what it has."""
     slug = task["slug"]
+    _require_daemon_fence(task, slug)  # every refusal comes before the first file changes
     src, dst = S.archive_dir(project) / slug, S.tasks_dir(project) / slug
     if src.is_dir():
         src.rename(dst)
     done = next((ev for ev in reversed(S.read_events(project, slug))
                  if ev.get("kind") == "state" and ev.get("to") == "done"), {})
-    digest_path = dst / "digest.md"
+    digest_path = dst / "digest.md"  # the latest completion's, until the task finishes again
     digest = digest_path.read_text().strip() if digest_path.is_file() else ""
     # The conversation sorts by time, so the row sits where the task finished: after its last row and before the
     # operator's message, in the conversation's own time format.
@@ -925,7 +926,6 @@ def _reopen(project: str, task: dict, at: str) -> dict:
     _append_jsonl(dst / "conversation.jsonl", {
         "id": uuid.uuid4().hex, "at": min(max(finished, last), at), "role": "system", "by": "altd", "completion": True,
         "text": headline(digest) if digest else "", "digest": digest})
-    digest_path.unlink(missing_ok=True)
     task.pop("cleaned", None)
     task["reopened"] = {"at": at, "done_at": done.get("at")}
     S.append_event(project, slug, "reopened", done_at=done.get("at"), digest=digest, by=OPERATOR_MESSAGE_ROLE)
@@ -2199,8 +2199,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
         if tracked:
             digest = "\n".join([digest.rstrip(), "", f"Open review findings tracked at {tracked['reference']}:",
                                 *(f"- {finding}" for finding in tracked["findings"])]).lstrip()
-        if digest:
-            S.atomic_write(d / "digest.md", digest.rstrip() + "\n")
+        _write_digest(d, digest)
         _archive(project, slug)
         S.regen_state_md(project)
         return task
@@ -2237,13 +2236,20 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
         digest = str(request.get("digest") or "")
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor, requested_by="l2")
-        if digest:
-            S.atomic_write(d / "digest.md", digest.rstrip() + "\n")
+        _write_digest(d, digest)
         _archive(project, slug)
         S.regen_state_md(project)
     fyi(project, slug, " ".join(filter(None, (f"{task['title']} completed without code changes.", digest.strip(),
                                               "Its findings stay in the task conversation."))), actor=actor)
     return task
+
+
+def _write_digest(folder: Path, digest: str) -> None:
+    """A completion's digest replaces a reopened task's earlier one, which its conversation keeps."""
+    if digest.strip():
+        S.atomic_write(folder / "digest.md", digest.rstrip() + "\n")
+    else:
+        (folder / "digest.md").unlink(missing_ok=True)
 
 
 def _remove_scratch(project: str, slug: str) -> None:

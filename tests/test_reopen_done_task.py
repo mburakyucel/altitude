@@ -42,6 +42,9 @@ class TestReopenDoneTask(AltitudeCase):
         result = land.land("Demo notes", cwd=self.worktree, merge=True, wait=0)
         self.assertTrue(result["merged"])
         deliveries.append((result["pr"], git("rev-parse", "main", cwd=self.remote).strip()))
+        return self.finish(deliveries)
+
+    def finish(self, deliveries):
         S.write_json(S.task_dir(self.project, self.slug) / "report.json", {
             "landed": {"prs": [{"number": number, "title": f"Delivery {number}", "merged": True, "merge_sha": sha}
                                for number, sha in deliveries],
@@ -96,7 +99,7 @@ class TestReopenDoneTask(AltitudeCase):
         completion = next(row for row in rows if row.get("completion"))
         self.assertIn("PR #101", completion["digest"])
         self.assertLess(rows.index(completion), [row["id"] for row in rows].index(message["id"]))
-        self.assertFalse((S.task_dir(self.project, self.slug) / "digest.md").exists())
+        self.assertIn("PR #101", (S.task_dir(self.project, self.slug) / "digest.md").read_text(), "the latest completion's until it finishes again")
         kinds = [event["kind"] for event in S.read_events(self.project, self.slug)]
         self.assertIn("reopened", kinds)
         self.assertIn("report-superseded", kinds)
@@ -142,8 +145,38 @@ class TestReopenDoneTask(AltitudeCase):
             T.message(self.project, rejected, T.OPERATOR_MESSAGE_ROLE, "Bring it back.")
 
     def test_a_planned_task_waits_again_while_its_dependency_is_reopened(self):
-        self.deliver("First notes\n", [])
-        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "One more question.")
+        deliveries = []
+        self.deliver("First notes\n", deliveries)
+        self.reopen()
         planned = T.new(self.project, "Publish the demo", "Fictional work", after=self.slug)
         self.assertIn("planned_wait", planned)
         self.assertIn("planned_wait", T.release_dependency(self.project, planned["slug"]))
+        self.finish(deliveries)
+        self.assertNotIn("planned_wait", T.release_dependency(self.project, planned["slug"]))
+
+    def test_an_answer_without_new_work_finishes_again_and_each_reopening_keeps_its_completion(self):
+        deliveries = []
+        self.deliver("First notes\n", deliveries)
+        for turn in range(2):
+            self.reopen(f"Question {turn + 1}?")
+            done = self.finish(deliveries)  # the owner answers in chat and saves a fresh report of the same PR
+            self.assertEqual(done["prs"], [101])
+        completions = [row for row in T.task_messages(self.project, self.slug) if row.get("completion")]
+        self.assertEqual(len(completions), 2)
+        self.assertTrue(all("PR #101" in row["digest"] for row in completions))
+        self.assertEqual(len(self.engine.calls), 3, "one launch and two resumes of the same provider conversation")
+
+    def test_a_refused_reopening_leaves_the_task_archived_done(self):
+        self.deliver("First notes\n", [])
+        with S.project_lock(self.project):
+            task = S.load_task(self.project, self.slug)
+            task["daemon_request"] = {"id": "r1", "operation": "stop", "status": "pending"}
+            S.save_task(self.project, task)
+        with self.assertRaisesRegex(T.TransitionError, "daemon request r1 owns this task"):
+            T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "One more question.")
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["state"], "done")
+        self.assertNotIn("reopened", task)
+        self.assertEqual(S.task_dir(self.project, self.slug).parent, S.archive_dir(self.project))
+        self.assertIn("PR #101", (S.task_dir(self.project, self.slug) / "digest.md").read_text())
+        self.assertFalse([row for row in T.task_messages(self.project, self.slug) if row.get("completion") or row["role"] == T.OPERATOR_MESSAGE_ROLE])

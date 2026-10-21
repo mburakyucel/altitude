@@ -106,7 +106,7 @@ class TestTaskConversation(ChatCase):
         self.assertEqual([m["role"] for m in T.pending(self.project, self.slug)], ["burak"],
                          "a reply is never queued for the worker itself")
 
-    def test_an_earlier_attempt_cannot_reply_and_a_finished_task_takes_no_message(self):
+    def test_an_earlier_attempt_cannot_reply_and_a_finished_task_takes_no_owner_or_coordinator_message(self):
         task = S.load_task(self.project, self.slug)
         task["attempt"] = 2
         S.save_task(self.project, task)
@@ -115,8 +115,10 @@ class TestTaskConversation(ChatCase):
 
         task["state"] = "done"
         S.save_task(self.project, task)
+        with self.assertRaisesRegex(T.TransitionError, "in done state; only the operator's message reopens"):
+            T.message(self.project, self.slug, "l3", "late steering", summary="Late steering")
         with self.assertRaisesRegex(T.TransitionError, "in done state"):
-            T.message(self.project, self.slug, "burak", "late steering")
+            T.message(self.project, self.slug, "l2", "late reply", by="l2")
         self.assertEqual(T.task_messages(self.project, self.slug), [])
         self.assertEqual(T.pending(self.project, self.slug), [])
 

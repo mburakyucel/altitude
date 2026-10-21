@@ -641,9 +641,11 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         pill={task.state === "done" ? undefined : <TaskModelButton transfer={transfer} />}
         shows={shownCopy}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
-        ariaLabel="Message the L2" placeholder={task.state === "done" ? "Message the L2 to reopen the task" : "Message the L2"} disabled={readOnly || denied}
+        ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={transfer.stopping || (task.state === "queued" && task.transfer?.request?.status === "done") || ["stopping", "stop_unconfirmed"].includes(steering.state)}
-        hint={task.state === "blocked" && steering.state === "idle" && !task.transfer?.resume_hold ? "Sending resumes the L2 with your message." : ""} />
+        hintOnPhone={task.state === "done"}
+        hint={task.state === "done" ? "Sending reopens the task with your message."
+          : task.state === "blocked" && steering.state === "idle" && !task.transfer?.resume_hold ? "Sending resumes the L2 with your message." : ""} />
         {steering.state === "stopped" ? <p className="text-meta text-muted">Send a correction to continue this session.</p>
           : null}
       </div> : null}

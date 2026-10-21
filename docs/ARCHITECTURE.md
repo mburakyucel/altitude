@@ -1023,10 +1023,16 @@ queued   -> running | rejected
 running  -> reported | blocked | rejected | done
 blocked  -> running | reported | rejected
 reported -> done | running | blocked | rejected
+done     -> blocked
 ```
 
 A no-code research or proposal task can go directly from `running` to `done/archive`; a git check
 refuses that shortcut when the task branch changed. Code work uses the verified report path.
+`done -> blocked` is the operator's follow-up message reopening the task in place: its folder leaves the
+archive, its earlier completion stays as one conversation row carrying its digest, and the ordinary
+resume continues the same attempt and session, restoring a worktree retention removed (from the kept
+branch, or from `origin/main` once the merged branch is gone). Only the operator's message reopens;
+rejected tasks stay closed ([reopen a done task](CLI.md#reopen-a-done-task)).
 Archival posts a task-linked FYI with the digest to the project conversation, the coordinator's
 handoff; findings stay in the task conversation. The project view's archive lists every done or
 rejected task finished in the last seven days, newest first by finish time, whatever their slugs.
@@ -1037,7 +1043,7 @@ Queued tasks with `planned_wait: {reason, after}` are **Planned**: `reason` is o
 changing the saved wait. `alt task new --wait` or `--after`
 creates the existing task record and written brief without a worker, worktree or WIP slot.
 Dispatch skips it until that dependency is archived done, or L3/the operator explicitly clears
-the wait with `alt task release <slug> --reason '…'`. An already archived-done dependency is satisfied at
+the wait with `alt task release <slug> --reason '…'`; a reopened dependency counts again once it finishes. An already archived-done dependency is satisfied at
 creation; a merged PR alone, rejection, failure or a missing dependency does not release it.
 Explicit release can override a named dependency early and records its reason. Messages remain
 in the task inbox for launch and do not release it or replace the original brief's source authority.
