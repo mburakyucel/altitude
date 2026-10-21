@@ -182,6 +182,7 @@ def retry(project: str, ref: str, request_id: str, *, now: datetime | None = Non
         if opening or accepted.get("turn") != seen:
             raise ValueError("L3 is still opening its task.")
         accepted["turn"] = l3.queue_locked(project, owner.task_turn(run, n), trigger="improvement-task")["id"]
+        accepted["retried"] = _at(now)
         record["presses"][request_id] = ["retry", ref]
         owner._save(project, record)
     return decision(project, run, n, now)
@@ -248,14 +249,16 @@ def require_accepted_locked(project: str, ref: str) -> None:
 
 def item(project: str, run: dict, s: dict, made_: dict[str, str], now: datetime) -> dict:
     """One shown suggestion as its card draws it: its state, its task, Undo, whether L3 is opening its task and whether
-    it waits in Needs you: undecided, or accepted without its task for LAPSE after the acceptance."""
+    it waits in Needs you: undecided, or accepted without its task for LAPSE after the last press, Make a task or Try
+    again."""
     ref, current = ref_of(run, s["n"]), state(run, s["n"], now)
     accepted = next((d for d in run["decisions"] if d["n"] == s["n"] and d["to"] == "accepted"), None)
     untasked = current == "accepted" and ref not in made_ and accepted
     return {"ref": ref, "n": s["n"], "title": s["title"], "explanation": s["explanation"], "state": current,
             "task": made_.get(ref), "undo": current == "dismissed" and not lapsed(run, now),
             "opening": bool(untasked and accepted.get("turn") and l3.pending(project, accepted["turn"])),
-            "waits": current == "undecided" or bool(untasked and now - _date(accepted["at"]) < LAPSE)}
+            "waits": current == "undecided" or bool(
+                untasked and now - _date(accepted.get("retried") or accepted["at"]) < LAPSE)}
 
 
 def origin(project: str, ref: str | None) -> str | None:

@@ -876,8 +876,8 @@ Deciding in one place updates the other. The form's Tell me row has one muted li
   line reads "Accepted · no task yet" with **Try again**, which queues the same single turn. While it
   queues, Try again becomes a spinner. If it is refused, it returns with "Not saved: <reason>". Each
   suggestion makes at most one task. An accepted suggestion without its task waits in Needs you for
-  seven days after your press, then stays only on the run page. L3's reply says why it made none, for
-  example that existing work already covers it.
+  seven days after your last press, Make a task or Try again, then stays only on the run page. L3's
+  reply says why it made none, for example that existing work already covers it.
 - **Dismiss** folds the suggestion at the press to its muted title and **Dismissed**, with a spinner where
   **Undo** goes until the save lands. Undo is offered until the suggestion lapses. Pressing it opens the
   suggestion again at once, with both buttons disabled beside a spinner until the save lands. A refused

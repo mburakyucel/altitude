@@ -2489,9 +2489,9 @@ shown before the post. Both kinds share the states (undecided, accepted, dismiss
 after the post), the presses on `POST /api/improve` with request ids whose receipts live in the record the ref
 names, typed answers (`alt improve resolve REF`), Try again and the one task per accepted suggestion (`alt task
 new --improvement REF`, recorded on the task as `improvement`). A suggestion waits in Needs you while undecided,
-or accepted without its task for seven days after the acceptance; after that it shows only where its run does. A
-task made from one carries `origin` in the project view's task rows, the agent's name or "Weekly improvement
-review", which ends its card's line ("· from Review each merge").
+or accepted without its task for seven days after the last press (Make a task or Try again); after that it shows
+only where its run does. A task made from one carries `origin` in the project view's task rows, the agent's name or
+"Weekly improvement review", which ends its card's line ("· from Review each merge").
 
 A run of an agent that found something may end its answer with up to three `Suggest:` blocks, each a title line
 and the explanation under it (`project_agents.report`). Altitude takes them out of the report, makes them plain

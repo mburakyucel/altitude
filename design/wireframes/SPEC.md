@@ -2605,8 +2605,8 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   Under **Suggestions**, a run whose kept suggestion waits shows as a card among the project's improvement cards,
   newest first: the agent's name, bold, with the run's time; under it, muted, what fired the run; its kept
   suggestions; and the underlined **Open the run**. It is never counted, never alerts a device and shows whatever Tell
-  me says. A suggestion waits while undecided, or accepted without its task for seven days after the press; deciding
-  it here or on the run page changes both.
+  me says. A suggestion waits while undecided, or accepted without its task for seven days after the last press,
+  Make a task or Try again; deciding it here or on the run page changes both.
 - **Chat**: one system line per ending as Tell me allows, led by the agent's name with **Open**; L3's offer card
   under its reply with **Create agent** or **Save change** and **Edit first**, created, refused and lapsed. A switch L3
   makes on your word adds one quiet line ("Paused Dependency check", "Resumed …", "Turned on …", "Retired …",

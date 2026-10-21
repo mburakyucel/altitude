@@ -434,12 +434,18 @@ class TestCard(RunCase):
         with self.assertRaisesRegex(ValueError, "already has its task"):
             suggestions.retry(self.project, ref, "e" * 32, now=NOW)
 
-    def test_an_accepted_suggestion_without_its_task_leaves_needs_you_a_week_after_the_press(self):
+    def test_an_accepted_suggestion_without_its_task_leaves_needs_you_a_week_after_the_last_press(self):
         run = self.posted()
         suggestions.decide(self.project, f"{run['id']}/1", "accept", "a" * 32, now=NOW)
         self.assertEqual(len(improve.waiting(self.project, now=NOW + timedelta(days=6))), 1)
         self.assertEqual(improve.waiting(self.project, now=NOW + timedelta(days=7)), [])
         self.assertEqual(improve.view(self.project, now=NOW + timedelta(days=7))[0]["suggestions"][0]["state"], "accepted")
+        # Try again is a press too: the card waits another week from it.
+        [turn] = self.tasks()
+        l3.unqueue_locked(self.project, turn["id"])
+        suggestions.retry(self.project, f"{run['id']}/1", "b" * 32, now=NOW + timedelta(days=8))
+        self.assertEqual(len(improve.waiting(self.project, now=NOW + timedelta(days=14))), 1)
+        self.assertEqual(improve.waiting(self.project, now=NOW + timedelta(days=15)), [])
 
     def test_two_try_again_presses_at_once_queue_one_turn(self):
         run = self.posted()
