@@ -175,9 +175,13 @@ export function ReviewFeedback({ controls }: { controls: ReviewControls }) {
 const iterations = (task: TaskView, review: Review) =>
   task.review?.history.filter((entry) => entry.subject === review.subject && deliveryOf(entry) === deliveryOf(review)) ?? [];
 
-/** Open findings an earlier review of the kind still holds in the current delivery's merge gate, e.g. under an additional review. */
-const earlierOpen = (task: TaskView, review: Review) => deliveryOf(review) !== "current" ? 0
-  : (task.review?.subjects[review.subject]?.open ?? 0) - (review.state === "withdrawn" ? 0 : review.unresolved.length);
+/** Open findings an earlier review of the kind still holds in its delivery's merge gate, e.g. under an additional review;
+ * `open` counts the delivery of the kind's latest unmerged review. */
+const earlierOpen = (task: TaskView, review: Review) => {
+  const entry = task.review?.subjects[review.subject];
+  return !entry?.latest || deliveryOf(entry.latest) !== deliveryOf(review) ? 0
+    : entry.open - (review.state === "withdrawn" ? 0 : review.unresolved.length);
+};
 const earlierNote = (open: number) => open > 0 ? <span className="review-open">{open} open in an earlier review, blocks merge</span> : null;
 const join = (...parts: React.ReactNode[]) => parts.filter(Boolean).map((part, index) => <span key={index}>{index ? " · " : ""}{part}</span>);
 
@@ -189,16 +193,14 @@ export function ReviewBoxes({ task, controls, view }: { task: TaskView; controls
     const entry = subjects[subject];
     if (!entry) return null;
     const latest = entry.latest;
-    // After its delivery merged, the button starts the next delivery's review rather than repeating it.
-    const repeat = latest && !latest.merged_head ? latest : undefined;
-    const label = !repeat || repeat.state === "withdrawn" ? "Request" : repeat.state === "completed" ? "Review again" : "Try again";
+    const label = !latest || latest.state === "withdrawn" ? "Request" : latest.state === "completed" ? "Review again" : "Try again";
     return <section key={subject} className="review-box" aria-label={NAME[subject]}>
       <Summary review={latest} iteration={latest ? iterations(task, latest).length : 0} name={NAME[subject]}
         empty={latest ? undefined : entry.available ? "Not reviewed yet" : entry.why}
         held={latest ? earlierOpen(task, latest) > 0 : false}
         extra={latest ? join(earlierNote(earlierOpen(task, latest)), <button type="button" className="link" onClick={() => view(latest.id)}>View</button>) : null}
         footer={entry.available ? <button type="button" className="btn review-box-action" disabled={controls.disabled}
-          onClick={() => controls.run("request", repeat, subject)}>{label}</button> : null} />
+          onClick={() => controls.run("request", latest ?? undefined, subject)}>{label}</button> : null} />
     </section>;
   })}<ReviewFeedback controls={controls} /></>;
 }

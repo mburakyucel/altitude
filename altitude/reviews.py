@@ -68,7 +68,7 @@ def _eligible(project, task, subject="changes"):
     if not task.get("worktree") or not task.get("l2_engine"):
         return "Review is available once L2 has started."
     if subject == "changes" and task.get("review_merged_head") and task["review_merged_head"] == _git(_worktree(project, task), "rev-parse", "HEAD"):
-        return "This delivery already merged. Prepare the next delivery's checkpoint before requesting review."
+        return "This PR already merged. Its next step can be reviewed once it has new commits."
     return None
 
 
@@ -246,6 +246,14 @@ def _target(task, subject, following):
     return "next"
 
 
+def _choose_step(task, subject, actor, chosen, verb):
+    """While a PR waits, L2's new proposal review or skip names its step: the waiting PR's proposal is already settled
+    by its code, so silence would put the next step's review into that PR's merge gate and under its number."""
+    if subject == "proposal" and actor == "l2" and not chosen and (number := _waiting_pr(task)):
+        raise T.TransitionError(f"PR #{number} waits to merge. Add --next to {verb} the proposal of the step after it"
+                                + (f", or --additional to add a review to PR #{number}'s own." if verb == "review" else "."))
+
+
 def _unresolved(review):
     """An assessment can honestly record open findings; only fixed/dismissed ones clear the review."""
     return [d["finding_id"] for d in review.get("dispositions", []) if d["disposition"] == "open"]
@@ -334,13 +342,14 @@ def view(project, slug):
         row["can_again"] = row["can_again"] and not (_open_findings(task, subject, delivery) or _eligible(project, task, subject)
                                                      or common or _request_wait(task, subject, row["id"], delivery))
     for subject in ("proposal", "changes"):
-        latest = next((r for r in reversed(history) if r.get("subject", "changes") == subject), None)
+        # Each box shows the kind's latest unmerged review, as the question line does; once a merge closed it, an open
+        # task's box starts the next step and a finished task's keeps its last delivery's.
+        kind = [r for r in reversed(history) if r.get("subject", "changes") == subject]
+        latest = next((r for r in kind if not r.get("merged_head")), None) or (None if _open(task) else next(iter(kind), None))
         why = _eligible(project, task, subject) or common or _request_wait(task, subject)
-        # A kind with a review keeps showing it; an unreviewed kind shows only while a request could start. After its
-        # delivery merged, the next request starts the current delivery's review.
         if latest or _open(task):
-            subjects[subject] = {"available": latest["can_again"] if latest and not latest.get("merged_head") else not why,
-                                 "why": why or "", "latest": latest, "open": _open_findings(task, subject)}
+            subjects[subject] = {"available": latest["can_again"] if latest else not why, "why": why or "", "latest": latest,
+                                 "open": _open_findings(task, subject, _delivery(latest) if latest else "current")}
     return {"subjects": subjects, "history": history}
 
 
@@ -408,6 +417,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             # A replacement leaves the gate, so its silence cannot stand in for resolving known findings.
             raise T.TransitionError("Fix or dismiss the review's open findings with evidence before replacing it, "
                                     "or request an additional review that leaves them in the merge gate.")
+        _choose_step(task, subject, actor, following or bool(prior or additional), "review")
         if why := _eligible(project, task, subject):
             raise T.TransitionError(why)
         delivery = _target(task, subject, following)
@@ -839,6 +849,7 @@ def skip(project, slug, *, actor, subject, reason, expected_attempt=None, follow
         _owner(task, actor, expected_attempt, required=True)
         if not _open(task):
             raise T.TransitionError("Finished review history is read-only.")
+        _choose_step(task, subject, actor, following, "skip")
         delivery = _target(task, subject, following)
         if any(r.get("subject", "changes") == subject and r["state"] != "withdrawn" and _delivery(r) == delivery
                for r in task.get("reviews", [])):

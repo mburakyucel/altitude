@@ -852,12 +852,18 @@ class TestReviews(AltitudeCase):
         self.merge(41)
         with self.assertRaisesRegex(T.TransitionError, "already merged"):
             self.request(actor=T.OPERATOR_MESSAGE_ROLE)
+        # The box starts the next step: it says why no review can start until that step has commits, then offers one.
+        box = reviews.view(self.project, self.slug)["subjects"]["changes"]
+        self.assertEqual((box["latest"], box["available"], box["open"]), (None, False, 0))
+        self.assertIn("already merged", box["why"])
         self.commit("value.py", "VALUE = 4\n")
         reviews.require_merge(self.project, self.slug, self.pair())
         box = reviews.view(self.project, self.slug)["subjects"]["changes"]
-        self.assertEqual((box["latest"]["id"], box["latest"]["merged_pr"], box["available"]), (completed["id"], 41, True))
-        self.assertFalse(box["latest"]["can_again"])
-        self.assertFalse(box["latest"]["can_withdraw"])
+        self.assertEqual((box["latest"], box["available"]), (None, True))
+        merged = next(r for r in reviews.view(self.project, self.slug)["history"] if r["id"] == completed["id"])
+        self.assertEqual(merged["merged_pr"], 41)
+        self.assertFalse(merged["can_again"])
+        self.assertFalse(merged["can_withdraw"])
         # A merged delivery's review is never replaced: the next delivery's request starts its own.
         with self.assertRaisesRegex(T.TransitionError, "belongs to a merged delivery"):
             self.request(actor=T.OPERATOR_MESSAGE_ROLE, previous=completed["id"])
@@ -907,10 +913,17 @@ class TestReviews(AltitudeCase):
     def test_the_step_after_a_waiting_pr_reviews_its_proposal_outside_that_merge_gate(self):
         with self.assertRaisesRegex(T.TransitionError, "No PR waits to merge"):
             self.request(subject="proposal", following=True)
-        self.step("Step 1: add the value", 2)
+        _, first, _ = self.step("Step 1: add the value", 2)
         self.deliver(41)
         with self.assertRaisesRegex(T.TransitionError, "changes review the branch itself"):
             self.request(following=True)
+        # While PR #41 waits, L2 names which step a new proposal review or skip belongs to; the operator's request is
+        # the waiting PR's own, and the implementation review still judges the branch.
+        with self.assertRaisesRegex(T.TransitionError, r"PR #41 waits to merge. Add --next .* or --additional"):
+            self.request(subject="proposal")
+        with self.assertRaisesRegex(T.TransitionError, r"PR #41 waits to merge. Add --next to skip"):
+            reviews.skip(self.project, self.slug, actor="l2", subject="proposal", reason="Copy only.", expected_attempt=1)
+        self.assertEqual(self.request()["id"], self.request()["id"])
         proposal = T.message(self.project, self.slug, "l2", "Step 2: double the value")
         following = self.request(subject="proposal", following=True, request_id="step-two")
         self.assertTrue(following["next"])
@@ -924,12 +937,14 @@ class TestReviews(AltitudeCase):
         self.assertEqual(reviews.status(self.project, task, "changes")["state"], "completed")
         following = self.run_review(following, proposal_id=proposal["id"])
         with self.assertRaisesRegex(T.TransitionError, "belongs to the current delivery"):
-            self.request(previous=self.request(subject="proposal")["id"], following=True)
+            self.request(subject="proposal", previous=first["id"], following=True)
         # Its open finding gates its own step, not PR #41.
         reviews.assess(self.project, self.slug, following["id"], actor="l2", expected_attempt=1,
                        dispositions=[{"finding_id": "f1", "disposition": "open", "reason": "Step 2 decides the fallback."}],
                        reason="The fallback is step 2's design choice.")
         self.assertEqual(reviews.status(self.project, S.load_task(self.project, self.slug), "proposal")["open"], 1)
+        box = reviews.view(self.project, self.slug)["subjects"]["proposal"]
+        self.assertEqual((box["latest"]["id"], box["open"]), ("step-two", 1))
         reviews.require_merge(self.project, self.slug, self.pair())
         self.merge(41)
         # The merge makes it the current delivery's review, where its open finding gates step 2's PR.

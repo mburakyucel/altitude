@@ -17,7 +17,8 @@ const empty = TaskViewSchema.parse({ slug: "index", title: "Keep pagination stab
   review: { subjects: { proposal: { available: true, why: "", latest: null }, changes: { available: true, why: "", latest: null } }, history: [] } });
 function withReviews(...reviews: Review[]) {
   const subjects = { ...empty.review!.subjects };
-  for (const review of reviews) subjects[review.subject] = { available: review.can_again, why: "", latest: review,
+  // Like the server, a box shows the kind's latest unmerged review.
+  for (const review of reviews.filter((entry) => !entry.merged_head)) subjects[review.subject] = { available: review.can_again, why: "", latest: review,
     open: reviews.filter((entry) => entry.subject === review.subject && entry.state !== "withdrawn").reduce((sum, entry) => sum + entry.unresolved.length, 0) };
   return { ...empty, review: { subjects, history: reviews },
     messages: [...empty.messages!, ...reviews.map((review) => ({ id: `anchor-${review.id}`, role: "system" as const, text: "Review requested", review_id: review.id }))] };
@@ -202,21 +203,19 @@ describe("Adversarial review", () => {
     expect(card("second").getByText(/The change misses the landing gate/)).toBeVisible();
   });
 
-  it("each delivery keeps its own card, iterations and open findings, and a merged one starts the next delivery's review", async () => {
+  it("each delivery keeps its own card, iterations and open findings, and after a merge the box starts the next delivery", async () => {
     const merged = { merged_head: "merged1", merged_pr: 41, can_withdraw: false, can_again: false };
     const stepOne = ReviewSchema.parse({ ...completed, id: "step-one", ...merged, result: { ...completed.result!, text: "Step one keeps the landing gate." } });
     const stepOneAgain = ReviewSchema.parse({ ...completed, id: "step-one-again", previous: "step-one", ...merged });
-    const delivered = withReviews(stepOne, stepOneAgain);
-    // Altitude offers a request once the merged delivery's review can no longer repeat.
-    const app = setup({ ...delivered, review: { ...delivered.review, subjects: { ...delivered.review.subjects,
-      changes: { ...delivered.review.subjects.changes!, available: true } } } });
+    const app = setup(withReviews(stepOne, stepOneAgain));
     await screen.findByText("Pagination is sound once expired cursors are handled.");
     expect(document.getElementById("review-step-one")).toBeNull();
     expect(card("step-one-again").getByText("Review 2", { exact: false })).toBeVisible();
     expect(card("step-one-again").getByText(/merged in PR #41/)).toBeVisible();
-    // After the merge, the box offers the next delivery's first review, naming no earlier one.
+    // After the merge, the box starts the next delivery: its first review names no earlier one.
     const box = within(within(await openDetails(app.user)).getByRole("region", { name: "Implementation review" }));
-    expect(box.getByText(/merged in PR #41/)).toBeVisible();
+    expect(box.getByText("Not reviewed yet")).toBeVisible();
+    expect(box.queryByText(/merged in PR/)).toBeNull();
     await app.user.click(box.getByRole("button", { name: "Request" }));
     expect(app.posts()).toEqual([expect.not.objectContaining({ review_id: expect.anything() })]);
     await app.settled();

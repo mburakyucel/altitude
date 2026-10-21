@@ -990,7 +990,8 @@ export const ReviewSchema = z.object({
 export type Review = z.infer<typeof ReviewSchema>;
 /** One delivery's reviews share this key: its merged head, "next" or "current". */
 export const deliveryOf = (review: Review) => review.merged_head ?? (review.next ? "next" : "current");
-/** `open` counts the open findings of every review of the kind in the current delivery's merge gate, earlier ones included. */
+/** `latest` is the kind's latest unmerged review (a finished task's last one otherwise); `open` counts the open findings of
+ * every review of the kind in its delivery's merge gate, earlier ones included. */
 const ReviewSubjectSchema = z.object({ available: z.boolean(), why: z.string(), latest: ReviewSchema.nullable(), open: z.number().default(0) });
 /** A kind appears while a request could start or once it has a review; finished tasks keep only what was reviewed. */
 export const TaskReviewSchema = z.object({
@@ -2236,7 +2237,7 @@ function skipsTask(data: TaskView, project: string, skips: ReviewSkip[]): TaskVi
   const review = (entry: Review) => { const skip = mine.find((item) => item.id === entry.id); return skip ? skippedReview(entry, skip) : entry; };
   const subjects = Object.fromEntries(Object.entries(data.review.subjects).map(([subject, entry]) => [subject, entry && {
     ...entry, latest: entry.latest && review(entry.latest),
-    open: Math.max(0, entry.open - mine.filter((skip) => skip.subject === subject && counted("current")(skip)).reduce((sum, skip) => sum + skip.unresolved, 0)),
+    open: Math.max(0, entry.open - mine.filter((skip) => skip.subject === subject && counted(within(entry.latest?.id))(skip)).reduce((sum, skip) => sum + skip.unresolved, 0)),
   }]));
   return {
     ...data,

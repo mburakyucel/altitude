@@ -1912,7 +1912,7 @@ proposal review, which is also its design review: the reviewer judges the design
 repository's design rules and interaction states, names what is unclear or not obviously clickable on
 a phone, and offers up to two alternative directions as findings with severity `alternative`. The
 owner assesses each like any finding and shows the alternatives to the operator, who chooses. Task details shows a **Proposal review** and an
-**Implementation review** box with the latest review's verdict and counts, and one **Request**,
+**Implementation review** box with the latest unmerged review's verdict and counts, and one **Request**,
 **Review again** or **Try again** button when a new review can start; the conversation shows one card
 per kind for each delivery ([design](../design/wireframes/SPEC.md#adversarial-review)). Viewing a review never invokes a
 reviewer. The reviewer is a separate invocation with the captured-input/read-only contract. It uses an
@@ -1982,9 +1982,14 @@ naming a merged delivery's review is refused. Replacement, waiting, open finding
 stay within one delivery, so each PR's merge considers only its own reviews; an operator's request
 belongs to the current delivery and gates its merge. While a PR waits to merge, `--next` requests the
 proposal review for the step after it, and `skip --next` records that step's skip: they stay out of the
-waiting PR's merge gate and become the current delivery's when that PR merges. `--next` needs a waiting
-PR and applies to proposals only, since changes review the branch itself; repeating a next-step review
-with `--previous` keeps it there. A task that ships one PR uses no flag.
+waiting PR's merge gate and become the current delivery's when that PR merges. L2's proposal request or
+skip names its step while a PR waits: one with neither `--next` nor, for a request, `--previous` or
+`--additional` is refused, since it would otherwise put the next step's review into the waiting PR's gate
+and under its number. `--next` needs a waiting PR and applies to proposals only, since changes review the
+branch itself; repeating a next-step review with `--previous` keeps it there. Only a merge through
+`alt land` closes a delivery: a step abandoned unmerged withdraws or replaces its reviews like any
+current ones. Task details and the question line read each kind's latest unmerged review, so after a
+merge they start the next step. A task that ships one PR uses no flag.
 
 Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subject` defaults to
 `changes`. Commands fence mutations to the current owner attempt. Operator requests can only be
