@@ -17,7 +17,8 @@ const empty = TaskViewSchema.parse({ slug: "index", title: "Keep pagination stab
   review: { subjects: { proposal: { available: true, why: "", latest: null }, changes: { available: true, why: "", latest: null } }, history: [] } });
 function withReviews(...reviews: Review[]) {
   const subjects = { ...empty.review!.subjects };
-  for (const review of reviews) subjects[review.subject] = { available: review.can_again, why: "", latest: review,
+  // Like the server, a box shows the kind's latest unmerged review.
+  for (const review of reviews.filter((entry) => !entry.merged_head)) subjects[review.subject] = { available: review.can_again, why: "", latest: review,
     open: reviews.filter((entry) => entry.subject === review.subject && entry.state !== "withdrawn").reduce((sum, entry) => sum + entry.unresolved.length, 0) };
   return { ...empty, review: { subjects, history: reviews },
     messages: [...empty.messages!, ...reviews.map((review) => ({ id: `anchor-${review.id}`, role: "system" as const, text: "Review requested", review_id: review.id }))] };
@@ -200,6 +201,34 @@ describe("Adversarial review", () => {
     await user.click(card("second").getByRole("button", { name: "Show implementation review details" }));
     expect(card("second").getByText("Earlier reviews")).toBeVisible();
     expect(card("second").getByText(/The change misses the landing gate/)).toBeVisible();
+  });
+
+  it("each delivery keeps its own card, iterations and open findings, and after a merge the box starts the next delivery", async () => {
+    const merged = { merged_head: "merged1", merged_pr: 41, can_withdraw: false, can_again: false };
+    const stepOne = ReviewSchema.parse({ ...completed, id: "step-one", ...merged, result: { ...completed.result!, text: "Step one keeps the landing gate." } });
+    const stepOneAgain = ReviewSchema.parse({ ...completed, id: "step-one-again", previous: "step-one", ...merged });
+    const app = setup(withReviews(stepOne, stepOneAgain));
+    await screen.findByText("Pagination is sound once expired cursors are handled.");
+    expect(document.getElementById("review-step-one")).toBeNull();
+    expect(card("step-one-again").getByText("Review 2", { exact: false })).toBeVisible();
+    expect(card("step-one-again").getByText(/merged in PR #41/)).toBeVisible();
+    // After the merge, the box starts the next delivery: its first review names no earlier one.
+    const box = within(within(await openDetails(app.user)).getByRole("region", { name: "Implementation review" }));
+    expect(box.getByText("Not reviewed yet")).toBeVisible();
+    expect(box.queryByText(/merged in PR/)).toBeNull();
+    await app.user.click(box.getByRole("button", { name: "Request" }));
+    expect(app.posts()).toEqual([expect.not.objectContaining({ review_id: expect.anything() })]);
+    await app.settled();
+    // The next delivery's review gets its own card; step one's stays where it was, with its earlier iteration.
+    const stepTwo = ReviewSchema.parse({ ...completed, id: "step-two", result: { ...completed.result!, text: "Step two doubles safely." }, unresolved: ["one"], can_again: false,
+      dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs a fixture." }, completed.dispositions[1]] });
+    await app.update(withReviews(stepOne, stepOneAgain, stepTwo));
+    await app.user.keyboard("{Escape}");
+    expect(await card("step-two").findByText("1 open, blocks merge")).toBeVisible();
+    expect(card("step-two").queryByText(/Review 2|merged in PR/)).toBeNull();
+    expect(card("step-one-again").queryByText(/open in an earlier review/)).toBeNull();
+    await app.user.click(card("step-two").getByRole("button", { name: "Show implementation review details" }));
+    expect(card("step-two").queryByText("Earlier reviews")).toBeNull();
   });
 
   it("an earlier review an additional one left in the merge gate stays visible, inspectable and skippable", async () => {

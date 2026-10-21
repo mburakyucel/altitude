@@ -68,7 +68,7 @@ def _eligible(project, task, subject="changes"):
     if not task.get("worktree") or not task.get("l2_engine"):
         return "Review is available once L2 has started."
     if subject == "changes" and task.get("review_merged_head") and task["review_merged_head"] == _git(_worktree(project, task), "rev-parse", "HEAD"):
-        return "This delivery already merged. Prepare the next delivery's checkpoint before requesting review."
+        return "This PR already merged. Its next step can be reviewed once it has new commits."
     return None
 
 
@@ -209,8 +209,47 @@ def _changed_evidence(left, right):
 
 
 def _current_reviews(task):
+    """The unmerged reviews nothing replaced: the current delivery's and the next step's."""
     replaced = {r.get("previous") for r in task.get("reviews", [])}
     return [r for r in task.get("reviews", []) if r["id"] not in replaced and not r.get("merged_head")]
+
+
+def _delivery(review):
+    """A review belongs to one delivery: the PR whose merge consumed it, the step after the PR that waits (`next`),
+    or the task's current delivery. Replacement, waiting, open findings and the merge gate stay within it."""
+    return review.get("merged_head") or ("next" if review.get("next") else "current")
+
+
+def _gate(task, delivery="current"):
+    """The current reviews of one unmerged delivery; the current one's gate the next merge."""
+    return [r for r in _current_reviews(task) if _delivery(r) == delivery]
+
+
+def _latest(task, subject, delivery):
+    return next((r for r in reversed(task.get("reviews", []))
+                 if r.get("subject", "changes") == subject and _delivery(r) == delivery), None)
+
+
+def _waiting_pr(task):
+    delivered = task.get("delivery") or {}
+    return delivered.get("number") if delivered.get("head") and delivered["head"] != task.get("review_merged_head") else None
+
+
+def _target(task, subject, following):
+    """`--next` reviews the proposal for the step after the PR that waits, so that PR's merge gate leaves it out."""
+    if not following:
+        return "current"
+    if subject != "proposal":
+        raise T.TransitionError("--next reviews the proposal for the step after the PR that waits; changes review the branch itself.")
+    if not _waiting_pr(task):
+        raise T.TransitionError("No PR waits to merge, so this proposal belongs to the current delivery. Request it without --next.")
+    return "next"
+
+
+def _gate_notice(task, subject, following, remedy):
+    """A proposal review or skip without --next while a PR waits is that PR's; saying so lets a forgotten flag show."""
+    number = subject == "proposal" and not following and _waiting_pr(task)
+    return {"notice": f"This belongs to PR #{number}, which waits to merge. For the step after it, {remedy}."} if number else {}
 
 
 def _unresolved(review):
@@ -218,8 +257,8 @@ def _unresolved(review):
     return [d["finding_id"] for d in review.get("dispositions", []) if d["disposition"] == "open"]
 
 
-def _request_wait(task, subject, previous=None):
-    for row in _current_reviews(task):
+def _request_wait(task, subject, previous=None, delivery="current"):
+    for row in _gate(task, delivery):
         if row["id"] == previous or row["state"] == "withdrawn" or row.get("subject", "changes") != subject:
             continue
         if row["state"] != "completed" or not row.get("reconciled"):
@@ -231,16 +270,19 @@ def _project_review(review, task, identity):
     row = {k: copy.deepcopy(v) for k, v in review.items() if k not in ("message", "delivered", "worker", "owner")}
     snapshot = review.get("snapshot") or {}
     assessed = review.get("reconciled") or {}
+    merged = bool(review.get("merged_head"))
+    if merged:  # a merged delivery is judged by the version that merged, which its landing checked
+        identity = assessed or snapshot or None
     matches = lambda saved: all(saved.get(k) == identity.get(k) for k in ("head", "base", "context_hash", "proposal_id", "proposal_hash"))
     coverage = ("unknown" if identity is None else "current" if snapshot and matches(snapshot)
                 else "assessed" if assessed and matches(assessed) else "earlier")
     mutable = _open(task) and review in _current_reviews(task)
-    latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == review.get("subject", "changes")), None)
+    latest = _latest(task, review.get("subject", "changes"), _delivery(review))
     finished = review["state"] in ("failed", "cancelled", "withdrawn") or review["state"] == "completed" and bool(assessed)
-    row.update(coverage=coverage, unresolved=_unresolved(review), earlier=_earlier(review, task, identity),
+    row.update(coverage=coverage, unresolved=_unresolved(review), earlier=not merged and _earlier(review, task, identity),
                can_withdraw=mutable and review["state"] not in ("withdrawn", "running"),
                can_cancel=mutable and review["state"] == "running" and not review.get("cancel_requested"),
-               can_again=_open(task) and review == latest and finished and not _unresolved(review))
+               can_again=_open(task) and not merged and review == latest and finished and not _unresolved(review))
     if review["state"] == "requested":
         woken = task.get("state") == "blocked" and task.get("resume_request") and not task.get("stop_id") and not task.get("fault")
         row["waiting"] = ("reviewer" if active_count() else "owner" if task.get("state") == "running" or woken else "resume")
@@ -274,9 +316,10 @@ def _current_identity(project, task, proposal_id):
         return None
 
 
-def _open_findings(task, subject):
-    """Open findings of every current review of a kind, including one an additional review left in the merge gate."""
-    return sum(len(_unresolved(r)) for r in _current_reviews(task)
+def _open_findings(task, subject, delivery="current"):
+    """Open findings of every current review of a kind in one delivery, including one an additional review left in
+    its merge gate."""
+    return sum(len(_unresolved(r)) for r in _gate(task, delivery)
                if r.get("subject", "changes") == subject and r["state"] != "withdrawn")
 
 
@@ -289,39 +332,43 @@ def view(project, slug):
     subjects, history, identities = {}, [], {}
     for review in task.get("reviews", []):
         proposal_id = _proposal_of(review)
-        if proposal_id not in identities:
+        if proposal_id not in identities and not review.get("merged_head"):
             identities[proposal_id] = _current_identity(project, task, proposal_id)
-        history.append(_project_review(review, task, identities[proposal_id]))
-    gate = {subject: _open_findings(task, subject) for subject in ("proposal", "changes")}
+        history.append(_project_review(review, task, identities.get(proposal_id)))
     for row in history:
-        subject = row.get("subject", "changes")
-        row["can_again"] = row["can_again"] and not (gate[subject] or _eligible(project, task, subject) or common or _request_wait(task, subject, row["id"]))
+        subject, delivery = row.get("subject", "changes"), _delivery(row)
+        row["can_again"] = row["can_again"] and not (_open_findings(task, subject, delivery) or _eligible(project, task, subject)
+                                                     or common or _request_wait(task, subject, row["id"], delivery))
     for subject in ("proposal", "changes"):
-        latest = next((r for r in reversed(history) if r.get("subject", "changes") == subject), None)
+        # Each box shows the kind's latest unmerged review, as the question line does; once a merge closed it, an open
+        # task's box starts the next step and a finished task's keeps its last delivery's.
+        kind = [r for r in reversed(history) if r.get("subject", "changes") == subject]
+        latest = next((r for r in kind if not r.get("merged_head")), None) or (None if _open(task) else next(iter(kind), None))
         why = _eligible(project, task, subject) or common or _request_wait(task, subject)
-        # A kind with a review keeps showing it; an unreviewed kind shows only while a request could start.
         if latest or _open(task):
             subjects[subject] = {"available": latest["can_again"] if latest else not why, "why": why or "", "latest": latest,
-                                 "open": gate[subject]}
+                                 "open": _open_findings(task, subject, _delivery(latest) if latest else "current")}
     return {"subjects": subjects, "history": history}
 
 
 def status(project, task, subject):
-    """A proposal or merge question's review status (SPEC.md §3.8.3): the kind's latest review, who skipped it and why,
-    its open findings and whether it covers an earlier version, exactly as the task's review card shows them."""
-    latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == subject), None)
+    """A proposal or merge question's review status (SPEC.md §3.8.3): the kind's latest unmerged review, who skipped it
+    and why, its delivery's open findings and whether it covers an earlier version, exactly as the task's review card
+    shows them. A merged delivery's review never stands for a later step's question."""
+    latest = next((r for r in reversed(task.get("reviews", []))
+                   if r.get("subject", "changes") == subject and not r.get("merged_head")), None)
     if not latest:
         return {"subject": subject, "id": None, "state": "none"}
     skipped = {"skipped_by": "l2" if latest.get("withdrawn_by") == "l2" else "operator",
                "reason": latest.get("withdrawal_reason", "") if latest.get("withdrawn_by") == "l2" else ""} if latest["state"] == "withdrawn" else {}
     return {"subject": subject, "id": latest["id"], "state": latest["state"], **skipped,
             "findings": len((latest.get("result") or {}).get("findings", [])), "reconciled": bool(latest.get("reconciled")),
-            "open": _open_findings(task, subject),
+            "open": _open_findings(task, subject, _delivery(latest)),
             "earlier": _earlier(latest, task, _current_identity(project, task, _proposal_of(latest)))}
 
 
 def request(project, slug, *, actor, request_id, focus="", source_id=None, previous=None, expected_attempt=None, subject=None,
-            engine=None, model=None, additional=False):
+            engine=None, model=None, additional=False, following=False):
     from . import dispatch, route
     if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
         raise T.TransitionError("A stable review request identity is required.")
@@ -337,6 +384,11 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         _owner(task, actor, expected_attempt)
         rows = task.setdefault("reviews", [])
         prior = _find(task, previous) if previous else None
+        if prior and prior.get("merged_head"):
+            raise T.TransitionError(f"Review {previous} belongs to a merged delivery. Request this delivery's review without --previous.")
+        if prior and following and not prior.get("next"):
+            raise T.TransitionError(f"Review {previous} belongs to the current delivery. Replace it without --next.")
+        following = following or bool(prior and prior.get("next"))
         subject = subject if subject is not None else (prior.get("subject", "changes") if prior else "changes")
         # A retry, rerun or replacement keeps the prior focus; an operator's focus stays and owner text only adds to it.
         kept = prior.get("focus", "") if prior else ""
@@ -355,7 +407,8 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         if repeated:
             if (repeated.get("focus", "") != focus or repeated.get("source_id") != source_id
                     or repeated.get("previous") != previous or repeated.get("subject", "changes") != subject
-                    or repeated.get("selection") != selection or repeated.get("additional", False) != additional):
+                    or repeated.get("selection") != selection or repeated.get("additional", False) != additional
+                    or repeated.get("next", False) != following):
                 raise T.TransitionError("That review request identity already has a different focus or selection.")
             return _project_review(repeated, task, None)
         if prior and _unresolved(prior):
@@ -364,7 +417,8 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                                     "or request an additional review that leaves them in the merge gate.")
         if why := _eligible(project, task, subject):
             raise T.TransitionError(why)
-        latest = next((r for r in reversed(rows) if r.get("subject", "changes") == subject), None)
+        delivery = _target(task, subject, following)
+        latest = _latest(task, subject, delivery)
         # Naming a waiting request with a different explicit selection replaces it; nothing else re-selects.
         reselect = bool(latest and previous == latest["id"] and latest["state"] == "requested"
                         and (engine or model) and selection != latest.get("selection"))
@@ -380,7 +434,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                 return _project_review(latest, task, None)
             if latest["state"] == "completed" and not latest.get("reconciled"):
                 raise T.TransitionError("Assess the completed review before requesting another.")
-        if why := _request_wait(task, subject, previous):
+        if why := _request_wait(task, subject, previous, delivery):
             raise T.TransitionError(why)
         if subject == "changes":
             root = _worktree(project, task)
@@ -405,9 +459,12 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                "fallback_reason": choice.get("fallback_reason", ""), "allowance_known": bool(choice.get("allowance_known")),
                "owner": {k: task.get(k) for k in ("attempt", "l2_engine")},
                "delivered": actor == "l2", "previous": previous, "additional": additional,
+               **({"next": True} if following else {}),
                "message": {"id": request_id, "at": at, "role": "system", "by": requester,
                            "review_id": request_id, "text": f"{'Additional adversarial' if additional else 'Adversarial'} {subject} review requested. "
-                           + ("Current reviews and their open findings stay in the merge gate. " if additional else "") + "Prepare a committed source checkpoint, "
+                           + ("Current reviews and their open findings stay in the merge gate. " if additional else "")
+                           + (f"It reviews the step after PR #{_waiting_pr(task)} and stays out of that PR's merge gate. " if following else "")
+                           + "Prepare a committed source checkpoint, "
                            f"then run alt task review run --review-id {request_id}"
                            + (" --proposal-message <original-L2-proposal-id>" if subject == "proposal" else "")
                            + ". Preserve open approval questions; this request authorizes only review and assessment, not implementation. "
@@ -423,7 +480,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             task.update(resume_request=request_id, resume_after=S.now())
         S.save_task(project, task)
         S.append_event(project, slug, "review-requested", review_id=request_id, by=requester)
-        return _project_review(row, task, None)
+        return {**_project_review(row, task, None), **_gate_notice(task, subject, following, "withdraw it and request with --next")}
 
 
 def _capture(project, task, review, context_ids, proposal_id=None, show=None):
@@ -777,9 +834,9 @@ def withdraw(project, slug, review_id, *, actor, reason="", expected_attempt=Non
         return _project_review(review, task, None)
 
 
-def skip(project, slug, *, actor, subject, reason, expected_attempt=None):
-    """The owner records that it judged a review of this kind unnecessary, so the question resting on it says why
-    (SPEC.md §3.8.3). It is a withdrawn review that never ran: the merge gate and later requests treat it as one."""
+def skip(project, slug, *, actor, subject, reason, expected_attempt=None, following=False):
+    """The owner records that it judged a review of this kind unnecessary for its delivery, so the question resting on
+    it says why (SPEC.md §3.8.3). It is a withdrawn review that never ran: the merge gate and later requests treat it as one."""
     if subject not in ("proposal", "changes"):
         raise T.TransitionError("Skip a proposal or changes review.")
     if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 120:
@@ -789,22 +846,25 @@ def skip(project, slug, *, actor, subject, reason, expected_attempt=None):
         _owner(task, actor, expected_attempt, required=True)
         if not _open(task):
             raise T.TransitionError("Finished review history is read-only.")
-        if any(r.get("subject", "changes") == subject and r["state"] != "withdrawn" for r in task.get("reviews", [])):
+        delivery = _target(task, subject, following)
+        if any(r.get("subject", "changes") == subject and r["state"] != "withdrawn" and _delivery(r) == delivery
+               for r in task.get("reviews", [])):
             raise T.TransitionError(f"A {subject} review is already recorded; withdraw a waiting one with its own reason instead.")
         at, identity = T._conversation_time(), uuid.uuid4().hex
         row = {"id": identity, "requested_at": at, "requested_by": actor, "subject": subject, "state": "withdrawn",
                "focus": "", "withdrawn_by": actor, "withdrawal_reason": reason.strip(), "finished_at": S.now(),
+               **({"next": True} if following else {}),
                "message": {"id": identity, "at": at, "role": "system", "by": actor, "review_id": identity,
                            "text": f"{'Proposal' if subject == 'proposal' else 'Implementation'} review skipped: {reason.strip()}"}}
         task.setdefault("reviews", []).append(row)
         S.save_task(project, task)
         S.append_event(project, slug, "review-skipped", review_id=identity, by=actor)
-        return _project_review(row, task, None)
+        return {**_project_review(row, task, None), **_gate_notice(task, subject, following, "skip again with --next")}
 
 
 def require_resolved(task):
-    """The recorded review prerequisites shared by approval presentation and landing."""
-    current = [review for review in _current_reviews(task) if review["state"] != "withdrawn"]
+    """The recorded review prerequisites shared by approval presentation and landing: the current delivery's reviews."""
+    current = [review for review in _gate(task) if review["state"] != "withdrawn"]
     for review in current:
         if review["state"] != "completed" or not review.get("reconciled"):
             raise T.TransitionError(f"Adversarial review {review['id']} ({review.get('subject', 'changes')}) "

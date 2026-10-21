@@ -999,9 +999,21 @@ Proposal assessment records the proposal identity and dispositions, including an
 revised proposal when relevant. Later proposal/source/context changes require L2 assessment or deliberate review.
 The UI distinguishes reviewed evidence from later L2 assessment; proposal evidence never accepts an
 implementation. Request admission and final merge share a task lock. Landing checks every accepted
-request for assessment or authorized withdrawal after other pre-merge checks, including changes requests
+request of the current delivery for assessment or authorized withdrawal after other pre-merge checks, including changes requests
 followed by a proposal request. Review cannot release an operator hold or replace required checks.
 Only the operator can withdraw an operator request. No automatic rerun occurs after fixes.
+
+Each review belongs to one delivery, the work one merge closes, so a task that ships several PRs keeps
+each step's reviews apart. The merge `alt land` records stamps the current delivery's reviews, replaced
+ones included, with the merged head and PR number, once per merged head: they leave the gate, are never replaced or repeated, and keep their coverage
+against the version that merged. A review the owner requests with `--next` while a PR waits is the
+proposal review of the step after it: it stays out of that PR's gate and loses the mark when the PR
+merges, joining the current delivery. A proposal request or skip without `--next` while a PR waits
+belongs to that PR, and the command's `notice` says so. Replacement (`--previous` naming the latest review of its kind),
+`--additional`, request waiting, skip and open findings all work within one delivery, and a question's
+review status and task details' boxes read the latest unmerged review of its kind with its delivery's
+open findings, so a later step's proposal never rests on an earlier step's review. A task with one PR is one delivery: its reviews work as before until its merge closes them, after which
+its boxes start the next step if the task continues.
 
 ## Task lifecycle
 

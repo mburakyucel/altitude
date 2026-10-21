@@ -563,17 +563,25 @@ wrapper around them. Each box shows its latest review: a state icon, "<name> · 
 you or L2, in progress, stopping, done, didn't finish, skipped), the reviewer's one-sentence verdict,
 counts and **View**. With no review yet it says "Not reviewed yet", or why review is unavailable. One
 button starts the next review when one can start: **Request**, **Review again** after an assessed
-review with nothing open, or **Try again** after one that didn't finish. There is no button while that
-kind is queued, running or has open findings, including an earlier review's. Finished tasks show the boxes without buttons, and hide a
-kind that was never reviewed. The reviewer is a separate invocation; same-engine review is the
+review with nothing open, or **Try again** after one that didn't finish. A box reads the latest
+review of its kind that has not merged, as the question line does (§3.8.3): once a PR merges, an open
+task's boxes start the next step, with "Not reviewed yet" or, until that step has commits, "This PR
+already merged. Its next step can be reviewed once it has new commits." The merged reviews stay on
+their cards in the conversation. There is no button while that
+kind is queued, running or has open findings, including an earlier review's. Finished tasks show the boxes without buttons, their last
+delivery's reviews included, and hide a kind that was never reviewed. The reviewer is a separate invocation; same-engine review is the
 ordinary path, and an alternate engine is used when one is configured.
 
 Requests queue on any open task whatever L2 is doing. A waiting or blocked L2 is woken; a stopped or
 faulted task is not resumed, and its request waits for the next resume. Requesting closes task
 details and preserves the draft, reading position and listening state.
 
-The conversation shows one card per kind, at the latest request's anchor; earlier iterations fold
-inside it. The card's sentence reads:
+The conversation shows one card per kind for each delivery, at that delivery's latest request's
+anchor; earlier iterations of the same delivery fold inside it. A delivery is the work one merge
+closes; a proposal review L2 requests for the step after a PR that waits belongs to that step. So a
+task that ships several PRs keeps each step's cards where they happened, each merged one ending its
+counts with "merged in PR #N", and its "Review 2" and earlier reviews never mix steps. The card's
+sentence reads:
 
 | State | Sentence |
 | --- | --- |
@@ -582,7 +590,7 @@ inside it. The card's sentence reads:
 | Waiting for the reviewer slot | Waiting for the reviewer: another review is running on this machine. |
 | In progress | Reviewing the proposal (implementation)…, with **Stop** and "Requested by L2/you". |
 | Didn't finish | The failure, or "Stopped before it finished.", with **Try again**. |
-| Done | The verdict, then counts: "2 findings, both resolved", "3 findings · 2 open, blocks merge", "L2 is responding", "Review 2", "earlier version", "1 open in an earlier review, blocks merge". |
+| Done | The verdict, then counts: "2 findings, both resolved", "3 findings · 2 open, blocks merge", "L2 is responding", "Review 2", "earlier version", "1 open in an earlier review, blocks merge", "merged in PR #41". |
 | Skipped | "Skipped by you" or "Skipped by L2". |
 
 The chevron opens the card: each finding with **Open**, **Fixed**, **Dismissed** or **New**, its
@@ -602,8 +610,8 @@ permission to merge.
 
 Loading and saving disable the buttons; from the press a line under the boxes reads "Saving review request…",
 or "Stopping the reviewer…" for **Stop**, until Altitude answers. Unavailable explains why in the box; denied and uncertain
-delivery use inline feedback with a saved-status refresh. `adversarial-review.pw.ts` walks these states
-at phone and desktop widths; `adversarial-review-integration.pw.ts` walks real persisted requests,
+delivery use inline feedback with a saved-status refresh. `adversarial-review.pw.ts` walks these states,
+including a two-step task's cards and its boxes after the first PR merged, before and after the next step's commits, at phone and desktop widths; `adversarial-review-integration.pw.ts` walks real persisted requests,
 same-engine and alternate-engine fixtures, L2 requests, failure and try again, unavailable,
 earlier-version coverage and dispositions.
 
@@ -1086,7 +1094,8 @@ The box sits under the question, the files it shows, the merge card's detail or 
 the recommendation. Its
 anatomy follows the task card (§3.5): a 16px state icon, the review's name (14px, 600) over its state
 (13px, muted), and a chevron; bordered, card radius, at least 44px tall, full card width up to 480px.
-Its accessible name is "<name> · <state>". The state reads the latest review of that kind:
+Its accessible name is "<name> · <state>". The state reads the latest review of that kind that has
+not merged, so a later step's question never rests on an earlier step's merged review:
 
 | Review | State | Icon |
 | --- | --- | --- |

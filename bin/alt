@@ -194,11 +194,12 @@ def _task_review(args, project: str) -> dict:
     if args.review_action in ("run", "assess", "skip") and ACTOR != "l2":
         sys.exit("alt task review: only the current L2 runs, assesses or skips a review")
     if args.review_action == "skip":
-        return reviews.skip(project, slug, subject=args.subject, reason=args.reason, **options)
+        return reviews.skip(project, slug, subject=args.subject, reason=args.reason, following=args.following, **options)
     if args.review_action == "request":
         return reviews.request(project, slug, request_id=args.request_id or uuid.uuid4().hex,
                                focus=args.focus, source_id=args.source_message, previous=args.previous,
-                               additional=args.additional, subject=args.subject, engine=args.engine, model=args.model, **options)
+                               additional=args.additional, following=args.following, subject=args.subject, engine=args.engine,
+                               model=args.model, **options)
     if args.review_action == "assess":
         try:
             payload = json.loads(sys.stdin.read() if args.file == "-" else _read(args.file))
@@ -535,14 +536,18 @@ def main(argv=None) -> None:
             rv.add_argument("--request-id", help="stable identity for retries of this request")
             rv.add_argument("--focus", default="")
             rv.add_argument("--source-message", help="original chat message requesting this review")
-            rv.add_argument("--previous", help="review this request replaces: a finished one to repeat, or a waiting one to reselect")
+            rv.add_argument("--previous", help="this delivery's review this request replaces: a finished one to repeat, or a waiting one to reselect")
             rv.add_argument("--additional", action="store_true",
                             help="another review of the subject that replaces none; current reviews and their open findings keep gating merge")
+            rv.add_argument("--next", action="store_true", dest="following",
+                            help="proposal review for the step after the PR that waits; that PR's merge gate leaves it out")
             rv.add_argument("--engine", choices=config.ENGINES, help="reviewer engine for this request only; never substituted")
             rv.add_argument("--model", help="reviewer model for this request only; never substituted")
         elif action == "skip":
             rv.add_argument("--subject", choices=("proposal", "changes"), required=True)
             rv.add_argument("--reason", required=True, help="why no review is needed, at most 120 characters")
+            rv.add_argument("--next", action="store_true", dest="following",
+                            help="proposal review for the step after the PR that waits; that PR's merge gate leaves it out")
         elif action != "status":
             rv.add_argument("--review-id", required=True)
             if action == "run":
