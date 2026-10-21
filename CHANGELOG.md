@@ -18,8 +18,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   project, telling you in chat what they found. Agents… in the project menu lists them, with three built-in agents
   to turn on (a dependency check, a build health check and a weekly summary of what landed), New agent to write
   your own and a weekly time budget. A run only reads and reports: it cannot push, open pull requests, file issues
-  or message anyone, and it stops at its limit of 10, 20 or 60 minutes, which is the most it is charged. Pause
-  stops an agent at once, including a run waiting to start. Ask L3 for an agent or a change and it drafts one for
+  or message anyone, and it stops at its limit of 10, 20 or 60 minutes, which is the most it is charged. Pausing
+  an agent also skips its run waiting to start. Ask L3 for an agent or a change and it drafts one for
   you to save. A run that found something may suggest up to three tasks; L3 checks each against the project
   first, and those it keeps wait under Suggestions in Needs you with Make a task and Dismiss, showing the task
   each became, and on the run's page under its report with what L3 set aside and why; a task made from one says

@@ -379,11 +379,12 @@ class TestReports(AgentCase):
     def test_a_report_shows_where_its_links_go(self):
         agent = self.started()
         self.ended("Found: a fix is out.\n\nSee [the advisory](https://example.invalid/a1), "
-                   "[https://example.invalid/b](https://example.invalid/b) and [the notes](<docs/release notes.md>).")
+                   "[https://example.invalid/b](https://example.invalid/b) and [the notes](<docs/release notes.md>). "
+                   "Write it as `[x](y)`:\n\n```md\n[the notes](docs/notes.md)\n```")
         A.reconcile(self.project, NOW + timedelta(minutes=5))
         self.assertEqual(A.run_view(self.project, agent, 1)["report"],
                          "See the advisory (https://example.invalid/a1), https://example.invalid/b and the notes "
-                         "(docs/release notes.md).")
+                         "(docs/release notes.md). Write it as `[x](y)`:\n\n```md\n[the notes](docs/notes.md)\n```")
 
     def test_a_run_whose_end_is_noticed_late_is_charged_at_most_its_limit(self):
         agent = self.started(limit=20)

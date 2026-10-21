@@ -919,11 +919,14 @@ def _plain(text: str, limit: int) -> str:
 
 def _shown(report: str) -> str:
     """A report as its page shows it: a markdown link reads as its label and the address it goes to, since a model's
-    report is untrusted and a label can hide where a link leads."""
+    report is untrusted and a label can hide where a link leads. Code, which never renders as a link, stays as written."""
     def show(match: re.Match) -> str:
-        label, target = match[1], match[2] or match[3]
+        if match[1]:
+            return match[1]
+        label, target = match[4], match[5] or match[6]
         return target if label.strip() == target else f"{label} ({target})"
-    return re.sub(r"!?\[([^\]]+)\]\((?:<([^>\n]+)>|([^\s)]+))\)", show, report)
+    return re.sub(r"(^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\2[ \t]*$|\Z)|(`+)[\s\S]*?\3(?!`))"
+                  r"|!?\[([^\]]+)\]\((?:<([^>\n]+)>|([^\s)]+))\)", show, report, flags=re.M)
 
 
 def _report(project: str, run: dict) -> str:
