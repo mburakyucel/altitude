@@ -5,9 +5,26 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
-- Agents learn about a malformed final report when they save it: `alt task save report` refuses a report missing
-  `landed` or `review`, or with a section of the wrong shape, and says what it expects. A report with nothing
-  blocked leaves `blocked` out instead of being handed back for it.
+## v0.12.0 — 2026-10-22
+
+Feature release of the early preview.
+
+- Projects have agents: briefs Altitude runs on a schedule, when you press Run now, or when your own scripts on
+  this computer send one an event with `alt agent send` (such as "PR #812 merged", with example scripts on its
+  page), each in a fresh copy of the project, telling you in chat what it found. Agents… in the project menu lists
+  them, with three built-in agents to turn on (a dependency check, a build health check and a weekly summary of
+  what landed), New agent to write your own and a weekly time budget; ask L3 for an agent or a change and it
+  drafts one for you to save. The agent screens say things once in plain words, such as why a run was skipped
+  ("Your Claude plan is close to its weekly limit"), and the Agents page says when the week's budget is used.
+- An agent only reads and reports: it has no GitHub sign-in and no Altitude commands, so it cannot push, open pull
+  requests or file issues, and it stops at its limit of 10, 20 or 60 minutes, which is the most it is charged. A
+  run that found something may suggest up to three tasks; L3 checks each against the project first, and those it
+  keeps wait under Suggestions in Needs you with Make a task and Dismiss, while the run's page shows what L3 didn't
+  offer and why. Pausing an agent also skips its run waiting to start, and an agent that pauses itself after three
+  runs that couldn't finish waits in Needs you with Resume, without alerting your devices. Monitor lists running
+  agents among Sessions and each agent with its next run and how its last one went. In the Altitude project, the
+  Weekly improvement review is a built-in agent with its own page, keeping your agreement and switch, as cheap as
+  before and outside the agents' budget.
 - Agents no longer see the sign-ins and keys your other programs keep in your home folder (SSH and GPG keys,
   GitHub, cloud, cluster and registry logins, publishing tokens, saved Git passwords, keyring and keychain files),
   and on a Mac they cannot ask the keychain. Workers reach GitHub over HTTPS with your GitHub CLI sign-in, also
@@ -16,31 +33,28 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Repairs show in Work: an Altitude repairs section under your current tasks holds the repair running and those
   that ended in the last three days, and a repair's page reads like a task's, its steps in one conversation.
   Settings → About keeps Repair… and links All repairs; Monitor no longer lists a repair.
-- Projects have agents: briefs Altitude runs on a schedule, when your own scripts on this computer send one an
-  event with `alt agent send` (such as "PR #812 merged", with example scripts on its page), or when you press Run now, each in a fresh copy of the
-  project, telling you in chat what they found. Agents… in the project menu lists them, with three built-in agents
-  to turn on (a dependency check, a build health check and a weekly summary of what landed), New agent to write
-  your own and, at the bottom, a weekly time budget, which says so at the top of the page once it is used. A run only reads and reports: it cannot push, open pull requests, file issues
-  or message anyone, and it stops at its limit of 10, 20 or 60 minutes, which is the most it is charged. Pausing
-  an agent also skips its run waiting to start. Ask L3 for an agent or a change and it drafts one for
-  you to save. A run that found something may suggest up to three tasks; L3 checks each against the project
-  first, and those it keeps wait under Suggestions in Needs you with Make a task and Dismiss, showing the task
-  each became, and on the run's page under its report with what L3 didn't offer and why; a task made from one says
-  which agent suggested it in Work. A run's report shows where each of its links goes. An agent that pauses itself
-  after three runs that couldn't finish waits in Needs you with Resume, without alerting your devices. Monitor
-  lists running agents among Sessions and each agent with what it does next and how its last run went. In the
-  Altitude project, the Weekly improvement review is a built-in agent with its own page in place of its settings
-  section, as cheap as before and outside the agents' budget.
-- The Weekly improvement review says why it skipped in plain words, such as "Your Claude plan is close to its
-  weekly limit." An accepted suggestion whose task wasn't made reads "Accepted · no task yet · Make a task", and a
-  failed press says only what failed, such as "Not stopped."
-- The third-party notices in the archive now cover everything the web UI ships: the IBM Plex fonts with the SIL
-  Open Font License, and the markdown packages that render shown documents with their copyrights and the BSD
-  2-Clause and ISC texts two of them use. A test keeps the notices in step with the web dependencies.
-- One validation command checks that host voice survives a runtime update on a Mac as well as on Linux:
-  `scripts/voice_replacement.py` runs the real speech model through an update from an earlier runtime, with
-  a failure, a cancellation, recordings open across the update and restarts, without waiting for a release
-  that changes the Mac pins.
+- Monitor's seat meters mark 90%, the point past which Altitude skips optional work such as agent runs and the
+  Weekly review, and a line under Seats says so.
+- A task that ships several pull requests shows one review card of each kind per pull request, and each merge
+  waits only on its own pull request's reviews.
+- Ask the coordinator how to address a problem you name and, when it agrees the work is worth doing, it creates
+  the task right away with its recommended approach; otherwise it explains and offers Create task, or says why not.
+- A task owner's note sent after you answered its questions no longer appears to answer them again, an owner's
+  own explanations no longer send its finished reviews back for another assessment while it lands, and an owner
+  learns about a malformed final report when it saves it instead of after it finishes.
+- The third-party notices in the release archive cover everything the web UI ships, including the IBM Plex fonts
+  and the packages that render shown documents, with every licence text they need.
+
+Updating from v0.11.0 needs nothing, unless your Git settings send GitHub's HTTPS address to SSH (an `insteadOf` or
+`pushInsteadOf` rule for `https://github.com/`): workers then cannot push, so remove that rule or scope it to your
+own shell. From v0.10.0 or older, take the steps in the v0.11.0 notes first.
+
+Known limits: repairs stay unconfined. Events reach an agent only from this computer, and a run that ends while
+Altitude is stopped counts up to its whole limit against the budget. Agent runs on the native Mac service,
+the hidden sign-ins on a Mac, repairs on the native Mac service, Codex workers under the Mac sandbox, the
+paired-device refusal on a Mac and the phone terminal on a real iPhone still await confirmation on a real
+installation. The limits the v0.11.0 notes name for a Codex coordinator, Linux older than 6.12 and typed skills
+in the project conversation remain. Live providers are not part of release testing.
 
 ## v0.11.0 — 2026-10-20
 
