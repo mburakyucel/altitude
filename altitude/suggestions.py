@@ -95,6 +95,8 @@ def choose(run: dict, keep: list[int], drop: list[tuple[int, str]]) -> tuple[lis
 def outcome(project: str, run: dict, n: int, now: datetime) -> str:
     """What became of a suggestion, as the next run that may repeat it reads it."""
     post = run.get("post") or {}
+    if post.get("unfinished"):
+        return "set aside: L3 did not finish checking it"
     if str(n) in post.get("drops", {}):
         return f"set aside by L3: {post['drops'][str(n)]}"
     if not post:
@@ -245,13 +247,15 @@ def require_accepted_locked(project: str, ref: str) -> None:
 
 
 def item(project: str, run: dict, s: dict, made_: dict[str, str], now: datetime) -> dict:
-    """One shown suggestion as its card draws it: its state, its task, Undo and whether L3 is opening its task."""
+    """One shown suggestion as its card draws it: its state, its task, Undo, whether L3 is opening its task and whether
+    it waits in Needs you: undecided, or accepted without its task for LAPSE after the acceptance."""
     ref, current = ref_of(run, s["n"]), state(run, s["n"], now)
     accepted = next((d for d in run["decisions"] if d["n"] == s["n"] and d["to"] == "accepted"), None)
+    untasked = current == "accepted" and ref not in made_ and accepted
     return {"ref": ref, "n": s["n"], "title": s["title"], "explanation": s["explanation"], "state": current,
             "task": made_.get(ref), "undo": current == "dismissed" and not lapsed(run, now),
-            "opening": bool(current == "accepted" and ref not in made_ and accepted and accepted.get("turn")
-                            and l3.pending(project, accepted["turn"]))}
+            "opening": bool(untasked and accepted.get("turn") and l3.pending(project, accepted["turn"])),
+            "waits": current == "undecided" or bool(untasked and now - _date(accepted["at"]) < LAPSE)}
 
 
 def origin(project: str, ref: str | None) -> str | None:

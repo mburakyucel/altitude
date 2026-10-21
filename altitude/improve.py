@@ -1196,15 +1196,14 @@ def view(project: str, *, now: datetime | None = None) -> list[dict]:
 
 
 def waiting(project: str, *, now: datetime | None = None) -> list[dict]:
-    """The cards Needs you lists, newest first: a posted run with a suggestion undecided or accepted without its task."""
-    return [run for run in reversed(view(project, now=now)) if any(
-        s["state"] == "undecided" or s["state"] == "accepted" and not s["task"] for s in run["suggestions"])]
+    """The cards Needs you lists: a posted run with a suggestion that waits (`suggestions.item`)."""
+    return [run for run in view(project, now=now) if any(s["waits"] for s in run["suggestions"])]
 
 
 def _run_view(project: str, run: dict, made: dict[str, str], now: datetime) -> dict:
     window = _span(run["window"]["start"], run["window"]["end"])
     post = run.get("post") or {}
-    item = {"id": run["id"], "state": run["state"], "started": run["started"], "ended": run["ended"],
+    item = {"kind": "review", "id": run["id"], "state": run["state"], "started": run["started"], "ended": run["ended"],
             "posted": post.get("at"), "tasks": run["tasks"], "window": window, "reason": run["reason"],
             "suggestions": [], "details": _details(project, run, window)}
     if run["state"] == "reading":

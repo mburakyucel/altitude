@@ -3343,8 +3343,11 @@ def overview() -> dict:
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     # Improvement suggestions waiting for the operator: listed after Needs you's questions, never counted with them.
-    suggestions = [{"project": p["name"], **run} for p in projects if p["managed"] for run in improve.waiting(p["name"])]
-    return {"projects": projects, "queue": digest.queue(), "suggestions": suggestions, "wip": digest.wip(), "quota": monitor.quota(),
+    # Each project's cards, the Weekly review's and its agents' runs alike, newest first.
+    waiting = [{"project": p["name"], **card} for p in projects if p["managed"]
+               for card in sorted([*improve.waiting(p["name"]), *project_agents.waiting(p["name"])],
+                                  key=lambda card: card["posted"], reverse=True)]
+    return {"projects": projects, "queue": digest.queue(), "suggestions": waiting, "wip": digest.wip(), "quota": monitor.quota(),
             "lifecycle": platform.container_lifecycle(),
             "deployment": "container" if platform.containerized() else "native",
             "engines": route.engine_readouts(), "new_tasks": new_tasks_view(),
@@ -3961,7 +3964,7 @@ def project_view(name: str) -> dict:
         t = task_wait_view(name, t)
         d = S.task_dir(name, t["slug"])
         prog = (d / "progress.md").read_text()[-1500:] if (d / "progress.md").exists() else ""
-        tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
+        tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "origin": suggestions.origin(name, t.get("improvement")), "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
     order = {"blocked": 0, "running": 1, "reported": 2, "queued": 3}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
