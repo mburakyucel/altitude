@@ -71,7 +71,9 @@ acceptance evidence; its pending or failed runs on main do not gate PR delivery 
 5. Record targeted validation and any applicable observation interval and results. When it is already activated, normal
    use and existing API/UI health evidence can inform this record without starting model-using
    validation tasks. Any changed code gives a new candidate and new evidence. A version's
-   notes and observations must identify which SHA was observed.
+   notes and observations must identify which SHA was observed. A candidate that changes the
+   speech runtime's pins records the [voice runtime replacement check](DEVELOPMENT.md#voice-runtime-replacement-check)
+   from its preceding pins on Linux and on a Mac.
 6. Present the readiness record and proposed notes to the operator for the publication decision.
    Approval names the version and SHA. Then deliver the dated changelog section
    (`## v0.1.0 — 2026-10-01`) through a PR. If that PR changes the release SHA, repeat the
