@@ -150,8 +150,10 @@ small group; a question link names its durable ID and revision and focuses the o
 ### 2.2 Layouts
 
 - **Desktop, width ≥ 1024.** Left rail 260px, always visible. Main pane fills the rest. The work
-  panel is 340px: inline as a third column at ≥ 1280, otherwise an overlay from the right opened by
-  the header's panel button (same content, scrim behind, Esc or the scrim closes it).
+  panel is 340px, or 480px (the live session panel's width, §3.10) while it shows the graph (§3.7):
+  inline as a third column at ≥ 1280, otherwise an overlay from the right opened by the header's
+  panel button (same content, scrim behind, Esc or the scrim closes it). The conversation reflows to
+  the width at once, without animation.
 - **Phone, width < 1024.** Header 54px, content, composer where the page has one, tab bar 84px
   (Chat, Work, Needs you, Monitor). The phone is specified at portrait 390 wide; landscape is
   unsupported and has no rules of its own. Chat and Work are the selected project's; Needs you and Monitor
@@ -881,6 +883,45 @@ releasing the task. There is no release button in Work or the task conversation.
 | Final answer | Attention leaves; the row shows observed execution or waiting status. Saving an answer cannot claim Running. |
 | Done or rejected | The row leaves Current and enters Done this week once, with a 200ms fade. The disclosure shows or hides every task finished in the last seven days, newest first, with or without a PR, and is absent when none exist. A no-code completion also posts a task-linked FYI to the project conversation. |
 | Open and Back | Waiting rows focus the owning question with live activity closed. App Back and browser Back/Forward preserve the originating Work or Needs you view (§3.9). |
+
+**List and Graph.** On desktop, Work's head carries a two-button switch, **List** and **Graph**, beside
+"Work" and its counts: a bordered group named "Show work as" of toggle buttons with icons, the pressed
+one in the accent tint. List is the default; the choice is remembered by this browser (`altitude.workView`,
+a display preference and nothing else) and lasts for the page when storage is unavailable. Phone Work
+has no switch and always shows the list. Graph replaces only Current: Altitude repairs, Done this week
+and Agents stay below, and the counts are unchanged.
+
+The graph ([design record](agent-graph/PROPOSAL.md), boards beside it) puts every current task and
+agent run on a ring around L3: the operator's turns first at the top, then the list's order, clockwise.
+Up to seven sit on a 150px circle; beyond, the ring stretches into a racetrack that keeps 132px between
+neighbours and the panel scrolls. L3 in the middle is a quiet outlined label, not a control, with the
+header's compact word under it (**Answering**, **Handling …**, **Busy**, **Ready**, **Not started**);
+hairline spokes join it to each node. A node is a 40px disc in its row's dot colour (dashed muted ring
+for queued, planned and paused work; a rounded square for an agent run) with its label under it: the
+title on at most two lines, ending in a chevron, then the state line in the row's own words — the
+attention text whole ("Your turn · 1 question", amber, with the open-question count as a badge), else
+the meta up to its first " · " or a fault's first sentence (red). Each node is one link opening what
+its row opens, with the full row text as its accessible name and tooltip. A planned task waiting for
+another current task gets a dashed arrow from the prerequisite.
+
+Live cues come from each running task's usage reading, which the service collects about every ten
+seconds and the change stream delivers: the worker's newest model request within a minute gives the
+node a soft breathing halo, and each helper of the current worker with a request within a minute is a
+pip on the node's upper rim, counted in the state line ("2 helpers active"). With no helper evidence,
+or no reading under 30 seconds old, the node shows no pips and its accessible name says "helper
+activity unknown", never zero. L3 breathes while it
+answers or handles something.
+
+| Graph state | Visible behavior |
+| --- | --- |
+| Initial loading | One skeleton disc; no guessed nodes or counts. |
+| Empty | L3 alone over **No current tasks. Ask L3 to start something.** |
+| Initial read fails | The list's error and Retry; no graph. |
+| Saved read | Nodes stay and open beside the saved notice; no halo, pip or L3 word claims anything is live, and running nodes' accessible names say "helper activity unknown". |
+| Aged reading | A usage reading older than 30 seconds shows no halo or pips; the accessible name says "helper activity unknown". |
+| Arrive or leave | An arriving node fades in at its slot (200ms) and the others glide (300ms); a finished task leaves the ring and Done this week counts it. |
+| Keyboard | Tab: the switch, then each node in ring order; Enter opens. L3 is not a stop. |
+| Reduced motion | Nothing breathes, glides or fades; a live node keeps a still halo. |
 
 A waiting or running [project agent](#317-project-agents) run is a row in Current with the ordinary dot
 and chevron: the agent's name over "Agent run · 2 of 20 min", "Agent run · waiting to start" or
@@ -2815,7 +2856,7 @@ retain phone/desktop state verification and accessible review evidence.
 | Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue, Create task press), `POST /api/chat/remove`, `POST /api/l3/reset` |
 | Models and settings | `GET /api/project-model-settings`, `GET /api/overview` `new_tasks`, `GET /api/defaults/<project>` | `POST /api/project-model-settings/reset` (a project's own setting), `POST /api/new-tasks`, `POST /api/defaults`; each with `expected` |
 | Project setup | `GET /api/setup/<project>` | `POST /api/project/setup` (check, repair, operator-approved hook integration) |
-| Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | none; rows open the owning conversation |
+| Work panel | `GET /api/project/<name>` (the graph's live cues from each task's `token_usage`), `GET /api/overview` `queue`, `GET /api/chat/<project>` (the graph's L3 word) | none; rows and graph nodes open the owning conversation |
 | Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |
 | Task page | `GET /api/task/<project>/<slug>` (questions and messages), transcript on demand | `POST /api/l2/message`, `POST /api/decide`, `POST /api/task/action` |
 | Report view | `GET /api/task/<project>/<slug>` (structured report, report notes and digest) | none |

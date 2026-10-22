@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router";
+import type { UseQueryResult } from "@tanstack/react-query";
 import { useOverview } from "../data/api";
 import type { Attention, Decision, Overview, TaskRow } from "../data/api";
 import { agoText, clockText } from "../data/observed";
@@ -94,6 +95,45 @@ function stateFacts(task: TaskRow, overview: Overview | undefined, project: stri
   return { dot: "idle", meta: state ? sentence(state) : "Status unavailable" };
 }
 
+/** What a task's card or graph node shows and where it leads: one reading for both (SPEC.md §3.5, §3.7). */
+export interface CardView {
+  title: string;
+  /** "Your turn · …" while the task waits on the operator. */
+  attention: string | null;
+  meta: string;
+  /** The dot's colour: amber whenever it is the operator's turn, red for a fault or the operator's Stop. */
+  dot: DotState;
+  /** The owning question while it is the operator's turn, else the task conversation. */
+  to: string;
+  /** Open questions the operator owns. */
+  questions: number;
+  /** The accessible name: title, attention and meta. */
+  label: string;
+}
+
+export function cardView(project: string, task: TaskRow, overview: Pick<UseQueryResult<Overview>, "data" | "isError">): CardView {
+  // Only a waiting task names its step: once a resume is due, the operator has nothing left to do (§3.5).
+  const waiting = (task.state === "blocked" || task.state === "reported") && !task.resume_after && !task["stop_id"] && !task["fault"];
+  // The task's own decisions, and while it waits each operator step L3 named it on (§3.8.4).
+  const decisions = task.state === "done" || task.state === "rejected" ? [] : (overview.data?.queue ?? [])
+    .filter((d) => d.project === project && (isStep(d) ? waiting && d.tasks.some((t) => t.slug === task.slug)
+      : isTaskDecision(d) && d.slug === task.slug && d.status !== "resolved" && d.audience !== "l3"));
+  const questions = decisions.filter(isTaskDecision).filter((d) => Boolean(d.id));
+  const facts = taskCardFacts(task, overview.data, project, decisions[0]);
+  const turn = turnLabel(decisions, waiting);
+  const attention = turn ? `${turn}${overview.isError ? " · saved" : ""}` : null;
+  const title = task.title || task.slug;
+  return {
+    title,
+    attention,
+    meta: facts.meta,
+    dot: facts.dot === "danger" ? "danger" : attention ? "waiting" : facts.dot,
+    to: questions[0] ? questionPath(questions[0]) : `/projects/${project}/tasks/${task.slug}`,
+    questions: questions.length,
+    label: [title, attention, facts.meta].filter(Boolean).join(" · "),
+  };
+}
+
 export function TaskCard({
   project,
   task,
@@ -107,32 +147,22 @@ export function TaskCard({
   // The same cache entry every page reads: no request of the card's own.
   const overview = useOverview();
   const location = useLocation();
-  // Only a waiting task names its step: once a resume is due, the operator has nothing left to do (§3.5).
-  const waiting = (task.state === "blocked" || task.state === "reported") && !task.resume_after && !task["stop_id"] && !task["fault"];
-  // The task's own decisions, and while it waits each operator step L3 named it on (§3.8.4).
-  const decisions = task.state === "done" || task.state === "rejected" ? [] : (overview.data?.queue ?? [])
-    .filter((d) => d.project === project && (isStep(d) ? waiting && d.tasks.some((t) => t.slug === task.slug)
-      : isTaskDecision(d) && d.slug === task.slug && d.status !== "resolved" && d.audience !== "l3"));
-  const questions = decisions.filter(isTaskDecision).filter((d) => Boolean(d.id));
-  const facts = taskCardFacts(task, overview.data, project, decisions[0]);
-  const turn = turnLabel(decisions, waiting);
-  const attention = turn ? `${turn}${overview.isError ? " · saved" : ""}` : null;
+  const view = cardView(project, task, overview);
   const tab = variant === "row" || new URLSearchParams(location.search).get("tab") === "work" ? "work" : "chat";
-  const title = task.title || task.slug;
   return (
     <Link
       className="task-card"
       data-variant={variant}
-      to={questions[0] ? questionPath(questions[0]) : `/projects/${project}/tasks/${task.slug}`}
+      to={view.to}
       state={{ from: "project", tab }}
       onClick={() => setSelectedProject(project)}
-      aria-label={[title, attention, facts.meta].filter(Boolean).join(" · ")}
+      aria-label={view.label}
     >
-      <span className="dot task-card-dot" data-state={facts.dot === "danger" ? "danger" : attention ? "waiting" : facts.dot} aria-hidden />
+      <span className="dot task-card-dot" data-state={view.dot} aria-hidden />
       <span className="task-card-body">
-        <span className="task-card-title">{title}</span>
-        {attention ? <span className="task-card-attention">{attention}</span> : null}
-        <span className="task-card-meta">{facts.meta}</span>
+        <span className="task-card-title">{view.title}</span>
+        {view.attention ? <span className="task-card-attention">{view.attention}</span> : null}
+        <span className="task-card-meta">{view.meta}</span>
       </span>
       <svg className="task-card-go" aria-hidden viewBox="0 0 20 20" width="16" height="16">
         <path d="M8 5l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />

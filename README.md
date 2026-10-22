@@ -14,7 +14,7 @@ Altitude runs Claude Code and Codex like an engineering team on your computer.
 - **Every task gets its own agent,** from idea to production, around the clock.
 - **It heals and improves itself,** so the work keeps moving and keeps getting better.
 
-**Early preview · Linux · macOS · [Get started](#get-started)**
+**Linux · macOS · [Get started](#get-started)**
 
 <img src="docs/images/opening.webp" alt="The project view on a computer, with the coordinator's plan and twenty-three tasks at work. On a phone in front of it, the one question that needs you is answered with its recommended seven days, and on the computer that task goes back to work." width="1200">
 
@@ -49,6 +49,13 @@ One engine is enough, and each integration is
 
 [See it all in the desktop and phone walkthrough](docs/WALKTHROUGH.md#see-the-features)
 
+## How it works
+
+Under the hood, one daemon on your computer, altd, holds the record of every project and task. The state of
+the work lives there, not in any model's memory, so a session that stops picks up where the record left off.
+
+<img src="docs/images/system.svg" alt="You give direction, answers and approvals: to the coordinator (L3) in project chat, to project agents as briefs and a budget, and to any task directly, including Stop. In the middle, altd, the daemon, holds the records, task states, dispatch and merge gate, and agents act on the records only through alt commands it checks. The coordinator starts, answers and resumes tasks; project agents run on a schedule or event, then report and suggest for you to decide. Each task agent (L2) works in a sandbox with its own worktree, branch and pull request, with L1 helpers for focused work; complex plans and changes get an independent review, preferably by the other engine; and GitHub holds pull requests and checks, with every merge passing altd's gate." width="1000">
+
 ## Get started
 
 Altitude runs for one person on Linux 6.5 or newer with a systemd user manager or on macOS 15 or newer; releases
@@ -62,11 +69,10 @@ and one authenticated coding CLI. Agent work uses your coding account's allowanc
    curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
    ```
 
-   Releases are early previews: expect rough edges, and read the
-   [release notes](CHANGELOG.md) for known limitations. The script checks the machine, runs
-   nothing it downloads unless it matches the release's checksums and prints the next steps. The
-   [installation steps](docs/SETUP.md#install-the-application) explain what it trusts and how to
-   verify a release's script before running it.
+   The script checks the machine, runs nothing it downloads unless it matches the release's
+   checksums and prints the next steps. The [installation steps](docs/SETUP.md#install-the-application)
+   explain what it trusts and how to verify a release's script before running it, and the
+   [release notes](CHANGELOG.md) list what each version brings.
 2. Trust Altitude's certificate with the
    [certificate guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device),
    comparing its name and full SHA-256 with the installer's output. Then open the private link the
@@ -90,8 +96,7 @@ optional private VPN fits in. The installer opens no browser and changes no cert
 <details>
 <summary>Ask your coding agent to help install</summary>
 
-Paste into Claude Code or Codex on the machine that will run Altitude. This is assisted setup;
-unattended installation is not yet validated.
+Paste into Claude Code or Codex on the machine that will run Altitude.
 
 ```text
 Help me install Altitude using https://github.com/mburakyucel/altitude/blob/main/docs/SETUP.md
