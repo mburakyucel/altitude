@@ -3,11 +3,14 @@
 The bare Git remote, retention cleanup and task lifecycle are real; only hosted GitHub and worker execution
 use deterministic fixtures.
 """
+import subprocess
 from pathlib import Path
+from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
 from tests.fakes import FakeL2
-from altitude import config, dispatch, land, server, state as S, tasks as T
+from tests.test_images import upload
+from altitude import config, dispatch, images, land, server, state as S, tasks as T
 
 
 class TestReopenDoneTask(AltitudeCase):
@@ -83,6 +86,11 @@ class TestReopenDoneTask(AltitudeCase):
         self.assertIn("The operator's message reopens this task, which was done on", prompt)
         self.assertIn(text, prompt)
         return message, prompt
+
+    def reopen_resumed(self):
+        dispatch.resume(self.project, self.slug)
+        self.assertEqual(S.load_task(self.project, self.slug)["state"], "running")
+        return None, self.engine.calls[-1]["prompt"]
 
     def test_merged_worktree_and_branch_are_rebuilt_and_the_task_finishes_again(self):
         deliveries = []
@@ -172,11 +180,39 @@ class TestReopenDoneTask(AltitudeCase):
             task = S.load_task(self.project, self.slug)
             task["daemon_request"] = {"id": "r1", "operation": "stop", "status": "pending"}
             S.save_task(self.project, task)
-        with self.assertRaisesRegex(T.TransitionError, "daemon request r1 owns this task"):
-            T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "One more question.")
+        for uploads in (None, [upload()]):
+            with self.assertRaisesRegex(T.TransitionError, "daemon request r1 owns this task"):
+                T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "One more question.", uploads=uploads)
+        root = images._root(self.project)
+        self.assertFalse(root.exists() and [path for path in root.iterdir() if not path.name.startswith(".")])
         task = S.load_task(self.project, self.slug)
         self.assertEqual(task["state"], "done")
         self.assertNotIn("reopened", task)
         self.assertEqual(S.task_dir(self.project, self.slug).parent, S.archive_dir(self.project))
         self.assertIn("PR #101", (S.task_dir(self.project, self.slug) / "digest.md").read_text())
         self.assertFalse([row for row in T.task_messages(self.project, self.slug) if row.get("completion") or row["role"] == T.OPERATOR_MESSAGE_ROLE])
+
+    def test_only_the_reopening_moves_a_done_task(self):
+        self.deliver("First notes\n", [])
+        with S.project_lock(self.project):
+            with self.assertRaisesRegex(T.TransitionError, "done → blocked is not allowed"):
+                T.continue_report(self.project, S.load_task(self.project, self.slug), actor="l3", reason="Note",
+                                  check_pr=False)
+        self.assertEqual(S.load_task(self.project, self.slug)["state"], "done")
+
+    def test_a_retried_rebuild_still_says_what_was_rebuilt(self):
+        self.deliver("First notes\n", [])
+        self.cleanup()
+        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "One more question.")
+        real = subprocess.run
+
+        def interrupted(args, *rest, **kwargs):
+            if "rev-list" in args:
+                raise subprocess.TimeoutExpired(args, 120)
+            return real(args, *rest, **kwargs)
+        with mock.patch("subprocess.run", interrupted), self.assertRaises(subprocess.TimeoutExpired):
+            dispatch._restore_reopened_worktree(self.project, self.slug)
+        self.assertTrue(self.worktree.is_dir())
+        _message, prompt = self.reopen_resumed()
+        self.assertIn("the task branch starts again from origin/main", prompt)
+        self.assertNotIn("still in place", prompt)

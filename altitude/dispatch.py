@@ -1130,27 +1130,36 @@ def _restore_reopened_worktree(project: str, slug: str) -> dict:
         return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120,
                               env=git_policy.git_env(repo))
 
-    if worktree.is_dir():
+    def mark(**fields) -> dict:
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            task["reopened"] = {**task["reopened"], **fields}
+            S.save_task(project, task)
+        return task
+
+    # A retry after a rebuild that stopped part way still reports the rebuild it started.
+    restoring = S.load_task(project, slug)["reopened"].get("restoring")
+    if worktree.is_dir() and not restoring:
         outcome = {"worktree": "kept"}
     else:
-        origin_sha = git_policy.fetch_origin(repo, "main")
-        git("worktree", "prune")
-        worktree.parent.mkdir(parents=True, exist_ok=True)
-        if git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0:
-            made = git("worktree", "add", str(worktree), branch)
-            outcome = {"worktree": "branch"}
-        else:
-            made = git("worktree", "add", "--no-track", "-b", branch, str(worktree), origin_sha)
-            outcome = {"worktree": "main"}
-        if made.returncode != 0:
-            raise T.TransitionError(f"git worktree add failed: {(made.stderr or made.stdout).strip()[:300]}")
+        if not worktree.is_dir():
+            origin_sha = git_policy.fetch_origin(repo, "main")
+            git("worktree", "prune")
+            worktree.parent.mkdir(parents=True, exist_ok=True)
+            if not restoring:
+                restoring = ("branch" if git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0
+                             else "main")
+                mark(restoring=restoring)
+            fresh = restoring == "main" and git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode
+            made = (git("worktree", "add", "--no-track", "-b", branch, str(worktree), origin_sha) if fresh
+                    else git("worktree", "add", str(worktree), branch))
+            if made.returncode != 0:
+                raise T.TransitionError(f"git worktree add failed: {(made.stderr or made.stdout).strip()[:300]}")
+        outcome = {"worktree": restoring}
         head = git("rev-parse", "--verify", f"refs/heads/{branch}").stdout.strip()
         ahead = git("rev-list", "--count", head, "--not", "refs/remotes/origin/main").stdout.strip()
         outcome.update(head=head, ahead=int(ahead or 0))
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        task["reopened"] = {**task["reopened"], **outcome}
-        S.save_task(project, task)
+    task = mark(**outcome)
     S.append_event(project, slug, "worktree-restored" if outcome["worktree"] != "kept" else "worktree-kept",
                    **outcome, branch=branch)
     return task

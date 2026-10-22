@@ -35,9 +35,10 @@ TRANSITIONS = {
     "running": {"reported", "blocked", "rejected", "done"},
     "blocked": {"running", "queued", "rejected", "reported"},   # queued: resumed before any launch
     "reported": {"done", "running", "blocked", "rejected"},      # running: verifier says not done → resume
-    "done": {"blocked"},                                         # the operator's message reopens it
+    "done": set(),
     "rejected": set(),
 }
+REOPEN = ("done", "blocked")  # only the operator's message takes it, through _reopen
 
 class TransitionError(Exception):
     pass
@@ -873,7 +874,8 @@ def reported_continuable(task: dict, report: dict | None, *, actor: str | None =
                     for pr in ((report or {}).get("landed") or {}).get("prs", []))))
 
 
-def continue_report(project: str, task: dict, *, actor: str, reason: str, check_pr: bool = True) -> dict:
+def continue_report(project: str, task: dict, *, actor: str, reason: str, check_pr: bool = True,
+                    reopen: bool = False) -> dict:
     """Under the project lock, retire completion evidence and enter the ordinary resume path."""
     from . import verify
     slug = task["slug"]
@@ -903,7 +905,7 @@ def continue_report(project: str, task: dict, *, actor: str, reason: str, check_
         S.save_task(project, task)
         S.regen_state_md(project)
         return task
-    return _move(project, task, "blocked", actor, reason=reason)
+    return _move(project, task, "blocked", actor, reopen=reopen, reason=reason)
 
 
 def _reopen(project: str, task: dict, at: str) -> dict:
@@ -911,18 +913,19 @@ def _reopen(project: str, task: dict, at: str) -> dict:
     completion stays in the conversation as one system row carrying its digest; `reopened` tells the next resume to
     restore the worktree if retention removed it and to tell the owner what it has."""
     slug = task["slug"]
-    _require_daemon_fence(task, slug)  # every refusal comes before the first file changes
     src, dst = S.archive_dir(project) / slug, S.tasks_dir(project) / slug
-    if src.is_dir():
-        src.rename(dst)
+    # Everything that can fail is read before the folder leaves the archive.
+    folder = src if src.is_dir() else dst
     done = next((ev for ev in reversed(S.read_events(project, slug))
                  if ev.get("kind") == "state" and ev.get("to") == "done"), {})
-    digest_path = dst / "digest.md"  # the latest completion's, until the task finishes again
+    digest_path = folder / "digest.md"  # the latest completion's, until the task finishes again
     digest = digest_path.read_text().strip() if digest_path.is_file() else ""
     # The conversation sorts by time, so the row sits where the task finished: after its last row and before the
     # operator's message, in the conversation's own time format.
     finished = datetime.fromisoformat(done["at"]).isoformat(timespec="microseconds") if done.get("at") else at
-    last = max((row["at"] for row in _rows(dst / "conversation.jsonl", "task conversation")), default=finished)
+    last = max((row["at"] for row in _rows(folder / "conversation.jsonl", "task conversation")), default=finished)
+    if folder == src:
+        src.rename(dst)
     _append_jsonl(dst / "conversation.jsonl", {
         "id": uuid.uuid4().hex, "at": min(max(finished, last), at), "role": "system", "by": "altd", "completion": True,
         "text": headline(digest) if digest else "", "digest": digest})
@@ -930,7 +933,7 @@ def _reopen(project: str, task: dict, at: str) -> dict:
     task["reopened"] = {"at": at, "done_at": done.get("at")}
     S.append_event(project, slug, "reopened", done_at=done.get("at"), digest=digest, by=OPERATOR_MESSAGE_ROLE)
     return continue_report(project, task, actor=OPERATOR_MESSAGE_ROLE, reason="Reopened by your message",
-                           check_pr=False)
+                           check_pr=False, reopen=True)
 
 
 def message(project: str, slug: str, role: str, text: str, *, by: str | None = None,
@@ -989,6 +992,8 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
                                   + ("; only the operator's message reopens a done task" if task.get("state") == "done" else ""))
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
             raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
+        if task.get("state") == "done":
+            _require_daemon_fence(task, slug)  # a refused reopening writes nothing, images included
         if _ensure_question(project, task):
             S.save_task(project, task)
         row = {"id": request_id or uuid.uuid4().hex, "at": _conversation_time(), "role": role, "text": text, "by": by or role}
@@ -1695,9 +1700,9 @@ def _supersede_resume(task: dict) -> None:
     task.pop("resume_request", None)
 
 
-def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
+def _move(project: str, task: dict, to: str, actor: str, *, reopen: bool = False, **ev) -> dict:
     frm = task["state"]
-    if to not in TRANSITIONS.get(frm, set()):
+    if to not in TRANSITIONS.get(frm, set()) and not (reopen and (frm, to) == REOPEN):
         raise TransitionError(f"{task['slug']}: {frm} → {to} is not allowed")
     usage.remember(task)
     if to == "rejected":
