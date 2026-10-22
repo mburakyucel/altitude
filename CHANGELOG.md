@@ -11,6 +11,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Ask the coordinator how Altitude or one of its parts works and it answers in that turn, in plain words, from
   the documentation, naming the section it drew on, and says so when the documentation does not cover the
   point. The overview carries a short map of which document answers which kind of question.
+- The required pull-request check no longer loses a shard for 30 minutes to a slow package mirror: its install
+  steps give up within minutes and retry once, the system packages from the runner's next mirror.
 
 ## v0.12.0 — 2026-10-22
 
