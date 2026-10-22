@@ -49,6 +49,13 @@ One engine is enough, and each integration is
 
 [See it all in the desktop and phone walkthrough](docs/WALKTHROUGH.md#see-the-features)
 
+## How it works
+
+Under the hood, one daemon on your computer, altd, holds the record of every project and task. The state of
+the work lives there, not in any model's memory, so a session that stops picks up where the record left off.
+
+<img src="docs/images/system.svg" alt="You talk with the coordinator in project chat, give project agents their briefs and budget, and can message, answer, approve or stop any task. All of it runs through altd in the middle, which keeps every record, moves every task and gates every merge; agents act on the record only through alt commands it checks. Below it, each task agent works in a sandbox on its own copy of the code with helper agents for focused work, an independent review checks complex work, and GitHub holds the pull requests and their checks." width="1000">
+
 ## Get started
 
 Altitude runs for one person on Linux 6.5 or newer with a systemd user manager or on macOS 15 or newer; releases

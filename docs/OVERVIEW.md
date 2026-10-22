@@ -6,6 +6,8 @@ documents are long, so read the sections a change touches, by heading, rather th
 
 ## The system in brief
 
+<img src="images/system.svg" alt="The operator talks with the coordinator in project chat, gives project agents their briefs and budget, and can message, answer, approve or stop any task. altd sits in the middle: it keeps every record, moves every task and gates every merge, and agents act on the record only through alt commands it checks. Below it, each task agent works in a sandbox on its own copy of the code with helper agents for focused work, an independent review checks complex work, and GitHub holds the pull requests and their checks." width="1000">
+
 Altitude runs for one operator on one machine. Each registered project has a persistent conversation
 with L3, the coordinator, which discusses direction, answers task questions from the record and
 dispatches L2 task owners. Each L2 owns one task in an isolated worktree (`.claude/worktrees/<slug>`,

@@ -10,6 +10,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   runs it. Landing names the clashing files to L2 the same way on a task's first or later pull request.
 - The required pull-request check no longer loses a shard for 30 minutes to a slow package mirror: its install
   steps give up within minutes and retry once, the system packages from the runner's next mirror.
+- The README and the overview show how Altitude fits together: you, the coordinator and project agents above altd,
+  which keeps every record and gates every merge, and task agents, independent review and GitHub below it.
 
 ## v0.12.0 — 2026-10-22
 
