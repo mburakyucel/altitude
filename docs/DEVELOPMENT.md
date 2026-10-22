@@ -1971,8 +1971,13 @@ to main and manual dispatches as parallel `shard` jobs, each on its own GitHub-h
 `ubuntu-24.04` runner: `make check-python SHARD=i/4` and `make check-web SHARD=i/6`, with
 Python using all of its runner's CPUs. Each shard verifies the exact candidate, then installs
 `ffmpeg` and `liblcms2-2` for the image fixtures and the frozen web dependencies and Chromium from
-`web/`, where Corepack selects the pinned pnpm. The workflow lists each suite's slices `1/n`
-through `n/n` and the runners split their own sorted test lists, so every test runs exactly once;
+`web/`, where Corepack selects the pinned pnpm. A slow or failing mirror costs minutes, not the shard's
+30-minute limit: apt retries each file and drops a silent connection, the apt download gets 90 seconds and
+one retry from the runner's next mirror, and packages install only after everything has downloaded; the
+pnpm install gets one minute and the Chromium install two, each with one retry, inside step limits of five
+and seven minutes. Only Ubuntu's archive is read, so the runner image's Microsoft package source is removed
+first. `tests/test_ci_workflow.py` runs both steps against fixture commands that stall. The workflow lists
+each suite's slices `1/n` through `n/n` and the runners split their own sorted test lists, so every test runs exactly once;
 `tests/test_ci_workflow.py` checks that the matrix covers every `make check` branch and
 `tests/test_parallel_checks.py` that Python slices partition the suite. Every shard finishes even
 when another fails. The required job `check` waits for all of them, always runs, and passes only

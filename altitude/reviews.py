@@ -139,13 +139,20 @@ def _git(root, *args, binary=False, stdin=None, conflict_ok=False):
     return (output, result.returncode == 1) if conflict_ok else output
 
 
-def _candidate_tree(root, base, head):
+class Conflict(T.TransitionError):
+    """The task branch no longer merges with current main: the owner's to reconcile, never the requester's."""
+
+
+def _candidate_tree(root, base, head, merged_head=None):
     output, conflicted = _git(root, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, head, conflict_ok=True)
     lines = output.splitlines()
     if conflicted:
         paths = ", ".join(dict.fromkeys(lines[1:])) or "unnamed paths"
-        raise T.TransitionError(f"The task branch conflicts with current main in {paths}. "
-                                "Reconcile the branch with origin/main and commit, then retry.")
+        # After a merged PR, alt land rebases the later commits and refuses a merge commit among them.
+        how = (f"Rebase the commits after the merged PR with git rebase --onto origin/main {merged_head}, resolve those "
+               "files and continue the rebase" if merged_head else
+               "Merge origin/main into the branch, resolve those files and commit")
+        raise Conflict(f"The task branch conflicts with current main in {paths}. {how}, then retry.")
     return lines[0]
 
 
@@ -185,7 +192,7 @@ def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
     head = _git(root, "rev-parse", "HEAD")
     base = _git(root, "rev-parse", "origin/main")
     tree = (_git(root, "rev-parse", head + "^{tree}") if proposal_id else
-            _candidate_tree(root, base, head)) if candidate else None
+            _candidate_tree(root, base, head, task.get("review_merged_head"))) if candidate else None
     context = _context(project, task)
     identity = {"head": head, "base": base, "tree": tree}
     if proposal_id:
@@ -436,9 +443,6 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                 raise T.TransitionError("Assess the completed review before requesting another.")
         if why := _request_wait(task, subject, previous, delivery):
             raise T.TransitionError(why)
-        if subject == "changes":
-            root = _worktree(project, task)
-            _candidate_tree(root, _git(root, "rev-parse", "origin/main"), _git(root, "rev-parse", "HEAD"))
         choice = route.pick_review(task, config.project(project), **(selection or {}))
         if not choice.get("engine"):
             raise T.TransitionError(choice.get("why") or "No second engine is available.")
@@ -696,7 +700,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             if registered and not admitted:
                 with _inflight_lock:
                     _inflight.discard(key)
-    result = None
+    result = conflict = None
     invoked = False
     try:
         identity, snapshot, runtime = _capture(project, task, review, context_ids, proposal_id, show)
@@ -733,6 +737,9 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
         result = engines.review(prompt, engine=review["engine"], snapshot=snapshot, runtime=runtime,
                                 model=review["model"], effort=review.get("effort"), images=(identity.get("design") or {}).get("images", []),
                                 on_start=started, on_wait=waiting)
+    except Conflict as exc:  # the request waits on the owner's reconciliation; no reviewer was invoked
+        conflict = exc
+        result = {"error": str(exc), "termination_confirmed": True}
     except (OSError, ValueError, T.TransitionError, subprocess.SubprocessError) as exc:
         saved = _find(_load(project, slug), review_id)
         worker = saved.get("worker")
@@ -756,17 +763,24 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             elif live["state"] == "running":
                 stopped = (live.get("cancel_requested") or current.get("state") != "running"
                            or current.get("agent_id") != review.get("generation") or current.get("attempt") != expected_attempt)
-                live.update(state="cancelled" if stopped else "failed" if result.get("error") else "completed", finished_at=S.now())
-                if result.get("error"):
-                    live["error"] = result["error"]
-                if not stopped and (not result.get("error") or result.get("text")):
-                    live["result"] = {k: result.get(k) for k in ("text", "findings", "limitations")}
-                live["usage"] = result.get("usage")
+                if conflict and not stopped:
+                    for field in ("started_at", "generation", "effort"):
+                        live.pop(field, None)
+                    live["state"] = "requested"
+                else:
+                    live.update(state="cancelled" if stopped else "failed" if result.get("error") else "completed", finished_at=S.now())
+                    if result.get("error"):
+                        live["error"] = result["error"]
+                    if not stopped and (not result.get("error") or result.get("text")):
+                        live["result"] = {k: result.get(k) for k in ("text", "findings", "limitations")}
+                    live["usage"] = result.get("usage")
             S.save_task(project, current)
         with _inflight_lock:
             _inflight.discard(key)
         if not confirmed:
             _termination_fault(project, current, review_id)
+    if conflict and live["state"] == "requested":
+        raise Conflict(f"{conflict} The review stays requested.") from conflict
     return next(row for row in view(project, slug)["history"] if row["id"] == review_id)
 
 

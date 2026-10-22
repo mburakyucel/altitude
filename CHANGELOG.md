@@ -5,6 +5,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Asking for a review of a task whose branch clashes with newer work on main no longer ends in a Git
+  instruction: the request is kept and shows as queued for L2, which brings the branch up to date and then
+  runs it. Landing names the clashing files to L2 the same way on a task's first or later pull request.
+- The required pull-request check no longer loses a shard for 30 minutes to a slow package mirror: its install
+  steps give up within minutes and retry once, the system packages from the runner's next mirror.
 - A release approval names the version and its notes, and also covers changes that merge before the notes once
   their checks pass and the notes mention anything you would notice; the release owner tells you what joined
   before it publishes. It asks again when a late change is breaking, turns a fix release into a feature release,

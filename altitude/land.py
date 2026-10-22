@@ -162,6 +162,17 @@ def _need(p: subprocess.CompletedProcess, what: str) -> str:
     return (p.stdout or "").strip()
 
 
+def _conflicted(root: Path) -> str:
+    """The files a stopped merge or rebase left unmerged, named before it is aborted."""
+    return ", ".join((_git(root, "diff", "--name-only", "--diff-filter=U").stdout or "").splitlines())
+
+
+def _conflict(base: str, paths: str, how: str, exc: LandError) -> LandError:
+    """A branch that no longer merges with main is the owner's to reconcile; both landing paths say so alike."""
+    return LandError(f"the task branch conflicts with current origin/{base} in {paths}; local work is committed and "
+                     f"retained. {how}, then re-run alt land: {exc}")
+
+
 def _note(msg: str) -> None:
     print(f"alt land: {msg}", file=sys.stderr)
 
@@ -1544,11 +1555,16 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         try:
             _need(_git(root, "rebase", "--onto", f"origin/{base}", cutoff, timeout=300), "continuation rebase")
         except LandError as exc:
+            paths = ""
             if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
+                paths = _conflicted(root)
                 try:
                     _need(_git(root, "rebase", "--abort"), "abort continuation")
                 except LandError as abort_error:
                     raise LandError(f"{exc}; abort also failed: {abort_error}; local commits remain in reflog") from exc
+            if paths:
+                raise _conflict(base, paths, f"Run git rebase --onto origin/{base} {cutoff}, resolve those files and "
+                                "continue the rebase", exc) from exc
             raise LandError(f"continuation could not reconcile with main; local work is committed and retained. "
                             f"Resolve with git rebase --onto origin/{base} {cutoff}, then re-run alt land: "
                             f"{exc}") from exc
@@ -1661,9 +1677,14 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                     _note(f"integrating current origin/{base} before publishing the candidate")
                     try:
                         _need(_git(root, "merge", "--no-edit", publishing_base, timeout=300), "integrate current base")
-                    except LandError:
+                    except LandError as exc:
+                        paths = ""
                         if (git_dir / "MERGE_HEAD").exists():
+                            paths = _conflicted(root)
                             _need(_git(root, "merge", "--abort"), "abort base integration; resolve the worktree before retrying")
+                        if paths:
+                            raise _conflict(base, paths, f"Merge origin/{base} into the branch, resolve those files and "
+                                            "commit", exc) from exc
                         raise
                     head = _need(_git(root, "rev-parse", "HEAD"), "integrated head")
                 republish = False
