@@ -2,10 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["landed", "review", "blocked"],
+  "required": ["landed", "review"],
   "properties": {
     "landed": {
       "type": "object",
+      "description": "an object with `prs`, `main_runs` and `deploy`: {\"prs\": [], \"main_runs\": [], \"deploy\": \"not-applicable\"} when nothing landed",
       "additionalProperties": false,
       "required": ["prs", "main_runs", "deploy"],
       "properties": {
@@ -41,6 +42,7 @@
     },
     "review": {
       "type": "array",
+      "description": "a list of findings, each with `summary`, `disposition` and `reason`: [] when there were none",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -54,7 +56,7 @@
         }
       }
     },
-    "blocked": {"type": "string"},
+    "blocked": {"type": ["string", "null"], "description": "the exact block; left out when nothing is blocked"},
     "decisions": {"type": "array", "items": {"type": "object"}},
     "fyi": {"type": "array", "items": {"type": "string"}},
     "follow_ups": {"type": "array", "items": {"type": "string"}},

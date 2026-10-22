@@ -76,18 +76,18 @@ class TestContinuationJourney(AltitudeCase):
         self.write_report([(delivery["pr"], merge_sha)])
         path = S.task_dir(self.project, self.slug) / "report.json"
         report = S.read_json(path)
-        report.pop("blocked")
+        report.pop("review")
         report["follow_ups"] = ["Real-device acceptance remains with this owner."]
         S.write_json(path, report)
         verdict = verify.verify(self.project, self.slug)
         self.assertEqual(verdict["verdict"], "contradicted")
-        self.assertIn("report.json lacks `blocked`", verdict["problems"])
+        self.assertTrue(any(p.startswith("report.json lacks `review`") for p in verdict["problems"]), verdict)
         original = T.report(self.project, self.slug, verdict)
         with self.assertRaises(T.TransitionError):
             T.done(self.project, self.slug, digest="Delivery alone is not acceptance")
 
         message = T.message(self.project, self.slug, "l3",
-                            "Correct the missing blocked field; retain the real-device acceptance question.")
+                            "Correct the missing review list; retain the real-device acceptance question.")
         waiting = S.load_task(self.project, self.slug)
         self.assertEqual(waiting["resume_request"], message["id"])
         self.assertIn(self.slug, dispatch.resume_due(self.project))
@@ -107,7 +107,7 @@ class TestContinuationJourney(AltitudeCase):
         self.assertEqual(verify.verify(self.project, self.slug)["verdict"], "contradicted")
 
         # The original owner publishes the correction and re-parks the retained acceptance.
-        report["blocked"] = "Operator: confirm real-device acceptance."
+        report.update(review=[], blocked="Operator: confirm real-device acceptance.")
         S.write_json(path, report)
         T.block(self.project, self.slug, report["blocked"], actor="l2", updates={"waiting_on": "operator"})
         self.assertEqual(verify.verify(self.project, self.slug)["verdict"], "blocked")

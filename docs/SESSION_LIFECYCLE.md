@@ -608,7 +608,7 @@ L3 can also return a reported owner's current `contradicted` verifier result thr
 or `task resume`, even when all PRs are merged. The verdict must name the same report owner and
 delivery. This uses the same continuation transaction without an open-PR lookup; ordinary operator
 continuation still requires the open PR. Report correction preserves delivery and approval evidence,
-holds and acceptance context. The owner writes a fresh report with the required `blocked` string
+holds and acceptance context. The owner writes a fresh report that states the open acceptance in `blocked`
 and retains or re-parks any unresolved acceptance question before completion. L3 does not edit the
 owner's report. Stop fencing, resume capacity and launch-failure recovery remain in force.
 The broker's owner-only `task block` refusal points L3 to this correction path for reported tasks

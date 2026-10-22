@@ -41,7 +41,7 @@ class ReadOnlyHome(AltitudeCase):
 
     def test_owner_verbs_change_records_through_altd(self):
         (self.worktree / "progress.md").write_text("Goal: the read-only home.\n")
-        (self.worktree / "report.json").write_text(json.dumps({"summary": "Fixture report."}))
+        (self.worktree / "report.json").write_text(json.dumps({"landed": {"prs": [], "main_runs": [], "deploy": "not-applicable"}, "review": []}))
         (self.worktree / "README.md").write_text("# Draft\n\nThe new introduction.\n")
         done = self.confined(sys.executable, str(ALT), "task", "reply", "-", stdin="The draft is ready to read.")
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -50,6 +50,9 @@ class ReadOnlyHome(AltitudeCase):
             done = self.confined(sys.executable, str(ALT), "task", "save", kind, name)
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertEqual((S.task_dir(self.project, self.slug) / name).read_text(), (self.worktree / name).read_text())
+        done = self.confined(sys.executable, str(ALT), "task", "save", "report", "-", stdin=json.dumps({"review": []}))
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("report.json lacks `landed`", done.stderr)
         done = self.confined(sys.executable, str(ALT), "task", "block", self.slug, "--reason", "Build the README as shown?",
                              "--for-operator", "--show", "README.md")
         self.assertEqual(done.returncode, 0, done.stderr)
