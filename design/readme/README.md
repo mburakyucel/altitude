@@ -2,7 +2,8 @@
 
 The README shows the built web app on desktop and phone together: an opening loop of the desktop
 project view with the phone answering a decision in front of it, the "work at any altitude" drawing
-of the coordinator, task agents and helpers, and an animation of new tasks balanced across two engines.
+of the coordinator, task agents and helpers, an animation of new tasks balanced across two engines, and the
+"how it works" drawing of the pieces around altd, which the overview also shows.
 [The walkthrough](../../docs/WALKTHROUGH.md) carries the longer scenario, full-size captures and the
 feature pictures. The README's pictures are the same at every width; it is laid out for a computer screen first.
 
@@ -82,9 +83,10 @@ task names are illustrative, not a capture. `python3 design/readme/balance.py` w
   replacing the matching files. Keep routine renders and before/after review evidence outside Git
   under the [project UI rule](../../AGENTS.md#ui); do not add a gallery for each PR.
 - Change the quota animation in `design/readme/balance.py` and write it again; never edit `balance.svg` by hand.
-- Edit `docs/images/altitude.svg` directly. This standalone vector uses system fonts and contains
-  no scripts or raster art; it is the same drawing at every width, so keep its type large enough
-  to read in a desktop README column.
+- Edit `docs/images/altitude.svg` and `docs/images/system.svg` directly. These standalone vectors use system
+  fonts and contain no scripts or raster art; each is the same drawing at every width, so keep its type large
+  enough to read in a desktop README column. Keep `system.svg`'s labels in step with the
+  [architecture](../../docs/ARCHITECTURE.md) and its alt text in README and the overview in step with it.
 - Keep image alt text in README and walkthrough. Keep desktop and phone app views visible together
   in README. Check GitHub's sanitized Markdown, image
   paths and anchors, then inspect both widths. Open the original images to review details that are

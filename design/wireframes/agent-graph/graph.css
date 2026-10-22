@@ -1,0 +1,51 @@
+/* Agent graph boards: the work panel's List | Graph switch and the constellation. */
+.g-work{gap:14px;overflow:auto}
+.g-work.ov{position:absolute;top:0;right:0;bottom:0;box-shadow:var(--shadow)}
+.wh2{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 4px;min-height:36px}
+.wh2 h2{font-size:15px;font-weight:600;margin:0;display:inline}
+.wh2 .ct{font-size:12px;color:var(--text-muted);margin-left:8px}
+.tgl{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius-control);padding:2px;gap:2px;background:var(--card);flex:none}
+.tg{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:8px;font-size:13px;font-weight:500;color:var(--text-secondary);cursor:pointer}
+.tg.on{background:var(--accent-tint);color:var(--accent-text);font-weight:600}
+.trow .ta{font-size:12px;font-weight:600;color:var(--chip-claimed-text);margin-top:2px}
+.dot.bad{background:var(--danger)}
+.wfold,.wagents{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);padding:8px 4px;border-top:1px solid var(--hairline)}
+.wagents{justify-content:space-between}
+.muted{color:var(--text-muted)}
+.u{color:var(--accent-text);text-decoration:underline;text-underline-offset:2px}
+
+/* the constellation */
+.graph{position:relative;flex:none;margin:0 auto}
+.graph .edges{position:absolute;inset:0;overflow:visible}
+.spoke{stroke:var(--hairline);stroke-width:1.5}
+.dep{fill:none;stroke:var(--text-secondary);stroke-width:1.5;stroke-dasharray:5 4}
+.arrowhead{fill:var(--text-secondary)}
+.gn{position:absolute;width:40px;height:40px;color:var(--text-primary);text-decoration:none;border-radius:50%}
+.gn .disc{position:absolute;inset:0;border-radius:50%;border:2.5px solid var(--state);background:color-mix(in srgb,var(--state) 16%,var(--card));
+  box-shadow:0 1px 2px rgba(15,23,42,.10)}
+.gn.run .disc{border-radius:11px}
+.gn.s-running{--state:var(--accent)}.gn.s-waiting{--state:var(--data-claimed)}.gn.s-danger{--state:var(--danger)}
+.gn.s-idle{--state:var(--text-muted)}
+.gn.s-idle .disc{background:var(--card);border-style:dashed}
+.gn.breathe .disc,.hub.breathe .disc{box-shadow:0 0 0 5px color-mix(in srgb,var(--state) 22%,transparent),0 0 0 11px color-mix(in srgb,var(--state) 9%,transparent)}
+.gn.halo .disc,.hub.halo .disc{box-shadow:0 0 0 4px color-mix(in srgb,var(--state) 20%,transparent)}
+.gn .gq{position:absolute;right:-6px;top:-6px;min-width:18px;height:18px;border-radius:9px;background:var(--data-claimed);color:#fff;
+  font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid var(--page)}
+.gn .gl{position:absolute;left:50%;top:46px;transform:translateX(-50%);width:124px;text-align:center;line-height:1.3}
+.gn .gl .gt,.gn .gl .gm{background:var(--page);border-radius:4px;padding:0 3px}
+.gn .gl .gt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12.5px;font-weight:600;color:var(--text-primary)}
+.gn .go{width:12px;height:12px;vertical-align:-1px;margin-left:2px;fill:none;stroke:var(--text-muted);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.gn .gl .gm{display:block;font-size:11.5px;color:var(--text-muted);margin-top:1px}
+.gn.s-waiting .gl .gm{color:var(--chip-claimed-text);font-weight:600}
+.gn.s-danger .gl .gm{color:var(--danger)}
+.gn.focus{outline:2px solid var(--accent);outline-offset:4px}
+.pip{position:absolute;width:10px;height:10px;border-radius:50%;background:var(--accent);border:2px solid var(--page)}
+.hub{position:absolute;width:44px;height:44px;--state:var(--accent)}
+.hub .disc{position:absolute;inset:0;border-radius:50%;border:2px solid var(--accent-tint-border);background:var(--page);color:var(--accent-text);
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+.hub .hl{position:absolute;left:50%;top:48px;transform:translateX(-50%);white-space:nowrap;font-size:11.5px;color:var(--text-muted);background:var(--page);padding:0 3px;border-radius:4px}
+.skeleton-disc{position:absolute;top:20px;width:44px;height:44px;border-radius:50%;background:var(--bubble)}
+.gempty{text-align:center;font-size:13px;margin:-24px 0 0}
+
+.gn .nw{white-space:nowrap}
+.st{background:var(--page)}
