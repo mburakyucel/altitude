@@ -3422,6 +3422,17 @@ rows open the ordinary task conversation. Questions and answer controls live in 
 and the owning chat. Partial or final answers update the same row; only completion or rejection
 moves it out of Current. Saving an answer does not assert that the worker resumed.
 
+On desktop, Work's List | Graph switch shows Current either as rows or as the graph
+(`web/src/components/AgentGraph.tsx`, spec §3.7); the choice is a per-browser display preference
+(`web/src/shell/workView.ts`, `altitude.workView`) and the phone always shows rows. The graph places
+every current task and agent run on a ring around L3, the operator's turns first, and widens the panel
+to the live session panel's 480px. Each node reads `cardView`, the task card's own facts, link and
+accessible name, so a node and its row never disagree. Live cues need no read of their own: a running
+task's halo and helper pips come from the row's `token_usage` (see [task usage](#task-usage)), counting
+the owner session's and the current worker's helper sessions' newest requests within a minute, and only
+while the reading is under 30 seconds old and the project read is fresh. Missing helper evidence shows
+no pips and is named as unknown, never as zero.
+
 Only global Needs you carries a numeric attention badge. Project rail and switcher rows retain
 their state dots. The badge counts operator questions awaiting a response plus existing operational
 attention items; Needs you and project summaries label questions and operational items separately.

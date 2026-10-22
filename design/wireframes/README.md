@@ -27,6 +27,12 @@ task metadata and Reject remain in the compact phone details sheet.
 terminal route is built and folded into [SPEC §3.15](SPEC.md#315-settings-and-voice-input) and the
 system docs; each later rollout step does the same and walks its own states.
 
+## Work's graph
+
+[The agent graph](agent-graph/PROPOSAL.md) the operator chose on 2026-10-22: Work's List | Graph switch
+and the constellation, folded into [SPEC §2.2 and §3.7](SPEC.md#37-work-panel). `agent-graph/gen.py`
+writes the boards beside it; `web/e2e/agent-graph.pw.ts` walks its states.
+
 ## Approved image-input interaction
 
 [Images in project and task chats](IMAGE_INPUT.md) describes the interaction approved on 2026-09-10.
