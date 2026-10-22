@@ -91,7 +91,7 @@ class TestReportedContinuation(ChatCase):
         self.report.pop("blocked")
         S.write_json(self.report_path, self.report)
         task = self.task()
-        task["verified"].update(verdict="contradicted", problems=["report.json lacks `blocked`"])
+        task["verified"].update(verdict="contradicted", problems=["report.json lacks `review`"])
         S.save_task(self.project, task)
         self.original = copy.deepcopy(task)
         self.gh.side_effect = AssertionError("Correction does not require a GitHub lookup")

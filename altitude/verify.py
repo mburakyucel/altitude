@@ -85,6 +85,16 @@ def report_sections(report: dict, errors: list[str]) -> dict:
             **{key: items(key) for key in ("decisions", "fyi", "follow_ups", "deviations")}}
 
 
+def report_problems(report: dict) -> list[str]:
+    """Why the report cannot be read: a section of another shape, or a key `schemas/report.json` requires, named with
+    the shape it expects. `alt task save report` refuses such a report and the verifier hands it back."""
+    errors: list[str] = []
+    report_sections(report, errors)
+    schema = json.loads((config.SCHEMAS / "report.json").read_text())
+    return errors + [f"report.json lacks `{key}`: {schema['properties'][key]['description']}"
+                     for key in schema["required"] if key not in report]
+
+
 def gh(args: list[str], cwd: Path) -> dict | list | None:
     try:
         p = subprocess.run(["gh"] + args, cwd=str(cwd), capture_output=True, text=True, timeout=60, env=engines.clean_env())
@@ -133,6 +143,9 @@ def _verify(project: str, slug: str) -> dict:
     repo = config.project_path(project)
     task = S.load_task(project, slug)
     out = {"verdict": "ok", "problems": [], "prs": [], "signals": [], "spend": {}}
+    delivery = task.get("delivery") or {}
+    if delivery:  # every verdict names the delivery it judged, so the report it hands back is admitted
+        out["delivery"] = delivery
     rep = S.read_json(d / "report.json")
     if not rep:
         out["problems"].append("report.json missing")
@@ -143,20 +156,15 @@ def _verify(project: str, slug: str) -> dict:
         out["problems"].append("report predates follow-up work; refresh report.json")
         out["verdict"] = "contradicted"
         return _spend(out, project, task, d)
-    report_sections(rep, out["problems"])
+    out["problems"] = report_problems(rep)
     if out["problems"]:  # the owner corrects its report's shape before the rest can be read
         out["verdict"] = "contradicted"
         return _spend(out, project, task, d)
-    for k in ("landed", "review", "blocked"):
-        if k not in rep:
-            out["problems"].append(f"report.json lacks `{k}`")
     unresolved = open_findings(rep)
     if unresolved and not rep.get("blocked"):
         out["problems"].append(OPEN_FINDINGS)
     landed = rep.get("landed") or {}
-    delivery = task.get("delivery") or {}
     if delivery:
-        out["delivery"] = delivery
         reported = {pr.get("number") for pr in landed.get("prs") or []}
         for number in task.get("prs") or []:
             if number not in reported:

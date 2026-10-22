@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Agents learn about a malformed final report when they save it: `alt task save report` refuses a report missing
+  `landed` or `review`, or with a section of the wrong shape, and says what it expects. A report with nothing
+  blocked leaves `blocked` out instead of being handed back for it.
 - Agents no longer see the sign-ins and keys your other programs keep in your home folder (SSH and GPG keys,
   GitHub, cloud, cluster and registry logins, publishing tokens, saved Git passwords, keyring and keychain files),
   and on a Mac they cannot ask the keychain. Workers reach GitHub over HTTPS with your GitHub CLI sign-in, also

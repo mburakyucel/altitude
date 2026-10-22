@@ -1257,7 +1257,11 @@ An owner's verbs change records through altd's [task door](ARCHITECTURE.md#task-
 content of each file it names and shows, so the files can live anywhere the worker can read, and altd
 applies the verb to the owner's own task and attempt only. `alt task save` stores the owner's
 `report.json`, `progress.md` or hand-off receipt (`handoff-<id>.ready.json`, from the receipt's `id`)
-in the task's folder from a file or stdin, while the task runs; a report or receipt is a JSON object.
+in the task's folder from a file or stdin, while the task runs; a report or receipt is a JSON object. A report
+has the shapes in `schemas/report.json`: it requires `landed` (`prs`, `main_runs` and `deploy`) and `review` (a
+list of findings, empty when there were none), and `blocked` names the exact block, left out when nothing is
+blocked. The save refuses a report missing a required key or with a section of another shape, naming the key and
+the shape it expects; the verifier hands back the same problems for a report written any other way.
 
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
 and installation commands remain available through `bin/alt --help` and the relevant subcommand

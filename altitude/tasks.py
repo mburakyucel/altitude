@@ -1069,6 +1069,10 @@ def save_owner_file(project: str, slug: str, kind: str, text: str, *, expected_a
             raise TransitionError(f"alt task save: the {kind} is not JSON: {exc}") from None
         if not isinstance(parsed, dict):
             raise TransitionError(f"alt task save: the {kind} is one JSON object")
+        if kind == "report":
+            from . import verify
+            if problems := verify.report_problems(parsed):
+                raise TransitionError("alt task save: " + "; ".join(problems) + " (schemas/report.json)")
         if kind == "handoff":
             transfer = parsed.get("id")
             if not isinstance(transfer, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", transfer):
