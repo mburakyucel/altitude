@@ -992,19 +992,20 @@ class TestEvents(AgentCase):
         send = A.agent_view(self.project, agent, now=NOW)["send"]
         self.assertEqual((send["command"], send["id"]),
                          (f"alt --project {self.project} agent send 'Review each merge' \"what happened\"", agent))
-        # A quote in a name is quoted for the shell; a leading - would read as an option, and a name another agent shares
-        # would be refused as ambiguous, so those commands name the id.
+        # A quote in a name is quoted for the shell. A leading - would read as an option, a name another agent shares
+        # would be refused as ambiguous and a name that is another agent's id names that agent, so those commands name
+        # the id, and the line about the examples' id has nothing to explain.
         def renamed(name):
             view = A.agent_view(self.project, agent, now=NOW)
             A.change(self.project, "set", {"agent": agent, "version": view["version"],
                                            "definition": {**view["definition"], "name": name}}, by="operator", source="cli")
-            return A.agent_view(self.project, agent, now=NOW)["send"]["command"]
-        self.assertTrue(renamed("What's new").endswith("""agent send 'What'"'"'s new' "what happened\""""))
-        self.assertTrue(renamed("-x").endswith(f'agent send {agent} "what happened"'))
-        renamed("Review each merge")
-        self.events_agent(on=False)
-        self.assertEqual(A.agent_view(self.project, agent, now=NOW)["send"]["command"],
-                         f'alt --project {self.project} agent send {agent} "what happened"')
+            return A.agent_view(self.project, agent, now=NOW)["send"]
+        by_id = f'alt --project {self.project} agent send {agent} "what happened"'
+        self.assertTrue(renamed("What's new")["command"].endswith("""agent send 'What'"'"'s new' "what happened\""""))
+        self.assertEqual((renamed("-x")["command"], renamed("-x")["id"]), (by_id, None))
+        other = self.events_agent(on=False)
+        self.assertEqual(renamed(other)["command"], by_id)
+        self.assertEqual(renamed("Review each merge")["command"], by_id)
         merges, issues, failing = send["recipes"]
         self.assertEqual([r["what"] for r in send["recipes"]],
                          ["Each merged pull request: a script for cron every 10 minutes",

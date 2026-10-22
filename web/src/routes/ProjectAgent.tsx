@@ -106,7 +106,7 @@ function SendSection({ send }: { send: NonNullable<ProjectAgentDetail["send"]> }
     <h3 id="agent-send">Send it an event</h3>
     <p className="text-meta text-muted">From a script or your terminal on this computer:</p>
     <CodeBlock text={send.command} info="" />
-    {send.command.includes(send.id) ? null : <p className="text-meta text-muted">The examples use its id, <code>{send.id}</code>, so they keep working after a rename.</p>}
+    {send.id ? <p className="text-meta text-muted">The examples use its id, <code>{send.id}</code>, so they keep working after a rename.</p> : null}
     <p className="text-meta text-muted">To try it first, use <code>agent run</code> in place of <code>agent send</code>: it starts a run now, even before the agent is on.</p>
     <details className="agent-fold">
       <summary>Examples</summary>

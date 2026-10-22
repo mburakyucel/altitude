@@ -2490,8 +2490,8 @@ form). An offer lapses after seven days, and a change offer is refused once the 
 **Pages.** `GET /api/agents/<project>` is the Agents page (budget, agents, retired agents, built-ins not on,
 offers, and in Altitude's own project the [Weekly improvement review](#improvement-review) as `weekly`); `/<agent>`
 an agent's status with its note, actions, definition, recent runs and, with the event trigger, `send`: the command, naming the agent by its
-shell-quoted name or by its id when another agent not retired shares the name or the name starts with `-`, the id
-and the example scripts, which use the id; `/weekly` the review's own page; `/<agent>/runs/<n>` a run's outcome, the events it took, the
+shell-quoted name when `alt agent` resolves that name to it and it does not start with `-`, else by its id; the id
+the example scripts use when the command names the name; and those scripts; `/weekly` the review's own page; `/<agent>/runs/<n>` a run's outcome, the events it took, the
 version it ran and its report; `/<agent>/runs/<n>/transcript` its session through the transcript
 reader, read only. The project view carries `project_agents`: the runs waiting or running, shown in Work under
 Current; the number of agents not retired, with the Weekly improvement review once it is the operator's; and the

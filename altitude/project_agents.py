@@ -1215,16 +1215,16 @@ def agent_view(project: str, agent_id: str, *, runs: int = 10, now: datetime | N
             "version": agent["version"], "status": _status(record, agent, now),
             "definition": {k: agent[k] for k in DEFINITION}, "definition_line": _definition_line(agent),
             "runs": [_run_row(r) for r in reversed(own[-runs:])], "more": len(own) > runs,
-            "send": ({"command": f'alt --project {project} agent send {_ref_name(record, agent)} "what happened"',
-                      "id": agent["id"], "recipes": recipes(project, agent["id"])}
-                     if agent["events"] and agent["state"] != "retired" else None)}
+            "send": _send(project, record, agent) if agent["events"] and agent["state"] != "retired" else None}
 
 
-def _ref_name(record: dict, agent: dict) -> str:
-    """The agent as a command names it: its name, quoted for the shell, unless another agent that is not retired shares
-    the name or the name would read as an option."""
-    same = [a for a in record["agents"] if a["state"] != "retired" and a["name"].lower() == agent["name"].lower()]
-    return shlex.quote(agent["name"]) if len(same) == 1 and not agent["name"].startswith("-") else agent["id"]
+def _send(project: str, record: dict, agent: dict) -> dict:
+    """The command that sends the agent an event, naming it by its name, quoted for the shell, when the CLI resolves
+    that name to this agent and it would not read as an option, else by its id; `id` is the id the examples use when the
+    command names the name, else None."""
+    named = not agent["name"].startswith("-") and _matches(record, agent["name"]) == [agent["id"]]
+    return {"command": f'alt --project {project} agent send {shlex.quote(agent["name"]) if named else agent["id"]} '
+                       '"what happened"', "id": agent["id"] if named else None, "recipes": recipes(project, agent["id"])}
 
 
 #: Cron's PATH holds neither `alt` (~/.local/bin) nor a Homebrew `gh`; this line finds both on Linux and the Mac.
@@ -1633,12 +1633,16 @@ def verb(project: str, options, stdin: str = "", *, by: str, source: str) -> dic
     return change(project, action, fields, by=by, source=source)
 
 
+def _matches(record: dict, ref: str) -> list[str]:
+    """The agents a CLI reference names: the agent with that id, else every agent not retired with that name."""
+    if any(a["id"] == ref for a in record["agents"]):
+        return [ref]
+    return [a["id"] for a in record["agents"] if a["state"] != "retired" and a["name"].lower() == ref.strip().lower()]
+
+
 def _id(project: str, ref: str) -> str:
     """An agent by its id, or by its name when exactly one agent that is not retired has it."""
-    record = _load(project)
-    if any(a["id"] == ref for a in record["agents"]):
-        return ref
-    named = [a["id"] for a in record["agents"] if a["state"] != "retired" and a["name"].lower() == ref.strip().lower()]
+    named = _matches(_load(project), ref)
     if len(named) != 1:
         raise Missing(f"There is no agent {ref!r}." if not named else f"More than one agent is named {ref!r}.")
     return named[0]

@@ -821,8 +821,9 @@ export const ProjectAgentDetailSchema = z.object({
   definition_line: z.string(),
   runs: z.array(ProjectAgentRunSchema),
   more: z.boolean(),
-  /** With the event trigger: the command that sends it an event, and examples to copy (project_agents.recipes). */
-  send: z.object({ command: z.string(), id: z.string(), recipes: z.array(z.object({ what: z.string(), text: z.string() })) }).nullable(),
+  /** With the event trigger: the command that sends it an event, the id the examples use when the command names the
+   * agent by its name (else null), and examples to copy (project_agents.recipes). */
+  send: z.object({ command: z.string(), id: z.string().nullable(), recipes: z.array(z.object({ what: z.string(), text: z.string() })) }).nullable(),
 });
 export type ProjectAgentDetail = z.infer<typeof ProjectAgentDetailSchema>;
 export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
