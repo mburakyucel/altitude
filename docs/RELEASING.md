@@ -23,7 +23,7 @@ remain separate [release prerequisites](ROADMAP.md#early-user-onboarding-and-pub
 ## Cadence and versions
 
 During active preview development, L3 proposes a release whenever validated changes have
-accumulated on main, at least daily, and the operator approves its version and SHA. Several
+accumulated on main, at least daily, and the operator approves its version and notes. Several
 releases in one day are reasonable when changes warrant them; there is no weekly wait or mandatory
 overnight observation period. Every candidate passes the complete gate and targeted validation.
 Higher-risk lifecycle, permissions or storage changes include an observation interval chosen for
@@ -50,8 +50,9 @@ and publication decisions. The separately dispatched
 acceptance evidence; its pending or failed runs on main do not gate PR delivery or release publication.
 
 1. Select an exact commit already on `origin/main`. Record its SHA, proposed version, previous
-   release/known-good SHA and the PRs included since that point. Later main commits are outside
-   this candidate's evidence and notes. Use an isolated checkout for candidate testing.
+   release/known-good SHA and the PRs included since that point. Use an isolated checkout for
+   candidate testing. Later main commits join the release only as its [approval](#release-approval)
+   allows.
 2. Require the complete deterministic gate: Python, web tests, typecheck/build and all applicable
    phone/desktop browser cases. Record the successful CI run for that exact SHA, commands,
    runtime/tool versions, executed counts, exceptions and artifacts. Missing, failed, canceled
@@ -70,22 +71,24 @@ acceptance evidence; its pending or failed runs on main do not gate PR delivery 
    the same PR as that behavior.
 5. Record targeted validation and any applicable observation interval and results. When it is already activated, normal
    use and existing API/UI health evidence can inform this record without starting model-using
-   validation tasks. Any changed code gives a new candidate and new evidence. A version's
-   notes and observations must identify which SHA was observed. A candidate that changes the
+   validation tasks. Changed code gives a new candidate; its targeted validation and observation
+   repeat when the change touches what they cover. A version's notes and observations must
+   identify which SHA was observed. A candidate that changes the
    speech runtime's pins records the [voice runtime replacement check](DEVELOPMENT.md#voice-runtime-replacement-check)
    from its preceding pins on Linux and on a Mac.
-6. Present the readiness record and proposed notes to the operator for the publication decision.
-   Approval names the version and SHA. Then deliver the dated changelog section
-   (`## v0.1.0 — 2026-10-01`) through a PR. If that PR changes the release SHA, repeat the
-   deterministic gate on the final SHA before publishing it. The operator publishes it, or asks a
-   task owner to and grants it ([publish a release](#publish-a-release)). Use the same source for
-   notes and tag; an early preview remains labeled as such.
+6. Present the readiness record and proposed notes to the operator for the publication decision
+   ([release approval](#release-approval)). Then deliver the dated changelog section
+   (`## v0.1.0 — 2026-10-01`) through a PR. Its merge commit is the release commit; repeat the
+   deterministic gate on it before publishing it. The operator publishes it, or asks a task owner
+   to and grants it ([publish a release](#publish-a-release)). Use the same source for notes and
+   tag; an early preview remains labeled as such.
 
-The readiness record can be a small file attached to the task report; it needs no new daemon
-record or release service. Include: version, candidate SHA, included PRs, previous known-good
-SHA, CI run and artifact links, test counts/timings, tested runtime/engine fixture formats,
-observation interval, compatibility/recovery notes, finding dispositions and publication decision.
-An example candidate command sequence, from an isolated checkout at the recorded SHA:
+The readiness record can be a small file attached to the task report; it needs no new daemon record
+or release service. Include: version, candidate SHA, release commit, included PRs and those that
+joined after the approval, previous known-good SHA, CI run and artifact links, test counts/timings,
+tested runtime/engine fixture formats, observation interval, compatibility/recovery notes, finding
+dispositions and publication decision. An example candidate command sequence, from an isolated
+checkout at the recorded SHA:
 
 ```sh
 git rev-parse HEAD
@@ -96,6 +99,23 @@ make check
 
 This validates the selected source. It does not create a release, switch a deployment to that
 source or prove live provider compatibility.
+
+### Release approval
+
+The operator approves a version and its notes. The approval covers main up to the release commit,
+so changes that merge before the notes do join the release without another round, provided each
+has passed the required checks, targeted validation covering anything it touches has run
+again with it included, and the notes mention anything in it a user would notice. The owner adds
+notes lines only for such changes and posts what joined after the approval, with those lines, in its
+task chat before it merges the notes; then it publishes once and repeats that list in its final
+report and the readiness record.
+
+The owner asks again before merging the notes when a joining change alters what the version means:
+it breaks an installation, settings or the update path, it turns a PATCH release into a MINOR one,
+it fixes a security problem the approved notes do not cover, it needs an observation interval or is
+an incompatible storage change, or its targeted validation fails. An operator can still ask for an
+exact-commit release: the notes merge first, the approval names that merge commit and only that
+commit is published.
 
 ## Pre-publication history audit
 
@@ -145,9 +165,14 @@ becomes the latest release, which the [one-command install](SETUP.md#install-the
 fetches.
 
 ```sh
-git tag <version> <approved SHA>
+git tag <version> <release commit>
 git push origin <version>
 ```
+
+A task owner asked to push the tag runs exactly these two commands at the release commit under a
+one-time [operator grant](CLI.md#operator-grant), which it can ask for with the approval: the grant
+names the version and its release commit as the notes PR's merge commit, and the commands it runs
+record the actual SHA. The owner revokes the grant after verifying the published release.
 
 A tag ruleset lets only the operator's GitHub account create, move or delete `v*` tags, and immutable
 releases keep a published release's tag and files unchanged. Workers and granted commands use that
@@ -161,21 +186,22 @@ content is followed by a new version, never by moving its tag or replacing its f
 
 ### Publication by a granted task owner
 
-When the operator asks a task to publish an approved version and SHA, the owner asks for an
-[operator grant](CLI.md#operator-grant) naming the repository, version, SHA and these steps, then runs
-each step with `alt task run`. This path needs no hosted build or Actions billing and provides no
-hosted build attestation, so its notes say so.
+When the operator asks a task to publish an approved version, the owner asks for an [operator
+grant](CLI.md#operator-grant) naming the repository, version, release commit (the notes PR's merge
+commit, which the commands record) and these steps, then runs each step with `alt task run`. This
+path needs no hosted build or Actions billing and provides no hosted build attestation, so its notes
+say so.
 
-1. Build the files from the approved commit into a new directory in the task folder:
+1. Build the files from the release commit `<SHA>` into a new directory in the task folder:
    `python3.12 scripts/build_release.py --version <version> --source <SHA> --output <dir> --notes <dir>-notes.md`.
-2. Create a draft that targets the approved commit, with every file attached:
+2. Create a draft that targets the release commit, with every file attached:
    `gh release create <version> --draft --target <SHA> --title 'Altitude <version>' --notes-file <dir>-notes.md`
    plus `--prerelease` for `-rc.N`, followed by the files in `<dir>`.
 3. Read the draft back and compare every asset's name and size with the build, then publish it with
    `gh release edit <version> --draft=false`. GitHub creates the tag with the release, so no tag is
    pushed before the files are in place. The tag still starts the release workflow, which fails
    because the release already exists and changes nothing; that failed run is expected on this path.
-4. Read back the published release: its tag's commit is the approved SHA and every asset's digest
+4. Read back the published release: its tag's commit is the release commit and every asset's digest
    matches `SHA256SUMS`.
 
 The owner stops and reports at any mismatch, at an existing tag or release for that version that

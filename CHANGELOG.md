@@ -5,6 +5,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A release approval names the version and its notes, and also covers changes that merge before the notes once
+  their checks pass and the notes mention anything you would notice; the release owner tells you what joined
+  before it publishes. It asks again when a late change is breaking, turns a fix release into a feature release,
+  needs a longer trial or brings a security fix the notes miss, and you can still ask for one exact commit.
+
 ## v0.12.0 — 2026-10-22
 
 Feature release of the early preview.
