@@ -1,0 +1,166 @@
+/* Work's graph (SPEC.md §3.7): the coordinator, the current tasks on a ring, their helpers as pips. */
+.ag {
+  --ag-bg: var(--page);
+  position: relative;
+  flex: none;
+  margin: 0 auto;
+}
+.overlay .ag { --ag-bg: var(--surface); }
+.ag-edges { position: absolute; inset: 0; overflow: visible; }
+.ag-spoke { stroke: var(--hairline); stroke-width: 1.5; }
+.ag-after { fill: none; stroke: var(--text-secondary); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.ag-arrowhead { fill: var(--text-secondary); }
+
+.ag-node {
+  --state: var(--text-muted);
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: left 300ms ease, top 300ms ease;
+}
+.ag-node[data-run] { border-radius: 11px; }
+.ag-node[data-state="running"] { --state: var(--accent); }
+.ag-node[data-state="waiting"] { --state: var(--data-claimed); }
+.ag-node[data-state="danger"] { --state: var(--danger); }
+.ag-node[data-enter] { animation: ag-enter 200ms ease-out; }
+.ag-disc {
+  position: absolute;
+  inset: 0;
+  border: 2.5px solid var(--state);
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--state) 16%, var(--card));
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
+}
+.ag-node[data-state="idle"] .ag-disc { border-style: dashed; background: var(--card); }
+.ag-node:hover .ag-disc { background: color-mix(in srgb, var(--state) 28%, var(--card)); }
+/* Live work wears a halo that breathes; under reduced motion the halo stays still. */
+.ag-node[data-live] .ag-disc,
+.ag-hub[data-live] .ag-hub-disc {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--state) 22%, transparent);
+  animation: ag-breathe 1.6s ease-in-out infinite;
+}
+.ag-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: 2px solid var(--ag-bg);
+  border-radius: 9px;
+  background: var(--data-claimed);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.ag-pip {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--ag-bg);
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ag-label {
+  position: absolute;
+  top: 46px;
+  left: 50%;
+  width: 124px;
+  transform: translateX(-50%);
+  text-align: center;
+  line-height: 1.3;
+}
+.ag-title,
+.ag-state {
+  border-radius: 4px;
+  padding: 0 3px;
+  background: var(--ag-bg);
+}
+.ag-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ag-last { white-space: nowrap; }
+.ag-go { display: inline; margin-left: 2px; vertical-align: -1px; color: var(--text-muted); }
+.ag-state {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.ag-node[data-state="waiting"] .ag-state { color: var(--chip-claimed-text); font-weight: 600; }
+.ag-node[data-state="danger"] .ag-state { color: var(--danger); }
+
+/* The coordinator: a quiet label in the middle, not a control. */
+.ag-hub { --state: var(--accent); position: absolute; width: 44px; height: 44px; }
+.ag-hub-disc {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--accent-tint-border);
+  border-radius: 50%;
+  background: var(--ag-bg);
+  color: var(--accent-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+.ag-hub-word {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--ag-bg);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.ag-skeleton { width: 44px; height: 44px; margin: 20px auto; border-radius: 50%; }
+
+@keyframes ag-breathe {
+  0%, 100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--state) 22%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--state) 22%, transparent), 0 0 0 11px color-mix(in srgb, var(--state) 9%, transparent); }
+}
+@keyframes ag-enter { from { opacity: 0; } }
+/* Reduced motion: a live node keeps a static halo; nothing breathes, glides or fades. */
+@media (prefers-reduced-motion: reduce) {
+  .ag-node { transition: none; }
+  .ag-node[data-enter] { animation: none; }
+  .ag-node[data-live] .ag-disc,
+  .ag-hub[data-live] .ag-hub-disc { animation: none; }
+}
+
+/* Work's List | Graph switch, desktop only. */
+.wp-view { display: inline-flex; flex: none; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--card); }
+.wp-view button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.wp-view button:hover { color: var(--text-primary); }
+.wp-view button[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent-text); font-weight: 600; }

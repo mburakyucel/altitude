@@ -5,11 +5,20 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Work can show your agents as a graph: on a computer, the List | Graph switch beside Work puts every current
+  task around L3, the ones waiting on you at the top, with arrows for tasks planned after another, a soft halo
+  on work that is active right now and a dot for each helper it is running. Each node opens what its row opens.
+  The panel widens while the graph shows; your browser remembers the choice, and the phone keeps the list.
 - Asking for a review of a task whose branch clashes with newer work on main no longer ends in a Git
   instruction: the request is kept and shows as queued for L2, which brings the branch up to date and then
   runs it. Landing names the clashing files to L2 the same way on a task's first or later pull request.
+- Ask the coordinator how Altitude or one of its parts works and it answers in that turn, in plain words, from
+  the documentation, naming the section it drew on, and says so when the documentation does not cover the
+  point. The overview carries a short map of which document answers which kind of question.
 - The required pull-request check no longer loses a shard for 30 minutes to a slow package mirror: its install
   steps give up within minutes and retry once, the system packages from the runner's next mirror.
+- The README and the overview show how Altitude fits together: you, the coordinator and project agents above altd,
+  which keeps every record and gates every merge, and task agents, independent review and GitHub below it.
 - A release approval names the version and its notes, and also covers changes that merge before the notes once
   their checks pass and the notes mention anything you would notice; the release owner tells you what joined
   before it publishes. It asks again when a late change is breaking, turns a fix release into a feature release,
