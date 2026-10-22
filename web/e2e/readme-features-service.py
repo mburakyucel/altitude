@@ -210,7 +210,7 @@ def main():
     project_setup.run("altitude")
     l3.save_info("altitude", {"session_id": "readme-altitude-l3", "engine_last": config.ENGINES[0], "turns": 1})
     # The review's lifecycle is real; the Altitude-project gate and Claude's reserve are unit-tested and fixed here.
-    improve._altitude = lambda _project: True
+    improve._altitude = lambda project: project == "altitude"
     route.improvement_reserve = lambda: None
     drain = server.request_l3_drain
     server.request_l3_drain = lambda project: project == PROJECT and drain(project)  # the Altitude project's L3 stays idle
@@ -240,7 +240,7 @@ def main():
     run = improve.start("altitude", "readme-improve", now=asked)["run"]
     improve.execute("altitude", run)
     improve.post("altitude", run, [1, 2, 3], [], now=asked + timedelta(minutes=8))
-    # Harbor's routines: the built-in dependency check found two security fixes this morning and suggested a task for
+    # Harbor's routines: the built-in dependency check found two security fixes two hours ago and suggested a task for
     # each, which the coordinator checked and kept; a routine of the operator's own reads each merge.
     answers: dict[str, str] = {}
     def start(_engine, _name, _prompt, *, extra_env, **_options):
@@ -263,7 +263,7 @@ def main():
         project_agents.reconcile("harbor", now=at + timedelta(minutes=6))
         return run["n"]
 
-    day = NOW.replace(hour=7, minute=0, second=0) - timedelta(days=0 if NOW.hour >= 9 else 1)
+    day = NOW - timedelta(hours=2)
     project_agents.change("harbor", "builtin", {"key": "dependency-check"}, by="operator", source="fixture",
                           now=day - timedelta(days=6))
     merges = project_agents.change("harbor", "create", {"definition": {
@@ -273,7 +273,7 @@ def main():
     project_agents.change("harbor", "turn_on", {"agent": merges}, by="operator", source="fixture",
                           now=day - timedelta(days=6))
     deps = next(a["id"] for a in project_agents._load("harbor")["agents"] if a.get("builtin") == "dependency-check")
-    ran(merges, day - timedelta(hours=15), "Nothing: #212 changes only the docs.")
+    ran(merges, day - timedelta(days=1), "Nothing: #212 changes only the docs.")
     n = ran(deps, day, """Found: two packages Harbor uses have security fixes.
 
 The lock file pins yaml 2.3.1 and sharp 0.32.5; both have releases that close published advisories.

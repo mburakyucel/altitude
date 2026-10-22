@@ -136,7 +136,7 @@ test("a created task, a proposal review, the task view, review before merge, a r
   await expect(suggestions).toContainText("L3 is opening a task");
   await capture("improve-accepted");
 
-  // Harbor's routines: the built-in dependency check found something this morning, and its suggested tasks wait in
+  // Harbor's routines: the built-in dependency check found something, and its suggested tasks wait in
   // Needs you, each a task away.
   await page.goto("/projects/harbor/agents");
   await expect(page.getByRole("heading", { level: 1, name: "Routines", exact: true })).toBeVisible();
