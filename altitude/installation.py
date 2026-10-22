@@ -28,7 +28,7 @@ from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Requ
 VERSION = re.compile(r"v0\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?\Z")
 ARCHIVE_LIMIT = 256 * 1024 * 1024
 REQUIRED = ("bin/alt", "altitude/__init__.py", "altitude/config.py", "altitude/server.py", "web/dist/index.html",
-            "personas/l2.md", "personas/l3.md", "schemas/report.json")
+            "personas/l2.md", "personas/l3.md", "schemas/report.json", "docs/OVERVIEW.md")
 
 
 def atomic(path: Path, content: str, mode: int = 0o600) -> None:
