@@ -816,12 +816,15 @@ class TestSetup(SpeechCase):
         # A read probing the setup lock just as Retry or the startup update took it refused them as already running.
         speech.ROOT.mkdir(parents=True)
         (speech.ROOT / ".lock").touch()
-        probing, release = threading.Event(), threading.Event()
+        probing, release, tried = threading.Event(), threading.Event(), threading.Event()
         flock = fcntl.flock
 
         def held(handle, operation):
+            name, path = threading.current_thread().name, getattr(handle, "name", "")
+            if name == "retry" and path.endswith("/.control"):
+                tried.set()  # Retry waits here for the read
             flock(handle, operation)
-            if threading.current_thread().name == "status" and getattr(handle, "name", "").endswith("/.lock"):
+            if name == "status" and path.endswith("/.lock"):
                 probing.set()
                 release.wait(5)  # the read is preempted while it holds the lock
 
@@ -836,10 +839,12 @@ class TestSetup(SpeechCase):
                 host.start_setup()
             except speech.SpeechError as exc:
                 refused.append(exc)
+            finally:
+                tried.set()
 
-        retrying = threading.Thread(target=retry)
+        retrying = threading.Thread(target=retry, name="retry")
         retrying.start()
-        retrying.join(0.5)  # a refusal comes at once; a Retry waiting for the read is still running
+        self.assertTrue(tried.wait(5))  # Retry was refused, or waits for the read
         release.set()
         retrying.join(5)
         reader.join(5)
