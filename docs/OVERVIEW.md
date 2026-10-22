@@ -1,8 +1,9 @@
 # Altitude overview
 
-This page is the orientation read before changing Altitude. It summarizes the system and indexes the
-detailed documents; [architecture](ARCHITECTURE.md) remains the detailed reference. The detailed
-documents are long, so read the sections a change touches, by heading, rather than whole files.
+This page is the orientation read before changing Altitude or explaining how it works. It summarizes
+the system and indexes the detailed documents; [architecture](ARCHITECTURE.md) remains the detailed
+reference. The detailed documents are long, so read the sections a change touches or a question asks
+about, by heading, rather than whole files.
 
 ## The system in brief
 
@@ -10,10 +11,10 @@ documents are long, so read the sections a change touches, by heading, rather th
 
 Altitude runs for one operator on one machine. Each registered project has a persistent conversation
 with L3, the coordinator, which discusses direction, answers task questions from the record and
-dispatches L2 task owners. Each L2 owns one task in an isolated worktree (`.claude/worktrees/<slug>`,
-branch `worktree-<slug>`, created from fetched `origin/main`) and delivers through its own PR. It may
-delegate bounded work to engine-native L1 helpers, which Altitude does not supervise. The
-[personas](../personas/) hold each role's guidance; [AGENTS.md](../AGENTS.md) holds project policy.
+questions about Altitude from these documents, and dispatches L2 task owners. Each L2 owns one task in
+an isolated worktree (`.claude/worktrees/<slug>`, branch `worktree-<slug>`, created from fetched
+`origin/main`) and delivers through its own PR. It may delegate bounded work to engine-native L1
+helpers, which Altitude does not supervise. The [personas](../personas/) hold each role's guidance; [AGENTS.md](../AGENTS.md) holds project policy.
 
 The daemon, altd (the `altitude/` package), owns state transitions and JSON APIs and serves the built
 React app from `web/dist` over HTTPS (`127.0.0.1:8890` by default, with an installation-local CA from
@@ -38,6 +39,23 @@ on the current head with current main, plus every hold and review assessment. Fa
 own task, file a private incident and queue one L3 message. A merged change to Altitude activates at
 the next quiet point through a guarded restart. The container deployment is a rootless Podman Linux
 image still under validation, run on a Linux host or, through a Podman machine, from a Mac.
+
+## Which document answers what
+
+- What Altitude is and how a project runs day to day: the [README](../README.md) and the
+  [walkthrough](WALKTHROUGH.md).
+- How a part works and why it is built that way: [architecture](ARCHITECTURE.md), by the sections below.
+- What an engine session does at launch, resume, stop and review: [session lifecycle](SESSION_LIFECYCLE.md).
+- What an `alt` command does and accepts: the [CLI reference](CLI.md).
+- Installing, trusting HTTPS, pairing a device and the first conversation: [setup](SETUP.md).
+- Running, configuring, backing up or recovering an installation: [operations](OPERATIONS.md); the
+  container deployment: [containers](CONTAINERS.md).
+- Checks, test harnesses and evidence: [development](DEVELOPMENT.md).
+- Project rules and what waits for the operator: [AGENTS.md](../AGENTS.md); each role's duties: the
+  [personas](../personas/).
+- Releases and what comes next: [release checkpoints](RELEASING.md), the [roadmap](ROADMAP.md) and the
+  [changelog](../CHANGELOG.md).
+- The approved UI design: the [wireframe spec](../design/wireframes/SPEC.md).
 
 ## Architecture sections
 
