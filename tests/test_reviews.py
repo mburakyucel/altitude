@@ -599,6 +599,36 @@ class TestReviews(AltitudeCase):
         self.move_main("CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Another task's entry.\n")
         self.assert_waits_on_owner_until_reconciled("CHANGELOG.md")
 
+    def test_conflict_after_a_merged_pr_names_the_rebase_landing_needs(self):
+        merged = git("rev-parse", "HEAD", cwd=self.worktree).strip()
+        task = S.load_task(self.project, self.slug)
+        task["review_merged_head"] = merged
+        S.save_task(self.project, task)
+        self.commit("later.py", "LATER = 1\n")
+        self.move_main("value.py", "VALUE = 'main'\n")
+        review = self.request()
+        with self.assertRaises(reviews.Conflict) as refused:
+            self.run_review(review)
+        self.assertIn(f"in value.py. Rebase the commits after the merged PR with git rebase --onto origin/main {merged}, "
+                      "resolve those files and continue the rebase, then retry.", str(refused.exception))
+        git("rebase", "-q", "--onto", "origin/main", merged, cwd=self.worktree)
+        self.assertEqual(self.run_review(review)["state"], "completed")
+
+    def test_conflict_while_the_owner_changes_cancels_instead_of_waiting_on_the_old_owner(self):
+        self.move_main("value.py", "VALUE = 'main'\n")
+        review = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
+        capture = reviews._capture
+
+        def replaced(project, task, *args, **kwargs):
+            current = S.load_task(project, task["slug"])
+            current["agent_id"] = "owner-two"
+            S.save_task(project, current)
+            return capture(project, task, *args, **kwargs)
+        with mock.patch.object(reviews, "_capture", side_effect=replaced):
+            self.assertEqual(self.run_review(review)["state"], "cancelled")
+        self.engine.assert_not_called()
+        self.assertEqual(reviews.running(), [])
+
     def test_code_conflict_with_current_main_waits_on_the_owner_and_refuses_assessment(self):
         self.move_main("value.py", "VALUE = 'main'\n")
         completed = self.assert_waits_on_owner_until_reconciled("value.py")

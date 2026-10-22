@@ -164,15 +164,13 @@ def _need(p: subprocess.CompletedProcess, what: str) -> str:
 
 def _conflicted(root: Path) -> str:
     """The files a stopped merge or rebase left unmerged, named before it is aborted."""
-    return ", ".join((_git(root, "diff", "--name-only", "--diff-filter=U").stdout or "").split())
+    return ", ".join((_git(root, "diff", "--name-only", "--diff-filter=U").stdout or "").splitlines())
 
 
 def _conflict(base: str, paths: str, how: str, exc: LandError) -> LandError:
     """A branch that no longer merges with main is the owner's to reconcile; both landing paths say so alike."""
-    if not paths:
-        return exc
     return LandError(f"the task branch conflicts with current origin/{base} in {paths}; local work is committed and "
-                     f"retained. {how}, resolve those files and commit, then re-run alt land: {exc}")
+                     f"retained. {how}, then re-run alt land: {exc}")
 
 
 def _note(msg: str) -> None:
@@ -1564,9 +1562,12 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                     _need(_git(root, "rebase", "--abort"), "abort continuation")
                 except LandError as abort_error:
                     raise LandError(f"{exc}; abort also failed: {abort_error}; local commits remain in reflog") from exc
-            raise _conflict(base, paths, f"Rebase it with git rebase --onto origin/{base} {cutoff}", LandError(
-                f"continuation could not reconcile with main; local work is committed and retained. "
-                f"Resolve with git rebase --onto origin/{base} {cutoff}, then re-run alt land: {exc}")) from exc
+            if paths:
+                raise _conflict(base, paths, f"Run git rebase --onto origin/{base} {cutoff}, resolve those files and "
+                                "continue the rebase", exc) from exc
+            raise LandError(f"continuation could not reconcile with main; local work is committed and retained. "
+                            f"Resolve with git rebase --onto origin/{base} {cutoff}, then re-run alt land: "
+                            f"{exc}") from exc
         if commit:
             commit = _need(_git(root, "rev-parse", "HEAD"), "rebased commit")
         if _git(root, "diff", "--quiet", f"origin/{base}", "HEAD").returncode == 0:
@@ -1681,7 +1682,10 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                         if (git_dir / "MERGE_HEAD").exists():
                             paths = _conflicted(root)
                             _need(_git(root, "merge", "--abort"), "abort base integration; resolve the worktree before retrying")
-                        raise _conflict(base, paths, f"Merge origin/{base} into the branch", exc) from exc
+                        if paths:
+                            raise _conflict(base, paths, f"Merge origin/{base} into the branch, resolve those files and "
+                                            "commit", exc) from exc
+                        raise
                     head = _need(_git(root, "rev-parse", "HEAD"), "integrated head")
                 republish = False
                 if line and head != recorded_tip:  # the turn's push and heartbeat succeed together or not at all

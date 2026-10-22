@@ -143,13 +143,16 @@ class Conflict(T.TransitionError):
     """The task branch no longer merges with current main: the owner's to reconcile, never the requester's."""
 
 
-def _candidate_tree(root, base, head):
+def _candidate_tree(root, base, head, merged_head=None):
     output, conflicted = _git(root, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, head, conflict_ok=True)
     lines = output.splitlines()
     if conflicted:
         paths = ", ".join(dict.fromkeys(lines[1:])) or "unnamed paths"
-        raise Conflict(f"The task branch conflicts with current main in {paths}. "
-                       "Merge origin/main into the branch, resolve those files and commit, then retry.")
+        # After a merged PR, alt land rebases the later commits and refuses a merge commit among them.
+        how = (f"Rebase the commits after the merged PR with git rebase --onto origin/main {merged_head}, resolve those "
+               "files and continue the rebase" if merged_head else
+               "Merge origin/main into the branch, resolve those files and commit")
+        raise Conflict(f"The task branch conflicts with current main in {paths}. {how}, then retry.")
     return lines[0]
 
 
@@ -189,7 +192,7 @@ def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
     head = _git(root, "rev-parse", "HEAD")
     base = _git(root, "rev-parse", "origin/main")
     tree = (_git(root, "rev-parse", head + "^{tree}") if proposal_id else
-            _candidate_tree(root, base, head)) if candidate else None
+            _candidate_tree(root, base, head, task.get("review_merged_head"))) if candidate else None
     context = _context(project, task)
     identity = {"head": head, "base": base, "tree": tree}
     if proposal_id:
@@ -757,19 +760,20 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             confirmed = result.get("termination_confirmed", False)
             if not confirmed:
                 live.update(error="Reviewer termination is unconfirmed; capacity remains reserved.", cancel_requested=True)
-            elif conflict and live["state"] == "running" and not live.get("cancel_requested"):
-                for field in ("started_at", "generation", "effort"):
-                    live.pop(field, None)
-                live["state"] = "requested"
             elif live["state"] == "running":
                 stopped = (live.get("cancel_requested") or current.get("state") != "running"
                            or current.get("agent_id") != review.get("generation") or current.get("attempt") != expected_attempt)
-                live.update(state="cancelled" if stopped else "failed" if result.get("error") else "completed", finished_at=S.now())
-                if result.get("error"):
-                    live["error"] = result["error"]
-                if not stopped and (not result.get("error") or result.get("text")):
-                    live["result"] = {k: result.get(k) for k in ("text", "findings", "limitations")}
-                live["usage"] = result.get("usage")
+                if conflict and not stopped:
+                    for field in ("started_at", "generation", "effort"):
+                        live.pop(field, None)
+                    live["state"] = "requested"
+                else:
+                    live.update(state="cancelled" if stopped else "failed" if result.get("error") else "completed", finished_at=S.now())
+                    if result.get("error"):
+                        live["error"] = result["error"]
+                    if not stopped and (not result.get("error") or result.get("text")):
+                        live["result"] = {k: result.get(k) for k in ("text", "findings", "limitations")}
+                    live["usage"] = result.get("usage")
             S.save_task(project, current)
         with _inflight_lock:
             _inflight.discard(key)

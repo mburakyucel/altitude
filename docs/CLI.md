@@ -2020,8 +2020,10 @@ L2 selects the original proposal message; missing concrete proposal input preven
 Changes review captures the task branch merged onto current `origin/main`. A request is recorded even
 when the branch conflicts with main, so an operator's request always reaches the owner. When the branch
 conflicts, `run` names the conflicted files and leaves the review requested, which the task page shows as
-queued for L2; the owner merges `origin/main` into the branch, resolves those files, commits and runs the
-same review. `assess` refuses the same way until the branch merges with main.
+queued for L2. The owner reconciles as `run` says, merging `origin/main` into the branch or, after an earlier
+PR of the task merged, rebasing the later commits onto it as landing does, and runs the same review. A run
+stopped meanwhile or taken over by another owner attempt ends cancelled. `assess` refuses the same way
+until the branch merges with main.
 `run` is a fixed daemon operation, not an operator grant. It accepts repeated `--context-message`
 IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
 included. Default capture includes all L2 messages. The captured context holds one copy of each input and
