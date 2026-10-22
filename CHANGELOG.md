@@ -13,6 +13,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   point. The overview carries a short map of which document answers which kind of question.
 - The required pull-request check no longer loses a shard for 30 minutes to a slow package mirror: its install
   steps give up within minutes and retry once, the system packages from the runner's next mirror.
+- Opening an older Weekly improvement review run from its page takes the chat back to that run every time, rather
+  than sometimes showing the latest conversation until the next refresh.
 
 ## v0.12.0 — 2026-10-22
 
