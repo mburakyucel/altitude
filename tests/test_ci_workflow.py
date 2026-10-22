@@ -3,7 +3,9 @@ import json
 import os
 import re
 import subprocess
+import sys
 import textwrap
+import unittest
 
 from tests.support import AltitudeCase, REPO, git, make_repo
 from altitude import config
@@ -114,8 +116,7 @@ class TestRequiredCheckWorkflow(AltitudeCase):
         self.assertIn('pnpm install --frozen-lockfile', install)
         self.assertIn('pnpm exec playwright install --with-deps chromium', install)
         converter = next(step for step in steps if step.startswith('name: Install fixture tools'))
-        self.assertIn('apt-get install -y --no-install-recommends ffmpeg liblcms2-2', converter)
-        self.assertIn('libnss3-tools', converter)
+        self.assertIn("packages='ffmpeg liblcms2-2 libnss3-tools'", converter)
         report = steps[-1]
         self.assertIn("if: failure() && matrix.suite == 'web'", report)
         self.assertIn('actions/upload-artifact@', report)
@@ -209,3 +210,95 @@ class TestCandidateIdentity(AltitudeCase):
                 self.assertEqual(self.verify().returncode, 0, self.verify().stderr)
                 self.env['GITHUB_SHA'] = self.head
                 self.assertNotEqual(self.verify().returncode, 0)
+
+
+@unittest.skipUnless(sys.platform == 'linux', 'the steps run with GNU timeout and sed on Ubuntu runners')
+class TestInstallStepsFailFast(AltitudeCase):
+    """The install steps' own scripts, run against fixture apt, pnpm and Playwright commands with `/etc/apt` in a
+    temporary directory and each attempt's limit at one second. A fixture mirror named `slow` never answers."""
+
+    def setUp(self):
+        super().setUp()
+        workflow = (REPO / config.PR_CHECK_WORKFLOW).read_text()
+        self.steps = {step.split('\n')[0]: step for step in workflow.split('\n      - ')[1:]}
+        self.apt = self.tmp / 'apt'
+        for folder in ('sources.list.d', 'apt.conf.d'):
+            (self.apt / folder).mkdir(parents=True)
+        (self.apt / 'sources.list.d/microsoft-prod.list').write_text('deb https://packages.microsoft.com/ubuntu/24.04/prod noble main\n')
+        (self.apt / 'sources.list.d/ubuntu.sources').write_text('URIs: mirror+file:/etc/apt/apt-mirrors.txt\n')
+        self.bin = self.tmp / 'bin'
+        self.bin.mkdir()
+        self.log = self.tmp / 'calls'
+        self.fixture('sudo', 'exec "$@"')
+        self.fixture('apt-get', 'echo "apt-get $* from $(head -n 1 "$APT/apt-mirrors.txt")" >> "$CALLS"\n'
+                                'case "$*" in *--no-download*) exit 0;; esac\n'
+                                'case "$(head -n 1 "$APT/apt-mirrors.txt")" in *slow*) sleep 30;; esac')
+        self.fixture('ffmpeg', 'echo "ffmpeg version fixture"')
+        self.fixture('corepack', ':')
+        self.fixture('node', 'echo v22')
+        # A `stall` file for a command makes its first attempt hang, `fail` makes every attempt fail.
+        self.fixture('pnpm', 'echo "pnpm $*" >> "$CALLS"\ncommand=$(echo "$*" | tr " " -)\n'
+                             'test ! -e "$STATE/$command-fail" || exit 1\n'
+                             'if test -e "$STATE/$command-stall"; then rm "$STATE/$command-stall"; sleep 30; fi')
+        self.state = self.tmp / 'state'
+        self.state.mkdir()
+        self.env = dict(os.environ, PATH=f'{self.bin}:{os.environ["PATH"]}', APT=str(self.apt), CALLS=str(self.log),
+                        STATE=str(self.state), RUNNER_TEMP=str(self.tmp), GITHUB_ENV=str(self.tmp / 'github-env'))
+
+    def fixture(self, name, body):
+        path = self.bin / name
+        path.write_text(f'#!/bin/sh\n{body}\n')
+        path.chmod(0o755)
+
+    def run_step(self, name):
+        step = self.steps[f'name: {name}']
+        script = textwrap.dedent(step.split('run: |\n')[1]).replace('/etc/apt', str(self.apt))
+        script = re.sub(r'\btimeout \d+ ', 'timeout 1 ', script)
+        return subprocess.run(['bash', '-e', '-c', script], cwd=self.tmp, env=self.env, capture_output=True,
+                              text=True, timeout=20)
+
+    def calls(self):
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def test_each_install_step_ends_before_the_job_limit_and_each_attempt_sooner(self):
+        fixture, frozen = (self.steps[f'name: {name}'] for name in ('Install fixture tools', 'Install frozen dependencies and Chromium'))
+        self.assertIn('\n        timeout-minutes: 5\n', fixture)
+        self.assertIn('sudo timeout 90 sh -c "apt-get update && apt-get install', fixture)
+        self.assertIn('\n        timeout-minutes: 7\n', frozen)
+        self.assertEqual(re.findall(r'timeout (\d+) pnpm (install|exec playwright)', frozen),
+                         [('60', 'install')] * 2 + [('120', 'exec playwright')] * 2)
+
+    def test_a_stalled_mirror_costs_one_attempt_and_the_retry_uses_the_next_mirror(self):
+        (self.apt / 'apt-mirrors.txt').write_text('http://slow.example/ubuntu/\tpriority:1\nhttps://next.example/ubuntu/\tpriority:2\n')
+        result = self.run_step('Install fixture tools')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        packages = 'ffmpeg liblcms2-2 libnss3-tools'
+        self.assertEqual(self.calls(), [
+            'apt-get update from http://slow.example/ubuntu/\tpriority:1',
+            'apt-get update from https://next.example/ubuntu/\tpriority:2',
+            f'apt-get install -y --no-install-recommends --download-only {packages} from https://next.example/ubuntu/\tpriority:2',
+            f'apt-get install -y --no-install-recommends --no-download {packages} from https://next.example/ubuntu/\tpriority:2'])
+        self.assertIn('ffmpeg version fixture', result.stdout)
+        # Only Ubuntu's archive is read, and apt itself retries each file and gives up on a silent connection.
+        self.assertEqual(sorted(path.name for path in (self.apt / 'sources.list.d').iterdir()), ['ubuntu.sources'])
+        self.assertEqual((self.apt / 'apt.conf.d/99fail-fast').read_text(),
+                         'Acquire::Retries "3";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\n')
+
+    def test_a_second_stalled_attempt_fails_the_step_before_anything_installs(self):
+        (self.apt / 'apt-mirrors.txt').write_text('http://slow.example/ubuntu/\tpriority:1\nhttps://slow-too.example/ubuntu/\tpriority:2\n')
+        result = self.run_step('Install fixture tools')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual([call.split(' from ')[0] for call in self.calls()], ['apt-get update'] * 2)
+
+    def test_a_stalled_or_failed_pnpm_command_gets_one_more_attempt(self):
+        (self.state / 'install---frozen-lockfile-stall').touch()
+        result = self.run_step('Install frozen dependencies and Chromium')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls(), ['pnpm --version'] + ['pnpm install --frozen-lockfile'] * 2
+                         + ['pnpm exec playwright install --with-deps chromium'])
+        self.assertIn(f'PLAYWRIGHT_BROWSERS_PATH={self.tmp}/browsers', (self.tmp / 'github-env').read_text())
+        self.log.unlink()
+        (self.state / 'exec-playwright-install---with-deps-chromium-fail').touch()
+        result = self.run_step('Install frozen dependencies and Chromium')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls()[-2:], ['pnpm exec playwright install --with-deps chromium'] * 2)
