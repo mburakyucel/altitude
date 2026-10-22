@@ -102,15 +102,27 @@ jobs:
           node-version: 22
 
       # Image fixtures use ffmpeg/Little CMS; verified HTTPS uses a disposable NSS trust database.
+      # A mirror that trickles or refuses ends an attempt, not the job: apt drops an unresponsive connection and
+      # retries each file, the download gets 90 seconds, and its one retry moves to the runner's next mirror.
+      # Packages install only once all of them have downloaded, so a stopped attempt leaves nothing half
+      # installed. Playwright's apt below inherits the settings and the mirror; only Ubuntu's archive is used.
       - name: Install fixture tools
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg liblcms2-2 libnss3-tools
+          grep -rl packages.microsoft.com /etc/apt/sources.list.d | xargs -r sudo rm
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\n' |
+            sudo tee /etc/apt/apt.conf.d/99fail-fast
+          packages='ffmpeg liblcms2-2 libnss3-tools'
+          download() { sudo timeout 90 sh -c "apt-get update && apt-get install -y --no-install-recommends --download-only $packages"; }
+          download || { sudo sed -i 1d /etc/apt/apt-mirrors.txt && download; }
+          sudo apt-get install -y --no-install-recommends --no-download $packages
           ffmpeg -version | head -n 1
 
       # Corepack selects the pinned pnpm from web/package.json only when pnpm starts inside web/.
+      # Each install gets a few minutes and one retry.
       - name: Install frozen dependencies and Chromium
         working-directory: web
+        timeout-minutes: 7
         run: |
           export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/browsers"
           echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
@@ -118,8 +130,8 @@ jobs:
           python3 --version
           node --version
           pnpm --version
-          pnpm install --frozen-lockfile
-          pnpm exec playwright install --with-deps chromium
+          timeout 60 pnpm install --frozen-lockfile || timeout 60 pnpm install --frozen-lockfile
+          timeout 120 pnpm exec playwright install --with-deps chromium || timeout 120 pnpm exec playwright install --with-deps chromium
 
       # A shard has its runner to itself, so Python uses every CPU instead of half.
       - name: Run this shard
