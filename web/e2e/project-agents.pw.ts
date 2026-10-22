@@ -74,7 +74,7 @@ test("Work shows agent runs and the Agents row; the Agents page lists, budgets a
   const { press, fits, noRepeats, title } = setup(page, phone);
   const work = page.getByRole("region", { name: "Work", exact: true });
   const running = work.getByRole("link", { name: /^Flaky test watch · Agent run · \d+ of 20 min$/ });
-  const waiting = work.getByRole("link", { name: "Dependency check · Agent run · waiting for Flaky test watch", exact: true });
+  const waiting = work.getByRole("link", { name: "Dependency check · Agent run · waiting while Flaky test watch runs", exact: true });
   const agentsRow = work.getByRole("link", { name: "Agents · 4", exact: true });
 
   await walk.open(phone ? `${project}?tab=work` : project);
@@ -101,10 +101,10 @@ test("Work shows agent runs and the Agents row; the Agents page lists, budgets a
   await walk.state("02-agents-page", {
     visible: [title("Agents"), page.getByText("Each one runs a brief when its trigger fires, and tells you what it found.", { exact: true }),
       ...Object.values(rows),
-      page.getByText("Weekdays at 07:00 · Waiting for Flaky test watch", { exact: true }),
+      page.getByText("Weekdays at 07:00 · Waiting while Flaky test watch runs", { exact: true }),
       page.getByText(/^Weekdays at 07:00 · Couldn't finish \S/),
       page.getByText("Weekdays at 07:00 · Paused", { exact: true }),
-      page.getByText(/^When you run it · Running, \d+ of 20 min$/),
+      page.getByText(/^Only when you run it · Running, \d+ of 20 min$/),
       budget, page.getByText("20 min used this week", { exact: true }), page.getByRole("link", { name: "New agent", exact: true }),
       retiredLink, builtIn.getByText("Build health", { exact: true }),
       builtIn.getByText("Mondays at 08:00 · Runs the project's checks on a clean copy and says what broke", { exact: true }),
@@ -168,7 +168,7 @@ test("an agent's status card answers Stop, Pause, Resume and Run now; its runs a
   // A waiting run: Stop only, Stopping… until it reads as ended, then the agent's next time with Run now and Pause.
   await openAgent(page, press, "Dependency check");
   await walk.state("11-waiting", {
-    visible: [status.getByText("Waiting for Flaky test watch", { exact: true }), button("Stop"),
+    visible: [status.getByText("Waiting while Flaky test watch runs", { exact: true }), button("Stop"),
       page.getByRole("link", { name: /^Waiting/ })],
     hidden: [button("Run now"), button("Pause"), status.getByRole("link", { name: "Open" })],
   });
@@ -227,7 +227,7 @@ test("an agent's status card answers Stop, Pause, Resume and Run now; its runs a
   const skipped = page.locator(".agent-run").filter({ hasText: "Skipped" });
   await walk.state("22-recent-runs", {
     visible: [page.getByRole("link", { name: /^Couldn't finish.*3 min · 413k tokens.*The checkout has no CHANGELOG\.md$/ }),
-      skipped.getByText("Its engine's weekly allowance is inside Altitude's reserve", { exact: true }),
+      skipped.getByText("Your Claude plan is close to its weekly limit", { exact: true }),
       page.getByRole("link", { name: /^Nothing found.*4 min · 422k tokens.*Every merged change has a note\.$/ }),
       page.getByRole("link", { name: /^Found something.*6 min · 440k tokens.*The changelog misses two merged fixes\.$/ })],
     hidden: [page.getByRole("link", { name: /^Skipped/ }), page.getByRole("button", { name: "Show older" }), page.getByText("No runs yet.")],
@@ -247,7 +247,7 @@ test("a run's page shows its report, the brief it ran and its session, or why it
   const brief = page.getByText(/^Read the release notes in CHANGELOG\.md/);
   const transcript = page.getByText("Compared the changelog with the merged pull requests.");
   await walk.state("23-run-found", {
-    visible: [title(/^Run · /), page.getByText("Run now by you · Claude Opus 5.5 · 6 min · 440k tokens", { exact: true }),
+    visible: [title(/^Run · /), page.getByText("Requested by you · Claude Opus 5.5 · 6 min · 440k tokens", { exact: true }),
       page.locator(".agent-report").getByText("Found something", { exact: true }),
       page.getByText("Two fixes merged this week have no changelog entry:"), page.getByText("Tide timer rounding"),
       page.getByText("Brief it ran", { exact: true }), page.getByText("Session", { exact: true })],
@@ -274,7 +274,7 @@ test("a run's page shows its report, the brief it ran and its session, or why it
   await walk.state("26-run-couldnt-finish", {
     visible: [page.locator(".agent-report").getByText("Couldn't finish", { exact: true }),
       page.locator(".agent-report").getByText("The checkout has no CHANGELOG.md", { exact: true }),
-      page.getByText("Run now by you · Claude Opus 5.5 · 3 min · 413k tokens", { exact: true })],
+      page.getByText("Requested by you · Claude Opus 5.5 · 3 min · 413k tokens", { exact: true })],
     hidden: [page.getByText("Two fixes merged this week"), brief],
   });
   await fits();
@@ -284,7 +284,7 @@ test("a run's page shows its report, the brief it ran and its session, or why it
   await press(page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Flaky test watch · Agent run/ }));
   await walk.state("27-run-running", {
     visible: [page.getByText(/^Running · [1-9]\d* of 20 min$/), page.getByRole("button", { name: "Stop", exact: true }),
-      page.getByText("Run now by you · Claude Opus 5.5", { exact: true })],
+      page.getByText("Requested by you · Claude Opus 5.5", { exact: true })],
     hidden: [page.getByText("Brief it ran"), page.locator(".agent-report")],
   });
   await fits();
@@ -293,8 +293,8 @@ test("a run's page shows its report, the brief it ran and its session, or why it
   await walk.open(phone ? `${project}?tab=work` : project);
   await press(page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Dependency check · Agent run/ }));
   await walk.state("28-run-waiting", {
-    visible: [page.getByText("Waiting for Flaky test watch", { exact: true }), page.getByRole("button", { name: "Stop", exact: true }),
-      page.locator(".agent-run-meta").getByText("Run now by you", { exact: true })],
+    visible: [page.getByText("Waiting while Flaky test watch runs", { exact: true }), page.getByRole("button", { name: "Stop", exact: true }),
+      page.locator(".agent-run-meta").getByText("Requested by you", { exact: true })],
     hidden: [page.getByText("Brief it ran"), page.locator(".agent-report")],
   });
   await fits();
@@ -309,7 +309,9 @@ test("the form: defaults, what is missing, create, edit and discard", async ({ p
   const brief = page.getByLabel("What it does", { exact: true });
   const day = (label: string) => page.getByRole("button", { name: label, exact: true });
   const create = page.getByRole("button", { name: "Create agent", exact: true });
-  const missing = page.getByText("Give it a name and a brief.", { exact: true });
+  const noName = page.getByText("Give it a name.", { exact: true });
+  const noBrief = page.getByText("Say what it does.", { exact: true });
+  const startsOff = page.getByText("It starts off: try it with Run now, then turn it on.", { exact: true });
   const noDay = page.getByText("Pick at least one day.", { exact: true });
 
   await walk.open(`${project}/agents`);
@@ -317,8 +319,8 @@ test("the form: defaults, what is missing, create, edit and discard", async ({ p
   await walk.state("29-new-agent-defaults", {
     visible: [title("New agent"), name, brief, page.getByText("On a schedule", { exact: true }), page.getByLabel("Time"),
       page.getByRole("radio", { name: "When it finds something" }), page.getByLabel("Each run stops after"), create,
-      page.getByRole("button", { name: "Cancel", exact: true }), page.getByRole("button", { name: "+ Add a trigger", exact: true })],
-    hidden: [missing, noDay, page.getByText("Only when you run it")],
+      page.getByRole("button", { name: "Cancel", exact: true }), page.getByRole("button", { name: "+ Add a trigger", exact: true }), startsOff],
+    hidden: [noName, noBrief, noDay, page.getByText("Only when you run it")],
   });
   for (const label of ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]) await expect(day(label)).toHaveAttribute("aria-pressed", "true");
   for (const label of ["Saturday", "Sunday"]) await expect(day(label)).toHaveAttribute("aria-pressed", "false");
@@ -333,13 +335,15 @@ test("the form: defaults, what is missing, create, edit and discard", async ({ p
   await fits();
 
   await press(create, { force: true }); // aria-disabled: the press says what is missing
-  await walk.state("30-incomplete", { visible: [missing], hidden: [noDay] });
+  await walk.state("30-incomplete", { visible: [noName, noBrief], hidden: [noDay] });
   await expect(name).toBeFocused();
+  await expect(name).toHaveAccessibleDescription("Give it a name.");
   await name.fill("Docs spelling check");
-  await walk.state("31-typing-clears-it", { visible: [create], hidden: [missing] });
+  await walk.state("31-typing-clears-it", { visible: [create, noBrief], hidden: [noName] });
   await brief.fill("List misspelled words in docs/ and the file each is in.");
+  await expect(noBrief).toBeHidden();
   for (const label of ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]) await press(day(label));
-  await walk.state("32-no-day", { visible: [noDay], hidden: [missing] });
+  await walk.state("32-no-day", { visible: [noDay], hidden: [noName, noBrief] });
   await expect(create).toHaveAttribute("aria-disabled", "true");
   await press(create, { force: true });
   await expect(day("Monday")).toBeFocused();
@@ -489,9 +493,9 @@ test("Monitor lists the running agent among Sessions and every listed agent unde
       row("Dependency check").getByText("Waiting", { exact: true }),
       row("Release notes check").getByText(/^Next (today|tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday) at 07:00$/),
       row("Release notes check").getByText(/^Last: Couldn't finish · (yesterday|\d+ d ago) · 3 min · \S+ tokens$/),
-      row("Flaky test watch").getByText("Running", { exact: true }), row("Flaky test watch").getByText("No runs yet.", { exact: true })],
-    // Paused by you with no runs this week, and retired: not listed.
-    hidden: [row("Test timing"), row("Old lint sweep"), sessionRow.getByRole("link"), sessionRow.getByText("Stale", { exact: true })],
+      row("Flaky test watch").getByText("Running", { exact: true })],
+    // Paused by you with no runs this week, and retired: not listed. A first run under way needs no "No runs yet."
+    hidden: [row("Flaky test watch").getByText("No runs yet.", { exact: true }), row("Dependency check").getByText("No runs yet."), row("Test timing"), row("Old lint sweep"), sessionRow.getByRole("link"), sessionRow.getByText("Stale", { exact: true })],
   });
   await expect(row("Flaky test watch").locator(".dot[data-pulse]")).toHaveCount(1);
   // Agents come last on the page.

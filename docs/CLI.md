@@ -413,7 +413,7 @@ project, through its coordinator socket; the operator's CLI reads `alt improve s
 which becomes their recorded authority; L3 never starts or stops a review, or records a decision,
 on its own judgment. A refused `run` returns its reason for L3's reply: no agreement to the current
 terms of the Weekly improvement review, given on its Agents page, another review running, fewer than
-five tasks finished since the last review, Claude's allowance inside Altitude's reserve or unknown, or a
+five tasks finished since the last review, Claude's plan close to its limit or its use unknown, or a
 pending restart. After `stop`, Altitude posts the run's stopped line. Turning the Weekly improvement
 review on, pausing it and the agreement are the operator's alone, on its page
 (`/projects/<project>/agents/weekly`); no verb changes them, and `alt agent` neither lists nor switches

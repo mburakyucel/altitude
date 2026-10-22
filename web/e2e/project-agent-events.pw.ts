@@ -55,7 +55,8 @@ test("an agent with the event trigger: its status, how to send it events, and ru
   await send.scrollIntoViewIfNeeded();
   await walk.state("e03-send", {
     visible: [send.getByText("From a script or your terminal on this computer:", { exact: true }),
-      send.getByText(/^alt --project harbor agent send \w+ "what happened"$/), send.getByRole("button", { name: "Copy" }),
+      send.getByText(/^alt --project harbor agent send 'Review each merge' "what happened"$/), send.getByRole("button", { name: "Copy" }),
+      send.getByText(/^The examples use its id, \w+, so they keep working after a rename\.$/),
       send.getByText(/^To try it first, use agent run in place of agent send/), send.getByText("Examples", { exact: true }),
       send.getByText("Send numbers and your own words, not text anyone else can write: a run has your code and the network.", { exact: true })],
     hidden: [send.getByText("Each merged pull request: a script for cron every 10 minutes")],
@@ -91,7 +92,7 @@ test("an agent with the event trigger: its status, how to send it events, and ru
   await page.goBack();
   await press(page.getByRole("link", { name: /^Nothing found/ }));
   await walk.state("e06-run-replay", {
-    visible: [page.getByText(/^Run now by you · For “PR #812 merged”, the latest · /), page.getByLabel("Events").getByText(/ · PR #812 merged$/)],
+    visible: [page.getByText(/^Requested by you · For “PR #812 merged”, the latest · /), page.getByLabel("Events").getByText(/ · PR #812 merged$/)],
     hidden: [],
   });
 

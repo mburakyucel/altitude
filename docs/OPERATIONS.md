@@ -256,11 +256,13 @@ tasks, which L3 checks before they wait for you under Suggestions in Needs you.
 ## Sending agents events
 
 An agent with the trigger "When it's sent an event" runs on what your own scripts on this computer send it. Its
-page shows the command with its id filled in:
+page shows the command with its name filled in, quoted for the shell, or its id when another agent shares the name:
 
 ```sh
-alt --project harbor agent send 3f9a2c1b0e4d "PR #812 merged"
+alt --project harbor agent send 'Review each merge' "PR #812 merged"
 ```
+
+The examples below use the agent's id, which keeps working after a rename.
 
 Events that arrive during a run go to its next run together. `--key` makes a send safe to repeat: the agent
 ignores a key it already took, so a script can send the latest few things it sees every time it runs and needs

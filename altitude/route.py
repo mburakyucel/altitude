@@ -151,11 +151,11 @@ def reserve(engine: str) -> str | None:
     weekly, short = _usage()[engine]
     label = config.ENGINE_LABELS[engine]
     if weekly is None or short is None:
-        return f"{label}'s allowance is not known, so Altitude cannot keep its reserve."
+        return f"Your {label} plan's use isn't known yet."
     if weekly >= config.RESERVE:
-        return f"{label}'s weekly allowance is inside Altitude's reserve."
+        return f"Your {label} plan is close to its weekly limit."
     if short >= config.RESERVE:
-        return f"{label}'s short-term allowance is inside Altitude's reserve."
+        return f"Your {label} plan is close to its short-term limit."
     return None
 
 

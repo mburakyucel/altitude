@@ -309,9 +309,10 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
   );
 }
 
-/** "Last: Found something · 2 h ago · 6 min · 3.9M tokens", leaving out what the run lacks; "No runs yet." */
-function lastText(last: MonitorAgent["last"]): string {
-  if (!last) return "No runs yet.";
+/** "Last: Found something · 2 h ago · 6 min · 3.9M tokens", leaving out what the run lacks; "No runs yet." for an
+ * idle agent that never ran, and nothing under the first run while it waits or runs. */
+function lastText({ last, cue }: MonitorAgent): string | null {
+  if (!last) return cue === "running" || cue === "waiting" ? null : "No runs yet.";
   return ["Last: " + last.outcome, last.at ? newsAgo(last.at) : "", last.minutes != null ? `${last.minutes} min` : "",
     last.tokens != null ? `${tokensText(last.tokens)} tokens` : ""].filter(Boolean).join(" · ");
 }
@@ -332,7 +333,7 @@ function AgentsSection({ agents, clock }: { agents: MonitorAgent[]; clock: Agent
                   {zoned(agent.next, clock)}
                 </small>
               </span>
-              <small>{lastText(agent.last)}</small>
+              {lastText(agent) ? <small>{lastText(agent)}</small> : null}
             </span>
             <Chevron />
           </Link>

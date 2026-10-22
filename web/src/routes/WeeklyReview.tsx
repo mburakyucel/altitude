@@ -91,7 +91,7 @@ function StatusCard({ project, review, onRead }: { project: string; review: Week
     {idle && unavailable ? <p id={reason} className={why ? "text-meta text-muted" : "sr-only"}>{unavailable}</p>
       : idle && status.now?.line && !error ? <p className="text-meta text-muted">{status.now.line}</p> : null}
     {error ? <p role="alert" className="text-meta text-danger">
-      {error.action === "run" ? error.message : error.action === "stop" ? "Not stopped. Try again." : <>{refusal("Not saved", error.message)}{" "}
+      {error.action === "run" ? error.message : error.action === "stop" ? "Not stopped." : <>{refusal("Not saved", error.message)}{" "}
         <button type="button" className="link" onClick={() => ask(error.action)}>Retry</button></>}
     </p> : null}
     {sheet ? <WeeklyTermsSheet terms={sheet.terms} onAgree={() => void press(sheet.action, sheet.terms.version)} onClose={() => setSheet(null)} /> : null}

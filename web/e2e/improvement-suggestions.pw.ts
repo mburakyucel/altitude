@@ -53,7 +53,7 @@ test("posted cards, endings and the running line take their presses and appear u
   await walk.state("01-cards-endings-and-running-line", {
     visible: [reports, crane.getByText("Not decided", { exact: true }), reviewer.getByText(/^Accepted · no task yet ·/),
       failed, nothing, reask, checks, make(reask), dismiss(checks), running, stop],
-    hidden: [recent.getByRole("region", { name: /^2\. / }), make(crane), make(reviewer), opening(reviewer)],
+    hidden: [recent.getByRole("region", { name: /^2\. / }), make(crane), dismiss(reviewer), opening(reviewer)],
   });
   await expect(running.locator(".sys-text")).toHaveText(/^Improvement suggestions · reading 5 tasks from [^·]+$/);
   await expect(reports.getByRole("link", { name: /Start reports from the outcome/ })).toBeVisible();
@@ -134,8 +134,8 @@ test("posted cards, endings and the running line take their presses and appear u
     hidden: [make(reask), dismiss(reask), saving(reask)],
   });
 
-  // An accepted suggestion whose task turn ended without a task: Try again asks L3 once more.
-  await press(reviewer.getByRole("button", { name: "Try again", exact: true }));
+  // An accepted suggestion whose task turn ended without a task: Make a task asks L3 once more.
+  await press(reviewer.getByRole("button", { name: "Make a task", exact: true }));
   await walk.state("08-try-again-reopens", {
     visible: [opening(reviewer)],
     hidden: [reviewer.getByText(/^Accepted · no task yet ·/)],
@@ -181,7 +181,7 @@ test("posted cards, endings and the running line take their presses and appear u
   await expect(running.getByRole("status", { name: "Stopping" })).toBeVisible();
   await stopFails();
   await walk.state("12-stop-not-saved", {
-    visible: [running.getByText("Not stopped. Try again.", { exact: true }), stop],
+    visible: [running.getByText("Not stopped.", { exact: true }), stop],
     hidden: [running.getByRole("status", { name: "Stopping" })],
   });
   await press(stop);

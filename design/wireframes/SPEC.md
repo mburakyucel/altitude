@@ -883,8 +883,8 @@ releasing the task. There is no release button in Work or the task conversation.
 | Open and Back | Waiting rows focus the owning question with live activity closed. App Back and browser Back/Forward preserve the originating Work or Needs you view (§3.9). |
 
 A waiting or running [project agent](#317-project-agents) run is a row in Current with the ordinary dot
-and chevron: the agent's name over "Agent run · 2 of 20 min", "Agent run · waiting for a free task slot" or
-"Agent run · waiting for <agent>"; it opens the run's page and counts in Current. Runs are not tasks: the
+and chevron: the agent's name over "Agent run · 2 of 20 min", "Agent run · waiting to start" or
+"Agent run · waiting while <agent> runs"; it opens the run's page and counts in Current. Runs are not tasks: the
 project header's tasks in flight and Done this week leave them out, and a finished run leaves Work. After Done this week, **Agents · N** with a chevron
 opens the Agents page; with no agents the row is absent and the project menu's **Agents…** remains.
 
@@ -2048,11 +2048,11 @@ project the Weekly improvement review once it is the operator's, on the same ter
 order, each project's agents in its Agents page's order. No such agent: no section and no heading. One card
 holds whole-row links to each agent's page, separated by hairlines, each with a chevron: the title
 "<project> / <agent name>" in semibold; what comes next, the first that applies: a pulsing dot and "Running",
-"Waiting", "Not on yet", a pause mark and "Paused itself", "Paused" or "Paused: its terms changed", "Waits
-until Monday" (the project's weekly budget is used), "Next tomorrow at 07:00" (the computer's zone after the
+"Waiting", "Not on yet", a pause mark and "Paused itself", "Paused" or "Paused: its terms changed", "Weekly
+budget used" (the project's weekly budget is used, until Monday unless it is raised), "Next tomorrow at 07:00" (the computer's zone after the
 time when the browser is in another), "When it's sent an event", "Only when you run it"; then, muted, "Last: <outcome> · <when> ·
 <minutes> min · <tokens> tokens" for the latest run that ran, its missing parts left out and skips never
-shown, or "No runs yet.". On desktop what comes next sits right-aligned on the title's line and never wraps;
+shown, or "No runs yet." for an agent that never ran, absent under a first run that is running or waiting. On desktop what comes next sits right-aligned on the title's line and never wraps;
 on the phone each row stacks the title, what comes next in the secondary tone, and Last.
 [The project agents proposal](project-agents/PROPOSAL.md#monitor-step-3) holds its boards.
 
@@ -2580,32 +2580,37 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
 
 - **Agents page** (`/projects/:name/agents`): **‹ <project>** back, **Agents** over "Each one runs a brief
   when its trigger fires, and tells you what it found.", one card of agent rows (name; triggers · latest
-  news, with a running dot or pause mark), the weekly budget select (30 min · 1 h · 2 h · 5 h · 10 h) with
-  "N used this week" (amber "… · agents wait until Monday" when spent), **New agent**, and "N retired" opening
-  the retired rows. **Built in** lists each built-in agent not on with **Turn on**.
+  news, with a running dot or pause mark), **New agent** under it, and "N retired" opening the retired rows.
+  **Built in** lists each built-in agent not on with **Turn on**. Last, **Weekly budget**: "Agents may use up to"
+  with its select (30 min · 1 h · 2 h · 5 h · 10 h) over "N used this week", amber when spent. A spent budget also
+  says so once in amber under the intro: "This week’s budget is used: no new runs until Monday unless you raise
+  it."
 - **One agent** (`/projects/:name/agents/:id`): the status card and its actions (Run now, Pause, Resume, Turn
   on, Stop, Open), with a muted note under its line when one applies ("No event yet, so Run now runs without
   one.", "3 events wait for the next run."); Recent runs with **Show older**, a run that took events named by
-  them ("For “PR #810 merged” and 2 more: …"); What it does with **Edit**; and **Retire…** with its dialog. A
-  retired agent's page is read-only.
+  them ("For “PR #810 merged” and 2 more: …"); What it does with **Edit**; and **Retire agent** with **Retire…**,
+  whose dialog says what retiring does. A retired agent's page is read-only.
 - **Send it an event**: with the event trigger, What it does gains this section before Edit: "From a script or
-  your terminal on this computer:" over the `alt agent send` command with the agent's id and **Copy**; "To try it
+  your terminal on this computer:" over the `alt agent send` command with **Copy**, naming the agent by its name
+  quoted for the shell (`alt --project harbor agent send 'Review each merge' "what happened"`), or by its id when
+  another agent not retired shares the name or the name starts with `-`; under a command that uses the name, muted,
+  "The examples use its id, 553012b713c4, so they keep working after a rename."; "To try it
   first, use `agent run` in place of `agent send`: it starts a run now, even before the agent is on."; **Examples**
   folded, three scripts each under its muted label with **Copy** at its right, the code keeping its lines and
   scrolling sideways; and "Send numbers and your own words, not text anyone else can write: a run has your code
   and the network."
-- **One run** (`…/runs/:n`): what fired it ("On its schedule", "For “PR #810 merged” and 2 more", "Run now by
-  you · For “PR #812 merged”, the latest", "… · your text", "… · No event yet"), then each event it took on its
+- **One run** (`…/runs/:n`): what fired it ("On its schedule", "For “PR #810 merged” and 2 more", "Requested
+  by you · For “PR #812 merged”, the latest", "… · your text", "… · No event yet"), then each event it took on its
   own muted line (its time · its first line), the model once it starts and usage once it ends; waiting, what it
-  waits for ("Waiting for a free task slot", "Waiting for Review each merge") with **Stop**; running, the live
+  waits for ("Waiting to start", "Waiting while Review each merge runs") with **Stop**; running, the live
   session read only with **Stop**; ended, the outcome and report with **Brief it ran** and **Session** folded. A link
   in the report reads as its label with its address after it, "the advisory (https://…)", since a label can hide
   where an untrusted report's link goes. No composer.
   A run that suggested tasks shows **Suggested tasks** under its report: "L3 is checking 2 suggestions" with a spinner
   until L3 posts or its two hours pass; then each kept suggestion as on the [improvement
   card](improvement-review/PROPOSAL.md#where-suggestions-appear), its number and title, explanation, **Make a task** and **Dismiss**,
-  without target, Seen in or count; then **Set aside · N**, folded, opening to each title with L3's reason, or
-  "Set aside · N · L3 did not finish checking" opening to the titles. It loads and fails with the page.
+  without target, Seen in or count; then **Not offered · N**, folded, opening to each title with L3's reason, or
+  "Not offered · N · not checked in time" opening to the titles. It loads and fails with the page.
 - **The form** (`…/agents/new`, `…/:id/edit`): Name, What it does, Runs when, Tell me in chat, Model (§3.6.1)
   and Each run stops after. A new agent is saved not on. Runs when lists schedule rows (seven day toggles and a
   time) and the event row (a bolt, "When it’s sent an event" over "You send it from this computer; its page shows
@@ -2614,7 +2619,10 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   closes it and focus returns to the button); choosing the event adds its row and focuses its Remove. With the
   event row in the list the button adds a schedule at once. The hint "Events that arrive during a run go to its
   next run together." follows the list while the event row is in it. Under Tell me's choices one muted line reads
-  "Suggested tasks wait in Needs you whatever you choose."
+  "Suggested tasks wait in Needs you whatever you choose." A press with the name or brief missing puts "Give it a
+  name." or "Say what it does." in the danger tone under each missing field, described by it, and focuses the first;
+  each line goes once its field is filled. A new agent's form ends with a muted line under its buttons: "It starts
+  off: try it with Run now, then turn it on."
 - **Needs you**: an agent that paused itself waits as a card after its project's questions: "Agent paused
   itself" in the danger tone with its age, the agent's name linking to its page with a chevron, "3 runs in a row
   couldn't finish. The last: <reason>", a bordered **Resume** and the link **Open the last run**. Resume spins
@@ -2625,7 +2633,8 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   newest first: the agent's name, bold, with the run's time; under it, muted, what fired the run; its kept
   suggestions; and the underlined **Open the run**. It is never counted, never alerts a device and shows whatever Tell
   me says. A suggestion waits while undecided, or accepted without its task for seven days after the last press,
-  Make a task or Try again; deciding it here or on the run page changes both.
+  Make a task; deciding it here or on the run page changes both. One whose task L3 did not make reads "Accepted ·
+  no task yet · Make a task", the underlined link pressing Make a task again; a failed press says "Not saved."
 - **Chat**: one system line per ending as Tell me allows, led by the agent's name with **Open**; L3's offer card
   under its reply with **Create agent** or **Save change** and **Edit first**, created, refused and lapsed. A switch L3
   makes on your word adds one quiet line ("Paused Dependency check", "Resumed …", "Turned on …", "Retired …",
@@ -2647,7 +2656,7 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   and shows its reason ("Run now needs 5 finished tasks since Oct 19; 3 so far.") only when pressed, as its
   accessible description otherwise; Run now pressed reads "Starting…" with Pause unavailable, a refusal its
   reason in red; running, "Reading 6 tasks" or "L3 is checking 3" with a spinner and **Stop** only, which reads
-  "Stopping…" or "Not stopped. Try again."; "Paused" with **Resume** and **Run now**; Pause and Resume answer
+  "Stopping…" or "Not stopped."; "Paused" with **Resume** and **Run now**; Pause and Resume answer
   at once and a refusal shows "Not saved: <reason>" with **Retry**. While its agreement is not to the current
   terms the line is "Paused: its terms changed" and Turn on, Resume and Run now show the sheet first. Recent
   runs list the last ten, newest first: "3 suggestions" over the titles joined by "; " in two lines at most,

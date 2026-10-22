@@ -75,7 +75,7 @@ export function ImprovementRunning({ project, run }: { project: string; run: Pic
       {busy ? <span className="spinner" role="status" aria-label="Stopping" /> : (
         <button type="button" className="link" onClick={() => void press("stop", "stop", run.id)}>Stop</button>
       )}
-      {failed ? <span className="text-danger" role="alert">Not stopped. Try again.</span> : null}
+      {failed ? <span className="text-danger" role="alert">Not stopped.</span> : null}
     </div>
   );
 }
@@ -186,7 +186,7 @@ function Suggestion({ project, suggestion, tasks, busy, failed, press, choosing,
             </button>
             {choosing ? <span className="spinner" role="status" aria-label="Saving" /> : null}
           </div>
-          {failed === `${ref}:accept` ? <p className="irc-error text-danger" role="alert">Not saved. Try again.</p> : notSaved}
+          {failed === `${ref}:accept` ? <p className="irc-error text-danger" role="alert">Not saved.</p> : notSaved}
         </>
       ) : suggestion.task ? (
         <TaskCards project={project} slugs={[suggestion.task]} tasks={tasks} />
@@ -196,8 +196,8 @@ function Suggestion({ project, suggestion, tasks, busy, failed, press, choosing,
         <p className="irc-meta irc-retry">
           Accepted · no task yet ·{" "}
           {busy === `${ref}:retry` ? <span className="spinner" role="status" aria-label="Saving" />
-            : <button type="button" className="link" disabled={Boolean(busy)} onClick={() => void press(`${ref}:retry`, "retry", ref)}>Try again</button>}
-          {failed === `${ref}:retry` ? <span className="text-danger" role="alert"> Not saved. Try again.</span> : null}
+            : <button type="button" className="link" disabled={Boolean(busy)} onClick={() => void press(`${ref}:retry`, "retry", ref)}>Make a task</button>}
+          {failed === `${ref}:retry` ? <span className="text-danger" role="alert"> Not saved.</span> : null}
         </p>
       )}
     </section>
@@ -270,7 +270,6 @@ export function ImprovementCard({ project, run, tasks, linked = false }: {
  * deadline gives its one reason on the fold.
  */
 export function SuggestedTasks({ project, run, tasks }: { project: string; run: AgentSuggestions; tasks: Map<string, TaskRow> }) {
-  const reason = run.unfinished ? " · L3 did not finish checking" : "";
   return (
     <section className="irc agent-suggested" aria-label="Suggested tasks">
       <h3 className="irc-name">Suggested tasks</h3>
@@ -280,7 +279,7 @@ export function SuggestedTasks({ project, run, tasks }: { project: string; run: 
         <Suggestions project={project} run={run} tasks={tasks} />
         {run.set_aside.length ? (
           <details className="agent-fold agent-aside" data-first={run.suggestions.length ? undefined : true}>
-            <summary>Set aside · {run.set_aside.length}{reason}</summary>
+            <summary>Not offered · {run.set_aside.length}{run.unfinished ? " · not checked in time" : ""}</summary>
             <div className="agent-aside-body">
               {run.set_aside.map((item) => (
                 <p key={item.n}><span className="irc-title">{item.n}. {item.title}</span>

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import re
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -202,11 +203,11 @@ def builtins() -> list[dict]:
 
 
 def triggers(d: dict) -> str:
-    """"Weekdays at 07:00", "Weekdays at 07:00 and when it's sent an event", "3 triggers", "When you run it"."""
+    """"Weekdays at 07:00", "Weekdays at 07:00 and when it's sent an event", "3 triggers", "Only when you run it"."""
     said = [schedule.words(s["days"], s["time"]) for s in d["schedules"]]
     if d.get("events"):
         said.append(_lower(EVENT_WORDS) if said else EVENT_WORDS)
-    return ("When you run it" if not said else " and ".join(said) if len(said) <= 2 else f"{len(said)} triggers")
+    return ("Only when you run it" if not said else " and ".join(said) if len(said) <= 2 else f"{len(said)} triggers")
 
 
 def _model(choice: dict | None) -> str:
@@ -680,7 +681,7 @@ def claim(project: str, now: datetime | None = None) -> None:
                         _new_run(record, agent, trigger, now)
         for run in record["runs"]:
             if run["state"] == "waiting" and now - _date(run["created"]) >= WAIT:
-                _end(record, run, "skipped", "No free slot for 6 hours", now)
+                _end(record, run, "skipped", "Didn't start within 6 hours", now)
         _prune(project, record, now)
         _save(project, record)
 
@@ -724,14 +725,14 @@ def _slot() -> str | None:
     busy = sum(dispatch.occupies_slot(t) for _, t in tasks) + reviews.active_count() + running_count()
     ready = sum(t["state"] == "queued" and not t.get("planned_wait") for _, t in tasks) \
         + sum(dispatch.resume_ready(p, t) for p, t in tasks)
-    return "Waiting for a free task slot" if busy + ready >= config.machine_wip() else None
+    return "Waiting to start" if busy + ready >= config.machine_wip() else None
 
 
 def _waiting_for(record: dict, run: dict) -> str:
     other = next((r for r in record["runs"] if r["state"] == "running"), None)
     if other and other is not run:
-        return f"Waiting for {_agent(record, other['agent'])['name']}"
-    return "Waiting for a free task slot"
+        return f"Waiting while {_agent(record, other['agent'])['name']} runs"
+    return "Waiting to start"
 
 
 def start_next(project: str, now: datetime | None = None) -> dict | None:
@@ -1214,9 +1215,16 @@ def agent_view(project: str, agent_id: str, *, runs: int = 10, now: datetime | N
             "version": agent["version"], "status": _status(record, agent, now),
             "definition": {k: agent[k] for k in DEFINITION}, "definition_line": _definition_line(agent),
             "runs": [_run_row(r) for r in reversed(own[-runs:])], "more": len(own) > runs,
-            "send": ({"command": f'alt --project {project} agent send {agent["id"]} "what happened"',
-                      "recipes": recipes(project, agent["id"])}
-                     if agent["events"] and agent["state"] != "retired" else None)}
+            "send": _send(project, record, agent) if agent["events"] and agent["state"] != "retired" else None}
+
+
+def _send(project: str, record: dict, agent: dict) -> dict:
+    """The command that sends the agent an event, naming it by its name, quoted for the shell, when the CLI resolves
+    that name to this agent and it would not read as an option, else by its id; `id` is the id the examples use when the
+    command names the name, else None."""
+    named = not agent["name"].startswith("-") and _matches(record, agent["name"]) == [agent["id"]]
+    return {"command": f'alt --project {project} agent send {shlex.quote(agent["name"]) if named else agent["id"]} '
+                       '"what happened"', "id": agent["id"] if named else None, "recipes": recipes(project, agent["id"])}
 
 
 #: Cron's PATH holds neither `alt` (~/.local/bin) nor a Homebrew `gh`; this line finds both on Linux and the Mac.
@@ -1290,7 +1298,7 @@ def _run_row(run: dict) -> dict:
     if label:
         line = f"For {label}" + (f"{': ' if run['state'] in ('found', 'nothing', 'failed') else ' · '}{line}" if line else "")
     said = ("On its schedule" if trigger["kind"] == "schedule" else None if trigger["kind"] == "event"
-            else "Run now by you" if trigger.get("by") == "operator" else "Run now by L3")
+            else "Requested by you" if trigger.get("by") == "operator" else "Requested by L3")
     if label:
         named = f"For {label}" + {"latest": ", the latest", "yours": ", your text"}.get(trigger.get("event"), "")
         said = f"{said} · {named}" if said else named
@@ -1393,13 +1401,13 @@ def monitor_agents(project: str, *, now: datetime | None = None) -> list[dict]:
             continue
         cue = None
         if run:
-            line, cue = ("Running", "running") if run["state"] == "running" else ("Waiting", None)
+            line, cue = ("Running", "running") if run["state"] == "running" else ("Waiting", "waiting")
         elif agent["state"] == "new":
             line = "Not on yet"
         elif agent["state"] == "paused":
             line, cue = "Paused itself" if itself else "Paused", "paused"
         elif times or agent["events"]:
-            line = ("Waits until Monday" if spent else f"Next {schedule.when(min(times), now)}" if times
+            line = ("Weekly budget used" if spent else f"Next {schedule.when(min(times), now)}" if times
                     else EVENT_WORDS)
         else:
             line = "Only when you run it"
@@ -1625,12 +1633,16 @@ def verb(project: str, options, stdin: str = "", *, by: str, source: str) -> dic
     return change(project, action, fields, by=by, source=source)
 
 
+def _matches(record: dict, ref: str) -> list[str]:
+    """The agents a CLI reference names: the agent with that id, else every agent not retired with that name."""
+    if any(a["id"] == ref for a in record["agents"]):
+        return [ref]
+    return [a["id"] for a in record["agents"] if a["state"] != "retired" and a["name"].lower() == ref.strip().lower()]
+
+
 def _id(project: str, ref: str) -> str:
     """An agent by its id, or by its name when exactly one agent that is not retired has it."""
-    record = _load(project)
-    if any(a["id"] == ref for a in record["agents"]):
-        return ref
-    named = [a["id"] for a in record["agents"] if a["state"] != "retired" and a["name"].lower() == ref.strip().lower()]
+    named = _matches(_load(project), ref)
     if len(named) != 1:
         raise Missing(f"There is no agent {ref!r}." if not named else f"More than one agent is named {ref!r}.")
     return named[0]

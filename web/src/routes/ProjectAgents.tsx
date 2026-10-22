@@ -8,8 +8,9 @@ import { AgentFrame, Chevron, PauseMark, WeeklyTermsSheet } from "../components/
 import { BusyLabel, StatusMark } from "../components/StatusMark";
 
 /*
- * All agents of a project (design/wireframes/project-agents/PROPOSAL.md, "All agents"): one card of whole-row links,
- * the weekly budget and New agent, the retired agents behind their count, then the built-in agents to turn on. In
+ * All agents of a project (design/wireframes/project-agents/PROPOSAL.md, "All agents"): one card of whole-row links
+ * with New agent under it, the retired agents behind their count, the built-in agents to turn on, then the weekly
+ * budget, which says at the top of the page once it is used up. In
  * Altitude's own project the Weekly improvement review leads the agents once it is the operator's, else Built in.
  */
 
@@ -30,11 +31,12 @@ function AgentRow({ project, agent, clock }: { project: string; agent: ProjectAg
 function Budget({ project, budget }: { project: string; budget: ProjectAgents["budget"] }) {
   const save = useSaveAgentBudget(project);
   const used = `${durationText(budget.used)} used this week`;
-  return <>
-    <div className="settings-row agents-budget">
+  return <section className="settings-section" aria-labelledby="agents-budget-title">
+    <h2 id="agents-budget-title">Weekly budget</h2>
+    <div className="settings-group"><div className="settings-row agents-budget">
       <label htmlFor="agents-budget"><strong>Agents may use up to</strong>{" "}
         {save.isPending ? <small className="agents-saving" role="status"><span className="spinner" aria-hidden />Saving…</small>
-          : budget.spent ? <small className="agents-spent">{used} · agents wait until Monday</small>
+          : budget.spent ? <small className="agents-spent">{used}</small>
             : <small>{used}</small>}
       </label>
       <select id="agents-budget" className="settings-select" value={budget.minutes} disabled={save.isPending}
@@ -44,7 +46,8 @@ function Budget({ project, budget }: { project: string; budget: ProjectAgents["b
     </div>
     {save.error ? <p role="alert" className="text-meta text-danger agents-note">{refusal("Not saved", save.error.message)}{" "}
       <button type="button" className="link" onClick={() => save.variables && save.mutate(save.variables)}>Retry</button></p> : null}
-  </>;
+    </div>
+  </section>;
 }
 
 /** Built in: Turn on spins until the agent reads as on, when its row leaves; a refusal returns the button with why.
@@ -95,15 +98,15 @@ export default function ProjectAgentsPage() {
   const tab = (useLocation().state as { tab?: string } | null)?.tab === "chat" ? "" : "?tab=work";
   return <AgentFrame back={{ to: `/projects/${name}${tab}`, label: name }} title="Agents">
     <p className="text-meta text-muted agents-intro">Each one runs a brief when its trigger fires, and tells you what it found.</p>
+    {data?.budget.spent ? <p className="text-meta agents-spent">This week’s budget is used: no new runs until Monday unless you raise it.</p> : null}
     {agents.isPending ? <div className="settings-card"><StatusMark label="Loading agents…" /></div>
       : !data ? <div className="settings-card" role="alert"><p>Could not load agents.</p>
         <button type="button" className="btn agents-retry" onClick={() => void agents.refetch()}>Retry</button></div>
         : <>
-          <div className="settings-group">
+          {weekly?.agent || data.agents.length ? <div className="settings-group">
             {[...weekly?.agent ? [weekly.agent] : [], ...data.agents].map((agent) => <AgentRow key={agent.id} project={name} agent={agent} clock={data.clock} />)}
-            <Budget project={name} budget={data.budget} />
-            <div className="settings-row agents-new"><Link className="btn" to={`/projects/${name}/agents/new`}>New agent</Link></div>
-          </div>
+          </div> : null}
+          <div className="agents-new"><Link className="btn" to={`/projects/${name}/agents/new`}>New agent</Link></div>
           {data.retired.length ? <button type="button" className="link agents-link" aria-expanded={retired} onClick={() => setRetired(!retired)}>
             {data.retired.length} retired</button> : null}
           {retired && data.retired.length ? <section className="settings-section" aria-labelledby="agents-retired">
@@ -111,6 +114,7 @@ export default function ProjectAgentsPage() {
             <div className="settings-group">{data.retired.map((agent) => <AgentRow key={agent.id} project={name} agent={agent} clock={data.clock} />)}</div>
           </section> : null}
           <BuiltIn project={name} builtins={[...weekly?.builtin ? [weekly.builtin] : [], ...data.builtins]} terms={weekly?.terms} clock={data.clock} />
+          <Budget project={name} budget={data.budget} />
         </>}
   </AgentFrame>;
 }

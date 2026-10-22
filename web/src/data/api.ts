@@ -821,8 +821,9 @@ export const ProjectAgentDetailSchema = z.object({
   definition_line: z.string(),
   runs: z.array(ProjectAgentRunSchema),
   more: z.boolean(),
-  /** With the event trigger: the command that sends it an event, and examples to copy (project_agents.recipes). */
-  send: z.object({ command: z.string(), recipes: z.array(z.object({ what: z.string(), text: z.string() })) }).nullable(),
+  /** With the event trigger: the command that sends it an event, the id the examples use when the command names the
+   * agent by its name (else null), and examples to copy (project_agents.recipes). */
+  send: z.object({ command: z.string(), id: z.string().nullable(), recipes: z.array(z.object({ what: z.string(), text: z.string() })) }).nullable(),
 });
 export type ProjectAgentDetail = z.infer<typeof ProjectAgentDetailSchema>;
 export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
@@ -1132,7 +1133,7 @@ export const SessionSchema = z
 
 /** One row of Monitor's Agents (SPEC.md §3.14): what comes next, its cue, and the latest run that ran. */
 export const MonitorAgentSchema = z.object({
-  project: z.string(), id: z.string(), name: z.string(), next: z.string(), cue: z.enum(["running", "paused"]).nullable(),
+  project: z.string(), id: z.string(), name: z.string(), next: z.string(), cue: z.enum(["running", "waiting", "paused"]).nullable(),
   last: z.object({ outcome: z.string(), at: z.string().nullable(), minutes: z.number().nullable(), tokens: z.number().nullable() }).nullable(),
 });
 
