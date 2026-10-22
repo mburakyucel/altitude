@@ -119,7 +119,7 @@ function mockFetch(initialQueue: unknown[], decideStatus = 200) {
   return fetchMock;
 }
 
-describe("an agent that paused itself", () => {
+describe("a routine that paused itself", () => {
   const paused = { project: "harbor", slug: null, kind: "agent", id: "agent:flaky-tests", agent: "flaky-tests", title: "Flaky tests", run: 7,
     question: "3 runs in a row couldn't finish. The last: 'make test-e2e' is not a target.", asked_by: "altitude", asked: ago(120), since: ago(120) };
 
@@ -144,12 +144,12 @@ describe("an agent that paused itself", () => {
   it("waits after its project's questions, counted but never alerting, with its name, reason, Resume and the last run", async () => {
     serve(() => jsonResponse({ ok: true }));
     renderApp({ route: "/" });
-    expect(await screen.findByText("1 question · 1 paused agent in harbor")).toBeInTheDocument();
+    expect(await screen.findByText("1 question · 1 paused routine in harbor")).toBeInTheDocument();
     const section = screen.getByRole("region", { name: "Project harbor" });
     const cards = within(section).getAllByRole("article");
     expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["Score pronunciation per phoneme", "Flaky tests"]);
     const card = cards[1]!;
-    expect(within(card).getByText("Agent paused itself")).toHaveClass("kind-label");
+    expect(within(card).getByText("Routine paused itself")).toHaveClass("kind-label");
     expect(card.querySelector(".decision-kind")).toHaveAttribute("data-tone", "danger");
     expect(within(card).getByRole("link", { name: "Flaky tests" })).toHaveAttribute("href", "/projects/harbor/agents/flaky-tests");
     expect(card).toHaveTextContent("3 runs in a row couldn't finish. The last: 'make test-e2e' is not a target.");
@@ -163,7 +163,7 @@ describe("an agent that paused itself", () => {
     return { promise, resolve };
   }
 
-  it("Resume spins until the agent reads as on, and the card leaves; a refusal returns the button with why", async () => {
+  it("Resume spins until the routine reads as on, and the card leaves; a refusal returns the button with why", async () => {
     let answer = deferred<Response>();
     const presses = serve(() => answer.promise);
     const { user } = renderApp({ route: "/" });

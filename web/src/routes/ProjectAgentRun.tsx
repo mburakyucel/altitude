@@ -94,7 +94,7 @@ export default function ProjectAgentRunPage() {
   const run = useProjectAgentRun(name, id, Number(n));
   const data = run.data;
   const live = data?.state === "waiting" || data?.state === "running";
-  return <AgentFrame back={{ to: `/projects/${name}/agents/${id}`, label: data?.agent.name ?? "Agent" }} title={data ? `Run · ${runTime(data.at)}` : "Run"}>
+  return <AgentFrame back={{ to: `/projects/${name}/agents/${id}`, label: data?.agent.name ?? "Routine" }} title={data ? `Run · ${runTime(data.at)}` : "Run"}>
     {run.isPending ? <div className="settings-card"><StatusMark label="Loading this run…" /></div>
       : !data ? <div className="settings-card" role="alert"><p>Could not load this run.</p>
         <button type="button" className="btn agents-retry" onClick={() => void run.refetch()}>Retry</button></div>

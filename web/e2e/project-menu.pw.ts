@@ -20,7 +20,7 @@ test("project actions appear and disappear after cancel and Escape (issue #195)"
   });
   await expect(settings).toBeFocused();
   // Removal lives on the project's settings page, behind its own dialog (project-lifecycle.pw.ts).
-  await expect(menu.getByRole("menuitem")).toHaveText([/^Project settings…$/, /^Agents…$/, /^Setup…/, /^Reset L3 conversation…$/, /^All settings…$/]);
+  await expect(menu.getByRole("menuitem")).toHaveText([/^Project settings…$/, /^Routines…$/, /^Setup…/, /^Reset L3 conversation…$/, /^All settings…$/]);
   await expect(menu.getByText(/Remove/)).toHaveCount(0);
   await walk.state("03-confirmation", {
     action: () => reset.click(), visible: [confirmation, confirmation.getByRole("button", { name: "Reset", exact: true })], hidden: [reset],

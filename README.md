@@ -32,18 +32,23 @@ One engine is enough, and each integration is
 
 - **Self-healing.** When something breaks, it gets repaired and the work picks up where it stopped.
 - **Self-improving.** Altitude learns from its own finished work and fixes what slowed it down.
-- **Agents that keep watch.** Give a project standing briefs that run on a schedule or when your own scripts
-  send an event, like a morning dependency check or a look at each merge. Hear what they found and decide on
-  the tasks they suggest. Three come built in.
+- **Routines that keep watch.** Give a project standing briefs that run on a schedule or when your own scripts
+  send an event, like a look at each merge. A routine works on a throwaway copy, tells you what it found and
+  suggests the tasks worth doing; one tap makes one a task. A dependency check, a build health check and a
+  weekly summary of what landed come built in.
 - **Parallel without collisions.** Many tasks at once, each on its own copy of the code.
 - **Balanced quotas.** By default, each task goes to the engine that has used less of its week, so both are
   used evenly.
-- **Steer mid-flight.** Watch any agent live, redirect it in a sentence or take the terminal.
+- **Steer mid-flight.** Watch any agent live, redirect it in a sentence or take the terminal. When a step
+  needs you, like a password or a deploy only you may run, the command waits typed in a terminal; press Enter
+  and the agent reads the result and carries on.
 - **Nothing ships unchecked.** Your checks gate every merge, complex work gets an independent review,
   and the final say is yours whenever you want it.
-- **Decide from anywhere.** Your phone alerts you when a decision needs you; answer with a tap or
-  your voice. Dictate with built-in recognition, your browser, or [your own speech service](docs/SETUP.md#your-speech-service).
-- **Power with a fence.** Agents leave their sandbox only for a purpose you approve.
+- **Decide from anywhere.** Everything that waits on you gathers in Needs you, and your phone alerts you;
+  answer with a tap or your voice. Dictate with built-in recognition, your browser, or
+  [your own speech service](docs/SETUP.md#your-speech-service).
+- **Power with a fence.** Agents leave their sandbox only for a purpose you approve, and the sandbox hides the
+  sign-ins and keys your other programs keep.
 
 <img src="docs/images/balance.svg" alt="Two subscriptions, Claude and Codex, each with a meter for the share of its week used. New tasks arrive one at a time, each goes to the engine marked as less used, and that engine's meter fills, so both rise evenly until a new week empties them." width="760">
 

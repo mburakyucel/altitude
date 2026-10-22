@@ -67,7 +67,7 @@ export const routes: RouteObject[] = [
       { path: "/projects", element: <ProjectIndex /> },
       { path: "/projects/:name", element: <ProjectPage /> },
       { path: "/projects/:name/file", element: <TaskFile /> },
-      // A project's agents: the list, the form for a new one, the Weekly improvement review, one agent, its form and one
+      // A project's routines: the list, the form for a new one, the Weekly improvement review, one routine, its form and one
       // run (project-agents/PROPOSAL.md).
       { path: "/projects/:name/agents", element: <ProjectAgents /> },
       { path: "/projects/:name/agents/new", element: <ProjectAgentForm /> },

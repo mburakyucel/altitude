@@ -135,7 +135,7 @@ export default function NeedsYou() {
           <div className="needs-list" aria-label="Decisions" ref={list}>
             <AltitudeSection overview={overview.data!} />
             {projectOrder(overview.data!.queue, selected).map((project) => {
-              // A paused agent's card follows its project's questions.
+              // A paused routine's card follows its project's questions.
               const rows = overview.data!.queue.filter((decision) => decision.project === project);
               const items = [...rows.filter((row) => !isAgentRow(row)), ...rows.filter(isAgentRow)];
               const open = !collapsed.has(project);

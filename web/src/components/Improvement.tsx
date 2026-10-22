@@ -14,7 +14,7 @@ import { TaskCards } from "./TaskCard";
  * project's chat and, while it waits for a decision or a task, under Suggestions in Needs you. Every state is read
  * from the record; a press saves, then waits for the fresh record before its spinner leaves. Dismiss and Undo are the
  * operator's own choice, so the suggestion folds or unfolds at the press, in chat and Needs you alike (SPEC.md §1.1).
- * An agent run's suggested tasks (project-agents/PROPOSAL.md, "Suggestions") use the same suggestion part, on the
+ * A routine run's suggested tasks (project-agents/PROPOSAL.md, "Suggestions") use the same suggestion part, on the
  * same card in Needs you and as Suggested tasks on the run page.
  */
 
@@ -148,7 +148,7 @@ function Suggestion({ project, suggestion, tasks, busy, failed, press, choosing,
   const unsaved = refused && (refused.change.action === "dismiss" ? state === "undecided" : state === "dismissed" && suggestion.undo);
   const notSaved = unsaved ? <p className="irc-error text-danger" role="alert">Not saved: {refused.error.message}{" "}
     <button type="button" className="link" onClick={() => choose(refused.change.action)}>Retry</button></p> : null;
-  // Only the review's suggestions name a target; an agent run's are for its own project.
+  // Only the review's suggestions name a target; a routine run's are for its own project.
   const chip = suggestion.target ? <span className="chip" data-tone={suggestion.target === "How agents work" ? "held" : undefined}>{suggestion.target}</span> : null;
   const title = `${suggestion.n}. ${suggestion.title}`;
   if (state === "dismissed" || state === "not decided") {
@@ -223,7 +223,7 @@ const runPath = (project: string, run: AgentSuggestions) => `/projects/${encodeU
 
 /**
  * A card of suggested tasks. A posted review's card: in Needs you its header links to the card in the project's chat,
- * without Details. An agent run's card, in Needs you: the agent and the run's time, what fired it and Open the run.
+ * without Details. A routine run's card, in Needs you: the routine and the run's time, what fired it and Open the run.
  */
 export function ImprovementCard({ project, run, tasks, linked = false }: {
   project: string;

@@ -6,13 +6,13 @@ import { test } from "./fixtures";
 // The README's feature illustrations (design/readme/README.md#feature-pictures): a task created from the
 // coordinator's offer, a design proposal with its review, a task page with its question and live session, a pull
 // request waiting for the operator's review, a command typed into the task's terminal, a fault the coordinator
-// repairs, and improvement suggestions. With ALTITUDE_README_IMAGES naming a folder, each state is written there as
+// repairs, improvement suggestions, and a project's routines with the tasks one suggested. With ALTITUDE_README_IMAGES naming a folder, each state is written there as
 // `<feature>-<viewport>.png` at 2×.
 const images = process.env.ALTITUDE_README_IMAGES ? resolve(process.env.ALTITUDE_README_IMAGES) : undefined;
 test.use({ serviceScript: "readme-features-service.py", deviceScaleFactor: 2, locale: "en-US", timezoneId: "UTC", colorScheme: "light" });
 test.setTimeout(90_000);
 
-test("a created task, a proposal review, the task view, review before merge, a repaired fault and improvement suggestions", async ({ page, request }, info) => {
+test("a created task, a proposal review, the task view, review before merge, a repaired fault, improvement suggestions and routines", async ({ page, request }, info) => {
   const phone = info.project.name === "phone";
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -135,5 +135,18 @@ test("a created task, a proposal review, the task view, review before merge, a r
   await suggestions.getByRole("button", { name: "Make a task" }).first().click();
   await expect(suggestions).toContainText("L3 is opening a task");
   await capture("improve-accepted");
+
+  // Harbor's routines: the built-in dependency check found something this morning, and its suggested tasks wait in
+  // Needs you, each a task away.
+  await page.goto("/projects/harbor/agents");
+  await expect(page.getByRole("heading", { level: 1, name: "Routines", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Dependency check/ })).toContainText("Found something");
+  await expect(page.getByRole("button", { name: "Turn on" })).toHaveCount(2);  // Build health and What landed
+  await capture("routines");
+  await nav.getByRole("link", { name: /Needs you/ }).click();
+  const routine = page.getByRole("article", { name: "Suggested tasks from Dependency check", exact: true });
+  await expect(routine.getByRole("button", { name: "Make a task" })).toHaveCount(2);
+  await routine.evaluate((card) => card.scrollIntoView({ block: "start" }));
+  await capture("routines-suggestion");
   expect(errors).toEqual([]);
 });
