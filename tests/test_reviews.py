@@ -565,35 +565,47 @@ class TestReviews(AltitudeCase):
         self.assertIn("backslash", result["error"])
         self.engine.assert_not_called()
 
-    def test_conflict_with_current_main_names_paths_and_records_no_request(self):
-        def move_main(text):
-            (self.repo / "value.py").write_text(text)
-            git("add", "value.py", cwd=self.repo)
-            git("commit", "-q", "-m", "Move main", cwd=self.repo)
-            git("push", "-q", "origin", "main", cwd=self.repo)
+    def move_main(self, filename, text):
+        (self.repo / filename).write_text(text)
+        git("add", filename, cwd=self.repo)
+        git("commit", "-q", "-m", "Move main", cwd=self.repo)
+        git("push", "-q", "origin", "main", cwd=self.repo)
 
-        def assert_conflict(error):
-            self.assertIn("conflicts with current main in value.py", error)
-            self.assertIn("Reconcile the branch with origin/main", error)
-
-        review = self.request()
-        move_main("VALUE = 'main'\n")
-        failed = self.run_review(review)
-        self.assertEqual(failed["state"], "failed")
-        assert_conflict(failed["error"])
+    def assert_waits_on_owner_until_reconciled(self, filename):
+        """An operator's request on a branch that conflicts with main is kept for the owner, whose run names the
+        files and leaves it requested; once the owner merges main the same request runs (issue: refused reviews)."""
+        review = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
+        self.assertEqual((review["state"], review["waiting"]), ("requested", "owner"))
+        with self.assertRaises(reviews.Conflict) as refused:
+            self.run_review(review)
+        self.assertIn(f"conflicts with current main in {filename}. Merge origin/main into the branch, resolve those files "
+                      "and commit, then retry. The review stays requested.", str(refused.exception))
         self.engine.assert_not_called()
-        with self.assertRaises(T.TransitionError) as refused:
-            self.request(previous=review["id"])
-        assert_conflict(str(refused.exception))
-        self.assertEqual([r["id"] for r in S.load_task(self.project, self.slug)["reviews"]], [review["id"]])
+        saved = S.load_task(self.project, self.slug)["reviews"]
+        self.assertEqual([(r["id"], r["state"]) for r in saved], [(review["id"], "requested")])
+        self.assertFalse({"started_at", "generation", "error", "snapshot"} & saved[0].keys())
+        self.assertEqual(reviews.view(self.project, self.slug)["history"][0]["waiting"], "owner")
+        self.assertEqual(reviews.active_count(), 0)
+        self.assertEqual(reviews.running(), [])
 
         git("merge", "-q", "-X", "ours", "-m", "Reconcile main", "origin/main", cwd=self.worktree)
-        completed = self.run_review(self.request(previous=review["id"]))
-        self.assertEqual(completed["state"], "completed")
-        move_main("VALUE = 'moved again'\n")
-        with self.assertRaises(T.TransitionError) as refused:
+        completed = self.run_review(review)
+        self.assertEqual((completed["state"], completed["requested_by"]), ("completed", T.OPERATOR_MESSAGE_ROLE))
+        self.assertEqual(completed["snapshot"]["head"], self.pair()["head_sha"])
+        return completed
+
+    def test_changelog_conflict_with_current_main_waits_on_the_owner(self):
+        self.commit("CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- The task's entry.\n")
+        self.move_main("CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Another task's entry.\n")
+        self.assert_waits_on_owner_until_reconciled("CHANGELOG.md")
+
+    def test_code_conflict_with_current_main_waits_on_the_owner_and_refuses_assessment(self):
+        self.move_main("value.py", "VALUE = 'main'\n")
+        completed = self.assert_waits_on_owner_until_reconciled("value.py")
+        self.move_main("value.py", "VALUE = 'moved again'\n")
+        with self.assertRaises(reviews.Conflict) as refused:
             self.assess(completed)
-        assert_conflict(str(refused.exception))
+        self.assertIn("conflicts with current main in value.py", str(refused.exception))
         self.assertFalse(S.load_task(self.project, self.slug)["reviews"][-1].get("reconciled"))
         with self.assertRaises(T.TransitionError) as silent:
             reviews._git(self.worktree, "rev-parse", "--verify", "-q", "missing")

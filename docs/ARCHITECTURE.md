@@ -953,8 +953,9 @@ named in `context.json` and copied into the snapshot's `design/` folder. The eng
 to the reviewer's first prompt in that order: Codex with its image option, Claude as titled image blocks
 in its stream-json input. The receipt keeps the shown set's identity, which the question shares when it
 shows the same files, and names the images given; an engine CLI without image input gets none, and the capture's limitations say so. Identity and freshness hash the
-logical context, independent of this representation; the input hash covers every captured file. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
-refused with its conflicted files. Missing proposal input prevents invocation. Images attached to
+logical context, independent of this representation; the input hash covers every captured file. Changes reviews capture the merge-candidate tree and diff. A request is recorded whether or not the
+branch merges with main; a run on a branch that conflicts names the conflicted files to the owner and
+leaves the review requested for the owner to reconcile and run again. Missing proposal input prevents invocation. Images attached to
 messages need a textual account and stay outside the reviewer's coverage.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
 connectors, network tools, mutation, nested helpers or task identity. Read and search deliver text

@@ -682,7 +682,8 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.merged('first', self.finish(first))
         payload = self.finish(second)
         self.assertEqual(payload['type'], 'LandError')
-        self.assertIn('integrate current base', payload['error'])
+        self.assertIn('the task branch conflicts with current origin/main in README.md; local work is committed and retained. '
+                      'Merge origin/main into the branch, resolve those files and commit, then re-run alt land', payload['error'])
         worktree, fixture = self.owners['second']
         self.assertEqual(git('show', 'HEAD:README.md', cwd=worktree), 'second\n')
         self.assertEqual((worktree / 'README.md').read_text(), 'second\n')

@@ -83,7 +83,8 @@ class TestLandContinuation(AltitudeCase):
         (self.repo / "src/value").write_text("followup\n")
         self.git("add", "src/value")
         self.followup()
-        with self.assertRaisesRegex(land.LandError, "continuation could not reconcile.*retained"):
+        with self.assertRaisesRegex(land.LandError, "conflicts with current origin/main in src/value; local work is committed "
+                                    "and retained. Rebase it with git rebase --onto origin/main [0-9a-f]+, resolve those files"):
             self.land()
         self.assertEqual(self.git("branch", "--show-current").strip(), "worktree-fix-x")
         self.assertEqual((self.repo / "src/value").read_text(), "followup\n")

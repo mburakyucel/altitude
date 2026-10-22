@@ -139,13 +139,17 @@ def _git(root, *args, binary=False, stdin=None, conflict_ok=False):
     return (output, result.returncode == 1) if conflict_ok else output
 
 
+class Conflict(T.TransitionError):
+    """The task branch no longer merges with current main: the owner's to reconcile, never the requester's."""
+
+
 def _candidate_tree(root, base, head):
     output, conflicted = _git(root, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, head, conflict_ok=True)
     lines = output.splitlines()
     if conflicted:
         paths = ", ".join(dict.fromkeys(lines[1:])) or "unnamed paths"
-        raise T.TransitionError(f"The task branch conflicts with current main in {paths}. "
-                                "Reconcile the branch with origin/main and commit, then retry.")
+        raise Conflict(f"The task branch conflicts with current main in {paths}. "
+                       "Merge origin/main into the branch, resolve those files and commit, then retry.")
     return lines[0]
 
 
@@ -436,9 +440,6 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                 raise T.TransitionError("Assess the completed review before requesting another.")
         if why := _request_wait(task, subject, previous, delivery):
             raise T.TransitionError(why)
-        if subject == "changes":
-            root = _worktree(project, task)
-            _candidate_tree(root, _git(root, "rev-parse", "origin/main"), _git(root, "rev-parse", "HEAD"))
         choice = route.pick_review(task, config.project(project), **(selection or {}))
         if not choice.get("engine"):
             raise T.TransitionError(choice.get("why") or "No second engine is available.")
@@ -696,7 +697,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             if registered and not admitted:
                 with _inflight_lock:
                     _inflight.discard(key)
-    result = None
+    result = conflict = None
     invoked = False
     try:
         identity, snapshot, runtime = _capture(project, task, review, context_ids, proposal_id, show)
@@ -733,6 +734,9 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
         result = engines.review(prompt, engine=review["engine"], snapshot=snapshot, runtime=runtime,
                                 model=review["model"], effort=review.get("effort"), images=(identity.get("design") or {}).get("images", []),
                                 on_start=started, on_wait=waiting)
+    except Conflict as exc:  # the request waits on the owner's reconciliation; no reviewer was invoked
+        conflict = exc
+        result = {"error": str(exc), "termination_confirmed": True}
     except (OSError, ValueError, T.TransitionError, subprocess.SubprocessError) as exc:
         saved = _find(_load(project, slug), review_id)
         worker = saved.get("worker")
@@ -753,6 +757,10 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             confirmed = result.get("termination_confirmed", False)
             if not confirmed:
                 live.update(error="Reviewer termination is unconfirmed; capacity remains reserved.", cancel_requested=True)
+            elif conflict and live["state"] == "running" and not live.get("cancel_requested"):
+                for field in ("started_at", "generation", "effort"):
+                    live.pop(field, None)
+                live["state"] = "requested"
             elif live["state"] == "running":
                 stopped = (live.get("cancel_requested") or current.get("state") != "running"
                            or current.get("agent_id") != review.get("generation") or current.get("attempt") != expected_attempt)
@@ -767,6 +775,8 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             _inflight.discard(key)
         if not confirmed:
             _termination_fault(project, current, review_id)
+    if conflict and live["state"] == "requested":
+        raise Conflict(f"{conflict} The review stays requested.") from conflict
     return next(row for row in view(project, slug)["history"] if row["id"] == review_id)
 
 

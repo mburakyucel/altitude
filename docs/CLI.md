@@ -1733,7 +1733,8 @@ minutes. Refusals (authentication, a missing branch, a rejected or stale push) a
 
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
 Run one landing command per task worktree; collect or cancel an existing command before retrying.
-Conflicts abort integration and retain local work for the owner; dirty edits are not stashed. Adopted
+Conflicts abort integration and retain local work for the owner: a first delivery's merge of main and a
+continuation's rebase both name the conflicted files and how to reconcile them. Dirty edits are not stashed. Adopted
 PRs retain their history and accept only fast-forward pushes. Head or PR identity movement refuses
 instead of retrying. Review assessments never transfer automatically; review, hold, approval and
 `--closes-issue` gates repeat in the turn. Task messages and Stop remain available. Repeating a
@@ -2016,9 +2017,11 @@ The same owner attempt assesses a review that completed while it waited on a que
 running or blocked again, and republishes the revised question with the dispositions; a fault or Stop
 holds assessment until the owner resumes.
 L2 selects the original proposal message; missing concrete proposal input prevents reviewer invocation.
-Changes review captures the task branch merged onto current `origin/main`. When the branch conflicts
-with main, `request`, `run` and `assess` refuse with the conflicted files; reconcile the branch with
-main and commit before retrying.
+Changes review captures the task branch merged onto current `origin/main`. A request is recorded even
+when the branch conflicts with main, so an operator's request always reaches the owner. When the branch
+conflicts, `run` names the conflicted files and leaves the review requested, which the task page shows as
+queued for L2; the owner merges `origin/main` into the branch, resolves those files, commits and runs the
+same review. `assess` refuses the same way until the branch merges with main.
 `run` is a fixed daemon operation, not an operator grant. It accepts repeated `--context-message`
 IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
 included. Default capture includes all L2 messages. The captured context holds one copy of each input and

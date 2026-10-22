@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Asking for a review of a task whose branch clashes with newer work on main no longer ends in a Git
+  instruction: the request is kept and shows as queued for L2, which brings the branch up to date and then
+  runs it. Landing names the clashing files to L2 the same way on a task's first or later pull request.
+
 ## v0.12.0 — 2026-10-22
 
 Feature release of the early preview.
