@@ -938,13 +938,13 @@
   border-left: 1px solid var(--border);
   overflow-y: auto;
 }
+/* Graph chosen: the panel takes the live session panel's width (§2.2); inside the overlay it fills the overlay. */
+.work-panel[data-view="graph"] {
+  width: var(--live-w);
+}
 .overlay .work-panel {
   width: 100%;
   border-left: 0;
-}
-/* Graph chosen: the panel takes the live session panel's width (§2.2). */
-.work-panel[data-view="graph"] {
-  width: var(--live-w);
 }
 .overlay[data-side="right"] .overlay-panel:has(> .work-panel[data-view="graph"]) {
   width: var(--live-w);

@@ -23,9 +23,9 @@ describe("live cues from the usage reading", () => {
     expect(taskActivity(running({}), now, false)).toEqual({ live: true, helpers: 1 });
   });
 
-  it("claims nothing from an aged reading or a saved read", () => {
-    expect(taskActivity(running({ checked_at: ago(FRESH_MS + 1) }), now, false)).toEqual({ live: false, helpers: 0 });
-    expect(taskActivity(running({}), now, true)).toEqual({ live: false, helpers: 0 });
+  it("claims nothing from an aged reading or a saved read: no halo, and helpers unknown rather than none", () => {
+    expect(taskActivity(running({ checked_at: ago(FRESH_MS + 1) }), now, false)).toEqual({ live: false, helpers: null });
+    expect(taskActivity(running({}), now, true)).toEqual({ live: false, helpers: null });
   });
 
   it("is quiet when the worker's newest request is over a minute old", () => {

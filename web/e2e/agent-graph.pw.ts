@@ -7,6 +7,7 @@ import { walkthrough } from "./walkthrough";
 test.use({ serviceScript: "agent-graph-service.py" });
 
 const path = "/projects/harbor";
+// A reading is live for 30 seconds, so each live check writes a fresh one first.
 const activity = async (request: APIRequestContext, age = 0) => {
   expect((await request.post("/fixture/activity", { data: { age } })).ok()).toBe(true);
 };
@@ -22,6 +23,8 @@ test("Work's graph: the switch, every node's state and link, live helpers, aging
   const graph = work.getByRole("group", { name: "Current work as a graph", exact: true });
   const current = work.getByRole("region", { name: "Current", exact: true });
   const node = (name: RegExp) => graph.getByRole("link", { name });
+  // The graph fits its panel: no sideways scroll beside a scrollbar.
+  const fits = async (panel: typeof work) => expect(await panel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   const sync = node(/^Add offline sync for the field app · L2 working · .* · 2 helpers active$/);
   const login = node(/^Fix the login redirect loop · Your turn · 1 question · /);
   const exporting = node(/^Rework the export pipeline · L2 working · .* · 1 helper active$/);
@@ -46,6 +49,7 @@ test("Work's graph: the switch, every node's state and link, live helpers, aging
   });
   await expect(graphButton).toHaveAttribute("aria-pressed", "true");
   expect((await work.boundingBox())!.width).toBe(480);
+  await fits(work);
   // The operator's turn leads the ring; the rest keep the list's order.
   expect(await titles(graph.getByRole("link"))).toEqual(["Fix the login redirect loop", ...listed.filter((t) => t !== "Fix the login redirect loop")]);
   await expect(graph.locator(".ag-hub")).toHaveText("L3Ready");
@@ -68,6 +72,7 @@ test("Work's graph: the switch, every node's state and link, live helpers, aging
   await expect(sync).toHaveAttribute("href", /\/projects\/harbor\/tasks\/add-offline-sync-for-the-field-app$/);
   await expect(login).toHaveAttribute("href", /\/projects\/harbor\/(tasks\/fix-the-login-redirect-loop|needs)/);
 
+  await activity(request);
   await walk.state("graph-03-remembered-after-reload", { action: () => page.reload(), visible: [graph, sync], hidden: [current] });
   expect(await page.evaluate(() => localStorage.getItem("altitude.workView"))).toBe("graph");
 
@@ -85,6 +90,8 @@ test("Work's graph: the switch, every node's state and link, live helpers, aging
   await page.goBack();
   await expect(graph).toBeVisible();
 
+  await activity(request);
+  await expect(sync).toHaveAttribute("data-live", "true");
   await page.emulateMedia({ reducedMotion: "reduce" });
   const disc = sync.locator(".ag-disc");
   await walk.state("graph-05-reduced-motion", { visible: [sync], hidden: [] });
@@ -94,9 +101,9 @@ test("Work's graph: the switch, every node's state and link, live helpers, aging
   await page.emulateMedia({ reducedMotion: "no-preference" });
   expect(await disc.evaluate((el) => getComputedStyle(el).animationName)).toBe("ag-breathe");
 
-  // A reading older than half a minute claims nothing live.
+  // A reading older than half a minute claims nothing live, and says helper activity is unknown.
   await activity(request, 45);
-  const aged = node(/^Add offline sync for the field app · L2 working · [^·]+ · started [^·]+$/);
+  const aged = node(/^Add offline sync for the field app · L2 working · [^·]+ · started [^·]+ · helper activity unknown$/);
   await walk.state("graph-06-aged-reading", { visible: [aged], hidden: [sync.locator(".ag-pip"), exporting] });
   await expect(aged).not.toHaveAttribute("data-live");
 
@@ -129,6 +136,8 @@ test("Work's graph: the switch, every node's state and link, live helpers, aging
   const overlay = page.locator(".overlay-panel");
   await walk.state("graph-09-overlay", { visible: [overlay.getByRole("group", { name: "Current work as a graph", exact: true })], hidden: [] });
   expect((await overlay.boundingBox())!.width).toBe(480);
+  await fits(overlay);
+  await fits(overlay.locator(".work-panel"));
 });
 
 test("the phone's Work shows the list without a switch, whatever the browser chose @phone-only", async ({ page }, info) => {

@@ -12,8 +12,11 @@ import "./agent-graph.css";
  * task's own usage reading, which the service refreshes and the change stream delivers.
  */
 
-/** The graph's width inside the 480px panel, the ring's half-circle radius and the least spacing between neighbours. */
-export const GRAPH_WIDTH = 448;
+/**
+ * The graph's width: the side nodes' labels (cx ± RADIUS ± 62), inside the 480px panel's content box even
+ * beside a scrollbar. Then the ring's half-circle radius and the least spacing between neighbours.
+ */
+export const GRAPH_WIDTH = 424;
 const RADIUS = 150;
 const SPACING = 132;
 const NODE = 40;
@@ -54,14 +57,14 @@ function time(value: unknown): number | null {
 
 /**
  * A running task's live cues from its usage reading: the worker's own newest request, and its helpers' newest
- * requests, within ACTIVE_MS. A reading older than FRESH_MS, or a saved read, claims nothing.
+ * requests, within ACTIVE_MS. A reading older than FRESH_MS, or a saved read, claims nothing: no halo, and
+ * helpers unknown rather than none.
  */
 export function taskActivity(task: TaskRow, now: number, saved: boolean): Activity {
   const usage = TokenUsageSchema.safeParse(task["token_usage"]);
   const checked = usage.success ? time(usage.data.checked_at) : null;
-  if (task.state !== "running" || saved || !usage.success || checked == null || now - checked > FRESH_MS) {
-    return { live: false, helpers: task.state === "running" && !saved && !usage.success ? null : 0 };
-  }
+  if (task.state !== "running") return { live: false, helpers: 0 };
+  if (saved || !usage.success || checked == null || now - checked > FRESH_MS) return { live: false, helpers: null };
   const session = typeof task["session_id"] === "string" ? task["session_id"] : null;
   const recent = (at: unknown) => {
     const t = time(at);

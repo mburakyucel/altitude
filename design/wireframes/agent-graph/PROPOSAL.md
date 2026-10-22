@@ -99,7 +99,7 @@ page.
 | No current work | The coordinator (**Ready**) and the list's own line, **No current tasks. Ask L3 to start something.** |
 | Read fails, nothing saved | The list's error and **Retry**; no graph. |
 | Saved after a failed refresh | Nodes stay and open; the list's notice offers Retry. No halo, pip or L3 word claims anything is live. |
-| Activity data ages | Halos and pips show only while the task's activity reading is under 30 seconds old, so an old reading never claims work is happening. |
+| Activity data ages | Halos and pips show only while the task's activity reading is under 30 seconds old, so an old reading never claims work is happening; the accessible name then says "helper activity unknown". |
 | A task arrives or leaves | An arriving task fades in at its slot (200ms) and the others glide to theirs (300ms); a finished task leaves the ring and **Done this week** counts it. |
 | Keyboard | Tab: the switch, then each task in ring order. Enter opens; the focus ring is the app's. The coordinator is not a stop. |
 | Reduced motion | No breathing, glide or fade: a live node keeps a static halo, nodes appear and leave in place. |

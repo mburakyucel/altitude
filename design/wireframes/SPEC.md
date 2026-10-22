@@ -907,8 +907,9 @@ another current task gets a dashed arrow from the prerequisite.
 Live cues come from each running task's usage reading, which the service collects about every ten
 seconds and the change stream delivers: the worker's newest model request within a minute gives the
 node a soft breathing halo, and each helper of the current worker with a request within a minute is a
-pip on the node's upper rim, counted in the state line ("2 helpers active"). With no helper evidence
-the node shows no pips and its accessible name says "helper activity unknown". L3 breathes while it
+pip on the node's upper rim, counted in the state line ("2 helpers active"). With no helper evidence,
+or no reading under 30 seconds old, the node shows no pips and its accessible name says "helper
+activity unknown", never zero. L3 breathes while it
 answers or handles something.
 
 | Graph state | Visible behavior |
@@ -916,8 +917,8 @@ answers or handles something.
 | Initial loading | One skeleton disc; no guessed nodes or counts. |
 | Empty | L3 alone over **No current tasks. Ask L3 to start something.** |
 | Initial read fails | The list's error and Retry; no graph. |
-| Saved read | Nodes stay and open beside the saved notice; no halo, pip or L3 word claims anything is live. |
-| Aged reading | A usage reading older than 30 seconds shows no halo or pips. |
+| Saved read | Nodes stay and open beside the saved notice; no halo, pip or L3 word claims anything is live, and running nodes' accessible names say "helper activity unknown". |
+| Aged reading | A usage reading older than 30 seconds shows no halo or pips; the accessible name says "helper activity unknown". |
 | Arrive or leave | An arriving node fades in at its slot (200ms) and the others glide (300ms); a finished task leaves the ring and Done this week counts it. |
 | Keyboard | Tab: the switch, then each node in ring order; Enter opens. L3 is not a stop. |
 | Reduced motion | Nothing breathes, glides or fades; a live node keeps a still halo. |
