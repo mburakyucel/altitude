@@ -55,12 +55,12 @@ def state_line(attention, meta):
 
 def toggle(on="graph"):
     def b(key, label, icon):
-        return f'<span class="tg{" on" if key == on else ""}" role="radio" aria-checked="{str(key == on).lower()}">{icon}{label}</span>'
-    return f'<span class="tgl" role="radiogroup" aria-label="Show work as">{b("list", "List", LIST)}{b("graph", "Graph", GRAPH)}</span>'
+        return f'<span class="tg{" on" if key == on else ""}" role="button" aria-pressed="{str(key == on).lower()}">{icon}{label}</span>'
+    return f'<span class="tgl" role="group" aria-label="Show work as">{b("list", "List", LIST)}{b("graph", "Graph", GRAPH)}</span>'
 
 
-def wp_head(on="graph", count="7 current · 3 done this week", switch=True):
-    return f'<div class="wh2"><div><h2>Work</h2><span class="ct">{count}</span></div>{toggle(on) if switch else ""}</div>'
+def wp_head(on="graph", count="7 current · 3 done this week"):
+    return f'<div class="wh2"><div><h2>Work</h2><span class="ct">{count}</span></div>{toggle(on)}</div>'
 
 
 def track_height(n):
@@ -149,13 +149,11 @@ def foot():
 DOTS = {"running": "", "waiting": "held", "danger": "bad", "idle": "idle"}
 
 
-def list_rows(live=False):
-    def row(title, attention, meta, state, on, helpers, *_):
+def list_rows():
+    def row(title, attention, meta, state, *_):
         att = f'<div class="ta">{attention}</div>' if attention else ""
-        pips = (f'<span class="lpips">{"".join("<i></i>" for _ in range(helpers))}{helpers} helper{"s" if helpers != 1 else ""} active</span>'
-                if live and helpers else "")
-        return (f'<a class="trow" href="#"><span class="dot {DOTS[state]}{" lbreathe" if live and on else ""}"></span><div style="flex:1">'
-                f'<div class="tt">{title}</div>{att}<div class="tm">{meta}</div>{pips}</div>{CHEVR}</a>')
+        return (f'<a class="trow" href="#"><span class="dot {DOTS[state]}"></span><div style="flex:1">'
+                f'<div class="tt">{title}</div>{att}<div class="tm">{meta}</div></div>{CHEVR}</a>')
     return '<div class="sh">Current <span>(7)</span></div>' + "".join(row(*t) for t in TASKS)
 
 
@@ -230,42 +228,3 @@ states = [
 ]
 board("States", 1150, 3000,
       '<div style="padding:28px;display:flex;flex-wrap:wrap;gap:24px;align-content:flex-start">' + "".join(states) + '</div>')
-
-
-# ---- the brief's other directions and the review's, in the same panel, for comparison ----
-def altitude_map():
-    rows = [
-        ("You", [("Fix the login redirect loop", "waiting")]),
-        ("Coordinator", [("L3 · Answering", "running")]),
-        ("Tasks", [("Offline sync", "running"), ("Rework export", "running"), ("Payment SDK", "danger"),
-                   ("Export dashboard", "idle"), ("Onboarding copy", "idle")]),
-        ("Helpers", [("2 on Offline sync", "running"), ("1 on Rework export", "running")]),
-    ]
-    out_ = '<div class="amap">'
-    for label, items in rows:
-        out_ += f'<div class="arow2"><span class="alab">{label}</span><div class="aitems">'
-        for i, (t, s) in enumerate(items):
-            x = 10 + i * 20 if label == "Tasks" else 30 + i * 36
-            out_ += f'<span class="anode s-{s}" style="left:{x}%"><span class="disc"></span><span class="gt">{t}</span></span>'
-        out_ += '</div></div>'
-    out_ += '<div class="aaxis"><span>queued</span><span>working</span><span>merging</span></div></div>'
-    return out_
-
-
-def pipeline():
-    cols = [("Queued", [("Onboarding copy", "idle"), ("Export dashboard", "idle")]),
-            ("Working", [("Offline sync", "running"), ("Rework export", "running"), ("Login loop", "waiting"), ("Payment SDK", "danger")]),
-            ("Review", []), ("Merge", [])]
-    body = '<div class="pipe">'
-    for name, items in cols:
-        body += f'<div class="pcol"><div class="ph3">{name} <span>{len(items)}</span></div>'
-        for t, s in items:
-            pips = '<span class="psat"></span><span class="psat"></span>' if t == "Offline sync" else ""
-            body += f'<span class="pnode s-{s}"><span class="dot"></span>{t}{pips}</span>'
-        body += '</div>'
-    return body + '</div>'
-
-
-board("AltAltitudeMap", 1440, 900, desk(wp_head() + altitude_map() + foot()))
-board("AltPipeline", 1440, 900, desk(wp_head() + pipeline() + foot()))
-board("AltLiveList", 1440, 900, desk(wp_head(switch=False) + list_rows(live=True) + foot(), panel_w=340))

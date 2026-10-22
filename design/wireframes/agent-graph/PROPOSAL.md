@@ -1,6 +1,7 @@
 # Agent graph: proposal
 
-Status: proposed for the operator's choice. The boards beside this file are written by `gen.py`
+Status: the operator chose the constellation on 2026-10-22; it is built and folded into
+[SPEC §2.2 and §3.7](../SPEC.md#37-work-panel). The boards beside this file are written by `gen.py`
 (`python3 design/wireframes/agent-graph/gen.py`); review captures stay outside Git.
 
 ## What it is for
@@ -16,19 +17,16 @@ this browser.
 
 ## Directions
 
-| Direction | What it shows well | Trade-off |
-| --- | --- | --- |
-| **Constellation** (recommended, `DesktopGraph.html`) | How much is in flight at once, who waits on whom (dependency arrows, amber operator waits), helpers per task, live activity. Every label sits in the same place for every node, so it reads the same with three tasks or thirteen. | Needs the 480px panel; it does not show progress along the lifecycle (the list never did either). |
-| **List with live cues** (`AltLiveList.html`, the review's alternative) | The same live facts (a breathing dot, "2 helpers active") added to the existing rows, no switch, no new view, phone included. The cheapest option. | No picture of the whole: dependencies stay text, and how much is in flight is still counted row by row. |
-| **Altitude map** (`AltAltitudeMap.html`) | The roles as bands: you, the coordinator, tasks, helpers. | Its horizontal "progress" axis has no source: Altitude records states, not how far a task has got, so nodes would sit on invented positions. Helpers in their own band lose which task they belong to. |
-| **Pipeline** (`AltPipeline.html`) | Bottlenecks as crowded columns. | Altitude's states are queued, running, blocked/reported and done; review and merge happen inside a running task, so Review and Merge columns sit almost always empty and everything crowds into Working. At 480px four columns leave titles two words wide. |
+The constellation was chosen over three others: live cues added to the list (cheapest, but no picture
+of the whole), an altitude map (its progress axis would rest on data Altitude does not record) and a
+pipeline (Review and Merge columns would sit empty, since both happen inside a running task).
 
 ## Where it sits
 
 - **Work's head** gains a two-button switch, **List** and **Graph**, right-aligned beside "Work" and its
-  counts, on desktop only (§2.2 width ≥ 1024). A segmented control: a bordered group of two buttons
-  with icons, the chosen one filled with the accent tint (`role="radio"`, `aria-checked`, in a
-  `radiogroup` named "Show work as"). Phone Work has no switch and always shows the list.
+  counts, on desktop only (§2.2 width ≥ 1024). A segmented control: a bordered group named "Show
+  work as" of two toggle buttons with icons, the pressed one filled with the accent tint. Phone Work
+  has no switch and always shows the list.
 - **The graph replaces only the Current section.** Altitude repairs, **Done this week** and
   **Agents · N** stay below it, unchanged. The head's counts are unchanged.
 - **Width.** With Graph chosen the work panel is 480px, the task page's live-panel width (§2.2 gains
@@ -43,7 +41,7 @@ this browser.
 ## The constellation
 
 **Layout.** The coordinator sits in the middle as a quiet outlined disc reading **L3**, with the
-header's compact word under it: **Answering**, **Handling …**, **Busy** or **Ready**. It is a label,
+header's compact word under it: **Answering**, **Handling …**, **Busy**, **Ready** or **Not started**. It is a label,
 not a control: L3's conversation is already beside the graph. Tasks are 40px nodes spaced clockwise
 from the top in the list's order, except that your-turn tasks come first, so the top of the ring is
 where you are needed. Up to seven tasks sit on a 150px circle; past that the ring stretches into a
@@ -67,7 +65,8 @@ nothing needs hover to be understood.
 **State colours** are the list's dots, from the same `taskCardFacts` and `turnLabel`: running accent,
 your turn amber (with a count badge of open questions at the node's top right; a step shows the amber
 node without a number), fault or operator's Stop red, queued/planned/paused muted with a dashed ring.
-An agent run is the same node with rounded-square corners and opens its run page.
+An agent run is the same node with rounded-square corners and opens its run page; it has no halo or
+helpers, since nothing records its requests.
 
 **Live activity.** A running task whose worker made a model request in the last 60 seconds (the rule
 the task page's activity line uses) wears a soft halo that breathes (the existing 1.6s pulse). The
@@ -80,7 +79,7 @@ When the engine gives no helper evidence for a task, it shows no pips and no cou
 name says "helper activity unknown"; the graph never guesses zero.
 
 **Dependencies.** A planned task waiting for another current task gets a dashed arrow from the
-prerequisite to it, bowed toward the centre so it leaves each node on its inner side, away from the
+prerequisite to it, along the line between them and bowed toward the centre, clear of the pips and
 labels. When the prerequisite is not current, no arrow is drawn; the state line still says Planned
 and the accessible name carries the reason. Releasing the task removes the arrow, as the list's
 "Planned" leaves.
@@ -101,7 +100,7 @@ page.
 | Read fails, nothing saved | The list's error and **Retry**; no graph. |
 | Saved after a failed refresh | Nodes stay and open; the list's notice offers Retry. No halo, pip or L3 word claims anything is live. |
 | Activity data ages | Halos and pips show only while the task's activity reading is under 30 seconds old, so an old reading never claims work is happening. |
-| A task arrives or leaves | It fades in at its slot (200ms) and the others glide to theirs (300ms); a finished task fades out and **Done this week** counts it. |
+| A task arrives or leaves | An arriving task fades in at its slot (200ms) and the others glide to theirs (300ms); a finished task leaves the ring and **Done this week** counts it. |
 | Keyboard | Tab: the switch, then each task in ring order. Enter opens; the focus ring is the app's. The coordinator is not a stop. |
 | Reduced motion | No breathing, glide or fade: a live node keeps a static halo, nodes appear and leave in place. |
 | Long title | Two lines and an ellipsis; the whole title is in the accessible name. |

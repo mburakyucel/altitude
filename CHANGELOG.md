@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Work can show your agents as a graph: on a computer, the List | Graph switch beside Work puts every current
+  task around L3, the ones waiting on you at the top, with arrows for tasks planned after another, a soft halo
+  on work that is active right now and a dot for each helper it is running. Each node opens what its row opens.
+  The panel widens while the graph shows; your browser remembers the choice, and the phone keeps the list.
 - Asking for a review of a task whose branch clashes with newer work on main no longer ends in a Git
   instruction: the request is kept and shows as queued for L2, which brings the branch up to date and then
   runs it. Landing names the clashing files to L2 the same way on a task's first or later pull request.

@@ -7,7 +7,11 @@ import { useChat, useL3Reset, useL3Start, useOverview, useProject, useWaitsForTo
 import type { Attention, ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
 import { agoText } from "../data/observed";
 import { attentionSummary, isTaskDecision } from "../data/decisions";
-import { TaskCard } from "../components/TaskCard";
+import { TaskCard, cardView } from "../components/TaskCard";
+import { AgentGraph, taskActivity } from "../components/AgentGraph";
+import type { GraphNode } from "../components/AgentGraph";
+import { useNow } from "../components/TaskActivity";
+import { useWorkView } from "../shell/workView";
 import { WorkRepairs } from "../components/Repairs";
 import { RoleModelButton } from "../components/ModelMenu";
 import { handling } from "../components/SystemLine";
@@ -42,15 +46,69 @@ function sectionOf(task: TaskRow): "active" | "done" {
   return task.state === "done" || task.state === "rejected" ? "done" : "active";
 }
 
+/** L3 has no session, history or turn yet. */
+function neverStarted(project: ProjectView, chat: ChatView): boolean {
+  return !str(dict(project.l3).session_id) && chat.history.length === 0 && !chat.active;
+}
+
+/** The coordinator's compact word (§3.2): Answering, Handling …, Busy or Ready. */
+export function l3Word(chat: ChatView): string {
+  return chat.active ? chat.active.trigger === "chat" ? "Answering" : `Handling ${handling(chat.active.trigger)}` : chat.busy ? "Busy" : "Ready";
+}
+
+const LIST_ICON = <svg aria-hidden viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+  <path d="M8 6h12M8 12h12M8 18h12" /><circle cx="4" cy="6" r="1" fill="currentColor" /><circle cx="4" cy="12" r="1" fill="currentColor" /><circle cx="4" cy="18" r="1" fill="currentColor" />
+</svg>;
+const GRAPH_ICON = <svg aria-hidden viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+  <circle cx="12" cy="12" r="3" /><circle cx="5" cy="5" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="18" cy="19" r="2" /><path d="M6.5 6.5l3.3 3.3M17.3 7.2l-3.2 2.9M16.6 17.6l-2.6-3.4" />
+</svg>;
+
+/** Work's Current as the graph (§3.7): the same rows, read again every few seconds so live cues age out. */
+function WorkGraph({ name, project, chat, current, runs }: {
+  name: string;
+  project: UseQueryResult<ProjectView>;
+  chat: UseQueryResult<ChatView>;
+  current: TaskRow[];
+  runs: NonNullable<ProjectView["project_agents"]>["runs"];
+}) {
+  const overview = useOverview();
+  const now = useNow();
+  const slugs = new Set(current.map((t) => t.slug));
+  const nodes: GraphNode[] = [
+    ...current.map((task) => {
+      const card = cardView(name, task, overview);
+      const after = task.planned_wait?.after;
+      return {
+        key: task.slug, title: card.title, attention: card.attention, meta: card.meta, dot: card.dot, to: card.to,
+        linkState: { from: "project", tab: "work" }, questions: card.questions, run: false,
+        after: after && slugs.has(after) ? after : null, ...taskActivity(task, now, project.isError),
+      };
+    }),
+    ...runs.map((run) => ({
+      key: `agent:${run.agent}:${run.n}`, title: run.name, attention: null, meta: run.line,
+      dot: (run.state === "waiting" ? "idle" : "running") as GraphNode["dot"], to: `/projects/${name}/agents/${run.agent}/runs/${run.n}`,
+      linkState: { from: "project", tab: "work" }, questions: 0, run: true, after: null, live: false, helpers: 0,
+    })),
+  ];
+  return <AgentGraph project={name} nodes={nodes} saved={project.isError || chat.isError}
+    l3={{ word: !chat.data || !project.data ? "" : neverStarted(project.data, chat.data) ? "Not started" : l3Word(chat.data),
+      live: Boolean(chat.data?.active) }} />;
+}
+
 export function WorkPanel({
   name,
   project,
+  chat,
 }: {
   name: string;
   project: UseQueryResult<ProjectView>;
+  chat: UseQueryResult<ChatView>;
 }) {
   const overview = useOverview();
   const { phone } = useViewport();
+  const [chosen, setView] = useWorkView();
+  // The list is the phone's only view (§3.7).
+  const view = phone ? "list" : chosen;
   const decisions = decisionsFor(overview.data, name).filter(isTaskDecision);
   const tasks = project.data?.tasks ?? [];
   // Overview and project reads can arrive in either order; retain newly published waiting tasks.
@@ -83,14 +141,19 @@ export function WorkPanel({
   const agents = project.data?.project_agents;
   const runs = agents?.runs ?? [];
   const inCurrent = current.length + runs.length;
-
   return (
-    <section className="work-panel" aria-label="Work">
+    <section className="work-panel" aria-label="Work" data-view={view}>
       <div className="wp-head">
-        <h2 className="wp-title">Work</h2>
-        {project.data ? <p className="wp-count text-muted">
-          {inCurrent} current · {doneThisWeek.length} done this week{project.isError ? " · saved" : ""}
-        </p> : null}
+        <div className="wp-heading">
+          <h2 className="wp-title">Work</h2>
+          {project.data ? <p className="wp-count text-muted">
+            {inCurrent} current · {doneThisWeek.length} done this week{project.isError ? " · saved" : ""}
+          </p> : null}
+        </div>
+        {phone ? null : <div className="wp-view" role="group" aria-label="Show work as">
+          <button type="button" aria-pressed={view === "list"} onClick={() => setView("list")}>{LIST_ICON}List</button>
+          <button type="button" aria-pressed={view === "graph"} onClick={() => setView("graph")}>{GRAPH_ICON}Graph</button>
+        </div>}
       </div>
       {phone ? <RoleModelButton variant="row" /> : null}
       {project.isError ? <p className="text-meta text-danger" role="alert">
@@ -101,7 +164,7 @@ export function WorkPanel({
         {overview.data ? "Attention status is saved; refresh to update." : "Attention status unavailable."}{" "}
         <button type="button" className="link" onClick={() => overview.refetch()}>Refresh</button>
       </p> : null}
-      {project.isPending ? (
+      {project.isPending ? view === "graph" ? <div className="skeleton ag-skeleton" aria-label="Loading" /> : (
         <div className="flex flex-col gap-3" aria-label="Loading">
           <div className="skeleton h-5" />
           <div className="skeleton h-5" />
@@ -109,7 +172,8 @@ export function WorkPanel({
         </div>
       ) : project.data ? (
         <>
-          {inCurrent > 0 ? (
+          {view === "graph" ? <WorkGraph name={name} project={project} chat={chat} current={current} runs={runs} /> : null}
+          {inCurrent > 0 && view === "list" ? (
             <section className="wp-section" aria-label="Current">
               <h3 className="wp-section-title">
                 Current <span className="text-muted">({inCurrent})</span>
@@ -349,21 +413,19 @@ function ProjectHeader({
   overview: UseQueryResult<Overview>;
 }) {
   const start = useL3Start(name);
-  const sessionId = str(dict(project.data?.l3).session_id);
-  const neverStarted =
-    project.isSuccess && chat.isSuccess && !sessionId && chat.data.history.length === 0 && !chat.data.active;
-  const waiting = useWaitsForTool(name) && neverStarted;
+  const notStarted = project.isSuccess && chat.isSuccess && neverStarted(project.data, chat.data);
+  const waiting = useWaitsForTool(name) && notStarted;
   const status = project.isError
     ? project.error.message
     : waiting
       ? "L3 waits for a coding tool"
-      : neverStarted
+      : notStarted
         ? "L3 has not started"
       : statusParts(chat.data, project.data, overview.isSuccess ? decisions : [], engines).join(" · ");
   const engine = engines.find((e) => e.engine === chat.data?.engine)?.label;
-  const compactStatus = project.isError ? "Could not read project" : waiting ? "L3 · Waiting" : neverStarted ? "L3 · Not started"
-    : !chat.data ? "L3 · Loading…" : chat.data.active ? chat.data.active.trigger === "chat" ? "L3 · Answering" : `L3 · Handling ${handling(chat.data.active.trigger)}` : chat.data.busy ? "L3 · Busy" : "L3 · Ready";
-  const startButton = neverStarted && !waiting ? <button type="button" className="btn btn-primary" disabled={start.isPending} onClick={() => start.mutate()}>
+  const compactStatus = project.isError ? "Could not read project" : waiting ? "L3 · Waiting" : notStarted ? "L3 · Not started"
+    : !chat.data ? "L3 · Loading…" : `L3 · ${l3Word(chat.data)}`;
+  const startButton = notStarted && !waiting ? <button type="button" className="btn btn-primary" disabled={start.isPending} onClick={() => start.mutate()}>
     <BusyLabel busy={start.isPending} label="Start L3" working="Starting…" />
   </button> : null;
   const menu = <HeaderMenu key={name} name={name} designViewer={project.data?.design_viewer ?? ""} starting={start.isPending} />;
@@ -492,7 +554,7 @@ export default function ProjectPage() {
   const panel = terminalRoute
     ? <Terminal key={name} project={name} keys={false} onLeave={() => void navigate(home, { replace: true })}
       head={(close) => <header className="live-head"><h2 className="live-title">Terminal</h2>{close}</header>} />
-    : <WorkPanel name={name} project={project} />;
+    : <WorkPanel name={name} project={project} chat={chat} />;
   const conversation = <Conversation key={name} name={name} chat={chat} project={project} />;
   return (
     <div className="project-page">

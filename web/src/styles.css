@@ -942,6 +942,13 @@
   width: 100%;
   border-left: 0;
 }
+/* Graph chosen: the panel takes the live session panel's width (§2.2). */
+.work-panel[data-view="graph"] {
+  width: var(--live-w);
+}
+.overlay[data-side="right"] .overlay-panel:has(> .work-panel[data-view="graph"]) {
+  width: var(--live-w);
+}
 .shell[data-phone] .work-panel {
   width: auto;
   flex: 1;
@@ -1119,6 +1126,13 @@
 /* Work (§3.7): every current task once, with recent completion history folded. */
 .wp-head {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.wp-heading {
+  display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 4px;
 }
