@@ -51,7 +51,7 @@ skipped and says so. Events that arrive meanwhile join it if it is still waiting
 run, which gets all of them together ("For “PR #810 merged” and 2 more"), so a burst of events costs one
 more run, not three. A project runs one agent at a time, and only in a free task slot with tasks served
 first, so agents never crowd out your work. Waiting runs start oldest first, and one that has waited
-six hours is skipped ("no free slot for 6 hours"), so a 07:00 check never starts at midnight.
+six hours is skipped ("didn't start within 6 hours"), so a 07:00 check never starts at midnight.
 
 **Missed time.** A schedule missed while Altitude was off runs once when it comes back, marked late
 ("07:00, ran at 09:14"); older ones are not caught up. An event is recorded with the agent before
@@ -78,7 +78,7 @@ from step 6, a pull request an agent opens reaches a merge recipe only once you 
 | **Found something** / **Nothing found** | Finished with its report |
 | **Couldn't finish** | The worker failed, or the brief could not be done (`make audit` is not a target) |
 | **Stopped by you** / **Stopped at its limit** | Ended by Stop or by its time limit |
-| **Skipped** | Not started, with the reason: the budget could not fit its limit, the plan was inside the reserve, its last run was still going, no slot for six hours |
+| **Skipped** | Not started, with the reason: the budget could not fit its limit, the plan was inside the reserve, its last run was still going, it did not start within six hours |
 
 **Failure and retry.** A failed run is not retried automatically: its next trigger is the retry, and
 Run now is a manual one. Three triggered runs in a row that couldn't finish or stopped at their limit
@@ -159,7 +159,7 @@ step builds.
   engine's weekly or five-hour window is at the reserve (90%, the improvement review's) the run is
   skipped and says so. A window Altitude cannot read also skips, as the Weekly review does: Altitude
   reads Codex's windows only once Codex has been used, so an agent pinned to Codex may skip
-  ("Couldn't read Codex's plan use") until then.
+  ("Your Codex plan's use isn't known yet.") until then.
 - **Off is off.** Pause stops triggers at once, Stop ends a run, Retire ends the agent.
 
 ## When a run deserves your attention
@@ -177,7 +177,7 @@ its held pull requests, as review cards.
 | --- | --- | --- |
 | **Work** (the project's task list) | A running or waiting run is a row in **Current** ("Agent run · “PR #812 merged” · 2 of 20 min"), opening the run. After Done this week, one row **Agents · 4** opens the Agents page; it lists no agents, so nothing is shown twice | 1 |
 | **Project menu** | **Agents…**, always, so the page is reachable before the first agent exists | 1 |
-| **Agents page** | `/projects/<name>/agents`: every agent with its triggers and latest news, the weekly budget, New agent, Retired, then **Built in** agents to turn on | 1 |
+| **Agents page** | `/projects/<name>/agents`: every agent with its triggers and latest news, New agent, Retired, **Built in** agents to turn on, then the weekly budget | 1 |
 | **Agent page** | Status and Run now, recent runs, what it does and its triggers with Edit, Retire | 1 |
 | **Run page** | Its live session while running, then its report, what fired it and the brief version it ran | 1 |
 | **Project chat** | Quiet result lines; an offer card for every agent L3 would create or change, which only your press saves | 1 |
@@ -255,12 +255,12 @@ with **Retry**.
 - **Status card.** On and idle: "Next: Monday, Oct 26" (", if 2 more tasks finish" while fewer than five
   have) with **Run now** and **Pause**, and Run now's line under it: "Reads the 6 tasks finished since
   Oct 19." When Run now cannot run it looks disabled and has no line under the card; its reason ("Run now
-  needs 5 finished tasks since Oct 19; 3 so far." or "Claude's allowance is inside Altitude's reserve.")
+  needs 5 finished tasks since Oct 19; 3 so far." or "Your Claude plan is close to its weekly limit.")
   is its accessible description and shows under the card when pressed. Run now pressed shows "Starting…"
   in the button with Pause unavailable until the run is read; a refusal returns the buttons with its
   reason in red ("Another review just ended; ask again."). Running: "Reading 6 tasks" or "L3 is checking
   3" with a spinner and only **Stop**; Pause returns when the run ends, so Pause never changes a running
-  line. Stop shows "Stopping…" until the end is read, or returns with "Not stopped. Try again." Paused:
+  line. Stop shows "Stopping…" until the end is read, or returns with "Not stopped." Paused:
   "Paused" with **Resume** and **Run now**. Pause and Resume change the line and buttons at once; a
   refusal returns them with "Not saved: <reason>" and **Retry**.
 - **Terms.** Whenever the record's agreement is not to the current terms, whatever its switch says (paused
@@ -367,7 +367,7 @@ arrives.
 
 Work keeps answering "what is happening in this project?". A waiting or running run is a row in
 **Current** with the ordinary dot and chevron: the agent's name, then "Agent run · “PR #812 merged” · 2 of
-20 min", "Agent run · waiting for a free task slot" or "Agent run · waiting for Review each merge"; it opens
+20 min", "Agent run · waiting to start" or "Agent run · waiting while Review each merge runs"; it opens
 the run's page. Runs are not tasks: the header's "N tasks in flight" and Done this week leave them out,
 and a finished run leaves Work, its history being on the agent's page. After Done this week, one row
 **Agents · 4** with a chevron opens the Agents page; it names no agents, so nothing in Current is said
@@ -383,15 +383,14 @@ latest news, with a cue before it when one applies (a pulsing dot running, a pau
 
 - "Weekdays at 07:00 · Found something 2 h ago"
 - "When it's sent an event · Running, 2 of 20 min"
-- "Mondays at 08:00 · Waiting for Review each merge"
+- "Mondays at 08:00 · Waiting while Review each merge runs"
 - "Fridays at 17:00 · Paused"
-- "When you run it · Never run"
+- "Only when you run it · Never run"
 
 Several triggers read "Weekdays at 07:00 and when it's sent an event"; more than two read "3
 triggers". Schedules read "Every day", "Weekdays", "Weekends", "Mondays", "Mon, Wed, Fri", with the
-time in the machine's clock and its zone when the browser's differs ("07:00 Istanbul"). Below the
-rows, **Agents may use up to** with a select (30 min · 1 h · 2 h · 5 h · 10 h a week) and "1 h 10 min
-used this week", then a bordered **New agent**; with no agents of your own the card holds only these.
+time in the machine's clock and its zone when the browser's differs ("07:00 Istanbul"). The card holds
+only agent rows and is absent with no agents. A bordered **New agent** sits under it, outside the card.
 A muted "2 retired" link opens the retired agents as rows ("Retired Oct 19 · 23 runs"), each opening
 its read-only page.
 
@@ -402,6 +401,11 @@ the agent reads as on, then the row leaves Built in and appears among your agent
 returns with the reason under the line ("Not turned on: the agents changed in another window."). With every
 built-in turned on, the group is absent.
 
+**Weekly budget** comes last, a section of its own: **Agents may use up to** with a select (30 min · 1 h ·
+2 h · 5 h · 10 h a week) and "1 h 10 min used this week" under it. Spent, the used line turns amber
+("2 h used this week"), and an amber line under the page's intro says it once, on a phone's first
+screen: "This week’s budget is used: no new runs until Monday unless you raise it."
+
 ### One agent
 
 `/projects/<name>/agents/<id>`, **‹ harbor** back, the agent's name as the title. In order:
@@ -409,7 +413,7 @@ built-in turned on, the group is absent.
 1. **Status card.** On: "Next: tomorrow at 07:00" (a schedule) or "Runs when it's sent an event"
    (events only) with **Run now** and **Pause**. Running: a spinner, "Running · 4 of 20 min", an
    underlined **Open** to the run, **Stop** and **Pause** (Pause lets the run finish and fires nothing
-   after it). Waiting: "Waiting for a free task slot" or "Waiting for Review each merge" with **Stop**.
+   after it). Waiting: "Waiting to start" or "Waiting while Review each merge runs" with **Stop**.
    Paused: a pause mark and "Paused" (or "Paused itself after 3 failed runs"), with **Resume** and
    **Run now**. New: "Not on yet" with **Run now** and **Turn on**. Pause, Resume and Turn on answer at
    once; the line changes with them.
@@ -420,12 +424,12 @@ built-in turned on, the group is absent.
    more. None: "No runs yet."
 3. **What it does.** The brief clamped to three lines with **Show all**, then "Weekdays at 07:00 · Tells
    you when it finds something · Default model · Stops after 20 min", and a bordered **Edit**.
-4. **Retire agent**: "It won't run again. Past runs stay readable." and an outlined red **Retire…**.
+4. **Retire agent**: its heading and an outlined red **Retire…**; the dialog says what retiring does.
 
 ### One run
 
 `/projects/<name>/agents/<id>/runs/<n>`, **‹ Dependency check** back, the title "Run · Today 07:00".
-A line says what fired it ("On its schedule", "Run now by you", "For “PR #812 merged”"), the model, and
+A line says what fired it ("On its schedule", "Requested by you", "For “PR #812 merged”"), the model, and
 minutes and tokens once it has ended. While running: "Running · 4 of 20 min" with **Stop**, then the
 live session as a task's (the same transcript component, read only). Ended: the outcome in semibold
 with its dot, then the full report as text (its one-line summary is what lists and chat show); under
@@ -439,8 +443,9 @@ empty (ready-made briefs are the built-in agents). Fields:
 **Name**; **What it does** (hint "Write it as you would brief a task. It can use anything in the
 repository."); **Runs when**; **Tell me in chat** (When it finds something · Every run · Never;
 segmented on desktop, stacked on phone); **Model** (the model button of §3.6.1); **Each run stops
-after** (10 min · 20 min · 1 hour). **Save** or **Create agent**, and **Cancel**. A new agent is saved
-paused and its page opens, with Run now and Turn on.
+after** (10 min · 20 min · 1 hour). **Save** or **Create agent**, and **Cancel**; for a new agent, a muted
+"It starts off: try it with Run now, then turn it on." under them. A new agent is saved paused and its
+page opens, with Run now and Turn on.
 
 **Runs when** is a bordered list, one trigger per row with an icon (a clock for a schedule, a bolt for
 an event), its words and a Remove button (44px on phone). A schedule row opens to seven day toggles
@@ -451,9 +456,11 @@ it's sent an event; with the event row in the list it adds a schedule at once. W
 "Events that arrive during a run go to its next run together." follows the list. Removing the last trigger leaves "Only when you run it". New agents start with a
 weekday 07:00 schedule.
 
-Without a name or brief, Create agent looks unavailable and, pressed, focuses the first empty field
-with "Give it a name and a brief.". Leaving with unsaved changes asks "Discard your changes?" with
-**Keep editing** (focused) and **Discard**. A change to a running agent applies from its next run.
+Without a name or brief, Create agent looks unavailable. Pressed, it puts "Give it a name." or "Say what
+it does." under each missing field, in the danger tone and linked to the field (`aria-describedby`), and
+focuses the first missing field; each line goes once its field is filled. Leaving with unsaved changes
+asks "Discard your changes?" with **Keep editing** (focused) and **Discard**. A change to a running agent
+applies from its next run.
 
 Retire opens a dialog: **Retire Dependency check?**, "It won't run again, from its triggers or Run
 now. Its past runs stay readable under Retired.", **Cancel** (first, focused) and a red **Retire**. A
@@ -518,12 +525,12 @@ agent's page with a chevron at the right, centred on the row:
   | When | Line | Agent page's status |
   | --- | --- | --- |
   | A run is running | pulsing dot, "Running" | Running · 4 of 20 min |
-  | A run is waiting | "Waiting" | Waiting for a free task slot |
+  | A run is waiting | "Waiting" | Waiting to start |
   | Not on yet (you ran it by hand) | "Not on yet" | Not on yet |
   | Paused itself | pause mark, "Paused itself" | Paused itself after 3 runs in a row couldn't finish |
   | Paused by you | pause mark, "Paused" | Paused |
   | Weekly review, terms out of date | pause mark, "Paused: its terms changed" | the same |
-  | Its project's weekly budget is used, and it has a schedule | "Waits until Monday" | Next: … (the Agents page's budget line says it) |
+  | Its project's weekly budget is used, and it has a schedule | "Weekly budget used" | Next: … (the Agents page says the budget is used) |
   | It has a schedule | "Next tomorrow at 07:00", "Next today at 17:00", "Next Friday at 07:00" | Next: tomorrow at 07:00 |
   | No schedule | "Only when you run it" | Only when you run it |
 
@@ -534,7 +541,8 @@ agent's page with a chevron at the right, centred on the row:
   that ran (as the Agents page's news counts it, so skips never replace a result), its parts the run
   lacks left out ("Last: Found something · 2 h ago · 6 min · 3.9M tokens", "Last: Couldn't finish ·
   yesterday · 1 min", "Last: 3 suggestions · 2 d ago · 4 min · 1.2M tokens"). Skips stay in the
-  agent page's Recent runs. With none: "No runs yet."
+  agent page's Recent runs. With none: "No runs yet.", except under a first run that is running or
+  waiting, which shows no line.
 
 On desktop, what comes next sits right-aligned on the title's first line and never wraps; "Last:"
 is the line beneath. On the phone every row has the same three parts stacked: the title, then what
@@ -561,8 +569,9 @@ from. There is no catalogue of ready-made triggers to install.
 alt --project harbor agent send 3f9a2c1b0e4d "PR #812 merged"
 ```
 
-- The agent is named by its id, so renaming it never breaks a script. Its page shows the command
-  with that id filled in.
+- The agent is named by its id, or by its name when exactly one agent that is not retired has it. Its
+  page shows the command with its name, quoted for the shell (`'Review each merge'`), or its id when
+  another agent that is not retired shares the name or the name starts with `-`.
 - The text is at most 4,000 characters, read from the argument or, with `-`, from stdin.
 - `--key pr-812` makes a send idempotent: an event whose key the agent already took is ignored
   ("Already received."). So a script can send everything it sees each time it runs, with no record
@@ -593,7 +602,7 @@ alt --project harbor agent send 3f9a2c1b0e4d "PR #812 merged"
 
 When the running run ends, the next run waits with every event that waited, so a burst of five sends
 during a twenty-minute run costs one more run, not five. At most 50 events wait or join one run.
-Pausing or retiring the agent drops the events that waited. A run skipped at its start (the reserve, six hours without a slot) is
+Pausing or retiring the agent drops the events that waited. A run skipped at its start (the reserve, six hours without starting) is
 skipped with its events, and its line names them. A schedule that comes due while events wait still
 fires; the events join its run. Event runs count toward pausing itself as scheduled runs do.
 
@@ -604,7 +613,7 @@ examples send numbers and your own words, never text anyone else can write, such
 title. Docs and the agent page say so in one line.
 
 **Run now** on an agent with the event trigger replays the latest event it received, without using it
-up. Its run page says "Run now by you · For “PR #812 merged”, the latest". With none yet, the run
+up. Its run page says "Requested by you · For “PR #812 merged”, the latest". With none yet, the run
 starts without an event, and the status card says so beforehand, muted under its line: "No event
 yet, so Run now runs without one."
 
@@ -622,6 +631,8 @@ definition line and before Edit:
 
 - "From a script or your terminal on this computer:" over the command in a code block with **Copy**,
   the text a placeholder ("what happened");
+- when the command uses the name, a muted line under it: "The examples use its id, 553012b713c4, so
+  they keep working after a rename.";
 - the muted line "To try it first, use `agent run` in place of `agent send`: it starts a run now,
   even before the agent is on.";
 - **Examples**, folded, opening three short recipes. Each has a muted line saying what it does with
@@ -656,10 +667,10 @@ more". That name appears:
 - in its Recent runs line ("For “PR #810 merged” and 2 more: …");
 - in Work's run row ("Agent run · “PR #812 merged” · 2 of 20 min");
 - in the chat line ("found something for “PR #809 merged”: …");
-- in a skip line ("For “PR #806 merged” · No free slot for 6 hours.").
+- in a skip line ("For “PR #806 merged” · Didn't start within 6 hours.").
 
 A run page lists each event it took under its line, muted, one per line: its time and its first
-line. A text given to `alt agent run` reads "Run now by you · For “PR #812 merged”, your text". While a run is running and events wait, a muted line under the status line, before the
+line. A text given to `alt agent run` reads "Requested by you · For “PR #812 merged”, your text". While a run is running and events wait, a muted line under the status line, before the
 buttons, says "1 event waits for the next run." or "3 events wait for the next run.". On the phone
 the buttons sit beneath, as the status card already stacks there.
 
@@ -720,12 +731,12 @@ the run, as it does after a Weekly review.
 - Altitude, not L3, shows what was kept, in the run's own plain wording.
 - While the check runs, the run page shows "L3 is checking 2 suggestions" with a spinner, and nothing
   is in Needs you yet.
-- What L3 set aside shows only on the run page, folded under **Set aside · 1**, each with its reason.
+- What L3 did not offer shows only on the run page, folded under **Not offered · 1**, each with its reason.
   It rests folded. When L3 keeps none, Needs you never shows the run.
 - The check has two hours from the run's end. The checking line stays until L3 posts or the two hours
   pass; it has no Stop, because nothing reaches you before the post and the deadline ends a check that
   waits too long. A check that misses it or is interrupted sets every suggestion aside, and the fold
-  says why once: **Set aside · 2 · L3 did not finish checking**.
+  says why once: **Not offered · 2 · not checked in time**.
 - Each check is one L3 turn on your plan, outside the agents' weekly budget. The limit below bounds how
   often that happens.
 
@@ -747,7 +758,7 @@ decisions, not news, so they wait in Needs you.
 **The suggestion card** is the improvement card's layout without its improvement-only parts:
 
 - **Header:** the agent's name, bold, with the run's time on the right. Under it, muted, what fired the
-  run: "For “PR #810 merged” and 2 more", "On its schedule" or "Run now by you". The finding
+  run: "For “PR #810 merged” and 2 more", "On its schedule" or "Requested by you". The finding
   is not repeated; the run page holds it.
 - **Each kept suggestion**, separated by a hairline: its number and title (15px semibold, wraps, never
   cut), then its explanation, then **Make a task** (bordered, accent text) and **Dismiss** (ghost). There
@@ -761,7 +772,7 @@ The card appears in two places:
   It is never counted and never alerts a device. It shows whatever Tell me says, because a suggestion
   waits for a decision, while Tell me governs news.
 - **On the run page**, as a **Suggested tasks** card under the report: the checking line while L3
-  checks, then the kept suggestions with the same buttons and states, then **Set aside · N** folded,
+  checks, then the kept suggestions with the same buttons and states, then **Not offered · N** folded,
   and no footer. It loads and fails with the run page.
 
 Deciding in one place updates the other. The form's Tell me row has one muted line under its choices:
@@ -773,11 +784,12 @@ Deciding in one place updates the other. The form's Tell me row has one muted li
   holds the button's place and Dismiss dims. Then the line reads "Accepted · L3 is opening a task"
   until the outcome is read. These words name the work Altitude carries out, as the Weekly card already
   does. When L3 opens the task, the line becomes that task's card. If the turn ends without a task, the
-  line reads "Accepted · no task yet" with **Try again**, which queues the same single turn. While it
-  queues, Try again becomes a spinner. If it is refused, it returns with "Not saved: <reason>". Each
-  suggestion makes at most one task. An accepted suggestion without its task waits in Needs you for
-  seven days after your last press, Make a task or Try again, then stays only on the run page. L3's
-  reply says why it made none, for example that existing work already covers it.
+  line reads "Accepted · no task yet · Make a task", where the underlined **Make a task** presses Make a
+  task again and queues the same single turn. While it queues, the link becomes a spinner. If it is
+  refused, it returns with "Not saved." Each suggestion makes at most one task. An accepted
+  suggestion without its task waits in Needs you for seven days after your last Make a task, then stays
+  only on the run page. L3's reply says why it made none, for example that existing work already covers
+  it.
 - **Dismiss** folds the suggestion at the press to its muted title and **Dismissed**, with a spinner where
   **Undo** goes until the save lands. Undo is offered until the suggestion lapses. Pressing it opens the
   suggestion again at once, with both buttons disabled beside a spinner until the save lands. A refused
@@ -821,28 +833,28 @@ your own scripts send (step 4). No step adds a reader of strangers' text.
 | Surface | State | What appears |
 | --- | --- | --- |
 | Agents page | Loading / read failed | A spinner named Loading agents…; "Could not load agents." and Retry |
-| Agents page | No agents of your own | The line, the budget select and **New agent**, then every built-in agent |
+| Agents page | No agents of your own | The line, **New agent** with no card above it, every built-in agent, then the Weekly budget |
 | Built in | Turning on / refused / Altitude's project | A spinner in Turn on; the button returns with its reason; the Weekly review listed first, its Turn on opening its terms (step 2, [above](#the-weekly-improvement-review)) |
-| Budget | Saving / refused / spent | The choice shows at once with Saving…; refused: back to the saved value, "Not saved: <reason>" and Retry; spent: "2 h used this week · agents wait until Monday" in amber |
+| Budget | Saving / refused / spent | The choice shows at once with Saving…; refused: back to the saved value, "Not saved: <reason>" and Retry; spent: "2 h used this week" in amber, and "This week’s budget is used: no new runs until Monday unless you raise it." in amber under the page's intro |
 | Status | New / Run now pending / refused | "Not on yet" with Run now and Turn on; "Starting…" until the run is read; refused: Run now again with its reason ("Only 12 min of this week's budget is left.") |
-| Status | Waiting / running / Stop pressed | "Waiting for a free task slot" or "Waiting for Review each merge" with Stop; Running with Stop and Pause; "Stopping…" until the end is read |
+| Status | Waiting / running / Stop pressed | "Waiting to start" or "Waiting while Review each merge runs" with Stop; Running with Stop and Pause; "Stopping…" until the end is read |
 | Status | Pause pending / refused / paused itself | The line and button change at once; refused: they return with "Not saved: <reason>" and Retry; paused itself: its reason in the line |
-| Runs | None / several events / late / skipped | "No runs yet."; one run's line names every event it took; "Oct 13, 07:00, ran at 09:14"; "No free slot for 6 hours" with no chevron |
+| Runs | None / several events / late / skipped | "No runs yet."; one run's line names every event it took; "Oct 13, 07:00, ran at 09:14"; "Didn't start within 6 hours" with no chevron |
 | Run page | Running / ended / couldn't finish / loading / read failed | The live session and Stop; the report with Brief it ran and Session folded; the reason in the report's place; a spinner; "Could not load this run." and Retry |
-| Form | Saving / refused / unsaved / incomplete / no day | Save shows a spinner; refused keeps the edit with "Not saved: <reason>" and Retry; the Discard dialog; "Give it a name and a brief."; "Pick at least one day." |
+| Form | Saving / refused / unsaved / incomplete / no day | Save shows a spinner; refused keeps the edit with "Not saved: <reason>" and Retry; the Discard dialog; "Give it a name." / "Say what it does." under each missing field, focus on the first; "Pick at least one day." |
 | Triggers | Add / none | The trigger menu; "Only when you run it" |
 | Triggers | Menu / event row / event added | On a schedule and When it's sent an event, Escape returning focus; the event row with its line and the hint after the list; + Add a trigger adds a schedule directly |
 | Status | Events only / none yet / events waiting | "Runs when it's sent an event"; "No event yet, so Run now runs without one."; "3 events wait for the next run." under Running |
-| Send it an event | Command / examples | The command with Copy and the line about trying it; Examples folded, then three recipes, each its line with Copy over its code, and the line about others' text |
-| Runs | Several events / Run now replay / skipped with events | "For “PR #810 merged” and 2 more: …"; the run page's "Run now by you · For “PR #812 merged”, the latest"; "For “PR #806 merged” · No free slot for 6 hours." |
+| Send it an event | Command / examples | The command with Copy, by quoted name or by id; "The examples use its id, …" when it uses the name; the line about trying it; Examples folded, then three recipes, each its line with Copy over its code, and the line about others' text |
+| Runs | Several events / Run now replay / skipped with events | "For “PR #810 merged” and 2 more: …"; the run page's "Requested by you · For “PR #812 merged”, the latest"; "For “PR #806 merged” · Didn't start within 6 hours." |
 | Run page | Events | One muted line per event, its time and first line, under what fired it |
 | Needs you | Paused itself / resuming / refused / cleared | The card with its title link, Resume and Open the last run, counted, no alert; a spinner in Resume; "Not resumed: Flaky tests is retired."; gone after Resume, a saved edit or Retire |
-| Run page | Checking / none kept / check unfinished | "L3 is checking 2 suggestions" with a spinner until the post or the deadline, nothing in Needs you; only Set aside · 2, folded, opening to each title with its reason, Needs you never shows the run; "Set aside · 2 · L3 did not finish checking", folded, opening to the titles |
-| Suggestion card | Needs you / run page / agent retired | Under Suggestions once kept, uncounted, newest first, whatever Tell me says; Suggested tasks under the report with Set aside · N folded, loading and failing with the page; unchanged and decidable |
+| Run page | Checking / none kept / check unfinished | "L3 is checking 2 suggestions" with a spinner until the post or the deadline, nothing in Needs you; only Not offered · 2, folded, opening to each title with its reason, Needs you never shows the run; "Not offered · 2 · not checked in time", folded, opening to the titles |
+| Suggestion card | Needs you / run page / agent retired | Under Suggestions once kept, uncounted, newest first, whatever Tell me says; Suggested tasks under the report with Not offered · N folded, loading and failing with the page; unchanged and decidable |
 | Suggestion | Make a task pressed / accepted / task opened | A spinner in Make a task, Dismiss dimmed; "Accepted · L3 is opening a task"; the task's card |
-| Suggestion | No task yet / Try again pressed / refused | "Accepted · no task yet" with Try again; a spinner in Try again; "Not saved: <reason>" |
+| Suggestion | No task yet / Make a task pressed again / refused | "Accepted · no task yet · Make a task"; a spinner in place of the link; "Not saved." |
 | Suggestion | Dismissed / Undo pressed / refused / lapsed / typed answer | Folded with a spinner, then Dismissed and Undo; open with both buttons disabled beside a spinner; back as it was with "Not saved: <reason>" and Retry; "Not decided"; the same change a press makes |
-| Form | Tell me | "Suggested tasks wait in Needs you whatever you choose." under the choices |
+| Form | Tell me / new agent | "Suggested tasks wait in Needs you whatever you choose." under the choices; "It starts off: try it with Run now, then turn it on." under the buttons |
 | Work | A task from a suggestion | "Running · PR #811 green · from Review each merge" |
 | Offer | Shown / saving / created / refused / lapsed | The card; a spinner in the button; "Created · Open"; "Not saved: …"; "This offer lapsed." |
 | Retire | Pending / refused | "Retiring…" with Cancel unavailable; refused: the reason under the buttons, Cancel works |
@@ -852,7 +864,7 @@ your own scripts send (step 4). No step adds a reader of strangers' text.
 | Monitor | Loading / read failed | Monitor's skeleton; "Could not read the monitor." and Retry, for both sections |
 | Monitor | Run running / no reading yet / stale | The Agent session row with its meter; "context unknown", no age and no meter; past five minutes the meter at half opacity |
 | Monitor | No agents / only retired or quiet ones | No Agents section and no heading |
-| Monitor | Each next / each latest | The lines [above](#monitor-step-3), the first that applies; "No runs yet." when none ran |
+| Monitor | Each next / each latest | The lines [above](#monitor-step-3), the first that applies; "No runs yet." when none ran, and no line under a first run that is running or waiting |
 
 ## Steps
 

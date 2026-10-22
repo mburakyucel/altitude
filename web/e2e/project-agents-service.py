@@ -118,7 +118,7 @@ def main():
     notes = make("Release notes check", LONG, tell="every", at=week)
     run(notes, monday - timedelta(days=4, hours=2), 6, "done", answer=FOUND)
     run(notes, monday - timedelta(days=3, hours=2), 4, "done", answer="Nothing: Every merged change has a note.")
-    route.reserve = lambda _engine: "Its engine's weekly allowance is inside Altitude's reserve."
+    route.reserve = lambda _engine: "Your Claude plan is close to its weekly limit."
     A.change(PROJECT, "run", {"agent": notes}, by="operator", source="fixture", now=monday - timedelta(days=2))
     A.start_next(PROJECT, now=monday - timedelta(days=2))
     route.reserve = lambda _engine: None

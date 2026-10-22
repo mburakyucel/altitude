@@ -283,8 +283,8 @@ between **Routing** and **Project**, follows the page's existing form: heading, 
 - **Get suggestions now**: a secondary button with the line **Reads the 6 tasks finished since Oct 12.**
   While a review runs, the button is replaced by the running line above, so only one place shows it.
   With fewer than five finished tasks, or the allowance inside the reserve, it looks disabled; its
-  reason (**Needs 5 finished tasks since Oct 12; 3 so far.** or **Claude's weekly allowance is inside
-  Altitude's reserve.**) is its accessible description and appears under it on press, as SPEC §3.8.1
+  reason (**Needs 5 finished tasks since Oct 12; 3 so far.** or **Your Claude plan is close to its
+  weekly limit.**) is its accessible description and appears under it on press, as SPEC §3.8.1
   does for an unavailable alert switch.
 - **What is sent**, muted, no control: **Counts and short chat quotes · Claude Sonnet 5.5 on your plan ·
   capped per run, plus one L3 check**.
@@ -329,8 +329,9 @@ One card per review, in the project's chat in conversation order. While any of i
 undecided, the same card also appears in Needs you, in a muted **Suggestions** section after
 everything that needs you, grouped under project headings like the rest of the page. It is not a
 question: it never alerts a device, never adds to the Needs you count or badge, and never changes the
-summary line. With no questions, held reviews or operational items anywhere, Needs you says **Nothing
-needs you.** with the **Suggestions** section below it, and the badge stays hidden.
+summary line. With no questions, held reviews or operational items anywhere, Needs you goes from its title
+straight to the **Suggestions** section, and the badge stays hidden; **Nothing needs you.** shows only when
+the page lists nothing at all.
 Deciding in either place updates both. Two cards on one project stand newest first.
 
 A suggestion lapses seven days after its card posted, and only then: it folds to **Not decided**. A card
@@ -342,7 +343,7 @@ task; the last card leaving leaves **Nothing needs you.** alone, or the empty pa
 | State | What appears |
 | --- | --- |
 | Running | System line with a working dot: **Improvement suggestions · reading 14 tasks from Oct 5–12** and **Stop** (underlined). No Show. A Monday review shows the same line; nothing appears in Needs you until it posts. |
-| Stop pressed | **Stop** becomes a spinner in place; then the line reads **Improvement suggestions stopped by you**. If the stop cannot be saved: **Not stopped. Try again.** after the line, and Stop returns. |
+| Stop pressed | **Stop** becomes a spinner in place; then the line reads **Improvement suggestions stopped by you**. If the stop cannot be saved: **Not stopped.** after the line, and Stop returns. |
 | L3 checking | The same line reads **Improvement suggestions · L3 is checking 3**, with **Stop** as while reading. |
 | Finished with suggestions | The card (below). |
 | Nothing to suggest | System line **Improvement suggestions · 14 tasks from Oct 5–12 · nothing to suggest** and **Show** (the details, including any L3 drops). |
@@ -372,11 +373,11 @@ task; the last card leaving leaves **Nothing needs you.** alone, or the empty pa
 | --- | --- |
 | Make a task pressed | Its label becomes a spinner, same width; Dismiss dims. |
 | Accepted | Buttons leave; a check and **Accepted · L3 is opening a task**. The card stays in Needs you until the task exists. |
-| Task not opened | If L3's turn fails, is interrupted or ends without a task: **Accepted · no task yet** and an underlined **Try again**, which queues the same single turn; one task per suggestion still holds, so no retry can make a second. |
+| Task not opened | If L3's turn fails, is interrupted or ends without a task: **Accepted · no task yet · Make a task**, where the underlined **Make a task** presses Make a task again and queues the same single turn, a spinner while it queues and **Not saved.** if refused; one task per suggestion still holds, so no retry can make a second. |
 | Task opened | That line becomes the ordinary compact task card (SPEC §3.5); if L3 attached it to an existing task or issue instead, the line names and links that. |
 | Dismiss pressed, then dismissed | The suggestion folds at the press to its chip, muted title and **Dismissed**, a spinner where **Undo** goes until the save lands; then the underlined **Undo**. In Needs you a card with nothing else waiting leaves at the press. |
 | Undo pressed | The suggestion opens again at the press, both buttons disabled beside a spinner until the save lands; its card returns to Needs you at the press. Undo is offered until the suggestion lapses. |
-| Save failed | Make a task: buttons return with **Not saved. Try again.** under them, gone on the next press. Dismiss or Undo: the suggestion returns as it was with **Not saved: <reason>** and **Retry**, in chat and Needs you, until it is saved. A save Altitude kept although its reply was lost shows as saved, with no refusal. |
+| Save failed | Make a task: buttons return with **Not saved.** under them, gone on the next press. Dismiss or Undo: the suggestion returns as it was with **Not saved: <reason>** and **Retry**, in chat and Needs you, until it is saved. A save Altitude kept although its reply was lost shows as saved, with no refusal. |
 | Typed answer | You reply in chat; L3 records it citing your message and the card changes the same way. |
 | Lapsed | The suggestion folds to its chip, muted title and **Not decided**; the card leaves Needs you once nothing on it is undecided. |
 | Pattern found again after a task for it | A muted **Seen again after <task>** line under the explanation. |
@@ -570,7 +571,7 @@ more models or scenarios, Inspect is the one to adopt.
   numbering, post refused for stopped, ended or late runs and replayed for the same post, typed answers
   before the receipt, for a dropped number, delayed past a later run, ambiguous across runs and
   replayed, every allowed and refused change in the decisions table including Undo and late
-  acceptance, button replays and conflicts, lapsing at seven days only, an accepted suggestion whose task turn fails and its Try again,
+  acceptance, button replays and conflicts, lapsing at seven days only, an accepted suggestion whose task turn fails and its Make a task again,
   suggestions-only Needs you with the badge hidden, one task per
   suggestion, measurement cohorts after merge, the Needs you Suggestions section leaving the count and
   badge unchanged, and every chat, Needs you and settings state walked on phone and desktop. The

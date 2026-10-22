@@ -126,7 +126,8 @@ export default function NeedsYou() {
         </p>
       ) : overview.data!.queue.length === 0 ? (
         <>
-          {overview.data!.repair?.questions.length ? <AltitudeSection overview={overview.data!} /> : <p className="text-muted">Nothing needs you.</p>}
+          {overview.data!.repair?.questions.length ? <AltitudeSection overview={overview.data!} />
+            : overview.data!.suggestions.length ? null : <p className="text-muted">Nothing needs you.</p>}
           <Suggestions suggestions={overview.data!.suggestions} selected={selected} />
         </>
       ) : (

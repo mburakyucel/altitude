@@ -107,7 +107,7 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/altitude/tasks/release-notes"));
   });
 
-  it("Make a task spins in place, then reads accepted, then the task card; a lost task offers Try again", async () => {
+  it("Make a task spins in place, then reads accepted, then the task card; a lost task offers Make a task again", async () => {
     setViewport(width);
     let release: (() => void) | null = null;
     const { state, fetchMock } = serve([posted([suggestion(1)])], (body) => {
@@ -129,11 +129,11 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     expect(await within(shown).findByText("Accepted · L3 is opening a task")).toBeVisible();
     expect(within(shown).queryByRole("button", { name: "Make a task" })).toBeNull();
     expect(presses(fetchMock)[0]).toEqual({ project: "altitude", action: "accept", ref: "0123456789ab/1", request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
-    // L3's turn ended without a task: the record says so, and Try again queues the same turn.
+    // L3's turn ended without a task: the record says so, and Make a task queues the same turn.
     state.runs = [posted([suggestion(1, { state: "accepted" })])];
     await act(() => queryClient.refetchQueries({ queryKey: ["project", "altitude"] }));
     expect(await within(shown).findByText(/Accepted · no task yet/)).toBeVisible();
-    await user.click(within(shown).getByRole("button", { name: "Try again" }));
+    await user.click(within(shown).getByRole("button", { name: "Make a task" }));
     expect(await within(shown).findByRole("link", { name: /Stop re-asking merge approval/ })).toHaveAttribute("href", "/projects/altitude/tasks/cite-answers");
   });
 
@@ -186,7 +186,7 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     const line = (await screen.findByText("Improvement suggestions · reading 14 tasks from Oct 5–12")).closest<HTMLElement>(".sys-line")!;
     expect(within(line).queryByRole("button", { name: "Show" })).toBeNull();
     await user.click(within(line).getByRole("button", { name: "Stop" }));
-    expect(await within(line).findByRole("alert")).toHaveTextContent("Not stopped. Try again.");
+    expect(await within(line).findByRole("alert")).toHaveTextContent("Not stopped.");
     fail = false;
     await user.click(within(line).getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(screen.queryByText("Improvement suggestions · reading 14 tasks from Oct 5–12")).toBeNull());
@@ -231,8 +231,8 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     setViewport(width);
     serve([posted([suggestion(1)])]);
     const { user, router } = renderApp({ route: "/" });
-    expect(await screen.findByText("Nothing needs you.")).toBeVisible();
-    const section = screen.getByRole("region", { name: "Suggestions" });
+    const section = await screen.findByRole("region", { name: "Suggestions" });
+    expect(screen.queryByText("Nothing needs you.")).toBeNull();
     expect(within(section).getByRole("heading", { name: "altitude" })).toBeVisible();
     expect(screen.queryByText(/waiting|needs you in/i)).toBeNull();
     const waiting = within(section).getByRole("article");
@@ -314,8 +314,7 @@ describe.each([390, 1440])("an agent run's suggested tasks at %ipx", (width) => 
         wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false }, engines: [], roots: [] });
     });
     const { user } = renderApp({ route: "/" });
-    expect(await screen.findByText("Nothing needs you.")).toBeVisible();
-    const shown = within(screen.getByRole("region", { name: "Suggestions" })).getByRole("article", { name: "Suggested tasks from Review each merge" });
+    const shown = within(await screen.findByRole("region", { name: "Suggestions" })).getByRole("article", { name: "Suggested tasks from Review each merge" });
     expect(within(shown).getByRole("heading", { name: "Review each merge" })).toBeVisible();
     expect(within(shown).getByText("For “PR #810 merged” and 2 more")).toBeVisible();
     expect(within(shown).getByRole("heading", { name: "1. Add a test for the uploader's retry limit" })).toBeVisible();

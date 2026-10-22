@@ -101,9 +101,9 @@ class TestStart(RunCase):
     def test_refusals_name_their_reason_and_claim_nothing(self):
         self.load(count=4)
         cases = [("4 tasks finished since", {}),
-                 ("weekly allowance is inside Altitude's reserve", {"claude": (90.0, 10.0)}),
-                 ("short-term allowance is inside", {"claude": (40.0, 95.0)}),
-                 ("allowance is not known", {"claude": (None, 10.0)})]
+                 ("close to its weekly limit", {"claude": (90.0, 10.0)}),
+                 ("close to its short-term limit", {"claude": (40.0, 95.0)}),
+                 ("plan's use isn't known yet", {"claude": (None, 10.0)})]
         for why, usage in cases:
             with self.subTest(why=why):
                 self.usage.return_value = {"codex": (None, None), **({"claude": (40.0, 10.0)} | usage)}

@@ -106,6 +106,7 @@ function SendSection({ send }: { send: NonNullable<ProjectAgentDetail["send"]> }
     <h3 id="agent-send">Send it an event</h3>
     <p className="text-meta text-muted">From a script or your terminal on this computer:</p>
     <CodeBlock text={send.command} info="" />
+    {send.id ? <p className="text-meta text-muted">The examples use its id, <code>{send.id}</code>, so they keep working after a rename.</p> : null}
     <p className="text-meta text-muted">To try it first, use <code>agent run</code> in place of <code>agent send</code>: it starts a run now, even before the agent is on.</p>
     <details className="agent-fold">
       <summary>Examples</summary>
@@ -180,7 +181,6 @@ export default function ProjectAgentPage() {
           {retired ? null : <section className="settings-section" aria-labelledby="agent-retire">
             <h2 id="agent-retire">Retire agent</h2>
             <div className="settings-group"><div className="settings-row agent-retire">
-              <span className="text-muted">It won’t run again. Past runs stay readable.</span>
               <button type="button" className="btn btn-outline-danger" aria-haspopup="dialog" onClick={() => { setRetiring({ state: "idle" }); setDialog(true); }}>Retire…</button>
             </div></div>
           </section>}

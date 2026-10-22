@@ -38,19 +38,19 @@ test("a run's suggested tasks in Needs you and on its page, decided in either pl
   // Needs you: under Suggestions, uncounted, the agent's name and what fired the run; the made task's card in place.
   await walk.open("/");
   await walk.state("s01-needs-you", {
-    visible: [page.getByText("Nothing needs you.", { exact: true }), page.getByRole("region", { name: "Suggestions", exact: true }),
-      card.getByRole("heading", { name: "Review each merge" }), card.getByText("Run now by you", { exact: true }),
+    visible: [page.getByRole("region", { name: "Suggestions", exact: true }),
+      card.getByRole("heading", { name: "Review each merge" }), card.getByText("Requested by you", { exact: true }),
       first.getByText(/^A case beside the other retry tests in tests\/test_uploader\.py that checks the limit of 5/),
       first.getByRole("button", { name: "Make a task" }), first.getByRole("button", { name: "Dismiss" }),
       card.locator("a.task-card"), card.getByRole("link", { name: "Open the run" })],
-    hidden: [card.getByText("Raise the CLI's retry limit to match"), card.locator(".chip")],
+    hidden: [page.getByText("Nothing needs you.", { exact: true }), card.getByText("Raise the CLI's retry limit to match"), card.locator(".chip")],
   });
   await fits();
 
   // The run page: the report, then Suggested tasks with what L3 kept and what it set aside, folded.
   await press(card.getByRole("link", { name: "Open the run" }));
   const section = page.getByRole("region", { name: "Suggested tasks" });
-  const aside = section.getByText("Set aside · 1", { exact: true });
+  const aside = section.getByText("Not offered · 1", { exact: true });
   const kept = section.getByRole("region", { name: "1. Add a test for the uploader's retry limit" });
   await walk.state("s02-run-kept", {
     visible: [page.getByText(/^#811 raised the retry limit in uploader\.py/), kept.getByRole("button", { name: "Make a task" }),
@@ -79,7 +79,7 @@ test("a run's suggested tasks in Needs you and on its page, decided in either pl
     visible: [kept.getByText("Accepted · L3 is opening a task", { exact: true })],
     hidden: [kept.getByRole("button", { name: "Dismiss" })],
   });
-  // The fixture's L3 ends that turn without a task, so Needs you keeps the card with Try again.
+  // The fixture's L3 ends that turn without a task, so Needs you keeps the card with Make a task.
   await page.goto("/");
   await expect(first.getByText(/^Accepted · /)).toBeVisible();
   await fits();
@@ -102,15 +102,15 @@ test("the run page while L3 checks, when it kept none and when its check missed 
   // Docs drift's first run: L3 kept none, so only the fold shows, and Needs you never listed it.
   await openRun(page, press, "Docs drift", /^Found something.*two pages describe removed flags/);
   await walk.state("s08-none-kept", {
-    visible: [section.getByText("Set aside · 2", { exact: true })],
+    visible: [section.getByText("Not offered · 2", { exact: true })],
     hidden: [section.getByRole("button"), section.getByText("1. Remove --fast from the upload page")],
   });
-  await press(section.getByText("Set aside · 2", { exact: true }));
+  await press(section.getByText("Not offered · 2", { exact: true }));
   await expect(section.getByText("#809 already removes it")).toHaveCount(2);
 
   // Its second run: the check missed its deadline, said once on the fold, which opens to the titles.
   await openRun(page, press, "Docs drift", /^Found something.*install line/);
-  const unfinished = section.getByText("Set aside · 1 · L3 did not finish checking", { exact: true });
+  const unfinished = section.getByText("Not offered · 1 · not checked in time", { exact: true });
   await press(unfinished);
   await walk.state("s09-unfinished", {
     visible: [unfinished, section.getByText("1. Fix the README's install line", { exact: true })],

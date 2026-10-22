@@ -110,7 +110,7 @@ class TestCheck(SuggestionCase):
         self.assertEqual(self.checks(), [])
         card = self.card()
         self.assertEqual((card["checking"], card["name"], card["line"], card["unfinished"]),
-                         (0, "Review each merge", "Run now by you", False))
+                         (0, "Review each merge", "Requested by you", False))
         self.assertEqual([(s["ref"], s["state"], s["waits"]) for s in card["suggestions"]],
                          [(f"agent:{self.id}/1/1", "undecided", True)])
         self.assertEqual(card["set_aside"], [{"n": 2, "title": "Cap the uploader's retries at 5",

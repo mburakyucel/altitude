@@ -12,9 +12,10 @@
 .settings-row .agents-row-line { display: flex; align-items: center; gap: 6px; }
 .settings-row .agents-saving { display: flex; align-items: center; gap: 6px; }
 .agents-saving .spinner, .agent-status-line .spinner, .agent-status .btn .spinner, .remove-dialog .btn .spinner { width: 12px; height: 12px; }
-.settings-row small.agents-spent { color: var(--chip-claimed-text); }
-.agents-budget:hover, .agents-new:hover, .agents-builtin-row:hover, .agent-retire:hover, div.agent-run:hover { border-color: var(--hairline); background: var(--surface); }
-.settings-group > .agents-new { justify-content: flex-start; }
+.agents-spent, .settings-row small.agents-spent { color: var(--chip-claimed-text); }
+.agents-budget:hover, .agents-builtin-row:hover, .agent-retire:hover, div.agent-run:hover { border-color: var(--hairline); background: var(--surface); }
+.agents-new { align-self: flex-start; }
+.settings-group > .agent-retire { justify-content: flex-start; }
 .settings-group > .agents-note { padding: 0 16px 12px; border-top: 0; }
 .agents-builtin-row .text-danger { color: var(--danger); }
 /* The page scrolls as a flex column: a group (overflow hidden) must keep its height rather than clip its rows. */

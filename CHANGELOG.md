@@ -20,17 +20,20 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   event with `alt agent send` (such as "PR #812 merged", with example scripts on its page), or when you press Run now, each in a fresh copy of the
   project, telling you in chat what they found. Agents… in the project menu lists them, with three built-in agents
   to turn on (a dependency check, a build health check and a weekly summary of what landed), New agent to write
-  your own and a weekly time budget. A run only reads and reports: it cannot push, open pull requests, file issues
+  your own and, at the bottom, a weekly time budget, which says so at the top of the page once it is used. A run only reads and reports: it cannot push, open pull requests, file issues
   or message anyone, and it stops at its limit of 10, 20 or 60 minutes, which is the most it is charged. Pausing
   an agent also skips its run waiting to start. Ask L3 for an agent or a change and it drafts one for
   you to save. A run that found something may suggest up to three tasks; L3 checks each against the project
   first, and those it keeps wait under Suggestions in Needs you with Make a task and Dismiss, showing the task
-  each became, and on the run's page under its report with what L3 set aside and why; a task made from one says
+  each became, and on the run's page under its report with what L3 didn't offer and why; a task made from one says
   which agent suggested it in Work. A run's report shows where each of its links goes. An agent that pauses itself
   after three runs that couldn't finish waits in Needs you with Resume, without alerting your devices. Monitor
   lists running agents among Sessions and each agent with what it does next and how its last run went. In the
   Altitude project, the Weekly improvement review is a built-in agent with its own page in place of its settings
   section, as cheap as before and outside the agents' budget.
+- The Weekly improvement review says why it skipped in plain words, such as "Your Claude plan is close to its
+  weekly limit." An accepted suggestion whose task wasn't made reads "Accepted · no task yet · Make a task", and a
+  failed press says only what failed, such as "Not stopped."
 - The third-party notices in the archive now cover everything the web UI ships: the IBM Plex fonts with the SIL
   Open Font License, and the markdown packages that render shown documents with their copyrights and the BSD
   2-Clause and ISC texts two of them use. A test keeps the notices in step with the web dependencies.
