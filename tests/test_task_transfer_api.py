@@ -122,6 +122,7 @@ class TestTaskTransferAPI(AltitudeCase):
         record, page = seen[0]
         self.assertEqual((record["state"], record["daemon_request"]["status"]), ("queued", "executing"))
         self.assertEqual((page["state"], page["transfer"]["request"]["status"]), ("queued", "done"))
+        self.assertEqual(S.load_task(self.project, self.task["slug"])["daemon_request"]["status"], "done")
 
     def test_checkpoint_correction_has_one_short_display_receipt_and_unchanged_native_text(self):
         view = self.view()
