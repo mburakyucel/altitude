@@ -252,8 +252,9 @@ def main():
     engines.worker_answer = lambda worker, *, job_root: answers[worker]
     engines.observe_token_usage = lambda _engine, _session, _cursor, *, job_root: {"cursor": {}, "status": "observed",
                                                                                    "sessions": []}
-    route.reserve = lambda _engine: None
-    slot, project_agents._slot = project_agents._slot, lambda: None  # Atlas's tasks in flight hold every task slot
+    # While seeding: the engines' allowance is unread, and Atlas's tasks in flight hold every task slot.
+    reserve, route.reserve = route.reserve, lambda _engine: None
+    slot, project_agents._slot = project_agents._slot, lambda: None
 
     def ran(agent, at, answer):
         project_agents.change("harbor", "run", {"agent": agent}, by="operator", source="fixture", now=at)
@@ -284,7 +285,7 @@ Version 2.3.4 closes an advisory about deeply nested input. The upload tests pas
 Suggest: Update sharp for its security fix
 Version 0.32.6 closes an advisory in its bundled image decoder. The thumbnail tests pass with it.""")
     suggested.post("harbor", f"agent:{deps}/{n}", [1, 2], [], now=day + timedelta(minutes=20))
-    project_agents._slot = slot
+    route.reserve, project_agents._slot = reserve, slot
     S.regen_state_md(PROJECT)
 
     class Handler(server.Handler):
