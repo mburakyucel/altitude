@@ -106,6 +106,23 @@ class TestTaskTransferAPI(AltitudeCase):
         self.assertEqual(after["l2_engine"], target)
         self.assertEqual(after["attempt"], self.task["attempt"] + 1)
 
+    def test_a_read_between_the_requeue_and_its_receipt_shows_the_switch_done(self):
+        view = self.view()
+        target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"]
+        self.action(engine=target, observed=view["observed"])
+        self.action("handoff-now", request_id=self.view()["request"]["id"])
+        finish, seen = dispatch._finish_task_operation, []
+
+        def read_then_finish(*args):
+            seen.append((S.load_task(self.project, self.task["slug"]), self.request(f"/api/task/{self.project}/{self.task['slug']}")))
+            return finish(*args)
+
+        with mock.patch.object(dispatch, "_finish_task_operation", side_effect=read_then_finish):
+            dispatch.run_task_operation(self.project, self.task["slug"])
+        record, page = seen[0]
+        self.assertEqual((record["state"], record["daemon_request"]["status"]), ("queued", "executing"))
+        self.assertEqual((page["state"], page["transfer"]["request"]["status"]), ("queued", "done"))
+
     def test_checkpoint_correction_has_one_short_display_receipt_and_unchanged_native_text(self):
         view = self.view()
         self.action(engine=next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"], observed=view["observed"])

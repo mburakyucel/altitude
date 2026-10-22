@@ -19,6 +19,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   steps give up within minutes and retry once, the system packages from the runner's next mirror.
 - The README and the overview show how Altitude fits together: you, the coordinator and project agents above altd,
   which keeps every record and gates every merge, and task agents, independent review and GitHub below it.
+- Voice input you are recording on a task keeps going when its model switch completes: the page no longer
+  briefly drops the message box, and the recording with it, at the moment the task is queued for its new engine.
 
 ## v0.12.0 — 2026-10-22
 

@@ -4049,6 +4049,10 @@ def task_transfer_view(project: str, task: dict) -> dict:
     transfer = None
     if request.get("operation") == "handoff":
         transfer = {key: request.get(key) for key in ("id", "status", "phase", "engine", "at", "note", "now", "checkpoint", "result_state", "selection")}
+        # The daemon saves the requeued task before the request's receipt and finishes it by this same rule, so a read
+        # in between shows the switch done rather than a queued task that cannot take a message or keep a recording.
+        if active and dispatch._handoff_requeued(task, request):
+            transfer["status"] = "done"
         transfer["target_label"] = config.ENGINE_LABELS.get(request.get("engine"), request.get("engine"))
         # Who asked, and the coordinator's own words, so a switch never reads as caused by opening the chooser.
         transfer["by"] = "operator" if request.get("actor") == config.OPERATOR_ACTOR else request.get("actor")

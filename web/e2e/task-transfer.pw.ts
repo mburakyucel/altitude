@@ -316,9 +316,16 @@ test("@chromium listening survives confirmation and an accepted transfer without
   await start(page);
   await switchButton(page).click();
   await walk.state("02-listening-while-preparing", { visible: [stopVoice, card(page)], hidden: [] });
-  expect((await request.post("/fixture/transfer", { data: { slug, ready: true } })).ok()).toBe(true);
-  await expect.poll(async () => (await (await request.get(path(slug))).json()).state).toBe("queued");
-  await walk.state("03-listening-retained-while-queued", { visible: [stopVoice, draft(page)], hidden: [] });
+  // The daemon saves the requeued task before the switch's receipt; a page reading in between keeps its recording.
+  expect((await request.post("/fixture/transfer", { data: { slug, ready: true, hold_receipt: true } })).ok()).toBe(true);
+  const requeued = await (await request.get(path(slug))).json();
+  expect([requeued.state, requeued.daemon_request.status]).toEqual(["queued", "executing"]);
+  const waiting = card(page).getByText(`Waiting for ${requeued.transfer.request.target_label}`, { exact: true });
+  // The task's Stop leaves once the page has read the queued task.
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
+  await walk.state("03-listening-retained-while-queued", { visible: [stopVoice, draft(page), waiting], hidden: [] });
+  expect((await request.post("/fixture/transfer", { data: { slug } })).ok()).toBe(true);
+  await walk.state("03b-listening-retained-after-the-receipt", { visible: [conversation.getByText(`Switch to ${requeued.transfer.request.target_label} queued.`, { exact: true }), waiting, stopVoice], hidden: [] });
   expect(host.finals).toBe(0);
   expect((await request.post("/fixture/transfer", { data: { slug, launch: true } })).ok()).toBe(true);
   await expect(card(page).getByRole("button", { name: "Cancel switch", exact: true })).toBeHidden();
