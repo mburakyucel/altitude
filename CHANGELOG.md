@@ -23,6 +23,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   their checks pass and the notes mention anything you would notice; the release owner tells you what joined
   before it publishes. It asks again when a late change is breaking, turns a fix release into a feature release,
   needs a longer trial or brings a security fix the notes miss, and you can still ask for one exact commit.
+- Retry in voice settings is no longer refused now and then as "Voice is already being set up", and the automatic
+  voice update at startup is no longer skipped, when a page happened to read voice's status at that moment.
 
 ## v0.12.0 — 2026-10-22
 
