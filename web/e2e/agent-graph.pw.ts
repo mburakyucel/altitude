@@ -8,8 +8,8 @@ test.use({ serviceScript: "agent-graph-service.py" });
 
 const path = "/projects/harbor";
 // A reading is live for 30 seconds, so each live check writes a fresh one first.
-const activity = async (request: APIRequestContext, age = 0) => {
-  expect((await request.post("/fixture/activity", { data: { age } })).ok()).toBe(true);
+const activity = async (request: APIRequestContext, aged = false) => {
+  expect((await request.put(aged ? "/fixture/aged-activity" : "/fixture/activity")).ok()).toBe(true);
 };
 
 test("Work's graph: the switch, every node's state and link, live helpers, aging, saved, keyboard and reduced motion @desktop-only", async ({ page, request }, info) => {
@@ -102,7 +102,7 @@ test("Work's graph: the switch, every node's state and link, live helpers, aging
   expect(await disc.evaluate((el) => getComputedStyle(el).animationName)).toBe("ag-breathe");
 
   // A reading older than half a minute claims nothing live, and says helper activity is unknown.
-  await activity(request, 45);
+  await activity(request, true);
   const aged = node(/^Add offline sync for the field app · L2 working · [^·]+ · started [^·]+ · helper activity unknown$/);
   await walk.state("graph-06-aged-reading", { visible: [aged], hidden: [sync.locator(".ag-pip"), exporting] });
   await expect(aged).not.toHaveAttribute("data-live");

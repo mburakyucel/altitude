@@ -63,13 +63,14 @@ def main():
         S.save_task(project, row)
 
     class Handler(server.Handler):
-        def do_POST(self):
-            if self.path != "/fixture/activity":
-                return super().do_POST()
-            age = self._body().get("age", 0)
+        # Fixture controls answer PUT alone, so they never pass through the application's own routes.
+        def do_PUT(self):
+            ages = {"/fixture/activity": 0, "/fixture/aged-activity": 45}
+            if self.path not in ages:
+                return self._json({"error": "unknown fixture"}, 404)
             # Two helpers made a request in the last minute and one ten minutes ago; one helper on the export rework.
-            stamp(sync, [8, 20, 600], age=age)
-            stamp(export, [12], age=age)
+            stamp(sync, [8, 20, 600], age=ages[self.path])
+            stamp(export, [12], age=ages[self.path])
             return self._json({"ok": True})
 
     serve(Handler)
