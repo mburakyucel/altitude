@@ -9,6 +9,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   instruction: the request is kept and shows as queued for L2, which brings the branch up to date and then
   runs it. Landing names the clashing files to L2 the same way on a task's first or later pull request.
 
+- Ask the coordinator how Altitude or one of its parts works and it answers in that turn, in plain words, from
+  the documentation, naming the section it drew on, and says so when the documentation does not cover the
+  point. The overview carries a short map of which document answers which kind of question.
+
 ## v0.12.0 — 2026-10-22
 
 Feature release of the early preview.
