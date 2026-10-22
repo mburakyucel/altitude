@@ -34,6 +34,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - The third-party notices in the archive now cover everything the web UI ships: the IBM Plex fonts with the SIL
   Open Font License, and the markdown packages that render shown documents with their copyrights and the BSD
   2-Clause and ISC texts two of them use. A test keeps the notices in step with the web dependencies.
+- One validation command checks that host voice survives a runtime update on a Mac as well as on Linux:
+  `scripts/voice_replacement.py` runs the real speech model through an update from an earlier runtime, with
+  a failure, a cancellation, recordings open across the update and restarts, without waiting for a release
+  that changes the Mac pins.
 
 ## v0.11.0 — 2026-10-20
 

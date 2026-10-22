@@ -1106,6 +1106,38 @@ check remains it removes the label (`alt issue label 225 --remove verify:macos`)
 as completed when nothing else is open in it; an umbrella such as #225 keeps its remaining scope. A
 failed check stays open on the issue with its evidence until a fix is verified.
 
+### Voice runtime replacement check
+
+`scripts/voice_replacement.py` runs host voice through a runtime update with the real speech worker and
+model, on either host, through the validation runner:
+
+```sh
+alt task validate -- python3.12 scripts/voice_replacement.py
+```
+
+It downloads the candidate's pinned runtime and an earlier one, the same pins with onnxruntime 1.22.0,
+from their public sources (about 720 MB), checking each file's SHA-256, and
+serves them from a loopback fixture that can fail a download or hold it open. On Linux the earlier
+runtime is the one the release supports. On a Mac, where no earlier runtime has shipped, it is a real
+earlier wheel that only the script's own processes admit to the support set. The release's setup code
+installs it, and `speech.Host` drives the real worker, as the daemon does:
+
+- an automatic replacement at startup with a recording started while it downloads, and the page's
+  Retry with a recording already open: host voice stays selected and ready, the recording keeps its
+  final answer and replays it, the earlier runtime is deleted only after its worker exits, only the
+  replacement's wheels are downloaded while the checked model files are reused, and no staging remains;
+- a failed automatic replacement and a cancelled Retry: host voice stays selected, the earlier runtime
+  keeps serving and staging is removed;
+- after each, a fresh process starting voice as the daemon does starts no update, downloads nothing
+  and records on the runtime it should, read from the worker's mapped and open files.
+
+`voice-replacement.json` lists the checks, digests, transfer sizes, host and limits,
+`voice-replacement.log` the run, and `speech-worker.log` and `speech-verification.log` the worker's own
+errors; nothing else stays. Recordings are synthetic silence, which shows
+the runtime works, not microphone capture or word accuracy, and no installed service restarts.
+`tests/test_voice_replacement.py` runs the same check against fixture runtimes in `make check` and
+holds the earlier runtime to the support set, so a pin change also updates it.
+
 ## Coverage and limits
 
 Review evidence by user journey and failure mode. Full suites are required; a line-coverage number
