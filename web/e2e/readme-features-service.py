@@ -252,9 +252,12 @@ def main():
     engines.worker_answer = lambda worker, *, job_root: answers[worker]
     engines.observe_token_usage = lambda _engine, _session, _cursor, *, job_root: {"cursor": {}, "status": "observed",
                                                                                    "sessions": []}
-    # While seeding: the engines' allowance is unread, and Atlas's tasks in flight hold every task slot.
+    # While seeding: the engines' allowance is unread, Atlas's tasks in flight hold every task slot, and the runs'
+    # Git commands skip the guards' hooks, as the seed's own do.
     reserve, route.reserve = route.reserve, lambda _engine: None
     slot, project_agents._slot = project_agents._slot, lambda: None
+    unhooked = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": os.devnull}
+    os.environ.update(unhooked)
 
     def ran(agent, at, answer):
         project_agents.change("harbor", "run", {"agent": agent}, by="operator", source="fixture", now=at)
@@ -286,6 +289,8 @@ Suggest: Update sharp for its security fix
 Version 0.32.6 closes an advisory in its bundled image decoder. The thumbnail tests pass with it.""")
     suggested.post("harbor", f"agent:{deps}/{n}", [1, 2], [], now=day + timedelta(minutes=20))
     route.reserve, project_agents._slot = reserve, slot
+    for key in unhooked:
+        del os.environ[key]
     S.regen_state_md(PROJECT)
 
     class Handler(server.Handler):
