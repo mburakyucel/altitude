@@ -22,6 +22,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   it. The agent answers or does the work and finishes again; the earlier finish stays as a Done row you can open.
 - The README and the overview show how Altitude fits together: you, the coordinator and project agents above altd,
   which keeps every record and gates every merge, and task agents, independent review and GitHub below it.
+- A release approval names the version and its notes, and also covers changes that merge before the notes once
+  their checks pass and the notes mention anything you would notice; the release owner tells you what joined
+  before it publishes. It asks again when a late change is breaking, turns a fix release into a feature release,
+  needs a longer trial or brings a security fix the notes miss, and you can still ask for one exact commit.
 
 ## v0.12.0 — 2026-10-22
 
