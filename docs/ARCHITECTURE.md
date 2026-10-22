@@ -3431,7 +3431,7 @@ moves it out of Current. Saving an answer does not assert that the worker resume
 On desktop, Work's List | Graph switch shows Current either as rows or as the graph
 (`web/src/components/AgentGraph.tsx`, spec §3.7); the choice is a per-browser display preference
 (`web/src/shell/workView.ts`, `altitude.workView`) and the phone always shows rows. The graph places
-every current task and agent run on a ring around L3, the operator's turns first, and widens the panel
+every current task and routine run on a ring around L3, the operator's turns first, and widens the panel
 to the live session panel's 480px. Each node reads `cardView`, the task card's own facts, link and
 accessible name, so a node and its row never disagree. Live cues need no read of their own: a running
 task's halo and helper pips come from the row's `token_usage` (see [task usage](#task-usage)), counting
