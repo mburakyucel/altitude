@@ -121,7 +121,8 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   (including [incremental delivery](CLI.md#incremental-issue-delivery)),
   [task file lists](CLI.md#task-file-lists), [dirty-checkout recovery](CLI.md#dirty-checkout-recovery),
   [device pairing](CLI.md#device-pairing), [project lifecycle](CLI.md#project-lifecycle),
-  [task lifecycle](CLI.md#task-lifecycle) (task verbs, `alt land`, reviews, `--show`, grants, validation).
+  [task lifecycle](CLI.md#task-lifecycle) (task verbs, `alt land`, reviews, `--show`, grants, validation),
+  [reopening a done task](CLI.md#reopen-a-done-task).
 - [Development and checks](DEVELOPMENT.md): the suite, harnesses and evidence.
   [Local checks](DEVELOPMENT.md#local-checks),
   [noninteractive toolchain](DEVELOPMENT.md#noninteractive-toolchain),

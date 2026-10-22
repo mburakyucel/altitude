@@ -8,6 +8,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Asking for a review of a task whose branch clashes with newer work on main no longer ends in a Git
   instruction: the request is kept and shows as queued for L2, which brings the branch up to date and then
   runs it. Landing names the clashing files to L2 the same way on a task's first or later pull request.
+- A finished task takes your follow-up: message a done task from its page or with `alt task message` and it
+  reopens in place, with its conversation, session and earlier PRs, its working copy rebuilt if cleanup removed
+  it. The agent answers or does the work and finishes again; the earlier finish stays as a Done row you can open.
 
 ## v0.12.0 — 2026-10-22
 

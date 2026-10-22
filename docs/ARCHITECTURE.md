@@ -4091,8 +4091,8 @@ beside it when newer messages are offscreen; the question jump alone serves a sh
 Both are labeled 44px controls above the composer and disappear when their destinations are visible.
 Preview access stays in the question; tabs and the panel toggle provide live navigation without an
 extra composer row. There is no generic Resume while an operator question is open; viewing
-details never resolves a question or releases a merge hold. A done or rejected task is
-read-only with the composer and activity preview gone. Phone swipes move one tab at a time through
+details never resolves a question or releases a merge hold. A rejected task is read-only with the
+composer and activity preview gone; a done task keeps its composer, whose hint says that sending reopens it. Phone swipes move one tab at a time through
 the tabs in their order, Conversation, Live session and Terminal when the task offers one, left to the
 next and right to the previous, without wrapping: the views sit on one track that follows the finger,
 settles into the switch past half the width or a fling, springs back otherwise and resists past either
