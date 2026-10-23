@@ -5,6 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Opening an older Weekly improvement review run from its page takes the chat back to that run every time, rather
+  than sometimes showing the latest conversation until the next refresh.
 - The overview no longer fails to load when a task is archived while it is being read: the task's history is
   read from wherever the archive has just moved it.
 - Work can show your agents as a graph: on a computer, the List | Graph switch beside Work puts every current
