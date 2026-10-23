@@ -376,8 +376,7 @@ settings…**, is always there.
 
 ### All routines
 
-`/projects/<name>/agents`, with **‹ harbor** back to the project and the title **Routines** over "Each
-one runs a brief when its trigger fires, and tells you what it found." One card: a
+`/projects/<name>/agents`, with **‹ harbor** back to the project and the title **Routines** over "Give an agent a job and schedule it or make it event-driven." One card: a
 whole-row link per routine with a chevron, the name in semibold and one muted line, its triggers then the
 latest news, with a cue before it when one applies (a pulsing dot running, a pause mark paused):
 

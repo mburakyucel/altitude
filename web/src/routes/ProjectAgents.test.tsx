@@ -104,7 +104,7 @@ describe.each([390, 1440])("routines at %ipx", (width) => {
     expect(back()).toHaveTextContent("harbor");
     expect(back()).toHaveAttribute("href", "/projects/harbor?tab=work");
     expect(screen.getByRole("heading", { name: "Routines" })).toBeInTheDocument();
-    expect(screen.getByText("Each one runs a brief when its trigger fires, and tells you what it found.")).toBeInTheDocument();
+    expect(screen.getByText("Give an agent a job and schedule it or make it event-driven.")).toBeInTheDocument();
     const budget = screen.getByRole("combobox", { name: /Routines may use up to/ });
     expect(within(budget).getAllByRole("option").map((o) => o.textContent)).toEqual(["30 min a week", "1 h a week", "2 h a week", "5 h a week", "10 h a week"]);
     expect(budget).toHaveDisplayValue("2 h a week");
