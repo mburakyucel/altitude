@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Opening or reconnecting a terminal no longer types stray text such as `11;rgb:1111/1818/2727;1R` at its
+  prompt: answers to questions a program asked earlier (`gh` asks the background colour) are no longer sent again
+  each time the screen redraws its output. A program waiting for an answer still gets it.
 - Altitude repairs sit at the bottom of Work, below the project's finished work and Routines: they are
   Altitude's own upkeep rather than the project's work.
 - Routines can act, not only report: tick **What it may change** on a routine's form and it may clear the

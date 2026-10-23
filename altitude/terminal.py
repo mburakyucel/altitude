@@ -70,6 +70,7 @@ class Terminal:
     id: str  # every request names it: a replaced terminal refuses
     buffer: bytearray = field(default_factory=bytearray)
     start: int = 0  # absolute output offset of buffer[0]
+    sent: int = 0  # the end of the output some page has been sent: its queries had their chance to be answered
     exit_code: int | None = None
     reason: str | None = None  # why it ended: exited, closed, task-finished, project-removed, failed
     error: str | None = None  # why a shell that failed could not run, in the launcher's words
@@ -540,16 +541,35 @@ def stream(project: str, slug: str | None, ident) -> Terminal:
     return _named(project, slug, ident)
 
 
-def read(term: Terminal, offset: int, wait: float) -> tuple[bytes, int, bool, bool]:
-    """Output after `offset`, waiting up to `wait` seconds for some: (data, next offset, missed, ended).
-    `missed` says output before the replay buffer's start is gone."""
+def read(term: Terminal, offset: int, wait: float, catching_up: bool = False) -> tuple[bytes, int, bool, bool, int]:
+    """Output a page is sent after `offset`, waiting up to `wait` seconds for some: (data, next offset, missed, ended,
+    replay). `missed` says output before the replay buffer's start is gone. The first `replay` bytes are output the page
+    catches up on (`catching_up`) or starts over from, whose queries it leaves unanswered (`replayed`). The output is
+    recorded as sent in the same step, so two pages never both take one query as unsent."""
     with term.cond:
         if offset >= term.end and not term.ended:
             term.cond.wait(wait)
         missed = offset < term.start
         begin = max(offset, term.start)
         data = bytes(term.buffer[begin - term.start:])
-        return data, term.end, missed, term.ended and begin + len(data) >= term.end
+        sent, term.sent = term.sent, max(term.sent, term.end)
+        replay = replayed(data, begin, sent) if catching_up or missed else 0
+        return data, term.end, missed, term.ended and begin + len(data) >= term.end, replay
+
+
+def replayed(data: bytes, begin: int, sent: int) -> int:
+    """How much of `data`, output from offset `begin` that a page catches up on, is replay: all of it but the escape
+    sequences after its last text beyond offset `sent`, the end of what pages were sent before. A query there may still
+    be waiting, as a shell asking at its start or a command that asked while no page was open. A query a page was sent
+    has had its chance to be answered, and one followed by text belongs to a program that has printed more since or
+    ended. A page whose connection died without closing was sent output it never drew: a program still waiting on a
+    query in it waits for its own timeout or a key, the safe side, since an answer typed twice reaches the prompt."""
+    text = done = 0
+    for match in _ESCAPES.finditer(data):
+        if match.start() > done:
+            text = match.start()
+        done = match.end()
+    return max(len(data) if done < len(data) else text, min(len(data), sent - begin))
 
 
 # --- The reader's read-only view ----------------------------------------------------------------------------------

@@ -45,8 +45,8 @@ export function inputPiece(text: string): string {
 }
 
 /**
- * One running terminal on screen. It writes `intro` dimmed, replays the server's buffer from the start,
- * follows the output stream, and after a lost connection resumes from the last offset it drew; the
+ * One running terminal on screen. It writes `intro` dimmed, replays the server's buffer from the start without
+ * answering the queries in it, follows the output stream, and after a lost connection resumes from the last offset it drew; the
  * shell's end, a replaced terminal or an altd restart ends it through `onEnd`. Typed input is sent in
  * order, one request at a time over a kept connection, and every request names terminal `id`, so nothing
  * reaches a terminal that replaced it. Input that fails may have arrived in part, so typing stops, with an
@@ -105,7 +105,28 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host.current!);
-    const introduce = () => term.write(`\x1b[2m${intro}\x1b[0m\r\n`);
+    // xterm answers a query in the output it parses (a colour, the cursor's place, what terminal it is) through onData,
+    // as it does keys. Each write's callback runs right after its output is parsed, in the same task, so what xterm
+    // emits while output waits to be parsed is held: the callback takes the answers to that output and sends them only
+    // when it is live, never for output only replayed, whose programs have moved on. The operator's keys, pastes,
+    // mouse and focus arrive in tasks of their own, so what is held outside a parse goes on as that task ends.
+    let parsing = 0;
+    let held = "";
+    const draw = (data: string | Uint8Array, live = true) => {
+      parsing += 1;
+      term.write(data, () => {
+        parsing -= 1;
+        const answers = held;
+        held = "";
+        if (live && answers) deliver(answers);
+      });
+    };
+    const release = () => {
+      const data = held;
+      held = "";
+      if (data) send.current(data);
+    };
+    const introduce = () => draw(`\x1b[2m${intro}\x1b[0m\r\n`);
     introduce();
     // The browser keeps Ctrl+V (paste) and, with text selected, Ctrl+C (copy); without a selection Ctrl+C interrupts.
     term.attachCustomKeyEventHandler((event) => {
@@ -130,13 +151,17 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
       source?.close();
       const stream = terminalStream(project, task, id, offset);
       stream.addEventListener("output", (event) => {
-        const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string; missed?: boolean };
+        const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string; missed?: boolean; replay?: number };
         // Output from before the replay buffer's start is gone: the screen starts over, as a fresh attach draws it.
         if (chunk.missed) {
           term.reset();
           introduce();
         }
-        term.write(bytes(chunk.data));
+        // Output already there as the stream opened is replayed, apart from queries a program may still wait on (altd's `replay`).
+        const data = bytes(chunk.data);
+        const replay = chunk.replay ?? 0;
+        if (replay) draw(data.subarray(0, replay), false);
+        if (replay < data.length) draw(data.subarray(replay));
         offset = chunk.offset;
         output.current.seen = true;
         output.current.at = Date.now();
@@ -204,6 +229,11 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
       sending = false;
       void flush();
     };
+    function deliver(data: string) {
+      if (stopped.current) return;
+      pending += data;
+      void flush();
+    }
     send.current = (data: string) => {
       if (stopped.current) return;
       if (ctrlRef.current) {
@@ -211,12 +241,11 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
         ctrlRef.current = false;
         setCtrl(false);
       }
-      pending += data;
       // Input returns the screen to the prompt: xterm does so for typing, not for the key row. Only when scrolled
       // back: at the bottom, xterm's viewport can still be a frame behind new output and would scroll back to it.
       const { viewportY, baseY } = term.buffer.active;
       if (viewportY !== baseY) term.scrollToBottom();
-      void flush();
+      deliver(data);
     };
     focus.current = () => term.focus();
     // xterm frames a paste as the shell asked (bracketed paste), so pasted lines wait for Enter.
@@ -231,7 +260,11 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
     };
     xterm.current = term;
     host.current!.addEventListener("paste", unlatch, true);
-    const input = term.onData((data) => send.current(data));
+    const input = term.onData((data) => {
+      if (!parsing && !held) return send.current(data);
+      held += data;
+      queueMicrotask(release);
+    });
 
     // xterm's viewport scrolls only by wheel, so a finger drag over the screen scrolls the scrollback here, as
     // content scrolls anywhere else, and a released swipe flings on. It reaches only the display: no key or

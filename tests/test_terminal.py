@@ -84,7 +84,7 @@ class TerminalCase(AltitudeCase):
         term = terminal._terminals[(self.project, slug)]
         while until.encode() not in seen:
             self.assertLess(time.monotonic(), deadline, seen)
-            data, offset, _, ended = terminal.read(term, offset, .2)
+            data, offset, _, ended, _ = terminal.read(term, offset, .2)
             seen += data
             if ended and until.encode() not in seen:
                 self.fail(seen)
@@ -198,11 +198,25 @@ class TestTerminalLifecycle(TerminalCase):
         self.type("head -c 20000 /dev/zero | tr '\\0' x; echo; echo done-$((1+1))\n")
         self.output(until="done-2")
         term = terminal._terminals[(self.project, None)]
-        data, offset, missed, ended = terminal.read(term, 0, 0)
+        data, offset, missed, ended, _ = terminal.read(term, 0, 0)
         self.assertTrue(missed)
         self.assertFalse(ended)
         self.assertEqual(len(data), 4096)
         self.assertEqual(terminal.read(term, offset, 0)[:3], (b"", offset, False))
+
+    def test_replay_is_all_caught_up_output_but_queries_after_its_text_that_no_page_was_sent(self):
+        # A program's queries replayed to a page that opened later were answered as typed input at the shell's prompt.
+        queries = b"\x1b]11;?\x1b\\\x1b[6n"
+        for data, replay in [(b"$ gh repo edit\r\n" + queries + b"Edited\r\n$ ", None),
+                             (b"\x1b]0;a title\x07$ ", None), (b"$ read\r\n" + queries, len(b"$ read\r\n")),
+                             (b"\x1b[?2004h" + queries, 0), (b"", 0), (b"$ \x1b", None)]:
+            with self.subTest(data=data):
+                self.assertEqual(terminal.replayed(data, 100, 100), len(data) if replay is None else replay)
+        # gh asks, a page is sent the query live, and gh then waits on the network: a page opening meanwhile answers
+        # nothing, while what asked after the last page was sent output is still answered.
+        history = b"$ gh repo edit\r\n" + queries
+        self.assertEqual(terminal.replayed(history, 100, 100 + len(history)), len(history))
+        self.assertEqual(terminal.replayed(history + queries, 100, 100 + len(history)), len(history))
 
     def test_input_and_size_are_validated(self):
         self.turn(True)
@@ -1292,6 +1306,41 @@ class TestTerminalHttp(TerminalCase):
         self.assertEqual(self.request("GET", f"{base}?task={self.slug}")["state"], "none")
         self.request("GET", f"{base}/stream?task={self.slug}&id=other&offset=0", status=404)
         self.request("POST", f"{base}/forget", at, status=404)
+
+    def test_a_page_catching_up_answers_only_what_a_program_may_still_wait_on(self):
+        # Queries replayed to a page that opened later were answered as typed input at the shell's prompt.
+        self.turn(True)
+        base = f"/api/terminal/{self.project}"
+        ident = self.request("POST", f"{base}/open", {})["id"]
+        self.output(until="$ ")
+        self.type("printf '\\033[6n'; echo done-$((1+1))\n")
+        self.output(until="done-2")
+        self.type("read -rs -d R -p $'\\033[6n' at; echo got-${#at}\n")
+        self.wait(lambda: bytes(self.current().buffer).endswith(b"\r\x1b[6n"))  # read waits for its answer
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=30)
+        self.addCleanup(connection.close)
+        connection.request("GET", f"{base}/stream?id={ident}&offset=0")
+        events = self.events(connection.getresponse())
+        first = next(events)
+        data = base64.b64decode(first["data"])
+        self.assertEqual(first["replay"], len(data) - len(b"\x1b[6n"))
+        self.assertIn(b"done-2", data[:first["replay"]])
+        self.type("\x1b[5;9R")  # the page's answer to the query the program waits on
+        live = b""
+        while b"got-5" not in live:
+            event = next(events)
+            self.assertEqual(event["replay"], 0)
+            live += base64.b64decode(event["data"])
+
+    @staticmethod
+    def events(response):
+        """The stream's output events, as they arrive."""
+        while True:
+            lines = []
+            while (line := response.readline().decode()) not in ("\n", ""):
+                lines.append(line.rstrip("\n"))
+            if lines[:1] == ["event: output"]:
+                yield json.loads(lines[1].split("data: ", 1)[1])
 
     def test_typing_reuses_one_connection_and_other_replies_close_theirs(self):
         # Every keystroke paid a new TCP and TLS handshake: about three round trips before its echo instead of one.

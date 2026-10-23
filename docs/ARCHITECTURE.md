@@ -1890,12 +1890,22 @@ stopping it.
 
 Output goes into a 256 KB replay buffer addressed by absolute offsets. `GET
 /api/terminal/<project>/stream?task=&id=&offset=` is server-sent events: `output` events carry base64
-bytes, the next offset and whether older output was dropped, and `end` carries the final status
+bytes, the next offset, whether older output was dropped and `replay`, how many leading bytes are replayed, and
+`end` carries the final status
 (`exited`, exit code and end reason: `exited`, `closed`, `task-finished`, `project-removed` or `failed` with
 its `error`). A
 reconnecting page resumes from its own offset, and so does a page shown again after the background or the
 back-forward cache, whose connection may have dropped without an error; when older output was dropped meanwhile it
-starts its screen over from what was kept. The page sends `resize` once a size change has settled and changed
+starts its screen over from what was kept. The output a page catches up on as its stream opens, or starts over
+from, is replayed, apart from the escape sequences after its last text that no page has been sent: a query there
+(a shell asking at its start, a command that asked while no page was open) may still be waiting. A query sent to a
+page whose connection had died without closing goes unanswered after the reconnect, so its program waits for its own
+timeout or a key rather than receiving a second answer that could reach the prompt. Programs query the terminal (`gh` asks
+its background colour, others the cursor's place), and xterm answers through the same channel as keys; the page
+sends the answers to live output and drops those to replayed output, whose programs have moved on, so opening a
+terminal never types at its prompt. Each write's callback runs right after its output is parsed, in the same
+browser task, and takes what xterm emitted meanwhile; keys, pastes, the mouse and focus arrive in tasks of their
+own and always reach the shell. The page sends `resize` once a size change has settled and changed
 the columns or rows, and again after each reconnect, since another page may have resized the shell. An ended terminal leaves the status at once (`none`), accepts no
 more input, resize or close, and stays readable only by a stream naming its id, so a page attaching after a
 failed start still reads why, until a new terminal opens, the task finishes or altd stops. `GET /api/terminal/<project>?task=` returns
