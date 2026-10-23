@@ -4,9 +4,14 @@ import TerminalScreen, { inputPiece } from "./TerminalScreen";
 import { ApiError, terminalSend, terminalStatus, terminalStream, type TerminalStatus } from "../data/api";
 
 // A stand-in xterm, without bracketed paste unless a test turns it on: a paste reaches onData as the raw text, as a
-// keystroke would. Its screen is a focusable box, and the fit gives it `size`.
-const term: { data?: (data: string) => void; bracketed: boolean; written: string[]; resets: number; size: { cols: number; rows: number } } =
-  { bracketed: false, written: [], resets: 0, size: { cols: 80, rows: 24 } };
+// keystroke would. Its screen is a focusable box, and the fit gives it `size`. It parses what is written at once, or
+// once a test calls `parse` while `later` holds the writes, answering a background colour query and a cursor position
+// report through onData as it parses them, before the write's callback runs, as xterm does.
+const term: { data?: (data: string) => void; bracketed: boolean; written: string[]; resets: number; size: { cols: number; rows: number }; later: (() => void)[] | null } =
+  { bracketed: false, written: [], resets: 0, size: { cols: 80, rows: 24 }, later: null };
+const QUERIES = /\x1b\]11;\?(?:\x07|\x1b\\)|\x1b\[6n/g;
+const answer = (query: string) => query.startsWith("\x1b]") ? "\x1b]11;rgb:1111/1818/2727\x1b\\" : "\x1b[1;1R";
+const parse = () => { for (const write of term.later!.splice(0)) write(); };
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
@@ -15,7 +20,16 @@ vi.mock("@xterm/xterm", () => ({
     textarea?: HTMLTextAreaElement;
     loadAddon(addon: { activate(terminal: unknown): void }) { addon.activate(this); }
     open(parent: HTMLElement) { this.textarea = parent.appendChild(document.createElement("textarea")); }
-    write(data: string | Uint8Array) { term.written.push(typeof data === "string" ? data : new TextDecoder().decode(data)); }
+    write(data: string | Uint8Array, callback?: () => void) {
+      const text = typeof data === "string" ? data : new TextDecoder().decode(data);
+      term.written.push(text);
+      const parsed = () => {
+        for (const [query] of text.matchAll(QUERIES)) term.data?.(answer(query));
+        callback?.();
+      };
+      if (term.later) term.later.push(parsed);
+      else parsed();
+    }
     reset() { term.resets += 1; }
     focus() { this.textarea?.focus(); }
     resize(cols: number, rows: number) { this.cols = cols; this.rows = rows; }
@@ -48,13 +62,13 @@ const font = { family: "monospace", size: 13 };
 type Stream = { offset: number; closed: boolean; listeners: Record<string, (event: MessageEvent<string>) => void>; addEventListener(name: string, listener: (event: MessageEvent<string>) => void): void; close(): void };
 let streams: Stream[];
 let observed: () => void;
-const output = (offset: number, data: string, missed = false) => streams.at(-1)!.listeners.output?.(new MessageEvent("output", { data: JSON.stringify({ offset, data: btoa(data), missed }) }));
+const output = (offset: number, data: string, missed = false, replay = 0) => streams.at(-1)!.listeners.output?.(new MessageEvent("output", { data: JSON.stringify({ offset, data: btoa(data), missed, replay }) }));
 const emit = () => output(1, "$ ");
 
 beforeEach(() => {
   vi.useFakeTimers();
   streams = [];
-  Object.assign(term, { written: [], resets: 0, size: { cols: 80, rows: 24 } });
+  Object.assign(term, { written: [], resets: 0, size: { cols: 80, rows: 24 }, later: null });
   vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { observed = callback; } observe() {} disconnect() {} });
   vi.mocked(terminalStatus).mockResolvedValue(running);
   vi.mocked(terminalSend).mockImplementation(async () => ({ ok: true }));
@@ -283,6 +297,43 @@ describe("the terminal screen", () => {
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(typed()).toEqual(["a"]);
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // A program's queries in replayed output were answered as typed input: `gh` asks the background colour and the cursor's
+  // place, and every opening of the terminal typed the answers at the shell's prompt.
+  const queries = "\x1b]11;?\x1b\\\x1b[6n";
+  const answers = "\x1b]11;rgb:1111/1818/2727\x1b\\\x1b[1;1R";
+
+  it("answers no query in output it replays as it opens or starts over, and answers a live one", () => {
+    open();
+    const history = `$ gh repo edit\r\n${queries}Edited\r\n$ `;
+    act(() => output(history.length, history, false, history.length));
+    act(() => output(400_000, history, true, history.length));
+    expect(term.written.at(-1)).toBe(history);
+    expect(typed()).toEqual([]);
+    act(() => output(400_100, queries));
+    expect(typed()).toEqual([answers]);
+  });
+
+  it("answers the queries replayed output ends with, which their program may still wait on", () => {
+    open();
+    const history = `${queries}$ read -p query\r\n`;
+    act(() => output(history.length + queries.length, history + queries, false, history.length));
+    expect(typed()).toEqual([answers]);
+  });
+
+  it("never holds back or drops the operator's keys while output waits to be drawn", async () => {
+    term.later = [];
+    open(true);
+    const history = `${queries}$ `;
+    act(() => output(history.length + queries.length, history + queries, false, history.length));
+    // A latched Ctrl belongs to the operator's next key, not to an answer.
+    key("Control");
+    await act(async () => term.data?.("c"));
+    expect(typed()).toEqual(["\x03"]);
+    act(() => parse());
+    await act(async () => term.data?.("x"));
+    expect(typed()).toEqual(["\x03", answers, "x"]);
   });
 
   it("takes focus as it opens on desktop", () => {

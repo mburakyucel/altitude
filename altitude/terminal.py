@@ -552,6 +552,18 @@ def read(term: Terminal, offset: int, wait: float) -> tuple[bytes, int, bool, bo
         return data, term.end, missed, term.ended and begin + len(data) >= term.end
 
 
+def replayed(data: bytes) -> int:
+    """How much of `data`, output a page draws only as it catches up, is replay: all of it but the escape sequences
+    printed after its last text. Queries in the replay go unanswered, since their programs have printed more since or
+    ended; a query among those last sequences may still be waiting, as a shell asking at its start does."""
+    end = done = 0
+    for match in _ESCAPES.finditer(data):
+        if match.start() > done:
+            end = match.start()
+        done = match.end()
+    return len(data) if done < len(data) else end
+
+
 # --- The reader's read-only view ----------------------------------------------------------------------------------
 
 #: Escape sequences: operating-system commands (titles, links), control sequences (colour, cursor) and the rest.
