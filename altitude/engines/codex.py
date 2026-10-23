@@ -463,15 +463,16 @@ def _codex_home(env: dict) -> Path:
 def denied() -> tuple[str, ...]:
     """What every Codex profile Altitude sets refuses: the places no sandbox Altitude applies reaches (the per-user
     runtime folder on Linux, the job folders on macOS), macOS's private places, Altitude's credentials, and the
-    operator's stored credentials (`platform.credential_places`), other engines' folders and files and the repairs'
-    records (`repair.home`) present now (`platform.operator_paths`), apart from any inside the others, which Codex's
-    Linux sandbox could not hide again, and the shared temporary folders. A narrower entry reopens a folder inside
-    them: a coordinator's working folder in the runtime folder, and the job's own temporary folder, its TMPDIR
-    (`:tmpdir`), which `platform.job_command` makes in /tmp."""
+    operator's stored credentials (`platform.credential_places`), other engines' folders and files, the repairs'
+    records (`repair.home`) and the agent chats (`config.CHATS`) present now (`platform.operator_paths`), apart from
+    any inside the others, which Codex's Linux sandbox could not hide again, and the shared temporary folders. A
+    narrower entry reopens a folder inside them: a coordinator's working folder in the runtime folder, and the job's
+    own temporary folder, its TMPDIR (`:tmpdir`), which `platform.job_command` makes in /tmp."""
     refused = (*map(str, platform.job_control_paths()), *platform.private_places(), *platform.secret_places())
     shared = (os.path.realpath("/tmp"), os.path.realpath("/var/tmp"))
     others = [path for path in platform.operator_paths((*platform.credential_places(), *(
-                  place for place in common.operator_places() if place not in operator_places()), str(repair.home())))
+                  place for place in common.operator_places() if place not in operator_places()), str(repair.home()),
+                  str(config.CHATS)))
               if not any(Path(path).is_relative_to(place) for place in (*refused, *shared))]
     return (*refused, *others, ":slash_tmp", shared[1])
 
@@ -786,7 +787,7 @@ def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, t
 
 
 def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images,
-                   restricted=False):
+                   restricted=False, commits=False):
     """A Codex worker in Altitude's sandbox, as a Claude worker, with Codex's own sandbox off and approvals never: its
     own Codex folder (`l2-engine/codex`) beside the same roots, and the operator's Codex folder hidden from it except
     the installed program, the entries its folder links to (none when `restricted`) and a conversation it resumes for
@@ -795,7 +796,7 @@ def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, sett
            "-c", 'approval_policy="never"']
     if effort is not None:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
-    git_writable, read_only = git_policy.worker_git_access(cwd, shared=not restricted)
+    git_writable, read_only = git_policy.worker_git_access(cwd, shared=commits or not restricted)
     home, operator = Path(job_root) / "codex", operator_home()
     copies = _first_resume(home, operator, resume)
     reopened = (*_program(operator), *(operator / name for name in (() if restricted else (*LINKED, SKILLS))

@@ -242,7 +242,8 @@ class TestClaudeFolders(AltitudeCase):
             filesystem = next(setting for setting in engines.codex_l3_permissions(self.tmp, project=self.project)
                               if ".filesystem=" in setting)
         self.assertEqual(set(named.call_args.args[0]), {*platform.credential_places(), *engines.claude.operator_places(),
-                                                        str(repair.home())}, "a Codex coordinator keeps its own folder")
+                                                        str(repair.home()), str(config.CHATS)},
+                                                       "a Codex coordinator keeps its own folder")
         for path in present[:2]:
             self.assertIn(f'{json.dumps(path)}="deny"', filesystem)
         self.assertNotIn(json.dumps(present[2]), filesystem)

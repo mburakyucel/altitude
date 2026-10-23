@@ -1297,19 +1297,23 @@ def owned_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
 def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
                   persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
                   settings: Path | None = None, start_timeout: float = 15.0, effort: str | None = None,
-                  images: list[dict] | tuple = (), report_only: bool = False, runtime_max: int | None = None) -> dict:
+                  images: list[dict] | tuple = (), restricted: bool = False, commits: bool = False,
+                  runtime_max: int | None = None) -> dict:
     """One foreground CLI per transient unit; both engines persist identity and output for adoption.
 
-    A `report_only` worker (a project agent run) gets the repository rules but no owner instruction, nothing of the
-    operator's engine folder, no GitHub sign-in and no Send now, and its job ends after `runtime_max` seconds."""
+    A `restricted` worker (a project agent run or an agent chat's turn) gets the repository rules but no owner
+    instruction, nothing of the operator's engine folder, no GitHub sign-in and no Send now, and writes the
+    repository's objects and branches only when it `commits`, as a task's worker does; its job ends after
+    `runtime_max` seconds when one is given."""
     config.task_effort(engine, effort)
-    prompt = (repository_rule_prompt(cwd) if report_only else owner_prompt(cwd, persona, resume=bool(resume))) + prompt
+    prompt = ((repository_rule_prompt(cwd) if not resume else "") if restricted
+              else owner_prompt(cwd, persona, resume=bool(resume))) + prompt
     native = implementation(engine)
     scratch = task_scratch(extra_env)
     root = Path(job_root)
     cmd, content, writable, read_only, own_env, launch = native.prepare_worker(
         name, prompt, cwd=cwd, scratch=scratch, job_root=root, persona=persona, model=model, settings=settings,
-        effort=effort, resume=resume, images=images, restricted=report_only)
+        effort=effort, resume=resume, images=images, restricted=restricted, commits=commits)
     worker_id = uuid.uuid4().hex
     unit = native.worker_unit_name(worker_id)
     root.mkdir(parents=True, exist_ok=True)
@@ -1318,7 +1322,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
               "started_at": datetime.now(timezone.utc).isoformat(), **native.worker_record({**launch_env(extra_env), **own_env}),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
               "launch_model": model, "launch_effort": effort, "input_delivered": False,
-              "sends": None if report_only else str(paths["sends"])}
+              "sends": None if restricted else str(paths["sends"])}
     S.write_json(paths["record"], record)
     worker_env = task_tool_env(launch_env(extra_env, retain_user_bus=True), scratch)
     if native.EFFORT_ENV and effort is not None:
@@ -1335,7 +1339,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         try:
             task = ({"project": extra_env["ALTITUDE_PROJECT"], "slug": extra_env["ALTITUDE_TASK"]}
                     if extra_env and extra_env.get("ALTITUDE_PROJECT") and extra_env.get("ALTITUDE_TASK") else None)
-            token = "" if report_only else github_token(launch_env(extra_env, retain_user_bus=True))  # the operator's own settings
+            token = "" if restricted else github_token(launch_env(extra_env, retain_user_bus=True))  # the operator's own settings
             data = _driver_input({**launch, "engine": engine, "command": cmd, "input": content, "cwd": str(cwd),
                                   "model": model, "resume": resume, "worker_id": worker_id, "task": task,
                                   "sends": record["sends"],
@@ -1438,8 +1442,23 @@ def start_project_agent_run(engine: str, name: str, prompt: str, *, cwd: Path, j
                             effort: str | None, runtime_max: int, extra_env: dict) -> dict:
     """A project agent run: the helper role, reporting only (`_start_worker`), ended by its job after `runtime_max`."""
     return _start_worker(engine, name, prompt, cwd=cwd, persona=config.PERSONAS / "l1.md", model=model,
-                         extra_env=extra_env, job_root=job_root, effort=effort, report_only=True,
+                         extra_env=extra_env, job_root=job_root, effort=effort, restricted=True,
                          runtime_max=runtime_max)
+
+
+def start_chat_turn(engine: str, name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None,
+                    model: str | None, effort: str | None, images: list[dict] | tuple, extra_env: dict) -> dict:
+    """One turn of an agent chat (`chats`): the chat role, restricted as a project agent run is but committing on its
+    own branch, resuming the chat's session from its own engine folder."""
+    return _start_worker(engine, name, prompt, cwd=cwd, resume=resume, persona=config.PERSONAS / "chat.md",
+                         model=model, extra_env=extra_env, job_root=job_root, effort=effort, images=images,
+                         restricted=True, commits=True)
+
+
+def worker_events(worker_id: str, *, job_root: Path) -> list[dict]:
+    """A worker's engine events so far, as its job wrote them."""
+    paths = _worker_paths(job_root, worker_id)
+    return _worker_events(paths["stdout"], _record_engine(S.read_json(paths["record"], None)))
 
 
 def worker_answer(worker_id: str, *, job_root: Path) -> str:

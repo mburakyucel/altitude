@@ -274,7 +274,8 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
   // A worker that is running should report every few minutes; anything else is as old as it says.
   const stale = str(session.state) === "running" && older(session.at, SESSION_STALE_MS);
   const run = session.kind === "agent";
-  const title = run ? `${project} / ${str(session["name"])}` : slug ? `${project} / ${slug}` : project;
+  const chat = session.kind === "chat";
+  const title = run || chat ? `${project} / ${str(session["name"])}` : slug ? `${project} / ${slug}` : project;
 
   const meta: string[] = [];
   if (session.engine) meta.push(label(session.engine));
@@ -286,12 +287,13 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
   if (str(session.context_state)) meta.push(str(session.context_state));
   if (session["rotate_next"]) meta.push("rotating");
   if (run) meta.push(`${num(session["minutes"]) ?? 0} of ${num(session["limit"]) ?? 0} min`);
+  if (chat) meta.push(`answering for ${num(session["minutes"]) ?? 0} min`);
   const observed = agoText(session.at);
 
   return (
     <li className="card monitor-card monitor-session" data-stale={stale || undefined}>
       <div className="monitor-row">
-        <span className="chip">{run ? "Routine" : session.kind.toUpperCase()}</span>
+        <span className="chip">{run ? "Routine" : chat ? "Chat" : session.kind.toUpperCase()}</span>
         <b className="monitor-session-title" title={title}>
           {title}
         </b>

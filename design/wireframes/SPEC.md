@@ -140,6 +140,7 @@ distinct from the fictional local UI harness.
 | `/projects/:name/agents/new`, `/projects/:name/agents/:id[/edit]` | the routine form; one routine's page and its form (§3.17) | new |
 | `/projects/:name/agents/weekly` | the Weekly improvement review's page, in Altitude's own project (§3.17) | new |
 | `/projects/:name/agents/:id/runs/:n` | one routine run's page (§3.17) | new |
+| `/projects/:name/chats/new`, `/projects/:name/chats/:id` | a new agent chat; one agent chat's page in a task's form (§3.18); Work is lit | new |
 | `/monitor` | Monitor | unchanged |
 | `/repairs/:id` | one repair's page in a task's form (§3.15); Work is lit, or no tab before any project exists | new |
 | `/projects`, `/chat/:name` | redirect to the first managed project, or to `/projects/:name` | the Projects list |
@@ -929,6 +930,7 @@ and chevron: the routine's name over "Routine run · 2 of 20 min", "Routine run 
 "Routine run · waiting while <routine> runs"; it opens the run's page and counts in Current. Runs are not tasks: the
 project header's tasks in flight and Done this week leave them out, and a finished run leaves Work. After Done this week, **Routines · N** with a chevron
 opens the Routines page; with no routines the row is absent and the project menu's **Routines…** remains.
+**Agent chats** follow Done this week, before Routines and Altitude repairs (§3.18).
 
 Work and Needs you add no voice controls. Listening, transcribing, denied and send-failure states
 remain in the owning conversation (§3.6); sending leaves no extra transcript field.
@@ -2187,13 +2189,14 @@ a reading with model rows but no account windows says "No account windows report
 Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
 <project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"
 in `--danger`, with the router's reason below. Rows wrap within the card. Sessions are only the ones
-Altitude runs: each project's coordinator (L3), its live task owners (L2) and its running routine runs,
-after the project's tasks; a repair shows in Work (§3.7). Session rows show their kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
+Altitude runs: each project's coordinator (L3), its live task owners (L2), its running routine runs and its
+answering agent chats, after the project's tasks; a repair shows in Work (§3.7). Session rows show their kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
 age such as "3 min ago". A routine run's row has the chip **Routine**, the title "<project> / <routine name>" and
 "<engine> · <model> · context 6% · 4 of 20 min"; before its first reading it says "context unknown" with no
 age and no meter; its age is that of its session's newest request, so a reading older than five minutes is
 stale as a running task's is (meter at half
-opacity, "Stale" for screen readers). A waiting run is not a session, and the Weekly improvement review's run
+opacity, "Stale" for screen readers). An answering agent chat's row has the chip **Chat**, the title "<project> / <chat
+name>" and "<engine> · <model> · context 12% · answering for 3 min". A waiting run is not a session, and the Weekly improvement review's run
 is one engine call, never a session. Session rows are readings, not links. Sessions are the process
 information on this page; there is no raw worker process list.
 
@@ -2842,6 +2845,52 @@ line in chat back past the conversation the chat loads at first, at both widths.
 Send it an event folded and with its examples, a run's events and a replay, a routine with no event yet, the
 trigger menu with Escape, the event row and its hint, a schedule added at once, the event row removed, and Needs
 you's card with Resume refused, resuming and resumed, at both widths.
+
+### 3.18 Agent chats
+
+An agent chat is an ad hoc conversation with a project's coding agent in its own copy of the code, outside the
+task lifecycle ([design](chats/PROPOSAL.md#screens), whose screens, exact text and states table this section
+adopts for what ships; [behavior](../../docs/ARCHITECTURE.md#agent-chats)). What ships:
+
+- **Work's Agent chats** (§3.7), after Done this week, on the phone's Work tab and the desktop's work panel:
+  "Agent chats (N)" counting the open chats, with **+ New chat** at its right; rows in the task row's anatomy,
+  latest message first, each opening its chat: the name on one line with an ellipsis over "Starting · Opus 5 on
+  Claude" or "Answering · Opus 5 on Claude" (running dot), "Replied 12 min ago" or "You wrote yesterday" (idle
+  dot), "Couldn’t answer · 1h ago" (red dot). **Archived · N** folds the archived rows, muted, "Archived Oct
+  22". With no chats the section is its heading and New chat; while its read loads the section is absent, and a
+  failed refresh keeps the rows it has. Work's counts, the project's tasks in flight and Graph leave chats out;
+  chats are not in Needs you or the rail's dot.
+- **A new chat** (`/projects/:name/chats/new`): the header reads "New chat" over the muted "Works in its own
+  copy of atlas’s code, made from main when you send."; the composer "Message the agent" with images, voice and
+  the **Model** pill (§3.6.1). Sending creates the chat, named from the message's first line, and opens its page.
+- **The chat page** (`/projects/:name/chats/:id`): a task page's header. Desktop: **‹ Work**, the dot and the
+  name, Stop (Esc) while it answers, **⋯**; chips "Answering" (accent) and the engine. Phone: back, the name on
+  one line, the status line "Answering · Opus 5 on Claude" or the engine, Stop while it answers, else **⋯**.
+  One column: day dividers; your messages; each turn's steps folded under "Working · 3 min · 5 steps" with the
+  latest step beneath while it runs, "Worked 3 min · 5 steps" after; its reply. System lines: "Started · <engine>
+  · its own copy of main", "Making its copy of main…", "Stopped by you · the command it was running was cut off",
+  "Altitude restarted · the reply continued", "New session on <engine> · it was given this conversation so far",
+  "Archived by you", "Reopened · a fresh copy of main". Failures, red, with Retry on the latest turn: "Couldn’t
+  answer: <the engine's reason>. Choose another model below, or Retry after it resets." and "The reply was cut
+  off: Altitude stopped while it ran." A message sent while it answers waits as a muted bubble, "Waits for the
+  reply · Remove", and goes next. The page follows its newest line.
+- **Menu** (phone bottom sheet, desktop popover from ⋯): Rename; Archive, disabled while it answers ("Available
+  when the reply ends"); then muted "<engine> · started Oct 21 · its copy: 1 changed file" (or "no
+  changes"). Rename edits the name in place ("Chat name", 1–80 characters; Enter or Save saves, Escape or
+  Cancel restores; the phone's back hides meanwhile).
+- **Archive**: without changes it archives at once; with changes it asks "Archive this chat?", naming the
+  changed files, with **Archive and delete changes** (danger) and Cancel. An archived chat has no composer:
+  "Archived · Oct 22" with **Reopen** and **Delete…**, which asks "Delete this chat?" with **Delete chat** in red
+  and Cancel, then returns to Work.
+- **Monitor** (§3.14): an answering chat is a session row with the chip **Chat**.
+
+Loading shows the conversation's skeleton; a failed read says "Couldn’t load this chat." with Retry; a chat
+that does not exist shows the server's message. Make a task and computer access follow in their own changes.
+
+`web/e2e/chats.pw.ts` walks Work's section with no chats, every row state, the archived fold and a failed
+refresh; a new chat with an image; answering, a waiting message and Remove, Stop and Esc, stopped; failed, cut
+off, Retry, a new session and a restart; the menu, Rename, Archive with and without changes, Reopen and Delete;
+loading, a failed read and a missing chat; and Monitor's row, at both widths.
 
 ## 4. Behaviour rules
 

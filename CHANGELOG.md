@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Agent chats: talk something through with a project's coding agent without making it a task. **New chat** in
+  Work starts one in its own copy of the code, made from main; you watch its steps as it works, and it resumes where you
+  left off every time, survives Altitude restarting, and takes images, voice and a choice of model. Rename,
+  archive, reopen and delete it from its menu; `alt chats list` and `alt chats show` read chats in your terminal.
 - Pictures open in a full-screen viewer that works like a phone's photo app: pinch, double-tap or the wheel
   zooms toward your fingers or pointer, a zoomed picture pans and stops at its edges, the next picture follows
   your finger as you swipe, and a swipe down or Escape closes it back into its thumbnail. The bar says where the

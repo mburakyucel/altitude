@@ -48,6 +48,8 @@ One engine is enough, and each integration is
 - **Decide from anywhere.** Everything that waits on you gathers in Needs you, and your phone alerts you;
   answer with a tap or your voice. Dictate with built-in recognition, your browser, or
   [your own speech service](docs/SETUP.md#your-speech-service).
+- **Agent chats.** Talk something through with a coding agent in its own copy of the code, from your phone or
+  computer, without making it a task; each chat picks up where you left off.
 - **Power with a fence.** Agents leave their sandbox only for a purpose you approve, and the sandbox hides the
   sign-ins and keys your other programs keep.
 

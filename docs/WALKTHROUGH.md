@@ -139,6 +139,16 @@ The scope and ordering here are an example of engineering judgment, not a prescr
 For session identity and engine-specific message timing, see [lifecycle](SESSION_LIFECYCLE.md).
 To try a project, follow [setup](SETUP.md).
 
+## Agent chats
+
+Not everything is a task. To ask why the export is slow or try an idea on a failing test, open **New chat**
+under Agent chats in Work and write to one of your coding agents directly, with images or your voice. It works
+in its own copy of the project's code, made from main when you send, and its steps fold under one line as it
+answers. A message you send while it answers waits and goes as its next turn; Stop ends the reply. A chat picks
+up the same session every time you come back, and keeps its copy until you archive it from its ⋯ menu, which
+asks first when the copy has changes. Chats use your plan like a short task turn, never appear in Needs you
+and publish nothing.
+
 ## See the features
 
 The README's features in the same Atlas project. On a computer the task view and the terminal show the

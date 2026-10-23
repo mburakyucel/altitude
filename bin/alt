@@ -14,7 +14,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import door  # noqa: E402
 door.follow_activation(__file__)
-from altitude import config, engines, l3, project_setup, state as S, tasks as T  # noqa: E402
+from altitude import chats, config, engines, l3, project_setup, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
 #: altd runs this verb for a task worker: its input arrives on stdin as JSON, with every input file's content.
@@ -53,6 +53,42 @@ def _project(args) -> str:
     if not p:
         sys.exit("alt: --project or ALTITUDE_PROJECT required")
     return p
+
+
+def _chats(args) -> None:
+    """`alt chats list|show`: the project's agent chats as Work lists them, or one chat's conversation."""
+    project = _project(args)
+    rows = [row for row in chats.listing(project)["chats"] if args.chats_action == "show" or args.archived
+            or not row["archived"]]
+    if args.chats_action == "list":
+        if args.as_json:
+            return out(rows)
+        return say("\n".join(f"{row['id']}  {row['name']} · {_chat_state(row)} · {row['latest']['at']}"
+                              for row in rows) or "No agent chats.")
+    found = [row for row in rows if row["id"] == args.chat] or [
+        row for row in rows if row["name"].casefold().startswith(args.chat.casefold())]
+    if len(found) != 1:
+        sys.exit("alt chats show: no chat by that id or name" if not found else
+                 "alt chats show: more than one chat's name starts that way; give its id")
+    chat = chats.view(project, found[0]["id"])
+    if args.as_json:
+        return out(chat)
+    lines = [f"{chat['name']} · {_chat_state(chat)}"]
+    for item in chat["items"]:
+        if item["kind"] == "you":
+            lines.append(f"\nYou, {item['at']}{' (waiting)' if item['waiting'] else ''}:\n{item['text']}")
+        elif item["kind"] == "turn":
+            ran = sum(step["kind"] == "step" for step in item["steps"])
+            lines.append(f"\nAgent, {item['started']} · {ran} steps · {item['state']}:\n"
+                         + (item["answer"] or item["error"] or ""))
+        else:
+            lines.append(f"\n· {item['event']} {item['at']}")
+    say("\n".join(lines))
+
+
+def _chat_state(row: dict) -> str:
+    return {"idle": "idle", "starting": "starting", "answering": "answering", "failed": "couldn't answer",
+            "archived": "archived"}[row["state"]]
 
 
 def _read(path: str) -> str:
@@ -590,6 +626,14 @@ def main(argv=None) -> None:
     ln.add_argument("--expected-head", help="full observed PR head SHA required with --adopt-pr")
     ln.add_argument("--reason", help="why this task is authorized to adopt the PR; required with --adopt-pr")
     ch = sub.add_parser("chat"); ch.add_argument("text", nargs="?", default="-"); ch.add_argument("--trigger", default="chat"); ch.add_argument("--engine", choices=config.ENGINES, help="pin this turn to one engine")
+    chatting = sub.add_parser("chats", help="read the project's agent chats, which you start and steer in the app")
+    chatting_actions = chatting.add_subparsers(dest="chats_action", required=True)
+    listed = chatting_actions.add_parser("list", help="the project's chats, most recent first")
+    listed.add_argument("--archived", action="store_true", help="include archived chats")
+    listed.add_argument("--json", action="store_true", dest="as_json")
+    shown = chatting_actions.add_parser("show", help="one chat's conversation")
+    shown.add_argument("chat", help="the chat's id, or the start of its name")
+    shown.add_argument("--json", action="store_true", dest="as_json")
     sub.add_parser("l3-reset")
     ic = sub.add_parser("incident"); ics = ic.add_subparsers(dest="icmd", required=True)
     inew = ics.add_parser("new"); inew.add_argument("--title", required=True); inew.add_argument("--task"); inew.add_argument("--what", required=True); inew.add_argument("--evidence", required=True); inew.add_argument("--cause", required=True); inew.add_argument("--tag", action="append", default=[])
@@ -692,6 +736,10 @@ def main(argv=None) -> None:
             sys.exit("alt: an L2 changes only its own project/task")
         if not DOOR and not local:
             return _forward(args, list(sys.argv[1:] if argv is None else argv), " ".join(filter(None, actor_command)))
+    if ACTOR == chats.ACTOR and actor_command not in READ_COMMANDS:
+        sys.exit(f"alt {c}: not available in an agent chat, whose agent reads but changes nothing in Altitude")
+    if c == "chats" and ACTOR != config.OPERATOR_ACTOR:
+        sys.exit("alt chats: only you read agent chats, in your own terminal or browser")
     if ACTOR == "l3" and actor_command not in L3_COMMANDS:
         sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
     if os.environ.get("ALTITUDE_REPAIR") and actor_command not in REPAIR_COMMANDS:
@@ -1190,6 +1238,8 @@ def main(argv=None) -> None:
         record = l3.tool_summary(_project(args), args.days); out(record) if args.as_json else say(_tools_text(record)); return
     if c == "improve":
         out(improve.status(_project(args), args.run)); return
+    if c == "chats":
+        return _chats(args)
     if c == "agent":
         from altitude import project_agents
         stdin = sys.stdin.read() if "-" in (getattr(args, "brief", None), getattr(args, "text", None)) else ""

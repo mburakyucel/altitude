@@ -295,14 +295,16 @@ export function RoleModelButton({ project, variant = "pill" }: { project?: strin
 // ---- A form's choice: a pick changes only the form ---------------------------------------------
 
 /**
- * The model button inside a form (a routine's Model): the same panel, with Default where a role has Auto. A
- * pick only changes the form's value, saved with the form.
+ * The model button inside a form (a routine's Model) or an agent chat's composer: the same panel, with Default where
+ * a role has Auto. A pick only changes the value its owner holds, saved with the form or the chat.
  */
-export function ChoiceButton({ value, onChange, label }: { value: Choice; onChange: (value: Choice) => void; label: string }) {
+export function ChoiceButton({ value, onChange, label, placement = "down", disabled }: {
+  value: Choice; onChange: (value: Choice) => void; label: string; placement?: "up" | "down"; disabled?: boolean;
+}) {
   const overview = useOverview(false);
   const options = overview.data?.new_tasks ?? undefined;
   const engines = (overview.data?.engines ?? []) as Engines;
-  const menu = useMenu("down");
+  const menu = useMenu(placement);
   const order = engines.length ? engines.map(engineId) : [...new Set((options?.models ?? []).map((m) => m.engine))];
   const groups: Group[] = [{ engine: null, label: "", rows: [{ key: "auto", engine: null, model: null, label: "Default" }] },
     ...order.map((engine) => ({ engine, label: engines.find((e) => engineId(e) === engine)?.label ?? engine,
@@ -323,7 +325,7 @@ export function ChoiceButton({ value, onChange, label }: { value: Choice; onChan
   };
   const model = value?.engine ? modelName(value, options, engines) : "Default";
   const effort = value?.effort ? effortLabel(value.effort, options) : "Default";
-  return <Picker menu={menu} label={`${label}: ${model} · ${effort}${value?.effort ? "" : " effort"}`} menuLabel={label} title={label}
+  return <Picker menu={menu} label={`${label}: ${model} · ${effort}${value?.effort ? "" : " effort"}`} menuLabel={label} title={label} disabled={disabled}
     text={<PairText model={model} effort={effort} unpinned={!value?.effort} />}>
     {!options ? <p className="model-menu-note">{overview.isPending ? <StatusMark label="Loading models…" /> : "Models are unavailable."}</p> : <>
       <Rows name="Model" groups={groups} checked={rowKey(value?.engine, value?.model)} pending="" onPick={pickModel} />

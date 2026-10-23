@@ -19,7 +19,6 @@
 /* The page, in a task's form: its header, chips and conversation come from the task page's own styles. */
 .repair-busy { flex: none; display: inline-flex; align-items: center; gap: 6px; }
 .repair-busy .spinner { width: 12px; height: 12px; }
-.repair-sys-time { font-family: var(--font-mono); font-size: var(--text-label); }
 .repair-center { display: flex; justify-content: center; text-align: center; }
 .repair-you { white-space: pre-wrap; }
 .repair-say { min-width: 0; overflow-wrap: anywhere; }
@@ -37,12 +36,7 @@
 .repair-brief[open] > summary svg { transform: rotate(90deg); }
 .repair-brief pre { margin: 0 12px 12px; max-height: 50dvh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* Steps as Live session's rows, consecutive ones together; the phone leaves out their times. */
-.repair-steps { display: flex; flex-direction: column; gap: 6px; }
-.repair-step .session-hint .spinner { width: 10px; height: 10px; vertical-align: -1px; }
-.repair-step[data-error="true"] { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
-.shell[data-phone] .repair-step .session-time { display: none; }
-@media (prefers-reduced-motion: reduce) { .repair-busy .spinner, .repair-step .spinner { animation: none; } .repair-brief > summary svg { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .repair-busy .spinner { animation: none; } .repair-brief > summary svg { transition: none; } }
 
 /* Question cards, on the page and in Needs you. */
 .repair-question h3 { font-size: var(--text-card-title); font-weight: 600; }

@@ -15,6 +15,7 @@ import TaskFile from "./routes/TaskFile";
 import Monitor from "./routes/Monitor";
 import Settings from "./routes/Settings";
 import Repair from "./routes/Repair";
+import Chat from "./routes/Chat";
 import ProjectSettings from "./routes/ProjectSettings";
 import ProjectAgents from "./routes/ProjectAgents";
 import ProjectAgent from "./routes/ProjectAgent";
@@ -75,6 +76,9 @@ export const routes: RouteObject[] = [
       { path: "/projects/:name/agents/:id", element: <ProjectAgent /> },
       { path: "/projects/:name/agents/:id/edit", element: <ProjectAgentForm /> },
       { path: "/projects/:name/agents/:id/runs/:n", element: <ProjectAgentRun /> },
+      // Agent chats (SPEC.md §3.17): the empty chat the first message makes, and one chat.
+      { path: "/projects/:name/chats/new", element: <Chat /> },
+      { path: "/projects/:name/chats/:id", element: <Chat /> },
       // The project folder's terminal: the desktop panel beside the conversation, full screen on phone.
       { path: "/projects/:name/terminal", element: <ProjectPage /> },
       // Saved decision URLs replace themselves with the owning conversation and durable question anchor.

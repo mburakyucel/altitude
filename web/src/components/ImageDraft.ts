@@ -39,7 +39,7 @@ export function useImageDraft(scope?: ImageScope) {
     if (!scope) return;
     const controller = new AbortController();
     setCapability(null);
-    void api<ImageCapability>(`/api/images/${scope.project}${scope.task ? `?task=${scope.task}` : ""}`, { signal: controller.signal }).then((value) => {
+    void api<ImageCapability>(`/api/images/${scope.project}${scope.task ? `?task=${scope.task}` : scope.engine ? `?engine=${scope.engine}` : ""}`, { signal: controller.signal }).then((value) => {
       if (!controller.signal.aborted) setCapability(ImageCapabilitySchema.parse(value));
     }).catch(() => {
       if (!controller.signal.aborted) setCapability({ ...LIMITS, max_pixels: 25_000_000, max_dimension: 8192, available: false, reason: "Could not check image input. Try again later." });

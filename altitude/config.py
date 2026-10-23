@@ -648,7 +648,7 @@ def activation_pending() -> bool:
 
 def ensure_root() -> None:
     from . import repair
-    for d in (ROOT, MONITOR_DIR, ROOT / "hooks", repair.home()):
+    for d in (ROOT, MONITOR_DIR, ROOT / "hooks", repair.home(), CHATS):
         d.mkdir(parents=True, exist_ok=True)
     if not PROJECTS_FILE.exists():
         storage.replace(PROJECTS_FILE, b"{}\n")
@@ -832,6 +832,9 @@ def beside_root(name: str) -> Path:
 SOURCE_COPY = beside_root("repository")
 # Each task worker's own writable folder for drafts and tool caches. altd makes and deletes it and never reads it.
 SCRATCH = beside_root("scratch")
+#: Agent chats, every project's (`chats`): only the operator reads them, so every agent session's sandbox hides this
+#: folder, apart from a chat turn's own engine and scratch folders (`platform.job_command`).
+CHATS = beside_root("chats")
 
 
 def task_scratch(name: str, slug: str) -> Path:

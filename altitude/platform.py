@@ -1604,9 +1604,10 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
     `writable` confines the job with Altitude's own sandbox, Seatbelt on macOS and bubblewrap on Linux: it may signal
     only its own processes and write only under these roots and its temporary folder, except under `read_only`,
     never reads Altitude's credentials, the operator's stored credentials (`credential_places`), the engines' places
-    of the operator's own (`engines.operator_places`) or the repairs' records (`repair.home`), except a `read_only`
-    path inside one, and reaches no Unix socket of the desktop session; `sockets` are the ones outside its roots it may
-    reach. Without it, file confinement is left to the engine.
+    of the operator's own (`engines.operator_places`), the repairs' records (`repair.home`) or the agent chats
+    (`config.CHATS`), except a `read_only` path or a writable root inside one (a chat turn's own engine folder), and
+    reaches no Unix socket of the desktop session; `sockets` are the ones outside its roots it may reach. Without it,
+    file confinement is left to the engine.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
     creates the child. This lets nested bwrap initialize without weakening altd's ``NoNewPrivileges=yes`` boundary.
@@ -1635,14 +1636,16 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
 
 def _operator_places(places=None) -> list[str]:
     """The folders and files of the operator's own that no job in Altitude's sandbox sees (`places`, by default their
-    stored credentials, every engine's places and the repairs' records), resolved, present or not; a place ending in *
-    stands for every name in its folder that starts with it, and is followed by where each such name present now that
-    is a link leads. On macOS each is also spelled through the data volume's other name, as `secret_places` spells
-    them."""
-    from . import repair
+    stored credentials, every engine's places, the repairs' records and the agent chats, whose folders
+    `config.ensure_root` makes, so what they later hold stays hidden too), resolved, present or not; a place ending in
+    * stands for every name in its folder that starts with it, and is followed by where each such name present now
+    that is a link leads. On macOS each is also spelled through the data volume's other name, as `secret_places`
+    spells them."""
+    from . import config, repair
     from .engines import common
     found = []
-    for place in (*credential_places(), *common.operator_places(), str(repair.home())) if places is None else places:
+    for place in (*credential_places(), *common.operator_places(), str(repair.home()), str(config.CHATS)) \
+            if places is None else places:
         if not place.endswith("*"):
             found.append(os.path.realpath(place))
             continue
@@ -3006,9 +3009,10 @@ def seatbelt_profile(writable: list[str], read_only: list[str] = (), *, temporar
     decide, so rules follow from shallow to deep. It reaches Unix sockets only under its own roots and `temporary`
     folder, at `sockets` and the system's, never one another program keeps in the shared temporary folders. It
     neither reads nor writes a `hidden` folder or file, or any path a hidden * place starts, apart from reading the
-    `read_only` paths inside a hidden folder, as named and resolved, each also through the data volume; these rules
-    come before the private places' refusal, which stays last. launchd refuses service control to every sandboxed
-    process, and the profile refuses the keychain and the services and Apple Events that would run a program outside
+    `read_only` paths inside a hidden folder, as named and resolved, each also through the data volume, and reading a
+    `writable` root inside one, whose write rules then follow again (a chat turn's own engine folder, as on Linux);
+    these rules come before the private places' refusal, which stays last. launchd refuses service control to every
+    sandboxed process, and the profile refuses the keychain and the services and Apple Events that would run a program outside
     it."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
     rules = []
@@ -3025,9 +3029,11 @@ def seatbelt_profile(writable: list[str], read_only: list[str] = (), *, temporar
                                  for kept in (path, os.path.realpath(path)))
     folders = [place for place in hidden if not place.endswith("*")]
     refused = (*_filters("subpath", folders), *(_prefix_rule(place[:-1]) for place in hidden if place.endswith("*")))
+    inside = [root for root in own if _inside(root, folders)]
     hide = "".join(f"(deny file-read* file-write* {rule})" for rule in refused) + "".join(
         f"(allow file-read-metadata {rule})" for rule in _filters("literal", folders)) + "".join(
-        f"(allow file-read* {rule})" for rule in _filters("subpath", reopened))
+        f"(allow file-read* {rule})" for rule in _filters("subpath", [*reopened, *_volume_spellings(inside)])) + "".join(
+        f"({verdict} file-write* {rule})" for path, verdict, rule in rules if _inside(path, inside))
     return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))(deny file-write*)"
             + "".join(f"({verdict} file-write* {rule})" for _, verdict, rule in rules) + hide
             + unix_socket_rule(own, map(os.path.realpath, sockets)) + private_rule() + SERVICE_ESCAPES)

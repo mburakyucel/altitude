@@ -194,7 +194,7 @@ export function useChangeStream() {
       void queryClient.invalidateQueries({ queryKey: ["monitor"] });
       void queryClient.invalidateQueries({ queryKey: ["repairs"] });
       void queryClient.invalidateQueries({ queryKey: ["repair"] });
-      for (const kind of ["project", "task"]) {
+      for (const kind of ["project", "task", "agent-chats", "agent-chat"]) {
         for (const project of projects ?? [undefined]) {
           void queryClient.invalidateQueries({ queryKey: project === undefined ? [kind] : [kind, project] });
         }
@@ -1431,13 +1431,18 @@ const RepairCheckSchema = z.object({
 });
 /** One line of an app repair's page, oldest first: a system line, what you wrote, the agent's words and steps, its
  * questions, and an earlier round's report. */
+/** What an agent said and did, as a repair's page and an agent chat's turns show it (`altitude/steps.py`). */
+const SayItemSchema = z.object({ kind: z.literal("say"), at: z.string().nullish(), text: z.string() });
+const StepItemSchema = z.object({ kind: z.literal("step"), at: z.string().nullish(),
+  verb: z.enum(["ran", "failed", "changed", "fetched", "running", "cut"]), text: z.string(), detail: z.string(),
+  output: z.string(), exit: z.number().nullish() });
+export type StepItem = z.infer<typeof StepItemSchema>;
 export const RepairItemSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("event"), at: z.string(), event: z.enum(["started", "restarting", "back", "kept_going", "failed"]),
     text: z.string().nullish(), resumed: z.boolean().optional() }),
   z.object({ kind: z.literal("you"), at: z.string(), text: z.string() }),
-  z.object({ kind: z.literal("say"), at: z.string().nullish(), text: z.string() }),
-  z.object({ kind: z.literal("step"), at: z.string().nullish(), verb: z.enum(["ran", "failed", "changed", "fetched", "running", "cut"]),
-    text: z.string(), detail: z.string(), output: z.string(), exit: z.number().nullish() }),
+  SayItemSchema,
+  StepItemSchema,
   z.object({ kind: z.literal("question"), at: z.string(), id: z.string(), type: z.enum(["ask", "step"]), title: z.string(),
     reason: z.string().nullable(), command: z.string(), answer: z.enum(["yes", "no", "ran", "expired"]).nullable(),
     answered: z.string().nullable() }),
@@ -1515,6 +1520,77 @@ export function useRepairAction<T>(request: (input: T) => Promise<Repair>) {
       void client.invalidateQueries({ queryKey: ["repairs"] });
       void client.invalidateQueries({ queryKey: ["overview"] });
     },
+  });
+}
+
+/**
+ * Agent chats (docs/ARCHITECTURE.md#agent-chats): conversations you drive with one of the project's coding agents, in
+ * its own copy of the code. `state` is the row's: answering (or starting) while a turn runs, failed when the last turn
+ * could not answer, idle, or archived. `latest` is the newest of your message and its reply, which orders the list.
+ */
+const AgentChatStateSchema = z.enum(["idle", "starting", "answering", "failed", "archived"]);
+export const AgentChatRowSchema = z.object({
+  id: z.string(), name: z.string(), state: AgentChatStateSchema, engine: z.string().nullable(), model: z.string().nullable(),
+  archived: z.string().nullable(), created: z.string(), latest: z.object({ at: z.string(), by: z.enum(["you", "agent"]) }),
+});
+export type AgentChatRow = z.infer<typeof AgentChatRowSchema>;
+const AgentChatsSchema = z.object({ chats: z.array(AgentChatRowSchema) });
+/** One line of a chat, in order: a system line, your message (waiting while a turn runs), or a turn with its steps and
+ * reply, or why it could not answer. */
+export const AgentChatItemSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("event"), at: z.string(), event: z.enum(["started", "new_session", "restarted", "archived", "reopened"]),
+    engine: z.string().nullish(), model: z.string().nullish() }),
+  z.object({ kind: z.literal("you"), id: z.string(), at: z.string(), text: z.string(), images: z.array(MessageImageSchema),
+    waiting: z.boolean() }),
+  z.object({ kind: z.literal("turn"), n: z.number(), state: z.enum(["starting", "answering", "done", "stopped", "failed", "cut"]),
+    started: z.string(), ended: z.string().nullable(), engine: z.string().nullable(), model: z.string().nullable(),
+    engine_model: z.string().nullish(), answer: z.string().nullable(), error: z.string().nullable(), stop: z.boolean().nullish(),
+    steps: z.array(z.discriminatedUnion("kind", [SayItemSchema, StepItemSchema])) }),
+]);
+export type AgentChatItem = z.infer<typeof AgentChatItemSchema>;
+export const AgentChatSchema = AgentChatRowSchema.extend({
+  choice: ChoiceSchema, effort: z.string().nullish(), items: z.array(AgentChatItemSchema),
+  /** Files its copy changed since main, committed or not; null while it has no copy. */
+  changes: z.number().nullable(),
+  context: z.number().nullish(),
+});
+export type AgentChat = z.infer<typeof AgentChatSchema>;
+
+/** The project's agent chats, most recent first; followed while one answers. */
+export function useAgentChats(project: string) {
+  return useQuery({
+    queryKey: ["agent-chats", project], queryFn: async () => AgentChatsSchema.parse(await api(`/api/chats/${project}`)),
+    refetchInterval: (query) => query.state.data?.chats.some((row) => row.state === "answering" || row.state === "starting") ? 5000 : false,
+  });
+}
+
+/** One chat; while a turn runs the page follows its steps every two seconds. */
+export function useAgentChat(project: string, id: string | undefined) {
+  return useQuery({
+    queryKey: ["agent-chat", project, id], enabled: Boolean(id),
+    queryFn: async () => AgentChatSchema.parse(await api(`/api/chats/${project}/${id ?? ""}`)),
+    retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 3,
+    refetchInterval: (query) => query.state.data && (query.state.data.state === "answering" || query.state.data.state === "starting") ? 2000 : false,
+  });
+}
+
+/** A chat request: each names itself, so a repeated tap or a retried request acts once; the answer is the chat. */
+export async function agentChatRequest(project: string, path: string, body: Record<string, unknown>, request: string): Promise<AgentChat> {
+  return AgentChatSchema.parse(await post(`/api/chats/${project}${path}`, { ...body, request }));
+}
+
+/** Delete an archived chat for good: its conversation, session and images. */
+export async function deleteAgentChat(project: string, id: string, request: string): Promise<void> {
+  await post(`/api/chats/${project}/${id}/delete`, { request });
+}
+
+/** Start, steer, rename, archive or reopen a chat; its page and Work's list follow the result. */
+export function useAgentChatAction<T>(project: string, request: (input: T) => Promise<AgentChat>) {
+  const client = useQueryClient();
+  return useMutation<AgentChat, Error, T>({
+    mutationFn: request,
+    onSuccess: (chat) => client.setQueryData(["agent-chat", project, chat.id], chat),
+    onSettled: () => void client.invalidateQueries({ queryKey: ["agent-chats", project] }),
   });
 }
 
@@ -2229,7 +2305,7 @@ export async function forgetProject(queryClient: QueryClient, name: string) {
     queue: cached.queue.filter((row) => row.project !== name),
   });
   forgetPending(queryClient, name);
-  for (const kind of ["project", "chat", "chat-outbox", "task", "task-outbox", "transcript"]) {
+  for (const kind of ["project", "chat", "chat-outbox", "task", "task-outbox", "transcript", "agent-chats", "agent-chat"]) {
     await queryClient.cancelQueries({ queryKey: [kind, name] });
     queryClient.removeQueries({ queryKey: [kind, name] });
   }
