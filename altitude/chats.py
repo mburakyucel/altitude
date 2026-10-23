@@ -1,8 +1,8 @@
 """Agent chats: conversations the operator drives with one of the project's coding agents, from their browser, with no
 brief, proposal or pull request (docs/ARCHITECTURE.md#agent-chats).
 
-A chat is a record in Altitude's chats folder (`chats/<project>/<id>/chat.json`), which every agent's sandbox hides: its name, the engine and model it answers
-with, its engine session, its copy of the code and its conversation. Each message the operator sends waits until the
+A chat is a record in the chats folder beside Altitude's home (`~/.altitude-chats/<project>/<id>/chat.json`), which
+every agent's sandbox hides: its name, the engine and model it answers with, its engine session, its copy of the code and its conversation. Each message the operator sends waits until the
 chat's previous turn ends, and the messages waiting then go together as its next turn: a worker job of the chat role,
 restricted as a routine run is but committing on its own branch (`engines.start_chat_turn`), in the chat's own copy of
 the project, a worktree on the `chat-<id>` branch made from the fetched main at its first turn, resuming the chat's one
@@ -55,7 +55,8 @@ def home(project: str) -> Path:
 
 
 def folder(project: str, chat_id: str) -> Path:
-    """A chat's own folder: its record (`chat.json`) and its engine folder (`l2-engine`), which keeps its session."""
+    """A chat's own folder: its record (`chat.json`), its engine folder (`l2-engine`), which keeps its session, and
+    its agent's scratch folder (`scratch`)."""
     if not isinstance(chat_id, str) or not ID.fullmatch(chat_id):
         raise Missing("There is no such chat.")
     return home(project) / chat_id
@@ -70,7 +71,7 @@ def branch(chat_id: str) -> str:
 
 
 def _scratch(project: str, chat_id: str) -> Path:
-    return config.task_scratch(project, f"chat-{chat_id}")
+    return folder(project, chat_id) / "scratch"
 
 
 def load(project: str, chat_id: str) -> dict:

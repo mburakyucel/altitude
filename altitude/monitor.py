@@ -5,8 +5,9 @@ import time
 from . import chats, engines, config, improve, project_agents, route, state as S
 
 
-def sessions() -> list[dict]:
-    """The sessions Altitude runs: each project's L3, its live task owners (L2) and its running agents."""
+def sessions(*, chats_too: bool = False) -> list[dict]:
+    """The sessions Altitude runs: each project's L3, its live task owners (L2) and its running agents, and with
+    `chats_too`, which only a paired browser's Monitor asks, its answering agent chats."""
     out = []
     for name in config.load_projects():
         inf = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
@@ -31,7 +32,8 @@ def sessions() -> list[dict]:
                             "model": t.get("engine_model"), "engine_reasoning_effort": t.get("engine_reasoning_effort"),
                             "context_state": engines.context_state(cp, engine)})
         out.extend(project_agents.monitor_sessions(name))
-        out.extend(chats.monitor_sessions(name))
+        if chats_too:
+            out.extend(chats.monitor_sessions(name))
     for row in out:
         if not row.get("model"):
             row.pop("model", None)

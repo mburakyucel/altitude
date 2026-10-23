@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from unittest import mock
 
 from tests.support import REPO, AltitudeCase, git, make_repo
 from altitude import (access, chats, config, engines, git_policy, images, monitor, platform, route, server, state as S,
@@ -211,7 +212,7 @@ class TestTurns(ChatCase):
         chats._start(self.project, chat_id)
         chats.service_started()
         self.assertEqual([e["kind"] for e in self.chat(chat_id)["events"]], ["restarted"])
-        rows = monitor.sessions()
+        rows = monitor.sessions(chats_too=True)
         row = next(r for r in rows if r.get("kind") == "chat")
         self.assertEqual((row["chat_id"], row["name"], row["engine"]), (chat_id, "Why is the export slow?", "claude"))
         self.answered_all(chat_id)
@@ -462,11 +463,19 @@ class TestLaunch(ChatCase):
             profile = platform.seatbelt_profile(writable, [str(path) for path in read_only],
                                                 temporary=str(self.tmp / "job-tmp"), hidden=hidden)
             deny = profile.index(f'(deny file-read* file-write* (subpath "{chats_folder}"))')
-            self.assertGreater(profile.index(f'(allow file-read* file-write* (subpath "{own}"))'), deny,
-                               f"{engine}: Seatbelt's later rule reopens the turn's own folder")
+            for verb in ("read", "write"):
+                self.assertGreater(profile.rindex(f'(allow file-{verb}* (subpath "{own}"))'), deny,
+                                   f"{engine}: Seatbelt's later rules reopen the turn's own folder")
             self.assertNotIn(other, profile, engine)
-        rules = next(s for s in engines.codex_l3_permissions(copy, project=self.project) if ".filesystem=" in s)
-        self.assertIn(f'"{chats_folder}"="deny"', rules, "the Codex coordinator, outside Altitude's sandbox, too")
+        settings = f"{own}/settings"  # a read-only path in a reopened root stays read-only, as on Linux
+        profile = platform.seatbelt_profile([own], [settings], temporary=str(self.tmp / "job-tmp"), hidden=hidden)
+        self.assertGreater(profile.rindex(f'(deny file-write* (subpath "{settings}"))'),
+                           profile.rindex(f'(allow file-write* (subpath "{own}"))'))
+        # This case's chats lie in the shared temporary folder, which a Codex profile refuses whole.
+        with mock.patch.object(platform, "operator_paths", return_value=["/home/fictional/.altitude-chats"]) as named:
+            rules = next(s for s in engines.codex_l3_permissions(copy, project=self.project) if ".filesystem=" in s)
+        self.assertIn(str(config.CHATS), named.call_args.args[0])
+        self.assertIn('"/home/fictional/.altitude-chats"="deny"', rules, "the Codex coordinator, outside Altitude's sandbox")
 
 
 class TestWhoReads(ChatCase):
@@ -536,6 +545,20 @@ class TestWhoReads(ChatCase):
         self.assertEqual(self.call("POST", f"{base}/{'0' * 12}/stop", {"request": "request-0004"}, status=404)["error"],
                          "There is no such chat.")
         self.assertEqual(self.call("GET", "/api/chats/elsewhere", status=404)["error"], "There is no such project.")
+
+    def test_only_the_paired_browsers_monitor_shows_an_answering_chat(self):
+        self.patch(monitor, "routing", return_value=[])  # this case's engine choice is a fixture
+        chat_id = self.new("Tidy the fixtures")
+        chats._start(self.project, chat_id)
+        rows = self.call("GET", "/api/monitor", status=200)["sessions"]
+        self.assertEqual([r["chat_id"] for r in rows if r.get("kind") == "chat"], [chat_id])
+        alt = [sys.executable, str(REPO / "bin" / "alt"), "monitor"]
+        for actor in ("l3", None):  # L3's broker runs `alt monitor` inside altd, outside every sandbox
+            env = {**{k: v for k, v in os.environ.items() if k != "ALTITUDE_ACTOR"}, **({"ALTITUDE_ACTOR": actor} if actor else {})}
+            seen = subprocess.run(alt, capture_output=True, text=True, env=env)
+            self.assertEqual(seen.returncode, 0, seen.stderr)
+            self.assertNotIn(chat_id, seen.stdout, actor)
+            self.assertNotIn("Tidy the fixtures", seen.stdout, actor)
 
     def test_alt_chats_is_the_operators_alone_and_a_chats_agent_only_reads(self):
         chat_id = self.new("Tidy the fixtures")

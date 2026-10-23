@@ -254,7 +254,8 @@ and action responses crossing the move return the archived task and state; an ev
 the archived log the same way, so the overview walking every task survives an archive mid-walk.
 Task status, documents and events share the archive lock while their snapshot is read.
 `GET /api/monitor` and `alt monitor` list only sessions Altitude runs: each project's L3 and its
-running, blocked or reported L2 tasks. Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
+running, blocked or reported L2 tasks and its running agents; a paired browser's `GET /api/monitor` also lists its
+answering [agent chats](#agent-chats). Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
 The configuration seam resolves model and effort through the existing routing paths. Explicit
@@ -1578,7 +1579,7 @@ home), the job's own engine folder and its own temporary folder, and never reads
 Altitude's credentials, the common browsers' profiles, the operator's stored credentials (below) or the
 operator's own Codex folder, Claude folder and Claude state file (`engines.operator_places`), apart from the entries
 its launch reopens read-only, or the [agent chats](#agent-chats) (`config.CHATS`), apart from a chat turn's own
-engine folder. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
+engine and scratch folders. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
 or the launcher's job folders, which hold each job's piped input and relay its output;
 launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
@@ -2860,7 +2861,7 @@ repair publishes the change stream's repairs key, which refreshes the shell's re
 
 An agent chat is a conversation the operator drives with one of a project's coding agents, from a paired
 browser, with no brief, proposal or pull request ([walkthrough](WALKTHROUGH.md#agent-chats)). Each chat
-is one record, `chats/<project>/<id>/chat.json` under Altitude's home, changed under the project lock:
+is one record, `~/.altitude-chats/<project>/<id>/chat.json` beside Altitude's home, changed under the project lock:
 its name, the model choice and the engine, model and session it answers with, its copy's base commit,
 whether and when it was archived, its messages, its turns and its system lines, each with a sequence
 number that orders the conversation. The operator's images go to the project's image store with the
@@ -2882,7 +2883,7 @@ with Retry. Tidy and task cleanup leave `chat-<id>` copies alone. A turn takes n
 while Altitude restarts.
 
 The first turn's session is the chat's session, and later turns resume it from the chat's own engine
-folder (`chats/<project>/<id>/l2-engine`). When the answering engine is not the one holding the session,
+folder (`~/.altitude-chats/<project>/<id>/l2-engine`). When the answering engine is not the one holding the session,
 because the operator chose another model or a resume fails, the turn starts a new session given the
 conversation so far as quoted evidence, and the conversation shows that line. The thread follows the
 worker (`engines.owned_worker`), records the session's context, and records the turn's end: its
@@ -2908,8 +2909,10 @@ Each request carries an identity the record keeps, so a repeat acts once. Every 
 paired device's cookie, passes the page's own-origin and [own agents](#altitudes-own-agents) checks and
 refuses the machine key, as repair routes do: no agent reads or steers a chat through Altitude. Every job in
 [Altitude's sandbox](#isolation-and-landing), L3's included, and a Codex coordinator's own profile hide the chats
-folder (`config.CHATS`), so no agent reads a chat's record; a chat turn's job reopens only its own engine folder,
-which keeps its session. Like a task worker, a chat's agent reads what the operator's account reads outside the
+folder (`config.CHATS`), which altd makes with its home, so no agent reads a chat's record or its turns' output; a
+chat turn's job reopens only its own engine folder, which keeps its session, and its scratch folder. The Monitor rows
+of answering chats go only to a paired browser, never to `alt monitor`. A chat's copy and branch are readable to the
+project's other agents, as a task's are. Like a task worker, a chat's agent reads what the operator's account reads outside the
 hidden places, other projects' code included, and reaches the network. The operator's terminal reads chats with `alt chats`. A chat's file changes
 publish the change stream's project key, which refreshes its reads; a running turn is a Monitor
 session row. Chats never appear in Needs you, the project's tasks in flight or L3's records.

@@ -463,15 +463,15 @@ def _codex_home(env: dict) -> Path:
 def denied() -> tuple[str, ...]:
     """What every Codex profile Altitude sets refuses: the places no sandbox Altitude applies reaches (the per-user
     runtime folder on Linux, the job folders on macOS), macOS's private places, Altitude's credentials, and the
-    operator's stored credentials (`platform.credential_places`) and other engines' folders and files present now
-    (`platform.operator_paths`), apart from any inside the others, which Codex's Linux sandbox could not hide again,
+    operator's stored credentials (`platform.credential_places`), other engines' folders and files and the agent chats
+    (`config.CHATS`) present now (`platform.operator_paths`), apart from any inside the others, which Codex's Linux sandbox could not hide again,
     and the shared temporary folders. A narrower entry reopens a folder inside them: a coordinator's working folder in
     the runtime folder, and the job's own temporary folder, its TMPDIR (`:tmpdir`), which `platform.job_command` makes
     in /tmp."""
     refused = (*map(str, platform.job_control_paths()), *platform.private_places(), *platform.secret_places())
     shared = (os.path.realpath("/tmp"), os.path.realpath("/var/tmp"))
     others = [path for path in platform.operator_paths((*platform.credential_places(), *(
-                  place for place in common.operator_places() if place not in operator_places())))
+                  place for place in common.operator_places() if place not in operator_places()), str(config.CHATS)))
               if not any(Path(path).is_relative_to(place) for place in (*refused, *shared))]
     return (*refused, *others, ":slash_tmp", shared[1])
 
@@ -626,7 +626,7 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     broker = verb_socket_path(project).resolve()
     rules = {":root": "read", str(Path(cwd).resolve()): "write",
              str(config.project_path(project).resolve()): "read", str(config.DOCS.resolve()): "read",
-             **dict.fromkeys(denied(), "deny"), str(config.CHATS.resolve()): "deny"}
+             **dict.fromkeys(denied(), "deny")}
     filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
                                    for path, access in rules.items()) + "}"
     # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's

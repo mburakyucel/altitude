@@ -183,9 +183,6 @@ PROJECTS_FILE = ROOT / "projects.json"
 MONITOR_DIR = ROOT / "monitor"
 INCIDENT_INDEX = ROOT / "incidents.jsonl"
 DIGEST_FILE = ROOT / "DIGEST.md"
-#: Agent chats, every project's (`chats`): only the operator reads them, so every agent session's sandbox hides this
-#: folder, apart from a chat turn's own engine folder (`platform.job_command`).
-CHATS = ROOT / "chats"
 
 
 def task_effort(engine: str | None, effort: str | None, *, role: str = "l2") -> str | None:
@@ -650,7 +647,7 @@ def activation_pending() -> bool:
 
 
 def ensure_root() -> None:
-    for d in (ROOT, MONITOR_DIR, ROOT / "hooks"):
+    for d in (ROOT, MONITOR_DIR, ROOT / "hooks", CHATS):
         d.mkdir(parents=True, exist_ok=True)
     if not PROJECTS_FILE.exists():
         storage.replace(PROJECTS_FILE, b"{}\n")
@@ -834,6 +831,9 @@ def beside_root(name: str) -> Path:
 SOURCE_COPY = beside_root("repository")
 # Each task worker's own writable folder for drafts and tool caches. altd makes and deletes it and never reads it.
 SCRATCH = beside_root("scratch")
+#: Agent chats, every project's (`chats`): only the operator reads them, so every agent session's sandbox hides this
+#: folder, apart from a chat turn's own engine and scratch folders (`platform.job_command`).
+CHATS = beside_root("chats")
 
 
 def task_scratch(name: str, slug: str) -> Path:

@@ -2691,7 +2691,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 400)
             if api == "monitor":
                 return self._json({"seats": route.seats(), "reserve": config.RESERVE, "routing": monitor.routing(),
-                                   "sessions": monitor.sessions(), "agents": monitor.agents(), "clock": schedule.zone()})
+                                   "sessions": monitor.sessions(chats_too=bool(self._device) and self.headers.get(
+                                       access.KEY_HEADER) is None),
+                                   "agents": monitor.agents(), "clock": schedule.zone()})
             if api == "digest":
                 return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:

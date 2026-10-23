@@ -393,7 +393,7 @@ class TestAgentChats(HomeSandboxCase):
     only its own engine folder inside them."""
 
     def test_a_chat_turn_reads_and_writes_its_own_engine_folder_and_nothing_else_of_the_chats(self):
-        chats_folder = Path(os.path.realpath(self.tmp)) / "altitude" / "chats"
+        chats_folder = Path(os.path.realpath(self.tmp)) / "altitude-chats"
         self.patch(config, "CHATS", chats_folder)
         own, other = chats_folder / "atlas/aaaaaaaaaaaa", chats_folder / "atlas/bbbbbbbbbbbb"
         engine = own / "l2-engine/claude"
@@ -401,12 +401,20 @@ class TestAgentChats(HomeSandboxCase):
         other.mkdir(parents=True)
         for path in (own / "chat.json", other / "chat.json", engine / "session.jsonl"):
             path.write_text("fictional chat")
-        files = {"own record": own / "chat.json", "other chat": other / "chat.json", "session": engine / "session.jsonl"}
-        seen = self.job(files, engine / "written", engine, hidden=platform._operator_places(), writable=[engine])
+        later = chats_folder / "atlas/cccccccccccc/chat.json"
+
+        def started_later():
+            later.parent.mkdir()
+            later.write_text("fictional chat")
+
+        files = {"own record": own / "chat.json", "other chat": other / "chat.json", "later chat": later,
+                 "session": engine / "session.jsonl"}
+        seen = self.job(files, engine / "written", engine, hidden=platform._operator_places(), writable=[engine],
+                        before=started_later)
         # Linux shows the hidden folder empty; Seatbelt refuses it.
         refused = errno.EPERM if NATIVE_PLATFORM == "darwin" else errno.ENOENT
-        self.assertEqual(seen, {"own record": refused, "other chat": refused, "session": "fictional chat",
-                                "write": "written", "listing": ["session.jsonl", "written"]})
+        self.assertEqual(seen, {"own record": refused, "other chat": refused, "later chat": refused,
+                                "session": "fictional chat", "write": "written", "listing": ["session.jsonl", "written"]})
         self.assertTrue((engine / "written").exists(), "the turn's own folder is the host's")
 
 

@@ -1635,14 +1635,12 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
 
 def _operator_places(places=None) -> list[str]:
     """The folders and files of the operator's own that no job in Altitude's sandbox sees (`places`, by default their
-    stored credentials, every engine's places and the agent chats, whose folder is made first so that what it later
-    holds stays hidden too), resolved, present or not; a place ending in * stands for every name
+    stored credentials, every engine's places and the agent chats, whose folder `config.ensure_root` makes, so what
+    it later holds stays hidden too), resolved, present or not; a place ending in * stands for every name
     in its folder that starts with it, and is followed by where each such name present now that is a link leads. On
     macOS each is also spelled through the data volume's other name, as `secret_places` spells them."""
     from . import config
     from .engines import common
-    if places is None:
-        config.CHATS.mkdir(parents=True, exist_ok=True)
     found = []
     for place in (*credential_places(), *common.operator_places(), str(config.CHATS)) if places is None else places:
         if not place.endswith("*"):
@@ -3008,9 +3006,10 @@ def seatbelt_profile(writable: list[str], read_only: list[str] = (), *, temporar
     decide, so rules follow from shallow to deep. It reaches Unix sockets only under its own roots and `temporary`
     folder, at `sockets` and the system's, never one another program keeps in the shared temporary folders. It
     neither reads nor writes a `hidden` folder or file, or any path a hidden * place starts, apart from reading the
-    `read_only` paths inside a hidden folder, as named and resolved, each also through the data volume, and reading
-    and writing a `writable` root inside one; these rules come before the private places' refusal, which stays last. launchd refuses service control to every sandboxed
-    process, and the profile refuses the keychain and the services and Apple Events that would run a program outside
+    `read_only` paths inside a hidden folder, as named and resolved, each also through the data volume, and reading a
+    `writable` root inside one, whose write rules then follow again (a chat turn's own engine folder, as on Linux);
+    these rules come before the private places' refusal, which stays last. launchd refuses service control to every
+    sandboxed process, and the profile refuses the keychain and the services and Apple Events that would run a program outside
     it."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
     rules = []
@@ -3027,11 +3026,11 @@ def seatbelt_profile(writable: list[str], read_only: list[str] = (), *, temporar
                                  for kept in (path, os.path.realpath(path)))
     folders = [place for place in hidden if not place.endswith("*")]
     refused = (*_filters("subpath", folders), *(_prefix_rule(place[:-1]) for place in hidden if place.endswith("*")))
-    inside = _volume_spellings(root for root in own if _inside(root, folders))
+    inside = [root for root in own if _inside(root, folders)]
     hide = "".join(f"(deny file-read* file-write* {rule})" for rule in refused) + "".join(
         f"(allow file-read-metadata {rule})" for rule in _filters("literal", folders)) + "".join(
-        f"(allow file-read* {rule})" for rule in _filters("subpath", reopened)) + "".join(
-        f"(allow file-read* file-write* {rule})" for rule in _filters("subpath", inside))
+        f"(allow file-read* {rule})" for rule in _filters("subpath", [*reopened, *_volume_spellings(inside)])) + "".join(
+        f"({verdict} file-write* {rule})" for path, verdict, rule in rules if _inside(path, inside))
     return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))(deny file-write*)"
             + "".join(f"({verdict} file-write* {rule})" for _, verdict, rule in rules) + hide
             + unix_socket_rule(own, map(os.path.realpath, sockets)) + private_rule() + SERVICE_ESCAPES)

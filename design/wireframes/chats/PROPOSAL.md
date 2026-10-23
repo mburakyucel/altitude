@@ -100,7 +100,8 @@ gates, other projects and other tasks' copies are out of the agent's reach whate
 **Who can see and steer a chat.** Starting, messaging, renaming, Make a task, computer access, archiving,
 reopening and deleting come from a paired browser only and refuse the machine key and every Altitude
 agent, as repair routes do. Reading a chat takes a paired browser or your own terminal; L3, task workers
-and other chats are refused, so what a chat saw never reaches an agent that did not see it.
+and other chats are refused, so no other agent reads its conversation. Its copy, branch and images are the
+project's, readable as a task's are.
 
 ## Where chats show
 
@@ -127,7 +128,7 @@ pill offers another. Engine differences stay behind the seam.
 `GET /api/chats/<project>` lists a project's chats; `GET /api/chats/<project>/<id>` is one chat with its
 conversation, running turn and steps; `POST /api/chats` takes `new`, `message`, `rename`, `stop`, `access`,
 `task`, `archive`, `reopen` and `delete`, each with a request id whose repeat returns the first result.
-Records live in `chats/<project>/<id>/` under Altitude's home, a folder every agent's sandbox hides: `chat.json` (name, engine, model, session,
+Records live in `~/.altitude-chats/<project>/<id>/` beside Altitude's home, a folder every agent's sandbox hides: `chat.json` (name, engine, model, session,
 copy, access, archived) and `conversation.jsonl`; images go to the project's image store. `alt chats list
 [--archived] [--json]` and `alt chats show <chat> [--json]` read them and are in no agent's `alt`.
 
@@ -155,7 +156,7 @@ Stop ends the job; a turn survives a service restart and a lost one reads cut of
 restarts with the conversation as quoted context; the copy is made from main, kept while open, removed on
 archive only after the unsaved-changes answer, and ignored by tidy and task cleanup; Make a task pins one
 commit per press, the task starts from it and the chat's copy starts again from main; every route refuses
-agents, L3, the machine key and replays; no agent's sandbox shows the chats, apart from a turn's own engine folder; with computer access
+agents, L3, the machine key and replays; no agent's sandbox shows the chats, apart from a turn's own engine and scratch folders; with computer access
 the hidden places stay unreadable and the checkout read-only, only from a paired browser and only from the
 next turn. Engine calls are fixtures at the engine seam; live engine behaviour and the Mac's native
 confinement stay listed on the issue for the Mac installation.
