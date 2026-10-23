@@ -100,7 +100,7 @@ and with which sign-in; Altitude ships example scripts as it does for events.
   that check, none only in the brief.
 - **Commands run as `alt task run` runs them**: a transient unit outside every sandbox, at most 10 minutes,
   one at a time, within the machine's command places, recorded with output and exit status. A command is
-  you in every way but the run's text, which reaches only a command you mark to take it
+  you in every way; the run chooses only which one and when, and passes it no text
   ([COMMANDS.md](COMMANDS.md)).
 - **No loops.** No action sends an event or starts a routine; a pull request reaches your own merge
   scripts only after you merge it.

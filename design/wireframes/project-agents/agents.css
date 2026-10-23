@@ -168,7 +168,14 @@ a.agentsrow{display:flex;align-items:center;justify-content:space-between;color:
 .chghead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px 0 10px}.chghead h2{margin:0}.chghead .btn.sm{height:30px;font-size:13px;padding:0 12px}
 .m .chghead .btn.sm,.phonesheet .chghead .btn.sm{height:44px}
 .report code{overflow-wrap:anywhere}
-.trig .tr.cmd code{display:block;font-family:var(--font-mono,ui-monospace,monospace);font-size:12.5px;color:var(--text-secondary,var(--text-muted));margin-top:2px;white-space:pre-wrap;overflow-wrap:anywhere}
+.trig .tr.cmd{align-items:flex-start}
+.trig .tr.cmd code{display:block;font-family:var(--font-mono,ui-monospace,monospace);font-size:12.5px;color:var(--text-muted);margin-top:2px;white-space:normal}
+.w{display:inline-block;max-width:100%;overflow-wrap:anywhere;white-space:pre-wrap}
+.trig .tr.cmd .acts{display:flex;gap:6px;flex:none}
+.m .trig .tr.cmd,.phonesheet .trig .tr.cmd{flex-wrap:wrap}
+.m .trig .tr.cmd .tx,.phonesheet .trig .tr.cmd .tx{flex:1 1 100%}
+.m .trig .tr.cmd .btn.sm,.phonesheet .trig .tr.cmd .btn.sm,.m .draft .btn.sm,.phonesheet .draft .btn.sm{height:44px}
+.sublab{font-size:13px;font-weight:600;margin:14px 0 6px}
+.draft{display:flex;gap:8px;margin-top:12px}
 .field.mono{font-family:var(--font-mono,ui-monospace,monospace);font-size:13px;min-height:64px}
 .chg pre.out{margin:6px 0 0;padding:8px 10px;background:var(--bubble);border-radius:8px;font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--font-mono,ui-monospace,monospace)}
-.trig .tr.cmd .takes{display:block;font-size:12.5px;color:var(--text-muted);margin-top:4px}
