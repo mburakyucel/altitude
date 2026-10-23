@@ -226,7 +226,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(page.locator("a.agents-back")).toBeVisible();
       await expect(main.getByRole("heading", { name: "Recent runs", exact: true })).toBeVisible();
     } else if (agent) {
-      const title = route.endsWith("/agents") ? "Agents" : route.endsWith("/new") ? "New agent" : route.endsWith("/edit") ? "Edit"
+      const title = route.endsWith("/agents") ? "Routines" : route.endsWith("/new") ? "New routine" : route.endsWith("/edit") ? "Edit"
         : route.endsWith("/runs/:n") ? /^Run · / : agent.name;
       await expect(page.getByRole("heading", { level: 1, name: title, exact: typeof title === "string" })).toBeVisible();
       await expect(page.locator("a.agents-back")).toBeVisible();

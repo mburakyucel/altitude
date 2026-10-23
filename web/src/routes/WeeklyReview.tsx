@@ -8,7 +8,7 @@ import { StatusMark } from "../components/StatusMark";
 
 /*
  * The Weekly improvement review's page in Altitude's own project (design/wireframes/project-agents/PROPOSAL.md,
- * "The Weekly improvement review"): the step-1 agent page's status card, recent runs and what it does, with the
+ * "The Weekly improvement review"): the step-1 routine page's status card, recent runs and what it does, with the
  * terms sheet as one gate. Turn on, Resume and Run now show the sheet first while the operator's agreement is not
  * to the current terms; its Turn on agrees and completes the press. There is no Edit or Retire.
  */

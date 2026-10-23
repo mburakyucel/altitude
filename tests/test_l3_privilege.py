@@ -343,13 +343,19 @@ class TestL3CheckoutConfinement(AltitudeCase):
         self.assertEqual({p: p.read_bytes() for p in self.repo.rglob("*") if p.is_file()}, before,
                          "inspection leaves checkout, config, index and textconv cache refs untouched")
 
+    def assert_docs_named(self, prompt):
+        # The coordinator of a project other than Altitude answers how Altitude works from the activated docs.
+        self.assertFalse(config.DOCS.is_relative_to(self.repo))
+        self.assertTrue((config.DOCS / "OVERVIEW.md").is_file())
+        self.assertIn(f" docs={config.DOCS}\n", prompt)
+
     def test_i_20260903_075410_claude_l3_denies_checkout_write_and_reads(self):
         before, seen = self.checkout_snapshot(), {}
         l3.save_info(self.project, {"sessions": {"claude": {"session_id": "old-auto-session"}},
                                     "engine_last": "claude"})
 
-        def fake_claude(_prompt, **kwargs):
-            seen.update(kwargs)
+        def fake_claude(prompt, **kwargs):
+            seen.update(kwargs, prompt=prompt)
             runtime = Path(kwargs["cwd"])
             self.assertEqual(runtime.parent, platform.coordinator_directory())
             self.assertTrue(runtime.name.startswith("l3-claude-"))
@@ -367,8 +373,9 @@ class TestL3CheckoutConfinement(AltitudeCase):
         self.assertEqual((seen["permission_mode"], seen["permission_prompts"], seen["restricted"]),
                          ("dontAsk", "none", True))
         self.assertEqual(seen["tools"], "Read,Grep,Glob,Bash")
-        self.assertEqual(seen["add_dirs"], (self.repo, config.ROOT),
-                         "restricted Claude retains read access to the Altitude home")
+        self.assertEqual(seen["add_dirs"], (self.repo, config.ROOT, config.DOCS),
+                         "restricted Claude reads its project, the Altitude home and Altitude's docs")
+        self.assert_docs_named(seen["prompt"])
         self.assertNotIn("Edit", seen["tools"]); self.assertNotIn("Write", seen["tools"])
         self.assertNotIn("git fetch", seen["allowed_tools"])
         self.assertEqual(set(seen["allowed_tools"].split(",")),
@@ -380,8 +387,8 @@ class TestL3CheckoutConfinement(AltitudeCase):
     def test_i_20260903_075410_codex_l3_denies_checkout_write_and_reads(self):
         before, seen = self.checkout_snapshot(), {}
 
-        def fake_codex(_prompt, **kwargs):
-            seen.update(kwargs)
+        def fake_codex(prompt, **kwargs):
+            seen.update(kwargs, prompt=prompt)
             runtime = Path(kwargs["cwd"])
             self.assertEqual(runtime.parent, platform.coordinator_directory())
             self.assertTrue(runtime.name.startswith("l3-codex-"))
@@ -401,6 +408,10 @@ class TestL3CheckoutConfinement(AltitudeCase):
         self.assertFalse(runtime.exists(), "the per-turn Codex runtime is disposed after the engine exits")
         self.assertEqual(settings, engines.codex_l3_permissions(runtime, project=self.project))
         self.assertIn('default_permissions="altitude-l3"', settings)
+        rules = tomllib.loads("\n".join(settings))["permissions"]["altitude-l3"]["filesystem"]
+        self.assertEqual((rules[str(config.DOCS.resolve())], rules[str(runtime.resolve())]), ("read", "write"),
+                         "Codex reads Altitude's docs and writes only its runtime")
+        self.assert_docs_named(seen["prompt"])
         self.assertFalse(any(value.startswith("sandbox_mode=") for value in settings))
         self.assertIn("permissions.altitude-l3.network.enabled=false", settings)
         broker = tomllib.loads("\n".join(settings))["mcp_servers"]

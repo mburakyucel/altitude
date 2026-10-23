@@ -11,8 +11,8 @@ import { BusyLabel, StatusMark } from "../components/StatusMark";
 import { Overlay } from "../shell/Overlay";
 
 /*
- * The agent form (design/wireframes/project-agents/PROPOSAL.md, "The form"), new at /agents/new and changing one at
- * /agents/<id>/edit; `?offer=<id>` fills it from L3's offer, which the save then names. A new agent is saved paused and
+ * The routine form (design/wireframes/project-agents/PROPOSAL.md, "The form"), new at /agents/new and changing one at
+ * /agents/<id>/edit; `?offer=<id>` fills it from L3's offer, which the save then names. A new routine is saved paused and
  * its page opens. Leaving with unsaved changes asks first; a refusal keeps the edit with its reason and Retry.
  */
 
@@ -164,11 +164,11 @@ function Form({ project, id, read, latest, start, offer, clock }: {
     } catch (failure) {
       setError((failure as Error).message);
       setSaving(false);
-      // A refusal may mean the agent moved on; reading it again tells whether Retry can still succeed.
+      // A refusal may mean the routine moved on; reading it again tells whether Retry can still succeed.
       if (id) void client.invalidateQueries({ queryKey: ["project", project, "agents", id] });
     }
   };
-  const primary = id ? "Save" : "Create agent";
+  const primary = id ? "Save" : "Create routine";
   return <form ref={form} className="settings-card agent-form" noValidate onSubmit={(event) => { event.preventDefault(); if (!saving) void save(); }}>
     <label className="agent-label" htmlFor="agent-name">Name</label>
     <input id="agent-name" className="field" value={draft.name} placeholder="For example: Dependency check" aria-invalid={incomplete && !draft.name.trim() || undefined}
@@ -205,7 +205,7 @@ function Form({ project, id, read, latest, start, offer, clock }: {
       <p className="text-meta text-muted">Suggested tasks wait in Needs you whatever you choose.</p>
     </fieldset>
     <div className="agent-form-pair">
-      <div><span className="agent-label">Model</span><ChoiceButton label="Model and effort for this agent" value={draft.model} onChange={(model) => set({ model })} /></div>
+      <div><span className="agent-label">Model</span><ChoiceButton label="Model and effort for this routine" value={draft.model} onChange={(model) => set({ model })} /></div>
       <div><label className="agent-label" htmlFor="agent-limit">Each run stops after</label>
         <select id="agent-limit" className="settings-select agent-limit" value={draft.limit} onChange={(event) => set({ limit: Number(event.target.value) })}>
           {LIMITS.map((limit) => <option key={limit.minutes} value={limit.minutes}>{limit.label}</option>)}
@@ -219,9 +219,9 @@ function Form({ project, id, read, latest, start, offer, clock }: {
     </div>
     {id ? null : <p className="text-meta text-muted">It starts off: try it with Run now, then turn it on.</p>}
     {error ? <p role="alert" className="text-meta text-danger">{refusal("Not saved", error)}
-      {/* Once the agent changed in another window, this edit cannot be saved over it; Cancel opens the new version. */}
+      {/* Once the routine changed in another window, this edit cannot be saved over it; Cancel opens the new version. */}
       {id && latest !== version ? null : <>{" "}<button type="button" className="link" onClick={() => void save()}>Retry</button></>}</p> : null}
-    {blocker.state === "blocked" ? <DiscardDialog detail={id ? `Your edits to ${initial.name} haven’t been saved.` : "Your new agent hasn’t been saved."}
+    {blocker.state === "blocked" ? <DiscardDialog detail={id ? `Your edits to ${initial.name} haven’t been saved.` : "Your new routine hasn’t been saved."}
       onKeep={() => blocker.reset()} onDiscard={() => blocker.proceed()} /> : null}
   </form>;
 }
@@ -237,11 +237,11 @@ export default function ProjectAgentForm() {
   const failed = reads.find((read) => read.isError && !read.data);
   const ready = reads.every((read) => read.data);
   const initial = id ? agent.data?.definition : NEW_DEFINITION;
-  const title = id ? "Edit" : "New agent";
-  return <AgentFrame back={{ to: id ? `/projects/${name}/agents/${id}` : `/projects/${name}/agents`, label: id ? agent.data?.name ?? "Agent" : name }} title={title}>
-    {failed ? <div className="settings-card" role="alert"><p>Could not load this agent.</p>
+  const title = id ? "Edit" : "New routine";
+  return <AgentFrame back={{ to: id ? `/projects/${name}/agents/${id}` : `/projects/${name}/agents`, label: id ? agent.data?.name ?? "Routine" : name }} title={title}>
+    {failed ? <div className="settings-card" role="alert"><p>Could not load this routine.</p>
       <button type="button" className="btn agents-retry" onClick={() => void failed.refetch()}>Retry</button></div>
-      : !ready || !initial ? <div className="settings-card"><StatusMark label="Loading this agent…" /></div>
+      : !ready || !initial ? <div className="settings-card"><StatusMark label="Loading this routine…" /></div>
         : <Form key={`${id ?? "new"}:${offerId ?? ""}`} project={name} id={id} read={{ version: agent.data?.version, definition: initial }} latest={agent.data?.version}
           start={offer?.definition ?? initial} offer={offer ? offer.id : null} clock={agents.data?.clock} />}
   </AgentFrame>;

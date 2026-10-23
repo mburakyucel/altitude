@@ -5,6 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The overview no longer fails to load when a task is archived while it is being read: the task's history is
+  read from wherever the archive has just moved it.
 - Work can show your agents as a graph: on a computer, the List | Graph switch beside Work puts every current
   task around L3, the ones waiting on you at the top, with arrows for tasks planned after another, a soft halo
   on work that is active right now and a dot for each helper it is running. Each node opens what its row opens.
@@ -15,12 +17,14 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Ask the coordinator how Altitude or one of its parts works and it answers in that turn, in plain words, from
   the documentation, naming the section it drew on, and says so when the documentation does not cover the
   point. The overview carries a short map of which document answers which kind of question.
+- The coordinator of every project, not only Altitude's own, can read Altitude's documentation to answer those
+  questions; installed releases include the documentation.
 - The required pull-request check no longer loses a shard for 30 minutes to a slow package mirror: its install
   steps give up within minutes and retry once, the system packages from the runner's next mirror.
 - A finished task takes your follow-up: message a done task from its page or with `alt task message` and it
   reopens in place, with its conversation, session and earlier PRs, its working copy rebuilt if cleanup removed
   it. The agent answers or does the work and finishes again; the earlier finish stays as a Done row you can open.
-- The README and the overview show how Altitude fits together: you, the coordinator and project agents above altd,
+- The README and the overview show how Altitude fits together: you, the coordinator and routines above altd,
   which keeps every record and gates every merge, and task agents, independent review and GitHub below it.
 - A release approval names the version and its notes, and also covers changes that merge before the notes once
   their checks pass and the notes mention anything you would notice; the release owner tells you what joined
@@ -28,6 +32,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   needs a longer trial or brings a security fix the notes miss, and you can still ask for one exact commit.
 - Retry in voice settings is no longer refused now and then as "Voice is already being set up", and the automatic
   voice update at startup is no longer skipped, when a page happened to read voice's status at that moment.
+- A project's standing briefs are called routines, so they read apart from the agents that work on your tasks: the
+  Routines page and menu item, New routine, Work, Needs you, Monitor, chat and the docs all use the name. They are
+  still read and changed with `alt agent`.
+- The README's feature list describes routines and the terminal steps that wait for your Enter, and the
+  walkthrough shows a routine's suggested tasks.
 - Voice input you are recording on a task keeps going when its model switch completes: the page no longer
   briefly drops the message box, and the recording with it, at the moment the task is queued for its new engine.
 

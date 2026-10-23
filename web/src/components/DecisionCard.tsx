@@ -368,8 +368,8 @@ export function StepCard({ step, disabled = false }: { step: Step; disabled?: bo
 }
 
 /**
- * The Needs you card of an agent that paused itself (design/wireframes/project-agents/PROPOSAL.md): Resume holds its
- * spinner until the queue no longer lists the agent, and Open the last run reads what broke first.
+ * The Needs you card of a routine that paused itself (design/wireframes/project-agents/PROPOSAL.md): Resume holds its
+ * spinner until the queue no longer lists the routine, and Open the last run reads what broke first.
  */
 export function AgentCard({ row, disabled = false }: { row: AgentRow; disabled?: boolean }) {
   const client = useQueryClient();

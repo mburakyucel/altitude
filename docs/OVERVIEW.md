@@ -7,7 +7,7 @@ about, by heading, rather than whole files.
 
 ## The system in brief
 
-<img src="images/system.svg" alt="The operator gives direction, answers and approvals: to the coordinator (L3) in project chat, to project agents as briefs and a budget, and to any task directly, including Stop. In the middle, altd, the daemon, holds the records, task states, dispatch and merge gate, and agents act on the records only through alt commands it checks. The coordinator starts, answers and resumes tasks; project agents run on a schedule or event, then report and suggest for you to decide. Each task agent (L2) works in a sandbox with its own worktree, branch and pull request, with L1 helpers for focused work; complex plans and changes get an independent review, preferably by the other engine; and GitHub holds pull requests and checks, with every merge passing altd's gate." width="1000">
+<img src="images/system.svg" alt="The operator gives direction, answers and approvals: to the coordinator (L3) in project chat, to routines as briefs and a budget, and to any task directly, including Stop. In the middle, altd, the daemon, holds the records, task states, dispatch and merge gate, and agents act on the records only through alt commands it checks. The coordinator starts, answers and resumes tasks; routines run on a schedule or event, then report and suggest for you to decide. Each task agent (L2) works in a sandbox with its own worktree, branch and pull request, with L1 helpers for focused work; complex plans and changes get an independent review, preferably by the other engine; and GitHub holds pull requests and checks, with every merge passing altd's gate." width="1000">
 
 Altitude runs for one operator on one machine. Each registered project has a persistent conversation
 with L3, the coordinator, which discusses direction, answers task questions from the record and
@@ -93,7 +93,7 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   interface subsection:
   [times](ARCHITECTURE.md#times),
   [improvement review](ARCHITECTURE.md#improvement-review),
-  [project agents](ARCHITECTURE.md#project-agents),
+  [routines](ARCHITECTURE.md#routines),
   [suggested tasks](ARCHITECTURE.md#suggested-tasks),
   [image input](ARCHITECTURE.md#image-input),
   [task usage](ARCHITECTURE.md#task-usage),
@@ -136,7 +136,7 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   [Times](CLI.md#times), [inspection](CLI.md#inspection), [project heads-ups](CLI.md#project-heads-ups),
   [coordinator information messages](CLI.md#coordinator-information-messages),
   [superseded PR closure](CLI.md#superseded-pr-closure),
-  [improvement suggestions](CLI.md#improvement-suggestions), [project agents](CLI.md#project-agents),
+  [improvement suggestions](CLI.md#improvement-suggestions), [routines](CLI.md#routines),
   [GitHub issues](CLI.md#github-issues)
   (including [incremental delivery](CLI.md#incremental-issue-delivery)),
   [task file lists](CLI.md#task-file-lists), [dirty-checkout recovery](CLI.md#dirty-checkout-recovery),
@@ -168,8 +168,8 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   [decision alerts on a device](OPERATIONS.md#decision-alerts-on-a-device),
   [refused decision alerts](OPERATIONS.md#refused-decision-alerts),
   [remove a project](OPERATIONS.md#remove-a-project),
-  [project agents](OPERATIONS.md#project-agents),
-  [sending agents events](OPERATIONS.md#sending-agents-events),
+  [routines](OPERATIONS.md#routines),
+  [sending events to routines](OPERATIONS.md#sending-events-to-routines),
   [worktree and source export retention](OPERATIONS.md#worktree-and-source-export-retention),
   [incident publication](OPERATIONS.md#incident-publication),
   [recovering dirty main](OPERATIONS.md#recovering-dirty-main),

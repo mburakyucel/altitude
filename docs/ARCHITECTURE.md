@@ -236,6 +236,11 @@ resumes and engine changes. Historical evidence is not new authority: current in
 records govern, and the coordinator checks temporary conditions and later corrections before action.
 See [source references and bounds](CLI.md#historical-evidence-search).
 
+Every L3 turn's header also names Altitude's documentation folder (`docs=`): `docs/` of the activated
+source or the installed release, which ships it. The coordinator answers how Altitude works from it
+for any project. A Claude turn adds that folder beside the project's repository and the Altitude home
+as a readable directory, and the Codex profile names it readable; neither engine can write it.
+
 Tasks and L3 session records carry `engine_model` and `engine_reasoning_effort`. The engine adapter
 reads Codex's rollout `turn_context` after the thread starts, recording the actual model and effort
 for the current turn. altd reads the provider home; the sandboxed worker does not. Missing or delayed
@@ -245,7 +250,8 @@ header chips, and the Monitor API expose the observation; old records remain rea
 `GET /api/task/<project>/<slug>` returns `engine_model` and `engine_reasoning_effort`;
 a missing task returns HTTP 404 without a failure traceback. Archival only renames the live task
 folder into the archive, so a status read that misses the live record reads the archived one; polls
-and action responses crossing the move return the archived task and state.
+and action responses crossing the move return the archived task and state; an event read reads
+the archived log the same way, so the overview walking every task survives an archive mid-walk.
 Task status, documents and events share the archive lock while their snapshot is read.
 `GET /api/monitor` and `alt monitor` list only sessions Altitude runs: each project's L3 and its
 running, blocked or reported L2 tasks. Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
@@ -1063,7 +1069,7 @@ work waits as a planned task; GitHub issues hold the long-term backlog.
 
 The aggregate gate reads `config.machine_wip()`, the persistent machine override or
 `config.WIP_PER_MACHINE` (80). Fresh and resumed launches share this cap with running adversarial reviews
-and [project agent runs](#project-agents); blocked tasks consume no capacity. One machine launch lock serializes admission through worker binding so simultaneous launches
+and [routine runs](#routines); blocked tasks consume no capacity. One machine launch lock serializes admission through worker binding so simultaneous launches
 cannot overfill it. Eligible ready resumes across all registered projects precede fresh dispatch. Operator waits,
 faults without verified recovery, future due times and unavailable engines reserve no slots and do not
 hold eligible work. A resumed worker already launched and recorded in its recovery claim counts toward
@@ -1810,7 +1816,7 @@ connecting process.
   worker go on, saying so on its own output; messages wait in the inbox for the next checkpoint. Once altd has a
   checkpoint, the hook waits for its answer for nearly its own time limit. A change that fails inside altd is a
   `hook` system fault.
-- **Project agent runs.** A [project agent run](#project-agents)'s driver names its run (`ALTITUDE_AGENT_RUN`)
+- **Routine runs.** A [routine run](#routines)'s driver names its run (`ALTITUDE_AGENT_RUN`)
   instead of a task, and altd admits it from a process in that running run's worker job. Its door answers only
   the engine's sign-in (`project_agents.door`); a run has no `alt` verbs, records or Send now.
 - **Driver.** The driver asks altd to take a Send now message from the worker's sends folder, to settle its
@@ -2248,7 +2254,7 @@ and [CLI times](CLI.md#times).
 
 The approved [improvement suggestions design](../design/wireframes/improvement-review/PROPOSAL.md)
 reads one project's finished work and proposes at most three fixes. It covers the Altitude project,
-where it is the built-in agent **Weekly improvement review** on the [Agents page](#project-agents). A
+where it is the built-in routine **Weekly improvement review** on the [Routines page](#routines). A
 review runs on Monday mornings while it is on, when the operator presses Run now on its page, or when
 they ask L3 in chat; each needs their agreement to the terms its sheet shows.
 
@@ -2371,11 +2377,11 @@ you shows them under Suggestions, after what needs the operator and not counted 
 linking to its card in the project's chat. The states, presses, typed answers and task rule are the
 shared [suggested tasks](#suggested-tasks) model.
 
-The review is a built-in agent of Altitude's own project, read from the same record. `improve.agent`
-is its Agents page entry in `GET /api/agents/<project>` (`weekly`): the first Built in row until the
-record has an agreement, a Weekly switch or a run, then the first of the operator's agents, whose line
+The review is a built-in routine of Altitude's own project, read from the same record. `improve.agent`
+is its Routines page entry in `GET /api/agents/<project>` (`weekly`): the first Built in row until the
+record has an agreement, a Weekly switch or a run, then the first of the operator's routines, whose line
 after "Mondays at 08:00" is its running line, Paused, "Paused: its terms changed", the latest ended run
-or Never run; Work's Agents count includes it. `improve.page` is its page, `GET
+or Never run; Work's Routines count includes it. `improve.page` is its page, `GET
 /api/agents/<project>/weekly`: the status card (Not on yet with Turn on; the next Monday, with how many
 more tasks must finish, and Pause; Paused or "Paused: its terms changed" with Resume; Run now beside
 each, with the tasks it reads or the reason it cannot run; while a run is going, its line with Stop
@@ -2388,7 +2394,7 @@ current terms, Turn on, Resume and Run now open the sheet first; Turn on sends t
 sheet's version (`terms`), which records the agreement and completes the press, and a version that
 changed since is refused. Turn on, Pause and Resume are the `weekly` press and Run now the `run` press
 on `POST /api/improve`; they come only from a paired device's cookie, never a client holding only the
-machine key. Its runs are not agent runs: they use neither the agents' weekly budget nor their one run
+machine key. Its runs are not routine runs: they use neither the routines' weekly budget nor their one run
 at a time and never appear in Work's Current rows, and it has no Edit or Retire. `alt agent` neither
 lists nor switches it. Projects other than Altitude have none.
 
@@ -2399,42 +2405,42 @@ ordinary and that what fired reaches the prompt; its live part matches suggestio
 by shared places and writes a blind grading sheet. [The eval](DEVELOPMENT.md#improvement-review-eval)
 describes both.
 
-### Project agents
+### Routines
 
-The approved [project agents design](../design/wireframes/project-agents/PROPOSAL.md) lets the operator give a
+The approved [routines design](../design/wireframes/project-agents/PROPOSAL.md) lets the operator give a
 project briefs that Altitude runs on a schedule, on events the operator sends or when asked, reporting only
-(`altitude/project_agents.py`). An agent is a definition (name, brief of at most 8,000 characters, up to four
+(`altitude/project_agents.py`). A routine is a definition (name, brief of at most 8,000 characters, up to four
 schedules of weekdays and a time, whether it runs when it's sent an event, Tell me, an optional model choice and a
 limit of 10, 20 or 60 minutes per run) with its state: new, on, paused or retired.
-`<project>/project-agents.json` holds the project's agents, every saved definition as a numbered version, every state
+`<project>/project-agents.json` holds the project's routines, every saved definition as a numbered version, every state
 change with who made it and its source, the runs, L3's offers, the presses' receipts and the weekly budget. A run's
 prompt, report and worker job live in `<project>/project-agents/<agent>/<n>/`. A run is never a task: nothing that
 lists, counts or reports tasks sees it.
 
-**Definitions.** Altitude ships built-in agents as `templates/project-agents/<key>.md`: a header of name, days,
-time, Tell me and a one-line summary, then the brief. Turning one on copies it as an agent that is on, marked with
-its key, and the Agents page lists only the built-ins without one. An agent the operator creates is saved new, not
+**Definitions.** Altitude ships built-in routines as `templates/project-agents/<key>.md`: a header of name, days,
+time, Tell me and a one-line summary, then the brief. Turning one on copies it as a routine that is on, marked with
+its key, and the Routines page lists only the built-ins without one. A routine the operator creates is saved new, not
 on: it runs only with Run now until they turn it on. Every saved change is a new version; a save names the version
 it edited and one made from an older version is refused, and each run records the version it ran.
 
 **Schedules.** Schedules use this computer's clock (`altitude/schedule.py`, which the Weekly improvement review
-shares). On each tick (`project_agents.tick`), an agent that is on claims each schedule's latest time
+shares). On each tick (`project_agents.tick`), a routine that is on claims each schedule's latest time
 (`schedule.latest`) that is after the moment it was turned on or resumed and after its previous claim, so a time
 missed while Altitude was off runs once when it returns, marked late after ten minutes, and older ones are not
 caught up. A schedule a saved version adds or changes starts from the save, so a time already passed that day does
-not fire. A claim becomes a waiting run, or a skip ("Its last run was still going") while the agent's previous run
-waits or runs: an agent has at most one. While Altitude waits to activate a change, nothing is claimed.
+not fire. A claim becomes a waiting run, or a skip ("Its last run was still going") while the routine's previous run
+waits or runs: a routine has at most one. While Altitude waits to activate a change, nothing is claimed.
 
-**Events.** An agent with the event trigger runs on short texts the operator sends from this computer:
+**Events.** A routine with the event trigger runs on short texts the operator sends from this computer:
 `alt agent send AGENT TEXT|- [--key KEY]`, a change of the operator's CLI only, refused on L3's socket, in task
-workers and from paired devices, and agent runs have no `alt` verbs. Altitude reads no source of its own; the agent
-page and [operations](OPERATIONS.md#sending-agents-events) show example scripts (`project_agents.recipes`) that send
-pull request and issue numbers and the operator's own words. A send is one locked write: a key the agent already
-took answers "Already received." before anything else; otherwise it is refused (agent not on, paused or retired, no
+workers and from paired devices, and routine runs have no `alt` verbs. Altitude reads no source of its own; the routine
+page and [operations](OPERATIONS.md#sending-events-to-routines) show example scripts (`project_agents.recipes`) that send
+pull request and issue numbers and the operator's own words. A send is one locked write: a key the routine already
+took answers "Already received." before anything else; otherwise it is refused (routine not on, paused or retired, no
 event trigger, text empty or over 4,000 characters, 50 events already waiting, or the week's budget short of its
 limit) and keeps nothing, or the event (`{text, key, at}`) starts a waiting run, joins the waiting one, or waits in
-the agent's `pending` while one runs. When a run ends, the agent's `pending` events become its next waiting run if it
-is still on; a schedule that comes due while events wait takes them into its run. The agent keeps its latest 1,000
+the routine's `pending` while one runs. When a run ends, the routine's `pending` events become its next waiting run if it
+is still on; a schedule that comes due while events wait takes them into its run. The routine keeps its latest 1,000
 keys in `received` and its latest event, which Run now replays without its key, so a replay uses nothing up; `alt agent run AGENT TEXT` gives
 one run a text of its own instead. Pause and Retire skip a run still waiting to start ("Paused before it started",
 "Retired before it started"). Pause, Retire, pausing itself, a skip, a Stop before the run's worker starts and a run
@@ -2444,7 +2450,7 @@ each time brings them in again.
 **Starting.** A project starts one run at a time, its oldest waiting run first (`project_agents.start_next`, spawned
 by the tick and by Run now), under the provider admission, the machine launch lock and the restart lock that task
 launches take. A run starts only when the machine's running work (task slots held, adversarial reviews and
-running agent runs) plus the queued tasks and ready resumes waiting for a slot is below `config.machine_wip()`, so
+running routine runs) plus the queued tasks and ready resumes waiting for a slot is below `config.machine_wip()`, so
 tasks always go first; a run that has waited six hours is skipped ("Didn't start within 6 hours"). At its start a run
 is skipped when its engine is inside Altitude's reserve (`route.reserve`: the engine's weekly or short window at
 `config.RESERVE` or more, or unknown, read as "Your <engine> plan is close to its weekly limit", "… short-term
@@ -2452,11 +2458,11 @@ limit" or "Your <engine> plan's use isn't known yet") or its whole limit does no
 hours, two hours by default), counted from Monday 00:00 on this computer's clock with a running run holding its whole
 limit. Run now is refused with the same budget reason.
 
-**The run.** The run's engine, model and effort come from the agent's model choice or else the New tasks choice
+**The run.** The run's engine, model and effort come from the routine's model choice or else the New tasks choice
 (`route.pick_engine`). It runs in its own detached checkout of the fetched main branch
 (`.claude/worktrees/project-agent-<agent>-<n>`) as a worker job of its own kind (`engines.start_project_agent_run`):
 the helper role, the repository's rules and the run template (`templates/project-agent-run.md`: the brief, what
-fired it with the events it took quoted as data, oldest first, the previous report quoted as data, the agent's earlier
+fired it with the events it took quoted as data, oldest first, the previous report quoted as data, the routine's earlier
 suggested tasks with what became of each, what the run may do, the limit, the report's shape and the room left for
 suggested tasks). Unlike a task
 worker it links nothing of the operator's engine folder (their settings, instructions, skills, plugins or rules),
@@ -2481,48 +2487,48 @@ its row and against the budget, are at most its limit: the tick that notices its
 late after Altitude or the computer was down. Each ending
 writes at most one assistant chat row (trigger `project-agent`) after the record is saved, once, as Tell me allows:
 found and couldn't finish unless Tell me is never, nothing found and stopped only with every run; a run that took
-events names them ("for “PR #809 merged”"). Three runs in a row on the agent's schedule or its events that couldn't
-finish or stopped at their limit pause the agent, with its own line; Run now, Stop and skips do not count, and
-turning it back on starts again from zero. An agent that paused itself waits in Needs you as a row of kind `agent`
+events names them ("for “PR #809 merged”"). Three runs in a row on the routine's schedule or its events that couldn't
+finish or stopped at their limit pause the routine, with its own line; Run now, Stop and skips do not count, and
+turning it back on starts again from zero. A routine that paused itself waits in Needs you as a row of kind `agent`
 (`project_agents.needs`, listed by `tasks.decisions` after the project's questions and steps) with no `alert_key`,
 so it never alerts a device; Resume, a saved change, which makes it paused by the operator, or Retire clears it. Runs older than 90 days
-beyond an agent's newest ten are removed.
+beyond a routine's newest ten are removed.
 
-**Authority.** The operator changes agents with presses on `POST /api/agents` from a paired device only, each
+**Authority.** The operator changes routines with presses on `POST /api/agents` from a paired device only, each
 carrying a request id whose repeat returns the first receipt, and with `alt agent new|set|on|pause|resume|retire|run|stop`
 on their CLI, which alone sends events (`alt agent send`). L3 reads them with `alt agent list|show`, and on the operator's own chat message can pause, resume,
-turn on, retire, run or stop one. It never writes a definition: `alt agent offer` drafts a new agent or a change as
-a card under its reply, which only the operator's press saves (Create agent, Save change, or Edit first through the
-form). An offer lapses after seven days, and a change offer is refused once the agent changed since it was drafted.
+turn on, retire, run or stop one. It never writes a definition: `alt agent offer` drafts a new routine or a change as
+a card under its reply, which only the operator's press saves (Create routine, Save change, or Edit first through the
+form). An offer lapses after seven days, and a change offer is refused once the routine changed since it was drafted.
 
-**Pages.** `GET /api/agents/<project>` is the Agents page (budget, agents, retired agents, built-ins not on,
+**Pages.** `GET /api/agents/<project>` is the Routines page (budget, routines, retired routines, built-ins not on,
 offers, and in Altitude's own project the [Weekly improvement review](#improvement-review) as `weekly`); `/<agent>`
-an agent's status with its note, actions, definition, recent runs and, with the event trigger, `send`: the command, naming the agent by its
+a routine's status with its note, actions, definition, recent runs and, with the event trigger, `send`: the command, naming the routine by its
 shell-quoted name when `alt agent` resolves that name to it and it does not start with `-`, else by its id; the id
 the example scripts use when the command names the name; and those scripts; `/weekly` the review's own page; `/<agent>/runs/<n>` a run's outcome, the events it took, the
 version it ran and its report; `/<agent>/runs/<n>/transcript` its session through the transcript
 reader, read only. The project view carries `project_agents`: the runs waiting or running, shown in Work under
-Current; the number of agents not retired, with the Weekly improvement review once it is the operator's; and the
+Current; the number of routines not retired, with the Weekly improvement review once it is the operator's; and the
 offers.
 
 ### Suggested tasks
 
-The [Weekly improvement review](#improvement-review) and [project agent](#project-agents) runs both suggest tasks
+The [Weekly improvement review](#improvement-review) and [routine](#routines) runs both suggest tasks
 for the operator to decide, through one model in `suggestions.py`; each owner keeps its runs in its own record. A
-suggestion is named by its ref: `<run>/<n>` for a review and `agent:<agent>/<run>/<n>` for an agent run. A run
+suggestion is named by its ref: `<run>/<n>` for a review and `agent:<agent>/<run>/<n>` for a routine run. A run
 holds `suggestions`, L3's check as `post: {shown, drops, at}` and the operator's `decisions`, and nothing is
 shown before the post. Both kinds share the states (undecided, accepted, dismissed, and not decided seven days
 after the post), the presses on `POST /api/improve` with request ids whose receipts live in the record the ref
 names, typed answers (`alt improve resolve REF`), the retry of Make a task and the one task per accepted suggestion (`alt task
 new --improvement REF`, recorded on the task as `improvement`). A suggestion waits in Needs you while undecided,
 or accepted without its task for seven days after the last press (Make a task, first or again); after that it shows
-only where its run does. A task made from one carries `origin` in the project view's task rows, the agent's name or
+only where its run does. A task made from one carries `origin` in the project view's task rows, the routine's name or
 "Weekly improvement review", which ends its card's line ("· from Review each merge").
 
-A run of an agent that found something may end its answer with up to three `Suggest:` blocks, each a title line
+A run of a routine that found something may end its answer with up to three `Suggest:` blocks, each a title line
 and the explanation under it (`project_agents.report`). Altitude takes them out of the report, makes them plain
 (no links, emphasis, code marks or headings, and text that looks like a credential as "[hidden]") and cuts them at
-a word to 90 and 300 characters; blocks after Nothing or Couldn't finish are ignored. An agent has at most three
+a word to 90 and 300 characters; blocks after Nothing or Couldn't finish are ignored. A routine has at most three
 waiting (`project_agents.room`): a suggestion waits while L3 checks it and for seven days after the check, kept or
 set aside, unless the operator decides it. A run keeps only as many as fit, and its template says the room left,
 or to suggest none. A run with suggestions queues one L3 turn (trigger `improvement-check`) naming only the run;
@@ -2538,8 +2544,8 @@ turn's commands is #1108.
 The run page (`suggested` on `/<agent>/runs/<n>`) shows a run's suggestions as Suggested tasks under its report:
 "L3 is checking N suggestions" while L3 checks, then the kept suggestions on the improvement card's suggestion
 part, then Not offered · N folded with L3's reasons, or "Not offered · N · not checked in time". The overview's
-`suggestions` lists agent runs with a waiting suggestion beside the review's cards, newest post first within each
-project. Needs you shows each as a card headed by the agent's name and the run's time, with what fired it and
+`suggestions` lists routine runs with a waiting suggestion beside the review's cards, newest post first within each
+project. Needs you shows each as a card headed by the routine's name and the run's time, with what fired it and
 Open the run, never counted and never alerting a device, whatever Tell me says.
 
 ### Image input
@@ -3432,7 +3438,7 @@ moves it out of Current. Saving an answer does not assert that the worker resume
 On desktop, Work's List | Graph switch shows Current either as rows or as the graph
 (`web/src/components/AgentGraph.tsx`, spec §3.7); the choice is a per-browser display preference
 (`web/src/shell/workView.ts`, `altitude.workView`) and the phone always shows rows. The graph places
-every current task and agent run on a ring around L3, the operator's turns first, and widens the panel
+every current task and routine run on a ring around L3, the operator's turns first, and widens the panel
 to the live session panel's 480px. Each node reads `cardView`, the task card's own facts, link and
 accessible name, so a node and its row never disagree. Live cues need no read of their own: a running
 task's halo and helper pips come from the row's `token_usage` (see [task usage](#task-usage)), counting
@@ -3974,17 +3980,17 @@ for a turn started now, in `pick_engine`'s own words. It explains the selected t
 unknown quota, continuity and skipped options; no eligible option gives an actionable installation,
 authentication, reset or configuration explanation. The
 sessions the monitor knows follow, each with its task, its engine and the model when the API reports
-one, its context meter and the age of its snapshot. A running [project agent](#project-agents) run is a
-session row of kind `agent` after its project's tasks: its agent's name, run number, engine and model, the
+one, its context meter and the age of its snapshot. A running [routine](#routines) run is a
+session row of kind `agent` after its project's tasks: its routine's name, run number, engine and model, the
 context the project tick last read and when its session made that request (so a long tool call ages it), and its
 minutes so far against its limit. L2 rows carry their persisted `token_usage` in
 the same read and offer **L2 usage details**: the task total, observed helper counts and attributable
 tokens, then per-helper parentage and owner attempt context. All helper detail stays behind the
 disclosure; expansion starts no collection or separate request. Archived evidence remains in task
-and report reads. No session is one muted sentence. Last, `agents` lists each project agent that is
+and report reads. No session is one muted sentence. Last, `agents` lists each routine that is
 not retired and is on with a schedule or the event trigger, has a run waiting or running, paused itself, or ran in the last seven
 days, plus the Weekly improvement review once it is the operator's on the same terms (`monitor.agents`,
-`project_agents.monitor_agents`, `improve.monitor`): what comes next in the agent page's status order and the
+`project_agents.monitor_agents`, `improve.monitor`): what comes next in the routine page's status order and the
 latest run that ran. `clock` is the computer's zone, so the page names it after a schedule's time when the
 browser is elsewhere. These reads write nothing, and the Weekly review is read only where its record exists.
 Loading is a skeleton in the page's shape, and a failed read is one sentence with Retry.

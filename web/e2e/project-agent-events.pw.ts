@@ -157,7 +157,7 @@ test("Needs you: an agent that paused itself, Resume refused and then resumed", 
 
   await walk.open("/");
   await walk.state("e13-needs-you", {
-    visible: [page.getByText("1 paused agent in harbor", { exact: true }), card.getByText("Agent paused itself", { exact: true }),
+    visible: [page.getByText("1 paused routine in harbor", { exact: true }), card.getByText("Routine paused itself", { exact: true }),
       card.getByRole("link", { name: "Flaky tests" }), card.getByText(/^3 runs in a row couldn't finish\. The last: 'make test-e2e' is not a target\.$/),
       resume, card.getByRole("link", { name: "Open the last run" })],
     hidden: [card.getByRole("link", { name: "Open L2 chat" })],

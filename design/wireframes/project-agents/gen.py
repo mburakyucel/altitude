@@ -1,9 +1,9 @@
-"""Write the project agents boards beside this file: python3 design/wireframes/project-agents/gen.py"""
+"""Write the routines boards beside this file: python3 design/wireframes/project-agents/gen.py"""
 import pathlib
 
 out = pathlib.Path(__file__).resolve().parent
 HEAD = '''<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Agents: {title}</title>
+<html lang="en"><head><meta charset="utf-8"><title>Routines: {title}</title>
 <link rel="stylesheet" href="../wireframes.css"><link rel="stylesheet" href="agents.css"></head>
 <body><div class="root" data-theme="light" style="width:{w}px;height:{h}px">
 '''
@@ -46,13 +46,13 @@ def tabbar(on=None):
     return '<nav class="tabbar">' + "".join(f'<div class="tab{" on" if k == on else ""}">{t}</div>' for k, t in tabs) + '</nav>'
 
 
-def phone(inner, back=P, title="Agents", h=844, overlay="", tab="work"):
+def phone(inner, back=P, title="Routines", h=844, overlay="", tab="work"):
     return (f'<div class="m" style="height:{h}px;position:relative"><div></div><header class="mh"><a class="btn" href="#" style="padding:0 8px">{CHEVL}{back}</a>'
             f'<h1 style="font-size:17px;margin:0 0 0 8px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{title}</h1></header>'
             f'<div class="route-content" style="overflow:hidden;padding:4px 16px 20px">{inner}</div><div></div>{tabbar(tab)}{overlay}</div>')
 
 
-# ---- the agents page ----
+# ---- the routines page ----
 AGENTS = [
     ("Dependency check", "Weekdays at 07:00 · Found something 2 h ago"),
     ("Review each merge", PULSE + "When it’s sent an event · Running, 2 of 20 min"),
@@ -74,8 +74,8 @@ def budget(state=None):
     elif state == "refused":
         extra = '<div class="err" style="padding:0 18px 12px">Not saved: the setting changed in another window. <a class="u" href="#">Retry</a></div>'
     elif state == "spent":
-        used = '<small style="color:var(--chip-claimed-text)">2 h used this week · agents wait until Monday</small>'
-    return (f'<div class="afoot budget"><span class="tx"><b>Agents may use up to</b>{used}</span>'
+        used = '<small style="color:var(--chip-claimed-text)">2 h used this week · routines wait until Monday</small>'
+    return (f'<div class="afoot budget"><span class="tx"><b>Routines may use up to</b>{used}</span>'
             f'<span class="field" style="min-width:9rem;flex:none;color:var(--text-primary)">{sel}&nbsp;{DOWN}</span></div>{extra}')
 
 
@@ -86,7 +86,7 @@ BUILTIN_ALL = [("Dependency check", "Weekdays at 07:00 · Looks for security fix
 WEEKLY_ROW = ("Weekly improvement review", "Mondays at 08:00 · Suggests fixes for friction that keeps coming back in this project’s tasks")
 
 
-def brow(name, line, state=None, refused="the agents changed in another window."):
+def brow(name, line, state=None, refused="the routines changed in another window."):
     btn = '<span class="btn">Turn on</span>'
     if state == "saving":
         btn = '<span class="btn" style="min-width:76px" aria-label="Turn on, saving"><span class="spin"></span></span>'
@@ -102,16 +102,16 @@ def builtin(rows=BUILTIN, state=None):
 
 def section(rows=None, state=None, bstate=None, retired=True, top=True, built=BUILTIN, bistate=None):
     rows = AGENTS if rows is None else rows
-    head = (f'<a class="btn setting-back" href="#">{CHEVL}{P}</a><h1 style="margin-bottom:4px">Agents</h1>'
+    head = (f'<a class="btn setting-back" href="#">{CHEVL}{P}</a><h1 style="margin-bottom:4px">Routines</h1>'
             '<p class="muted" style="margin:0 0 14px">Each one runs a brief when its trigger fires, and tells you what it found.</p>')
     if not top:
         head = head.split("</h1>")[1]
     if state == "loading":
-        return head + '<div class="card"><span class="spin" role="status" aria-label="Loading agents…"></span></div>'
+        return head + '<div class="card"><span class="spin" role="status" aria-label="Loading routines…"></span></div>'
     if state == "failed":
-        return head + '<div class="card"><p style="margin:0 0 10px">Could not load agents.</p><span class="btn">Retry</span></div>'
+        return head + '<div class="card"><p style="margin:0 0 10px">Could not load routines.</p><span class="btn">Retry</span></div>'
     items = "".join(arow(*a) for a in rows)
-    card = f'<div class="card alist">{items}{budget(bstate)}<div class="afoot"><span class="btn">New agent</span></div></div>'
+    card = f'<div class="card alist">{items}{budget(bstate)}<div class="afoot"><span class="btn">New routine</span></div></div>'
     tail = f'<p class="muted" style="margin:10px 2px 0"><a {U}>2 retired</a></p>' if retired and rows else ""
     return head + card + tail + (builtin(built, bistate) if built else "")
 
@@ -119,7 +119,7 @@ def section(rows=None, state=None, bstate=None, retired=True, top=True, built=BU
 board("DesktopAgents", 1440, 900, desk(section()))
 board("PhoneAgents", 390, 1000, phone(section(top=False), h=1000))
 
-# ---- one agent ----
+# ---- one routine ----
 BRIEF = ("Check every dependency in pyproject.toml and web/package.json for security fixes and major releases. "
          "Use <code>make audit</code> if it exists. Say which packages need an update, how urgent each is, and what the change would touch.")
 
@@ -145,7 +145,7 @@ def status(state="idle"):
         "paused": (PAUSE + "Paused", '<span class="btn">Resume</span>' + run_now, ""),
         "self-paused": (PAUSE + "Paused itself after 3 failed runs", '<span class="btn">Resume</span>' + run_now, ""),
         "pause-refused": ("Next: tomorrow at 07:00", run_now + pause,
-                          '<div class="err">Not saved: the agent changed in another window. <a class="u" href="#">Retry</a></div>'),
+                          '<div class="err">Not saved: the routine changed in another window. <a class="u" href="#">Retry</a></div>'),
     }
     line, btns, extra = rows[state]
     return f'<div class="card"><div class="status"><span class="tx">{line}</span><span class="btns">{btns}</span></div>{extra}</div>'
@@ -182,7 +182,7 @@ def definition(edit=True):
             f'{btn}</div>')
 
 
-RETIRE = ('<h2 style="margin-top:24px">Retire agent</h2><div class="card retire"><span class="muted" style="font-size:14px">It won’t run again. Past runs stay readable.</span>'
+RETIRE = ('<h2 style="margin-top:24px">Retire routine</h2><div class="card retire"><span class="muted" style="font-size:14px">It won’t run again. Past runs stay readable.</span>'
           '<span class="btn redbtn">Retire…</span></div>')
 
 
@@ -249,7 +249,7 @@ board("DesktopRun", 1440, 900, desk(RUN_HEAD + run_page()))
 board("PhoneRun", 390, 844, phone(run_page("running"), back="Dependency check", title="Run · Today 07:00"))
 
 
-# ---- the Weekly improvement review as a built-in agent (Altitude's own project, step 2) ----
+# ---- the Weekly improvement review as a built-in routine (Altitude's own project, step 2) ----
 WEEKLY_RUNS = [
     ("found", "Oct 19, 08:00", "3 suggestions", "4 min", "Owners re-ask settled questions; a review box hides its reason; landing waits are unclear."),
     ("", "Oct 12, 08:00", "Nothing to suggest", "3 min", "6 tasks read."),
@@ -373,7 +373,7 @@ def form(new=False, nameless=False, saving=False, refused=False, trig="schedule"
             f'<label class="flab">Tell me in chat</label>{seg()}<span class="hint">Suggested tasks wait in Needs you whatever you choose.</span>'
             f'<div style="display:flex;gap:0 24px;flex-wrap:wrap;align-items:flex-end"><div><label class="flab">Model</label><span class="newtasks"><span><b>Default</b> · Default effort</span>{DOWN}</span></div>'
             f'<div><label class="flab">Each run stops after</label><span class="field" style="min-width:8rem;flex:none;color:var(--text-primary)">20 min&nbsp;{DOWN}</span></div></div>')
-    primary = "Create agent" if new else "Save"
+    primary = "Create routine" if new else "Save"
     if saving:
         b = f'<span class="btn primary" style="min-width:72px" aria-label="{primary}, saving"><span class="spin"></span></span><span class="btn ghost" aria-disabled="true">Cancel</span>'
     elif nameless:
@@ -384,11 +384,11 @@ def form(new=False, nameless=False, saving=False, refused=False, trig="schedule"
     if nameless:
         body += '<div class="err">Give it a name and a brief.</div>'
     if refused:
-        body += '<div class="err">Not saved: the agent changed in another window. <a class="u" href="#">Retry</a></div>'
+        body += '<div class="err">Not saved: the routine changed in another window. <a class="u" href="#">Retry</a></div>'
     return f'<div class="card" style="padding-top:8px">{body}</div>'
 
 
-board("DesktopEdit", 1440, 960, desk(f'<a class="btn setting-back" href="#">{CHEVL}{P}</a><h1>New agent</h1>' + form(new=True), h=960))
+board("DesktopEdit", 1440, 960, desk(f'<a class="btn setting-back" href="#">{CHEVL}{P}</a><h1>New routine</h1>' + form(new=True), h=960))
 board("PhoneEdit", 390, 1150, phone(form(trig="event", name="Review each merge", brief=MERGE_BRIEF), back="Review each merge", title="Edit", h=1150))
 
 
@@ -488,10 +488,10 @@ def sysa(name, text, kind="plain", link="Open"):
 
 def offer(state="shown"):
     """L3's offer card: Altitude draws it from the stored definition; only the operator's press saves it."""
-    btns = '<span class="btn primary">Create agent</span><span class="btn">Edit first</span>'
+    btns = '<span class="btn primary">Create routine</span><span class="btn">Edit first</span>'
     foot = ""
     if state == "saving":
-        btns = ('<span class="btn primary" style="min-width:112px" aria-label="Create agent, saving"><span class="spin"></span></span>'
+        btns = ('<span class="btn primary" style="min-width:112px" aria-label="Create routine, saving"><span class="spin"></span></span>'
                 '<span class="btn" aria-disabled="true">Edit first</span>')
     elif state == "created":
         btns, foot = "", f'<p class="ok" style="margin:10px 0 0">Created · <a {U}>Open</a></p>'
@@ -500,7 +500,7 @@ def offer(state="shown"):
     elif state == "lapsed":
         btns, foot = "", '<p class="muted" style="margin:10px 0 0;font-size:13px">This offer lapsed.</p>'
     row = f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">{btns}</div>' if btns else ""
-    return ('<div class="acard"><small class="muted">New agent</small><b>Dependency check</b>'
+    return ('<div class="acard"><small class="muted">New routine</small><b>Dependency check</b>'
             '<small class="muted">Weekdays at 07:00 · Tells you when it finds something · On when created</small>'
             f'<p class="clamp">{BRIEF}</p><a {U} style="font-size:13px">Show all</a>{row}{foot}</div>')
 
@@ -543,7 +543,7 @@ MON_ROWS = [("altitude / Weekly improvement review", "Next Monday at 08:00", "La
 def mon_agents(rows=MON_ROWS, head=True):
     items = "".join(f'<a class="agl" href="#"><div class="tx"><div class="monitor-row"><b>{a}</b><span class="nx">{b}</span></div>'
                     f'<p class="muted" style="margin:0">{c}</p></div>{CHEVR}</a>' for a, b, c in rows)
-    return (f'<h2>Agents ({len(rows)})</h2>' if head else '') + f'<div class="card" style="padding:4px 18px">{items}</div>'
+    return (f'<h2>Routines ({len(rows)})</h2>' if head else '') + f'<div class="card" style="padding:4px 18px">{items}</div>'
 
 
 def session_row(chip, title, meta, ago, meter=None, stale=False):
@@ -560,12 +560,12 @@ def seat(name, week, five):
 
 
 UPDATE = '<h2>Altitude update</h2><p class="muted" style="margin:0 0 4px">No update pending.</p>'
-SEATS = ('<h2>Seats</h2><p class="muted" style="margin:0 0 6px">Past the mark at 90%, or without a current reading, Altitude skips optional work such as agent runs and the Weekly review.</p>'
+SEATS = ('<h2>Seats</h2><p class="muted" style="margin:0 0 6px">Past the mark at 90%, or without a current reading, Altitude skips optional work such as routine runs and the Weekly review.</p>'
          '<div class="monseats">' + seat("Claude Code", 38, 12) + seat("Codex", 22, 4) + '</div>')
 ROUTING = ('<h2>Routing now</h2><div class="card"><div class="monitor-row"><span>L3 · harbor · Auto</span><b style="flex:none">Claude Code</b></div>'
            '<p class="muted" style="margin:2px 0 10px">Most weekly headroom</p><div class="monitor-row"><span>L2 · new task</span><b style="flex:none">Claude Code</b></div>'
            '<p class="muted" style="margin:2px 0 0">Project harbor: most weekly headroom</p></div>')
-AGENT_SESSION = session_row("Agent", "harbor / Review each merge", "Claude Code · Sonnet · context 6% · 4 of 20 min", "just now", 6)
+AGENT_SESSION = session_row("Routine", "harbor / Review each merge", "Claude Code · Sonnet · context 6% · 4 of 20 min", "just now", 6)
 SESSIONS = ('<h2>Sessions (3)</h2>' + session_row("L3", "harbor", "Claude Code · Fable · context 12%", "1 min ago", 12)
             + session_row("L2", "harbor / fix-upload-retry", "Claude Code · Opus · context 31% · edits 14", "2 min ago", 31)
             + AGENT_SESSION)
@@ -584,11 +584,11 @@ def trow(title, status, dot="dot"):
 
 def work_rows():
     fold = f'<div class="fold">{CHEVR.replace("chev", "")}Done this week · 2</div>'
-    agents = f'<a class="fold agentsrow" href="#">Agents · 4{CHEVR}</a>'
+    agents = f'<a class="fold agentsrow" href="#">Routines · 4{CHEVR}</a>'
     return ('<div><div class="sh">Current <span>3</span></div>'
-            + trow("Review each merge", "Agent run · “PR #812 merged” · 2 of 20 min")
+            + trow("Review each merge", "Routine run · “PR #812 merged” · 2 of 20 min")
             + trow("Add a test for the uploader’s retry limit", "Running · PR #811 green · from Review each merge")
-            + trow("Upload timing", "Agent run · waiting for Review each merge", "dot q")
+            + trow("Upload timing", "Routine run · waiting for Review each merge", "dot q")
             + '</div>' + fold + agents)
 
 
@@ -620,7 +620,7 @@ board("PhoneRetire", 390, 844, phone(agent_page(), back=P, title="Dependency che
                                                    f'<span class="btn"{FOCUS}>Cancel</span><span class="btn redfill">Retire</span>')))
 
 
-# ---- sending an agent events (step 4) ----
+# ---- sending events to a routine (step 4) ----
 AGENT_ID = "3f9a2c1b0e4d"
 SEND = f'alt --project {P} agent send {AGENT_ID} "what happened"'
 PATHLINE = 'PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"'
@@ -659,17 +659,17 @@ def send_section(examples=False):
     return ('<div class="card"><p style="margin:0 0 2px;font-weight:600;font-size:14px">Send it an event</p>'
             '<p class="muted" style="margin:0 0 6px;font-size:13px">From a script or your terminal on this computer:</p>'
             f'{code(SEND)}'
-            '<p class="muted" style="margin:6px 0 0;font-size:12.5px">To try it first, use <code>agent run</code> in place of <code>agent send</code>: it starts a run now, even before the agent is on.</p>'
+            '<p class="muted" style="margin:6px 0 0;font-size:12.5px">To try it first, use <code>agent run</code> in place of <code>agent send</code>: it starts a run now, even before the routine is on.</p>'
             f'{fold}{body}'
             '<p class="muted" style="margin:10px 0 0;font-size:12.5px">Send numbers and your own words, not text anyone else can write: a run has your code and the network.</p></div>')
 
 
-# ---- needs you: an agent that paused itself (step 4) ----
+# ---- needs you: a routine that paused itself (step 4) ----
 def needs_card(state="shown"):
-    """Counted with the project's questions, never alerting a device; Resume presses the agent's resume change."""
+    """Counted with the project's questions, never alerting a device; Resume presses the routine's resume change."""
     resume = {"resuming": '<span class="btn" style="min-width:86px" aria-label="Resume, saving"><span class="spin"></span></span>'}.get(state, '<span class="btn">Resume</span>')
     err = '<div class="err">Not resumed: Flaky tests is retired.</div>' if state == "refused" else ""
-    return ('<div class="card ncard"><div class="nk"><span class="bad">Agent paused itself</span><span class="muted">2 h ago</span></div>'
+    return ('<div class="card ncard"><div class="nk"><span class="bad">Routine paused itself</span><span class="muted">2 h ago</span></div>'
             f'<a class="nt" href="#">Flaky tests{CHEVR}</a>'
             '<p>3 runs in a row couldn’t finish. The last: <code>make test-e2e</code> is not a target.</p>'
             f'<div class="nb">{resume}<a {U}>Open the last run</a></div>{err}</div>')
@@ -682,7 +682,7 @@ QUESTION = ('<div class="card ncard"><div class="nk"><span style="color:var(--ac
 
 
 def needs_page():
-    return ('<h1 style="margin-bottom:2px">Needs you</h1><p class="muted" style="margin:0 0 18px">1 question · 1 paused agent in harbor</p>'
+    return ('<h1 style="margin-bottom:2px">Needs you</h1><p class="muted" style="margin:0 0 18px">1 question · 1 paused routine in harbor</p>'
             f'<h2 style="margin:0 0 10px">{P}</h2><div style="display:flex;flex-direction:column;gap:12px">{QUESTION}{needs_card()}</div>'
             f'<div class="nsec">Suggestions</div><h2 style="margin:0 0 10px">{P}</h2>{scard()}')
 
@@ -698,20 +698,20 @@ def st(label, note, body):
     return f'<div class="st"><div class="lab">{label}<span>{note}</span></div>{body}</div>'
 
 
-RETIRED_LIST = ('<h2 style="margin-top:0">Retired agents</h2><div class="card alist">'
+RETIRED_LIST = ('<h2 style="margin-top:0">Retired routines</h2><div class="card alist">'
                 + arow("Issue labels", "Retired Oct 19 · 23 runs") + arow("Old digest", "Retired Sep 30 · 41 runs") + '</div>')
 RETIRED_PAGE = ('<h1 style="margin:0 0 4px">Issue labels</h1><p class="muted" style="margin:0 0 4px">Retired Oct 19</p>'
                 + runs(rows=RUNS[:2], more=False) + definition(edit=False))
 CELLS = [
-    ("1 · Section loading", "a spinner named Loading agents…", section(state="loading", top=False)),
+    ("1 · Section loading", "a spinner named Loading routines…", section(state="loading", top=False)),
     ("2 · Section read failed", "other settings stay usable", section(state="failed", top=False)),
-    ("3 · No agents of your own yet", "the budget, New agent and every built-in agent", section(rows=[], top=False, built=BUILTIN_ALL)),
+    ("3 · No routines of your own yet", "the budget, New routine and every built-in routine", section(rows=[], top=False, built=BUILTIN_ALL)),
     ("4 · Budget saving", "the choice shows at once", section(rows=AGENTS[:1], bstate="saving", retired=False, top=False, built=None)),
     ("5 · Budget refused", "back to the saved value", section(rows=AGENTS[:1], bstate="refused", retired=False, top=False, built=None)),
-    ("6 · Budget spent", "agents wait until Monday", section(rows=[AGENTS[3]], bstate="spent", retired=False, top=False, built=None)),
+    ("6 · Budget spent", "routines wait until Monday", section(rows=[AGENTS[3]], bstate="spent", retired=False, top=False, built=None)),
     ("7 · Run now starting", "held until the run is read; same width", status("starting")),
     ("8 · Run now refused", "Run now again, with its reason", status("refused")),
-    ("9 · Waiting", "for a task slot, or for the project’s other agent run", status("waiting") + '<div style="height:10px"></div>' + status("waiting-agent")),
+    ("9 · Waiting", "for a task slot, or for the project’s other routine run", status("waiting") + '<div style="height:10px"></div>' + status("waiting-agent")),
     ("10 · Running, then Stop pressed", "Open goes to the run; Pause lets this run finish", status("running") + '<div style="height:10px"></div>' + status("stopping")),
     ("11 · Paused", "Resume answers at once", status("paused")),
     ("12 · Pause refused", "the line and button return", status("pause-refused")),
@@ -719,18 +719,18 @@ CELLS = [
     ("14 · No runs yet", "", runs(rows=[], more=False)),
     ("15 · Edit saving", "Cancel waits", form(saving=True)),
     ("16 · Edit refused", "the edit stays in the fields", form(refused=True)),
-    ("17 · New agent without a name", "pressed Create agent focuses the first empty field", form(new=True, nameless=True)),
+    ("17 · New routine without a name", "pressed Create routine focuses the first empty field", form(new=True, nameless=True)),
     ("18 · Leaving with unsaved changes", "Keep editing has focus",
      dialog("Discard your changes?", "Your edits to Dependency check haven’t been saved.",
             f'<span class="btn"{FOCUS}>Keep editing</span><span class="btn redbtn">Discard</span>', static=True)),
-    ("19 · Retire pending", "held until the agent reads as retired",
+    ("19 · Retire pending", "held until the routine reads as retired",
      dialog("Retire Dependency check?", RETIRE_TEXT,
             '<span class="btn" aria-disabled="true">Cancel</span><span class="btn redfill" aria-disabled="true"><span class="spin"></span>Retiring…</span>', static=True)),
     ("20 · Retire refused", "Cancel works",
      dialog("Retire Dependency check?", RETIRE_TEXT, f'<span class="btn"{FOCUS}>Cancel</span><span class="btn redfill">Retire</span>',
-            '<div class="err">Not retired: the agent changed in another window.</div>', static=True)),
-    ("21 · Retired agents", "from “2 retired” under the section", RETIRED_LIST),
-    ("22 · A retired agent", "runs and what it did, read-only", RETIRED_PAGE),
+            '<div class="err">Not retired: the routine changed in another window.</div>', static=True)),
+    ("21 · Retired routines", "from “2 retired” under the section", RETIRED_LIST),
+    ("22 · A retired routine", "runs and what it did, read-only", RETIRED_PAGE),
     ("23 · Chat lines", "quiet system lines; never an alert or a Needs you count",
      '<div style="display:flex;flex-direction:column;gap:14px;padding:6px 0">'
      + sysa("Dependency check", "found something: 2 packages have security fixes.", "found")
@@ -741,7 +741,7 @@ CELLS = [
      + sysa("Retired Dependency check", "", link="") + '</div>'),
     ("24 · Add a trigger", "the menu under the button; Escape returns focus to it",
      triggers("schedule", open_schedule=False) + '<div style="margin:-8px 0 0 12px;position:relative">' + trigger_menu() + '</div>'),
-    ("25 · No trigger", "the agent runs only when you press Run now", triggers(empty=True)),
+    ("25 · No trigger", "the routine runs only when you press Run now", triggers(empty=True)),
     ("26 · One run for several events", "events during a run wait and go together",
      runs(rows=[("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For “PR #810 merged” and 2 more: #811 changed the retry limit without a test."),
                 ("", "Today 09:40", "Nothing found", "4 min · 2.1M tokens", "For “PR #809 merged”: every change has a test.")], more=False)),
@@ -751,17 +751,17 @@ CELLS = [
     ("28 · A late run, a run that waited too long", "one catch-up after Altitude was off; a wait ends at six hours",
      runs(rows=[("", "Oct 13, 07:00, ran at 09:14", "Nothing found", "5 min · 3.4M tokens", "Every dependency is current."),
                 ("skip", "Oct 12, 07:00", "Skipped", "", "No free slot for 6 hours.")], more=False)),
-    ("29 · A new agent", "saved paused; try it, then turn it on", status("new")),
+    ("29 · A new routine", "saved paused; try it, then turn it on", status("new")),
     ("30 · A schedule with no day", "Save waits for a day", triggers(noday=True)),
     ("31 · Offer in chat", "drawn by Altitude from the stored definition; only your press saves it", offer()),
     ("32 · Offer saving, then created", "the card stays where it was", offer("saving") + '<div style="height:12px"></div>' + offer("created")),
     ("33 · Offer refused, offer lapsed", "no buttons once it cannot be saved", offer("refused") + '<div style="height:12px"></div>' + offer("lapsed")),
     ("34 · Run page loading, read failed", "", run_page("loading") + '<div style="height:12px"></div>' + run_page("failed")),
     ("35 · A run that couldn’t finish", "its reason in the report’s place", run_page("fail")),
-    ("36 · The project menu", "Agents… is always there, after Project settings…",
-     '<div class="menu-mock" role="menu" style="position:static"><div class="hi">Project settings…</div><div>Agents…</div>'
+    ("36 · The project menu", "Routines… is always there, after Project settings…",
+     '<div class="menu-mock" role="menu" style="position:static"><div class="hi">Project settings…</div><div>Routines…</div>'
      '<div>Setup… <span class="muted">Ready</span></div><div>Reset L3 conversation…</div><div>All settings…</div></div>'),
-    ("37 · Turning a built-in agent on", "it joins your agents, on, with its schedule", builtin(state="saving")),
+    ("37 · Turning a built-in routine on", "it joins your routines, on, with its schedule", builtin(state="saving")),
     ("38 · Turn on refused", "the button returns with the reason", builtin(state="refused")),
     ("39 · Altitude’s own project", "the Weekly review is built in there (step 2); its Turn on opens its terms first",
      builtin(rows=[WEEKLY_ROW] + BUILTIN_ALL[:2])),
@@ -771,7 +771,7 @@ CELLS = [
     ("41 · Weekly: turning on, refused", "the spinner until the list reads it as yours; stale terms return the button",
      '<div class="card alist">' + brow(*WEEKLY_ROW, state="saving") + '</div><div style="height:10px"></div>'
      + '<div class="card alist">' + brow(*WEEKLY_ROW, state="refused", refused="the terms changed while the sheet was open; read them again.") + '</div>'),
-    ("42 · Weekly: yours", "first among your agents; its runs don’t count toward the budget",
+    ("42 · Weekly: yours", "first among your routines; its runs don’t count toward the budget",
      '<div class="card alist">' + arow("Weekly improvement review", "Mondays at 08:00 · 3 suggestions 2 d ago")
      + arow("Weekly improvement review", PULSE + "Mondays at 08:00 · Reading 6 tasks")
      + arow("Weekly improvement review", PAUSE + "Mondays at 08:00 · Paused: its terms changed") + '</div>'),
@@ -798,11 +798,11 @@ CELLS = [
     ("52 · Monitor: loading, read failed", "both sections share Monitor’s one read (step 3)",
      '<div class="skel" style="height:72px"></div><div style="height:10px"></div>'
      '<p style="margin:0;color:var(--danger)">Could not read the monitor. <a class="u" href="#">Retry</a></p>'),
-    ("53 · Monitor: an agent’s session", "a run with a reading; before its first reading; a reading gone stale",
+    ("53 · Monitor: a routine’s session", "a run with a reading; before its first reading; a reading gone stale",
      AGENT_SESSION
-     + session_row("Agent", "atlas / Release notes", "Claude Code · Opus · context unknown · 0 of 30 min", "")
-     + session_row("Agent", "harbor / Dependency check", "Claude Code · Sonnet · context 41% · 18 of 20 min", "6 min ago", 41, stale=True)),
-    ("54 · Monitor: what comes next", "the first that applies, in the agent page’s order; Last: is the latest run that ran",
+     + session_row("Routine", "atlas / Release notes", "Claude Code · Opus · context unknown · 0 of 30 min", "")
+     + session_row("Routine", "harbor / Dependency check", "Claude Code · Sonnet · context 41% · 18 of 20 min", "6 min ago", 41, stale=True)),
+    ("54 · Monitor: what comes next", "the first that applies, in the routine page’s order; Last: is the latest run that ran",
      mon_agents([("harbor / Review each merge", PULSE + "Running", "No runs yet."),
                  ("harbor / Upload timing", "Waiting", "Last: Nothing found · 2 h ago · 5 min · 2.8M tokens"),
                  ("atlas / Docs drift", "Not on yet", "Last: Found something · 2 d ago · 7 min · 3.1M tokens"),
@@ -814,7 +814,7 @@ CELLS = [
                  ("harbor / Issue triage", "When it’s sent an event", "Last: Found something · 1 d ago · 8 min · 3.0M tokens"),
                  ("atlas / Licence audit", "Only when you run it", "Last: Nothing found · 6 d ago · 3 min · 0.9M tokens")],
                head=False)),
-    ("55 · Monitor: no agents", "no Agents section and no heading; Sessions ends the page",
+    ("55 · Monitor: no routines", "no Routines section and no heading; Sessions ends the page",
      '<h2 style="margin-top:0">Sessions (1)</h2>' + session_row("L3", "harbor", "Claude Code · Fable · context 12%", "1 min ago", 12)),
     ("56 · The event trigger", "its row says where events come from; the hint follows the list (step 4)",
      '<div>' + triggers("both", open_schedule=False) + EVHINT + '</div>'),
@@ -827,17 +827,17 @@ CELLS = [
                 ("found", "Today 10:12", "Found something", "7 min · 4.4M tokens", "For “PR #810 merged” and 2 more: #811 changed the retry limit without a test."),
                 ("skip", "Oct 18, 09:30", "Skipped", "", "For “PR #806 merged” · No free slot for 6 hours.")], more=False)),
     ("60 · A run for several events", "each event on its own muted line under what fired it", run_page("events")),
-    ("61 · Run now on an event agent", "it replays the latest event; with none yet it runs without one",
+    ("61 · Run now on an event routine", "it replays the latest event; with none yet it runs without one",
      run_page("replay") + '<div style="height:12px"></div>' + run_page("no-event")),
-    ("64 · Send it an event", "on the agent page, in What it does; Examples folded", send_section()),
-    ("65 · Send it an event: examples", "three recipes to copy; the agent’s id and repository filled in", send_section(examples=True)),
+    ("64 · Send it an event", "on the routine page, in What it does; Examples folded", send_section()),
+    ("65 · Send it an event: examples", "three recipes to copy; the routine’s id and repository filled in", send_section(examples=True)),
     ("62 · Needs you: paused itself", "counted with the questions, never alerting a device", needs_card()),
-    ("63 · Needs you: resuming, refused", "the card leaves once the agent reads as on", needs_card("resuming") + '<div style="height:12px"></div>' + needs_card("refused")),
+    ("63 · Needs you: resuming, refused", "the card leaves once the routine reads as on", needs_card("resuming") + '<div style="height:12px"></div>' + needs_card("refused")),
     ("66 · The run page while L3 checks; none kept; check unfinished", "nothing in Needs you until L3 posts or two hours pass; what it sets aside rests folded here, with its reason",
      suggested(checking=3) + suggested((), set_aside=NONE_KEPT) + suggested((), set_aside=NONE_KEPT, open_=True)
      + suggested((), set_aside=[(n, SUGS[n - 1][0], None) for n in (1, 2)], why=UNFINISHED)
      + suggested((), set_aside=[(n, SUGS[n - 1][0], None) for n in (1, 2)], open_=True, why=UNFINISHED)),
-    ("67 · Needs you: Suggestions", "once L3 has kept them; after what needs you, uncounted, never alerting; shown whatever Tell me says; at most three waiting per agent",
+    ("67 · Needs you: Suggestions", "once L3 has kept them; after what needs you, uncounted, never alerting; shown whatever Tell me says; at most three waiting per routine",
      f'<div class="nsec" style="margin-top:0">Suggestions</div><h2 style="margin:0 0 10px">{P}</h2>' + scard()),
     ("68 · Make a task pressed, then accepted", "a spinner in place, same width; then the words hold until L3’s outcome is read",
      scard(("pressed", "open")) + '<div style="height:12px"></div>' + scard(("accepted", "open"))),
@@ -854,14 +854,14 @@ CELLS = [
     ("73 · The run page", "Suggested tasks under the report: what L3 kept, with the same buttons and states, then what it set aside, folded",
      run_with_suggestions() + suggested(open_=True)),
     ("74 · The form’s Tell me", "one muted line under the choices", f'<label class="flab" style="margin-top:0">Tell me in chat</label>{seg()}<span class="hint">Suggested tasks wait in Needs you whatever you choose.</span>'),
-    ("75 · Work: a task from a suggestion", "its card’s muted line names the agent; the Weekly review’s read “from Weekly improvement review”",
+    ("75 · Work: a task from a suggestion", "its card’s muted line names the routine; the Weekly review’s read “from Weekly improvement review”",
      '<div class="work" style="position:static;padding:0">' + trow("Add a test for the uploader’s retry limit", "Running · PR #811 green · from Review each merge")
      + trow("Stop re-asking merge approval after a rebase", "Done · from Weekly improvement review", "dot ok") + '</div>'),
 ]
-board("States", 1200, 21410, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 1440</h1>'
-      '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Every state of the agents page, the agent page, the form, the dialogs and chat, as PROPOSAL.md specifies them.</p></div>'
+board("States", 1200, 21410, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Routines: states at 1440</h1>'
+      '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Every state of the routines page, the routine page, the form, the dialogs and chat, as PROPOSAL.md specifies them.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in CELLS) + '</div>')
-board("PhoneStates", 1720, 15440, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Agents: states at 390</h1>'
+board("PhoneStates", 1720, 15440, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Routines: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: stacked choices, 44px targets, full-width cards.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in CELLS) + '</div>')
 board("PhoneWeeklyTerms", 390, 844, phone(weekly_page(), back="altitude", title="Weekly improvement review",

@@ -17,11 +17,11 @@ class TestAgreement(RunCase):
     def test_nothing_starts_without_the_operators_agreement_to_the_current_terms(self):
         self.load(agree=False)
         version = improve.terms(self.project)["version"]
-        with self.assertRaisesRegex(ValueError, "Agree to the Weekly improvement review's terms on the Agents page first"):
+        with self.assertRaisesRegex(ValueError, "Agree to the Weekly improvement review's terms on the Routines page first"):
             improve.start(self.project, self.operator("Get improvement suggestions"), now=NOW)
-        with self.assertRaisesRegex(ValueError, "Agents page first"):
+        with self.assertRaisesRegex(ValueError, "Routines page first"):
             improve.run_now(self.project, "a" * 32, now=NOW)
-        with self.assertRaisesRegex(ValueError, "Agents page first"):
+        with self.assertRaisesRegex(ValueError, "Routines page first"):
             improve.set_weekly(self.project, True, now=NOW)
         with self.assertRaisesRegex(ValueError, "terms changed while the sheet was open"):
             improve.run_now(self.project, "a" * 32, agree="0" * 12, now=NOW)
@@ -60,7 +60,7 @@ class TestAgreement(RunCase):
                              (False, "Paused: its terms changed", ["resume", "run"]))
             self.assertEqual([row["text"] for row in self.chat()],
                              ["Weekly improvement review paused: its terms changed."])
-            with self.assertRaisesRegex(ValueError, "Agents page first"):
+            with self.assertRaisesRegex(ValueError, "Routines page first"):
                 improve.start(self.project, self.operator("Get improvement suggestions"), now=NOW)
             improve.set_weekly(self.project, True, agree=improve.terms(self.project)["version"], now=NOW)
             self.assertEqual(improve.page(self.project, now=NOW)["status"]["line"][:6], "Next: ")
