@@ -9,16 +9,16 @@ import { walkthrough } from "./walkthrough";
  */
 
 // Browser layout simulation, not a claim about native iOS/Android keyboard events.
-async function visualViewport(page: Page, height: number, top = 0, scale = 1) {
-  await page.evaluate(({ height, top, scale }) => {
+async function visualViewport(page: Page, height: number, top = 0, scale = 1, resize = true) {
+  await page.evaluate(({ height, top, scale, resize }) => {
     const viewport = window.visualViewport!;
     Object.defineProperties(viewport, {
       height: { configurable: true, value: height },
       offsetTop: { configurable: true, value: top },
       scale: { configurable: true, value: scale },
     });
-    viewport.dispatchEvent(new Event("resize"));
-  }, { height, top, scale });
+    if (resize) viewport.dispatchEvent(new Event("resize"));
+  }, { height, top, scale, resize });
 }
 
 test("compact chat keeps bottom and older reading anchors through keyboard, details and restoration", async ({ page, request }, info) => {
@@ -251,12 +251,26 @@ test("the phone shell fills the screen again when the app returns from the backg
   await expect(shell).not.toHaveAttribute("data-keyboard");
   await expect(shell).toHaveCSS("height", full);
 
-  // Opened from a notification: a late short reading with no field focused is not a keyboard and leaves the shell whole.
-  await visualViewport(page, 480, 24);
-  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
-  await walk.state("02-notification-opened-stale-reading", { visible: [nav, field], hidden: [] });
-  await expect(shell).toHaveCSS("height", full);
-  expect(await shell.evaluate((el) => el.getBoundingClientRect().top)).toBe(0);
+  // Opened from a notification or restored from the back-forward cache: the return itself measures, and a short
+  // reading with no field focused is not a keyboard, so the shell stays whole.
+  for (const [label, event] of [["notification-focus", "focus"], ["restored-pageshow", "pageshow"]] as const) {
+    await visualViewport(page, 760); // Toolbar movement before going away: the shell follows it.
+    await expect(shell).toHaveCSS("height", "760px");
+    await visualViewport(page, 480, 24, 1, false);
+    await page.evaluate((event) => window.dispatchEvent(event === "pageshow" ? new PageTransitionEvent("pageshow", { persisted: true }) : new Event("focus")), event);
+    await walk.state(`02-${label}-stale-reading`, { visible: [nav, field], hidden: [] });
+    await expect(shell).toHaveCSS("height", full);
+    expect(await shell.evaluate((el) => el.getBoundingClientRect().top)).toBe(0);
+  }
+
+  // A window focus while typing, with focus on a composer control, keeps the keyboard layout: only going away ends it.
+  await field.focus();
+  await visualViewport(page, 510);
+  await page.getByRole("button", { name: "More actions" }).focus();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(shell).toHaveAttribute("data-keyboard", "");
+  await expect(shell).toHaveCSS("height", "510px");
+  await visualViewport(page, page.viewportSize()!.height);
 
   // The keyboard still works as before once the operator types.
   await field.focus();

@@ -67,28 +67,28 @@ export default function AppShell() {
       node.style.setProperty("--viewport-height", `${viewport.height}px`);
       node.style.setProperty("--viewport-top", `${viewport.offsetTop}px`);
     };
-    // The keyboard closes while the app is away, so a return measures afresh without the keyboard detected before.
-    const returned = () => {
-      if (document.hidden) return;
-      node.removeAttribute("data-keyboard");
-      resize();
-    };
+    // The keyboard closes while the app is away, so the keyboard detected before does not outlast it; a return
+    // measures afresh.
+    const away = () => node.removeAttribute("data-keyboard");
+    const shown = () => (document.hidden ? away() : resize());
     resize();
     viewport.addEventListener("resize", resize);
     viewport.addEventListener("scroll", resize);
     document.addEventListener("focusin", resize);
     window.addEventListener("resize", resize);
-    document.addEventListener("visibilitychange", returned);
-    window.addEventListener("pageshow", returned);
-    window.addEventListener("focus", returned);
+    document.addEventListener("visibilitychange", shown);
+    window.addEventListener("pagehide", away);
+    window.addEventListener("pageshow", resize);
+    window.addEventListener("focus", resize);
     return () => {
       viewport.removeEventListener("resize", resize);
       viewport.removeEventListener("scroll", resize);
       document.removeEventListener("focusin", resize);
       window.removeEventListener("resize", resize);
-      document.removeEventListener("visibilitychange", returned);
-      window.removeEventListener("pageshow", returned);
-      window.removeEventListener("focus", returned);
+      document.removeEventListener("visibilitychange", shown);
+      window.removeEventListener("pagehide", away);
+      window.removeEventListener("pageshow", resize);
+      window.removeEventListener("focus", resize);
       node.removeAttribute("data-keyboard");
       node.style.removeProperty("--viewport-height");
       node.style.removeProperty("--viewport-top");
