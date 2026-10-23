@@ -5,6 +5,7 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Starting Altitude removes a leftover file from older installations.
 - The agents Altitude runs can no longer read repair records, which hold each step a repair took with your full
   access and its output. Repairs themselves, the app and `alt repair` read them as before. An agent already
   running when Altitude updates keeps its earlier view until it ends.
