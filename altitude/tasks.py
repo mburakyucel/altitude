@@ -1742,9 +1742,9 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
     """`offer_turn` names the coordinator reply whose Create task press this creation answers (SPEC.md §3.3);
     a reply produces at most one task, however often its turn is retried. `improvement` names the accepted
     suggestion (`suggestions.parse`) the task carries out; a suggestion has at most one task. `start` is the commit
-    of the project's repository its branch starts from instead of main, made here, before the task exists, so its
-    dispatch always finds it (`dispatch._task_worktree`); `context` follows the request as quoted evidence, which issue
-    intake does not read. Both come from an agent chat's Make a task (`chats.make_task`)."""
+    of the project's repository its branch starts from instead of main (`dispatch._task_worktree`), its branch made
+    here with the record, which keeps that commit until the task starts; `context` follows the request as quoted
+    evidence, which issue intake does not read. Both come from an agent chat's Make a task (`chats.make_task`)."""
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
     if wait is not None and after is not None:
@@ -1793,8 +1793,6 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         while S.task_dir(project, slug).exists() or (start and _branch_exists(project, f"worktree-{slug}")):
             n += 1
             slug = f"{base}-{n}"
-        if start:
-            _start_branch(project, f"worktree-{slug}", start)
         d = S.tasks_dir(project) / slug
         d.mkdir(parents=True)
         S.atomic_write(d / "request.md", request.rstrip() + "\n")
@@ -1816,7 +1814,13 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
             task["improvement"] = improvement
         if start:
             task["start"] = start
-        S.save_task(project, task)
+            _start_branch(project, f"worktree-{slug}", start)
+        try:
+            S.save_task(project, task)
+        except BaseException:
+            if start:  # the branch belongs to a task that was never saved
+                _branch_git(project, "branch", "-D", f"worktree-{slug}")
+            raise
         S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True, planned_wait=planned,
                        **({"improvement": improvement} if improvement else {}))
         S.regen_state_md(project)

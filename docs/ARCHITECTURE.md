@@ -2898,12 +2898,13 @@ on each chat whose turn's worker is running, and its tick finds every chat with 
 interrupted, reads cut off.
 
 Make a task (`chats.make_task`) makes a task from the chat directly, as `alt task new` does, with the operator
-as its author: the operator's words are its request, and the conversation follows them as quoted evidence, which
-issue intake does not read. When the copy has changes since its base, Altitude saves them as one commit on the
+as its author: the operator's words are its request, and the conversation follows them as quoted evidence, its
+latest turns within 60,000 characters, which issue intake does not read. When the copy has changes since its base, Altitude saves them as one commit on the
 copy's last commit (`git add -A`, `write-tree`, `commit-tree`, so no project hook runs on the agent's content) and
 `tasks.new` makes the task's branch, `worktree-<slug>`, at that commit before the task record exists and records it
-as the task's `start`; the dispatcher checks the task out on that branch while it is still at `start` and refuses
-it as an orphan otherwise. The copy and its branch are then removed, and the next turn makes a fresh copy of main,
+as the task's `start`, which keeps that commit until the task starts; the dispatcher checks the task out on that
+branch while it is still at `start`, makes it again at `start` when it is gone, and refuses it as an orphan when it
+moved. The copy and its branch are then removed, and the next turn makes a fresh copy of main,
 so the changes live in the task alone. A chat without changes makes a task that starts from main and keeps its
 copy. Make a task refuses while a turn runs or a message waits, and no turn starts while it runs; the conversation
 records a line naming the task, which the page shows with the task's card.

@@ -472,7 +472,7 @@ class TestMakeTask(ChatCase):
         self.assertEqual(git("rev-parse", "HEAD", cwd=checkout).strip(), task["start"])
         self.assertEqual((checkout / "b.txt").read_text(), "b\n")
 
-    def test_a_branch_that_moved_from_its_start_is_still_refused_as_an_orphan(self):
+    def test_a_start_branch_that_moved_is_refused_and_one_deleted_is_made_again_at_its_start(self):
         from altitude import dispatch, tasks
         chat_id = self.new()
         self.answered_all(chat_id)
@@ -482,6 +482,33 @@ class TestMakeTask(ChatCase):
         git("branch", "-f", f"worktree-{task['slug']}", main, cwd=self.repo)
         with self.assertRaisesRegex(tasks.TransitionError, "exists without its registered worktree"):
             dispatch._task_worktree(self.repo, self.project, task["slug"], main)
+        # Deleted, by a worker that writes the shared Git store or by hand: never main instead of the chat's changes.
+        git("branch", "-D", f"worktree-{task['slug']}", cwd=self.repo)
+        checkout = dispatch._task_worktree(self.repo, self.project, task["slug"], main)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=checkout).strip(), task["start"])
+        self.assertTrue((checkout / "a.txt").exists())
+
+    def test_a_task_that_could_not_be_saved_leaves_no_branch(self):
+        chat_id = self.new()
+        self.answered_all(chat_id)
+        self.commit(chats.worktree(self.project, chat_id), "a.txt")
+        with mock.patch.object(S, "save_task", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            self.make(chat_id)
+        self.assertNotIn("worktree-faster-export", git("branch", "--list", cwd=self.repo))
+        self.assertTrue(chats.worktree(self.project, chat_id).is_dir())  # the changes stay in the chat
+        self.assertFalse([e for e in self.chat(chat_id)["events"] if e["kind"] == "task"])
+
+    def test_a_long_chat_quotes_its_latest_turns_and_says_how_many_are_left_out(self):
+        self.patch(chats, "BRIEF", 30)
+        chat_id = self.new("First question")
+        self.answered_all(chat_id)
+        chats.message(self.project, chat_id, "Second question", self.request())
+        self.answered_all(chat_id)
+        task = self.make(chat_id)
+        brief = (S.task_dir(self.project, task["slug"]) / "request.md").read_text()
+        self.assertIn("> (1 earlier turn of the chat is left out here.)", brief)
+        self.assertIn("> Second question", brief)
+        self.assertNotIn("> First question", brief)
 
     def test_a_chat_that_changed_nothing_makes_a_task_from_main_and_keeps_its_copy(self):
         chat_id = self.new()

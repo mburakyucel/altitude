@@ -24,8 +24,9 @@ from pathlib import Path
 
 from . import config, engines, git_policy, images, route, state as S, steps as step_lines, usage
 
-#: A chat's name, a message's text, the requests a chat remembers and a task's title.
-NAME, TEXT, REQUESTS, TITLE = 80, 20000, 200, 120
+#: A chat's name, a message's text, the requests a chat remembers, a task's title and how much of the conversation a
+#: task made from the chat quotes.
+NAME, TEXT, REQUESTS, TITLE, BRIEF = 80, 20000, 200, 120, 60000
 #: How often a turn's thread reads its worker, and how often it records the session's context.
 WATCH, CONTEXT = 1.0, 30.0
 ID = re.compile(r"[0-9a-f]{12}")
@@ -341,13 +342,22 @@ def _snapshot(project: str, record: dict) -> str:
 
 
 def _context(record: dict, moved: int) -> str:
-    """The conversation, quoted, for the task made from the chat."""
-    said = _said(record, None)
+    """The conversation, quoted, for the task made from the chat: its latest turns within `BRIEF` characters, so a
+    long chat leaves its owner room to work."""
+    turns, kept, size = _said(record, None), [], 0
+    for turn in reversed(turns):
+        if kept and size + len(turn) > BRIEF:
+            break
+        kept.insert(0, turn)
+        size += len(turn) + 2
+    left = len(turns) - len(kept)
+    said = ([f"> ({left} earlier turn{' of the chat is' if left == 1 else 's of the chat are'} left out here.)"]
+            if left else []) + kept
     branch = (f" Its {_files(moved)} are already on this task's branch, in the commits after main." if moved
               else "")
     return ("## The agent chat it came from\n\n"
             f"The operator made this task from their agent chat \u201c{record['name']}\u201d.{branch} "
-            "Its conversation, quoted as evidence:\n\n" + (said or "> (No conversation.)"))
+            "Its conversation, quoted as evidence:\n\n" + ("\n\n".join(said) or "> (No conversation.)"))
 
 
 def archive(project: str, chat_id: str, request, *, discard: bool = False) -> dict:
@@ -602,22 +612,22 @@ def _quote(text: str) -> str:
     return "\n".join("> " + line if line else ">" for line in text.splitlines())
 
 
-def _said(record: dict, before: int | None, agent: str = "The agent") -> str:
-    """The conversation, quoted, up to turn `before` or all of it."""
-    parts = []
+def _said(record: dict, before: int | None, agent: str = "The agent") -> list[str]:
+    """Each turn of the conversation, quoted, up to turn `before` or all of them."""
+    turns = []
     for turn in (t for t in record["turns"] if before is None or t["n"] < before):
         said = "\n\n".join(m["text"] for m in record["messages"] if m.get("turn") == turn["n"] and m["text"])
-        if said:
-            parts.append("The operator wrote:\n" + _quote(said))
-        if turn.get("answer"):
-            parts.append(f"{agent} answered:\n" + _quote(turn["answer"]))
-    return "\n\n".join(parts)
+        parts = (["The operator wrote:\n" + _quote(said)] if said else []) + (
+            [f"{agent} answered:\n" + _quote(turn["answer"])] if turn.get("answer") else [])
+        if parts:
+            turns.append("\n\n".join(parts))
+    return turns
 
 
 def _history(record: dict, before: int) -> str:
     """The conversation before turn `before`, quoted, for a session that did not see it."""
     return ("This chat began in another session. Its conversation so far, quoted as evidence:\n\n"
-            + _said(record, before, "You") + "\n\nThe operator's new message:\n\n")
+            + "\n\n".join(_said(record, before, "You")) + "\n\nThe operator's new message:\n\n")
 
 
 def _follow(project: str, chat_id: str, n: int) -> None:
