@@ -1,0 +1,31 @@
+/* Chats boards: what the repair boards' styles (../repair/repair.css) do not already give */
+.trow .tt.one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chats .sh{align-items:center}
+.newchat{display:inline-flex;align-items:center;gap:4px;min-height:32px;padding:0 10px;border:1px solid var(--border);border-radius:999px;color:var(--text-primary)!important;background:var(--card)}
+.m .newchat{min-height:36px;font-size:13px}
+.worked{display:flex;flex-direction:column;gap:6px}
+.worked .wl{display:flex;align-items:center;gap:6px;min-height:32px;font-size:13px;color:var(--text-muted)}
+.worked.open .wl svg{transform:rotate(90deg)}
+.worked.live .wl{color:var(--text-secondary)}
+.worked .steps{padding-left:20px}
+.caret{display:inline-block;width:8px;height:16px;margin-left:2px;vertical-align:-2px;background:var(--text-muted);opacity:.6}
+.me.queued{opacity:.75}
+.me .qline{font-size:12px;color:var(--text-muted);margin-top:4px}
+.empty{color:var(--text-muted);text-align:center;font-size:14px;margin:auto 0 0}
+.bsheet.menu{padding-bottom:30px}
+.mi{display:flex;align-items:center;min-height:52px;font-size:16px;border-top:1px solid var(--hairline)}
+.mi:first-of-type{border-top:0}
+.mi b{margin-left:6px;color:var(--accent-text);font-weight:500}
+.mmeta{font-size:12px;margin:10px 0 0}
+.menu-d .mi{font-size:14px;min-height:40px}
+.tcard{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-card);background:var(--card)}
+.tcard .dot{margin-top:7px}.tcard .tt{font-weight:500}.tcard .tm{font-size:12px;color:var(--text-muted)}
+.cstatus.bad{color:var(--danger)}
+.adock{display:flex;justify-content:center;align-items:center;gap:12px;padding:6px 0 10px}
+.field.rename{flex:1;font-size:17px;font-weight:600}
+.mrow{display:flex;gap:10px;align-items:center;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-card);background:var(--card)}
+.mrow .tt{font-weight:500}.mrow .tm{font-size:12px;color:var(--text-muted)}
+.mrow .ctx{width:150px;display:flex;flex-direction:column;gap:4px}.mrow small{color:var(--text-muted);font-size:11px}
+.skel.short{width:60%}
+.rpage .mbody{justify-content:flex-end;overflow:hidden}.rpage .mcol{margin-top:0}
+.grab+.mi{border-top:0}
