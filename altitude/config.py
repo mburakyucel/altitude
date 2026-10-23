@@ -647,7 +647,8 @@ def activation_pending() -> bool:
 
 
 def ensure_root() -> None:
-    for d in (ROOT, MONITOR_DIR, ROOT / "hooks", CHATS):
+    from . import repair
+    for d in (ROOT, MONITOR_DIR, ROOT / "hooks", repair.home(), CHATS):
         d.mkdir(parents=True, exist_ok=True)
     if not PROJECTS_FILE.exists():
         storage.replace(PROJECTS_FILE, b"{}\n")

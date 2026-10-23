@@ -76,7 +76,9 @@ def refusal(groups: list[str] | None = None) -> str | None:
 
 
 def home() -> Path:
-    """Where repairs keep their records, under Altitude's home as it is now."""
+    """Where repairs keep their records, under Altitude's home as it is now. Only the operator reads them, so every
+    agent session's sandbox hides this folder (`platform.job_command`), which `config.ensure_root` makes so that what
+    it later holds stays hidden too."""
     return config.ROOT / "repairs"
 
 

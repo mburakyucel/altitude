@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo
-from altitude import access, config, dispatch, engines, l3, platform, route, state as S
+from altitude import access, config, dispatch, engines, l3, platform, repair, route, state as S
 
 TOKEN = "fixture-claude-token"
 
@@ -242,7 +242,8 @@ class TestClaudeFolders(AltitudeCase):
             filesystem = next(setting for setting in engines.codex_l3_permissions(self.tmp, project=self.project)
                               if ".filesystem=" in setting)
         self.assertEqual(set(named.call_args.args[0]), {*platform.credential_places(), *engines.claude.operator_places(),
-                                                        str(config.CHATS)}, "a Codex coordinator keeps its own folder")
+                                                        str(repair.home()), str(config.CHATS)},
+                                                       "a Codex coordinator keeps its own folder")
         for path in present[:2]:
             self.assertIn(f'{json.dumps(path)}="deny"', filesystem)
         self.assertNotIn(json.dumps(present[2]), filesystem)
