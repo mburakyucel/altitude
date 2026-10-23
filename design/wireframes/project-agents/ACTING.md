@@ -44,16 +44,17 @@ none ticked only reports, as every routine does today.
 
 | Permission | What the run can ask for | What Altitude checks | If it goes wrong |
 | --- | --- | --- | --- |
-| **Worktrees and branches** | Remove a worktree under `.claude/worktrees`; delete a local branch | Nothing is lost: the worktree has no uncommitted change, every commit is on a branch; the branch is merged into main or by a merged pull request. Nothing is in use: no open task or run owns it, no program has its folder open | **Undo** puts it back, exactly |
+| **Worktrees and branches** | Set aside a worktree under `.claude/worktrees`; delete a local branch | The [tidy rule](#the-tidy-rule) below: nothing is lost, nothing is in use, nothing changed in seven days | **Undo** puts it back exactly, ignored files included, for 14 days |
 | **Commands you list** | Run one of the commands you wrote on its form, word for word, optionally with a short text on its input | It is on the list. The run cannot write or change a command, only choose to run one | It runs as you, with your access, recorded with its output; no undo, so list only commands safe to run whenever the run decides |
 | **Pull requests** | Propose the change it made in its copy, with a title and why | At most three of its proposals open at a time | Each becomes a task held for your merge: a task owner checks it, it goes through review and the required checks, and nothing merges without you |
 | **Your devices** | One alert to your devices, in plain words, led by the routine's name | At most one a run | You read a notification you did not need |
 
 What each means for you day to day:
 
-- **Worktrees and branches.** A weekly tidy removes the worktrees and branches finished work leaves behind,
+- **Worktrees and branches.** A weekly tidy clears the worktrees and branches finished work leaves behind,
   the helper copies Altitude's own cleanup never knew about included, and keeps anything with work in it.
-  You read "Removed 6 worktrees and 2 branches" in chat and can put any one back with one press.
+  You read "Set aside 6 worktrees and deleted 2 branches" in chat and can put any one back with one press,
+  or the whole run's with Undo all. A worktree's disk space comes back when its 14 days end.
 - **Commands you list.** This is how you bring your own: a script that frees memory or clears caches, one
   that posts a report to your team's channel or sends you a mail, one that prunes container images. You
   write the command once; the routine decides when it is needed (memory is high, a cache is large) and
@@ -71,7 +72,10 @@ and with which sign-in; Altitude ships example scripts as it does for events.
 
 - Anything on the never-granted list in [docs/CLI.md](../../../docs/CLI.md#operator-grant): loosening any
   sandbox, engine permission or Altitude guard, other tasks' worktrees or other projects' data, releasing
-  Altitude's own gates (merge holds, review findings, approvals), entering or printing credentials.
+  Altitude's own gates (merge holds, review findings, approvals), entering or printing credentials. Tidy
+  grants the run no access to other tasks' worktrees: altd carries out its own cleanup rule on worktrees
+  whose task has ended or that no task record names, never an open task's, as it already does for every
+  finished task. The CLI paragraph says so in increment 1.
 - Merging anything, answering questions, approving, starting or steering tasks, messaging L3, changing
   routines or sending events. A routine never acts in your place in Altitude itself.
 - Main, the project's own checkout, remote branches on GitHub, anything outside the routine's project.
@@ -91,8 +95,8 @@ and with which sign-in; Altitude ships example scripts as it does for events.
   it exactly against what it enumerates itself (`git worktree list`, the repository's refs, the command
   list) and passes only its own values to Git, never the run's text to a shell.
 - **The check runs at the moment of acting**, under the project lock that task cleanup and reopening take,
-  so a task reopened or a worktree touched meanwhile is kept. Task cleanup and routine actions share one
-  rule for "safe to remove", so the two can never disagree.
+  so a task reopened or a worktree touched meanwhile is kept. Every limit that protects your work is in
+  that check, none only in the brief.
 - **Commands run as `alt task run` runs them**: a transient unit outside every sandbox, at most 10 minutes,
   one at a time, within the machine's command places, recorded with output and exit status. `alt` inside
   one acts as the run, which has no verbs, so a command cannot reach Altitude or fire a routine.
@@ -105,14 +109,48 @@ and with which sign-in; Altitude ships example scripts as it does for events.
   reason, not allowed, failed) and what Undo needs. altd writes a `routine-action` project event for each,
   and `routine-undo` for each undo.
 - The run's page lists them under **What it changed**, in order, while it runs and after. Its report gains
-  Altitude's own sentence ("Removed 6 worktrees and 2 branches."), built from the changes rather than the
+  Altitude's own sentence ("Set aside 6 worktrees and deleted 2 branches."), built from the changes rather than the
   model's words, in chat, in Recent runs and in the report the next run reads.
-- **Undo** is a press on the run's page, or `alt agent undo` on your terminal, or L3 on your say. A removed
-  worktree comes back on its branch; a deleted branch comes back at the same commit, which Altitude keeps
-  under a hidden ref (`refs/altitude/undo/…`) until the run itself is pruned. Undo is refused only when
-  undo itself would lose something ("Not undone: a worktree is already at that path.").
+- **Undo** is a press on the run's page (one row, or **Undo all** for the run), `alt agent undo` on your
+  terminal, or L3 on your say. A set-aside worktree moves back to its path exactly. A deleted branch comes
+  back at the commit altd recorded in the change; a hidden ref (`refs/altitude/undo/…`) only keeps that
+  commit's objects, and Undo refuses if the ref no longer matches the record, since task workers can write
+  refs. Undo is refused when it would lose something ("Not undone: a worktree is already at that path.").
+- **Undo sticks.** What you put back is kept from that routine's later runs for as long as the run is kept
+  (90 days, or longer while it is among the newest ten), so next week's run does not take it again.
 - A command has no undo; its output is the record. A pull request is held for your merge, and its task can
   be stopped like any task. An alert has nothing to undo.
+
+## The tidy rule
+
+altd sets aside a worktree, or deletes a branch, only when all of these hold at the moment it acts. The
+rule is code, shared with task cleanup where the two overlap; the brief can narrow it, never widen it.
+
+**A worktree** is set aside when:
+
+- it is registered with the project's repository and its folder is directly under `.claude/worktrees`;
+  never main's checkout, never a run's copy;
+- its task has ended (done or rejected), or no task record names it; and no task that was open when it was
+  made is still open, so a helper copy of a running or blocked task stays until that task ends;
+- nothing in it changed for seven days: no commit, checkout or staging (its Git record), and no file in its
+  folder, ignored files included;
+- no program has its folder as its working folder (the platform seam: `/proc` on Linux, `lsof` on the Mac);
+- it has no uncommitted change and no commit found on no branch or remote.
+
+Set aside means `git worktree move` into `.claude/worktrees/.set-aside/<run>-<n>/`, the same disk, so
+nothing is copied and Undo moves it back exactly, ignored files (`.env`, local databases, installed
+packages) included. After 14 days the tick deletes the folder and its Git record for good, and its row
+reads "Removed for good Nov 9."; from then Undo restores it from its branch, without ignored files, and says
+so.
+
+**A branch** is deleted when:
+
+- it is a local branch of the project's repository: never main or the default branch, never checked out in
+  any worktree (a set-aside one included), never an open task's branch;
+- its tip is on `origin/main`, or a pull request into main of this repository merged exactly that tip
+  (looked up by branch on GitHub when no task record names the pull request);
+- it has not moved for seven days (its newest reflog entry, else its tip's commit time), so a branch you
+  just made from main is kept.
 
 ## Security review questions
 
@@ -137,11 +175,13 @@ The proposal review should test, at least:
 
 Each is its own held pull request that returns to you. The order recommended:
 
-1. **The fence, the door and Worktrees and branches.** The permission on the form, the routine page and
-   offers; `alt act` with its records, events and Undo; the shared safe-to-remove rule; a built-in **Tidy
-   worktrees and branches** routine, weekly, turned on through a sheet that says what it may change. It is
-   the operator's own example, wholly undoable, local, and adds no way out, so it proves the machinery at
-   the lowest risk.
+1. **The fence, the door and Worktrees and branches.** The permission on the form, the routine page,
+   the routines list and offers; `alt act` with its records, events and Undo; the tidy rule; a built-in
+   **Tidy worktrees and branches** routine, weekly, turned on through a sheet that says what it may change.
+   Turning on or resuming a routine that may change things, and Run now on it, stay your press or your
+   terminal; L3 may pause, stop and undo it on your say, which only lowers what it does.
+   It is the operator's own example, wholly undoable, local, and adds no way out, so it proves the
+   machinery at the lowest risk.
 2. **Commands you list and alerts to your devices.** The widest range (memory, caches, reports and
    notifications anywhere), with example scripts.
 3. **Pull requests, and issues** through the normal merge gate, Dependabot-style; deleting merged branches
@@ -160,6 +200,11 @@ The interface for each arrives with it; nothing is drawn or built before its inc
   record and runner while removing the trust: only your words run.
 - **Requests at the end of the run** (as suggestions are written) instead of a verb during it. One less
   door, but the run could not see an outcome (a command's output, a kept worktree's reason) and adjust.
+- **Tidy that Altitude does itself, with no model** (the review's alternative). Every rule above is
+  altd's, so a built-in tidy could run on its schedule with the same card and Undo, no tokens and no
+  prompt injection at all; the `alt act` door would arrive with commands, where it is needed. It is the
+  safer tidy, but not a routine acting: your brief could not say what to keep, and increment 1 would not
+  yet prove that a routine can act within its fence.
 - **A first run that only previews** ("would remove 6 worktrees", then a press). Considered for trust;
   Undo covers the same need without a second press each time, and Run now is still the test.
 
@@ -169,54 +214,62 @@ The interface for each arrives with it; nothing is drawn or built before its inc
 | --- | --- | --- |
 | How a routine acts | The run asks with `alt act`; Altitude acts within the fence | A wider box for the run; or your grant applied to a run |
 | The permissions | Worktrees and branches, commands you list, pull requests, your devices | Fewer, or more fixed kinds in place of commands |
-| First increment | The fence with Worktrees and branches and its built-in Tidy routine | Commands first; or pull requests first |
+| First increment | The fence with Worktrees and branches and its built-in Tidy routine | Tidy done by Altitude itself with no model; commands first; or pull requests first |
 | Pull requests | Each becomes a task held for your merge | Altitude opens the pull request itself, held, with no task owner |
 
 ## Increment 1 in detail
 
 Boards in this folder, written by `gen.py`: `DesktopActEdit`, `PhoneActEdit` (the form), `DesktopActAgent`,
 `PhoneActAgent` (the routine page), `DesktopActRun`, `PhoneActRun` (a run that changed things),
-`PhoneActTurnOn` (the built-in's sheet) and `ActStates` (every state below at both widths).
+`PhoneActTurnOn` (the built-in's sheet), `ActStates` and `PhoneActStates` (every state below at each width).
 
 **The form.** After **What it does** comes **What it may change**: a bordered list with one row, a
-checkbox (44px target on the phone), **Worktrees and branches** in semibold, and under it, muted: "Removes
-worktrees and branches nothing needs: no uncommitted change, every commit kept on a branch or merged, and
-nothing open in them. Each has Undo on the run's page." Unticked, the muted line under the list reads
-"Unticked, it only reports." and is absent when ticked. New routines start unticked. A change to the
-permission saves a new version as any change does; a running run keeps its own version, narrowed at once
-when the permission is taken away.
+checkbox (44px target on the phone), **Worktrees and branches** in semibold, and under it, muted: "Sets
+aside worktrees and deletes branches nothing needs: no uncommitted change, nothing changed in seven days,
+every commit kept on a branch or merged, and nothing open in them. Each has Undo on the run's page."
+Unticked, the muted line under the list reads "Unticked, it only reports." and is absent when ticked. New
+routines start unticked. A change to the permission saves a new version as any change does; a running run
+keeps its own version, narrowed at once when the permission is taken away.
+
+**The routines list.** A routine that may change things adds the permission after its triggers: "Mondays at
+09:00 · Changes worktrees and branches · Found something 2 h ago". A routine that only reports reads as
+today.
 
 **The routine page.** **What it does** gains a line after the definition line: "May change worktrees and
-branches, with Undo" in the primary text tone, or "Only reports" muted. The routines list is unchanged.
+branches, with Undo" in the primary text tone, or "Only reports" muted.
 
-**The built-in.** **Tidy worktrees and branches** appears in Built in with "Mondays at 09:00 · Removes
+**The built-in.** **Tidy worktrees and branches** appears in Built in with "Mondays at 09:00 · Clears
 worktrees and branches nothing needs, with Undo" and **Turn on**. Turn on opens a sheet, as the Weekly
 review's terms do (bottom sheet at 390px, centred at 1440px): **Turn on Tidy worktrees and branches for
-harbor?**, "Every Monday at 09:00 it removes worktrees and local branches of harbor that nothing needs: no
-uncommitted change, every commit kept on a branch or merged, and nothing open in them. Each removal is
-listed on its run's page with Undo. It never touches main, open tasks or GitHub.", **Cancel** (focused)
-and the primary **Turn on**. Cancel, Escape and the scrim change nothing. Its brief tells the run to keep
-anything changed in the last seven days and to say in its report what it kept and why.
+harbor?**, "Every Monday at 09:00 it sets aside worktrees and deletes local branches of harbor that nothing
+needs: no uncommitted change, nothing changed in seven days, every commit kept on a branch or merged, and
+nothing open in them. Each is listed on its run's page with Undo. It never touches main, open tasks or
+GitHub.", **Cancel** (focused) and the primary **Turn on**. Cancel, Escape and the scrim change nothing.
+While it saves, Turn on shows a spinner and Cancel is unavailable; a refusal closes the sheet with "Not
+turned on: <reason>" under the row. Its brief asks the run to say in its report what it kept and why.
 
-**The run.** The run's prompt lists what it may change and how to ask: `alt act remove-worktree PATH` and
-`alt act delete-branch NAME`, each answering "Removed …", "Kept: <reason>." or "Not allowed: <reason>.",
-and a list Altitude builds of the project's worktrees and branches with what its records say about each
-(its task and state, uncommitted changes, commits found nowhere else, last commit, merged or not). A run
-without the permission is told it only reports; if it asks anyway, `alt act` answers "Not allowed: this
-routine only reports; the operator can let it change worktrees and branches on its form.".
+**The run.** The run's prompt lists what it may change and how to ask: `alt act set-aside-worktree PATH` and
+`alt act delete-branch NAME`, each answering "Set aside …", "Deleted …", "Kept: <reason>." or "Not
+allowed: <reason>.", and a list Altitude builds of the project's worktrees and branches with what its
+records say about each (its task and state, last change, uncommitted changes, commits found nowhere else,
+merged or not). A run without the permission is told it only reports; if it asks anyway, `alt act` answers
+"Not allowed: this routine only reports; the operator can let it change worktrees and branches on its
+form.".
 
 **The run page.** Under the report (above the live session while it runs), a card **What it changed**, one
-row per request in order:
+row per request in order. Its header row has **Undo all** at the right while two or more rows can be undone;
+pressed, every such row shows its spinner, then reads as undone or refused on its own.
 
 | Row | Line | Muted line | Control |
 | --- | --- | --- | --- |
-| Removed a worktree | "Removed worktree agent-7c41e2d0" | "Its branch worktree-agent-7c41e2d0 keeps every commit." | **Undo** |
+| Set aside a worktree | "Set aside worktree agent-7c41e2d0" | "Removed for good Nov 9 unless you undo it." | **Undo** |
 | Deleted a branch | "Deleted branch upload-retry-fix" | "Merged by #214." or "Merged into main." | **Undo** |
-| Kept | "Kept worktree add-offline-sync-for-the-mobile" | "It has uncommitted changes." / "Task “…” is still open." / "A program has it open." / "Its commits are on no branch." / "Branch … has commits found nowhere else." | none |
+| Removed for good | "Set aside worktree agent-7c41e2d0" | "Removed for good Nov 9. Undo restores it from its branch, without ignored files." | **Undo** |
+| Kept | "Kept worktree add-offline-sync-for-the-mobile" | "It has uncommitted changes." / "It changed 2 days ago." / "Task “…” is still open." / "A program has it open." / "Its commits are on no branch." / "Branch … has commits found nowhere else." / "You put it back Oct 19." | none |
 | Not allowed | "Not allowed: delete branch upload-retry-fix" | "This routine only reports." / "This run used its 20 changes." | none |
-| Failed | "Couldn't remove worktree agent-7c41e2d0" | Git's message, one line | none |
+| Failed | "Couldn't set aside worktree agent-7c41e2d0" | Git's message, one line | none |
 | Undoing | the row's line | its muted line | Undo shows a spinner |
-| Undone | the row's line, then " · Undone" | "Put back Oct 26, 09:40." | none |
+| Undone | the row's line, then " · Undone" | "Put back Oct 26, 09:40. This routine leaves it alone from now on." | none |
 | Undo refused | the row's line | "Not undone: a worktree is already at that path." in the danger tone | **Undo** returns |
 
 Names are cut in the middle at 40 characters with the full name on hover and for screen readers; rows wrap
@@ -224,27 +277,30 @@ on the phone, with Undo at the row's right at both widths (44px on the phone). W
 absent. Undo is offered while the run is kept; a pruned run takes its undo refs with it.
 
 **In chat and Recent runs.** Altitude's sentence follows the run's summary: "**Tidy worktrees and branches**
-found something: 6 worktrees and 2 branches nothing needs. Removed 6 worktrees and 2 branches. Open". It
-counts only done changes ("Removed 6 worktrees. Kept 1."); a run that changed anything shows its line unless
-Tell me is Never. Undo writes no chat line.
+found something: 6 worktrees and 2 branches nothing needs. Set aside 6 worktrees and deleted 2 branches.
+Open". It counts only done changes ("Set aside 6 worktrees."); a run that changed anything shows its line
+unless Tell me is Never. Undo writes no chat line.
 
 **Offers.** An offer card that changes the permission shows it as its own line in the primary tone: "May
 now change worktrees and branches" or "No longer changes worktrees and branches"; a new routine's card shows
 "May change worktrees and branches" under its triggers. Only the press saves it.
 
 **CLI.** `alt agent new|set --may worktrees|none`; `alt agent show AGENT --run N` lists the run's changes;
-`alt agent undo AGENT --run N CHANGE`. L3 reads changes and may undo on the operator's own message; its
-offers may include `--may`.
+`alt agent undo AGENT --run N CHANGE|all`. L3 reads changes; on the operator's own message it may pause,
+stop and undo a routine that may change things, but not turn it on, resume it or run it; its offers may
+include `--may`.
 
 ### States
 
 | Surface | State | What appears |
 | --- | --- | --- |
 | Form | Unticked / ticked / saving / refused | "Unticked, it only reports."; the row's line alone; Save's spinner; "Not saved: <reason>" and Retry, the tick kept |
+| Routines list | May change / only reports | "· Changes worktrees and branches ·" after the triggers; as today |
 | Routine page | May change / only reports | "May change worktrees and branches, with Undo"; "Only reports" muted |
-| Built in | Row / sheet / turning on / refused | The row with Turn on; the sheet, Cancel focused; a spinner in the sheet's Turn on; the sheet closes and "Not turned on: <reason>" under the row |
+| Built in | Row / sheet / turning on / refused | The row with Turn on; the sheet, Cancel focused; a spinner in the sheet's Turn on, Cancel unavailable; the sheet closes and "Not turned on: <reason>" under the row |
 | Run page | Running with changes / ended with changes / none | The card above the live session, growing; the card under the report; no card |
-| Change row | Done / kept / not allowed / failed / undoing / undone / undo refused | As the table above |
+| Change row | Set aside / deleted / removed for good / kept / not allowed / failed / undoing / undone / undo refused | As the table above |
+| Undo all | Shown / pressed | At the card's header while two or more rows can be undone; each row's spinner, then its own outcome |
 | Chat | Changed something / changed nothing | The summary, then Altitude's sentence; the line as today |
 | Offer | Permission added / removed / new routine with it | "May now change worktrees and branches"; "No longer changes worktrees and branches"; "May change worktrees and branches" |
 
@@ -252,5 +308,5 @@ offers may include `--may`.
 
 The "a program has it open" check sits behind the platform seam (the processes' working folders on Linux,
 `lsof` on the Mac). The Mac owes on its verify issue: `alt act` admitted only from the run's own job under
-Seatbelt, the run's own attempt to remove a worktree or delete a branch refused by the sandbox, and the open
-check finding a terminal in a worktree.
+Seatbelt, the run's own attempt to set aside a worktree or delete a branch refused by the sandbox, and the
+open check finding a terminal in a worktree.

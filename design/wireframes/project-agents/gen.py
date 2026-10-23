@@ -871,8 +871,8 @@ board("PhoneWeeklyTerms", 390, 844, phone(weekly_page(), back="altitude", title=
 # ---- acting (ACTING.md, increment 1: the fence and Worktrees and branches) ----
 BOX = '<span class="cb{}" role="checkbox" aria-checked="{}">{}</span>'
 TICK = '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>'
-MAY_LINE = ("Removes worktrees and branches nothing needs: no uncommitted change, every commit kept on a branch or merged, "
-            "and nothing open in them. Each has Undo on the run’s page.")
+MAY_LINE = ("Sets aside worktrees and deletes branches nothing needs: no uncommitted change, nothing changed in seven "
+            "days, every commit kept on a branch or merged, and nothing open in them. Each has Undo on the run’s page.")
 
 
 def may(ticked=False):
@@ -883,8 +883,8 @@ def may(ticked=False):
 
 
 TIDY = "Tidy worktrees and branches"
-TIDY_BRIEF = ("List the worktrees and branches Altitude names below and remove the ones nothing needs. Keep anything with a "
-              "commit or a change in the last seven days. Say what you removed and what you kept, and why.")
+TIDY_BRIEF = ("Go through the worktrees and branches Altitude lists below and clear the ones nothing needs. Keep anything "
+              "that belongs to work still under way. Say what you cleared and what you kept, and why.")
 
 
 def act_form(ticked=True, saving=False, refused=False):
@@ -903,10 +903,11 @@ def act_definition(fence=FENCE_ON):
             f'{fence}<div style="margin-top:12px"><span class="btn">Edit</span></div></div>')
 
 
+SUMMARY = "2 worktrees and 2 branches nothing needs."
+DONE = "Set aside 2 worktrees and deleted 2 branches."
 ACT_RUNS = [
-    ("found", "Today 09:00", "Found something", "4 min · 1.9M tokens",
-     "6 worktrees and 2 branches nothing needs. Removed 6 worktrees and 2 branches. Kept 1."),
-    ("", "Oct 19, 09:00", "Nothing found", "2 min · 0.8M tokens", "Every worktree is in use or has work in it."),
+    ("found", "Today 09:00", "Found something", "4 min · 1.9M tokens", f"{SUMMARY} {DONE}"),
+    ("", "Oct 19, 09:00", "Nothing found", "2 min · 0.8M tokens", "Every worktree and branch is in use or has work in it."),
 ]
 
 
@@ -919,61 +920,72 @@ UNDOING = '<span class="btn sm" aria-label="Undo, saving"><span class="spin"></s
 
 
 def change(line, note, ctrl="", tone=""):
-    return (f'<div class="chg"><div class="tx"><b>{line}</b><small{tone}>{note}</small></div>{ctrl}</div>')
+    return f'<div class="chg"><div class="tx"><b>{line}</b><small{tone}>{note}</small></div>{ctrl}</div>'
 
 
+ASIDE1, ASIDE2 = "Set aside worktree agent-7c41e2d0", "Set aside worktree agent-91d0c3f2"
+FOR_GOOD = "Removed for good Nov 9 unless you undo it."
 CHANGES = {
-    "worktree": change("Removed worktree agent-7c41e2d0", "Its branch worktree-agent-7c41e2d0 keeps every commit.", UNDO),
+    "worktree": change(ASIDE1, FOR_GOOD, UNDO),
+    "worktree2": change(ASIDE2, FOR_GOOD, UNDO),
     "branch": change("Deleted branch upload-retry-fix", "Merged by #214.", UNDO),
     "branch-main": change("Deleted branch docs-typo-fix", "Merged into main.", UNDO),
+    "gone": change(ASIDE1, "Removed for good Nov 9. Undo restores it from its branch, without ignored files.", UNDO),
     "kept": change("Kept worktree add-offline-sync-f…-the-mobile-app", "It has uncommitted changes."),
+    "kept-recent": change("Kept worktree agent-3e90b1c5a7d2", "It changed 2 days ago."),
     "kept-task": change("Kept worktree add-a-billing-export-for-team-acc…", "Task “Add a billing export” is still open."),
-    "kept-open": change("Kept worktree agent-3e90b1c5a7d2", "A program has it open."),
+    "kept-open": change("Kept worktree agent-5b2e8f4c1d09", "A program has it open."),
     "kept-loose": change("Kept branch retry-limit-tests", "It has 2 commits found nowhere else."),
+    "kept-undone": change("Kept branch docs-typo-fix", "You put it back Oct 19."),
     "denied": change("Not allowed: delete branch upload-retry-fix", "This routine only reports."),
-    "cap": change("Not allowed: remove worktree agent-91d0c3f27a6e", "This run used its 20 changes."),
-    "failed": change("Couldn’t remove worktree agent-5b2e8f4c1d09", "git: cannot remove a locked working tree"),
-    "undoing": change("Removed worktree agent-7c41e2d0", "Its branch worktree-agent-7c41e2d0 keeps every commit.", UNDOING),
-    "undone": change("Removed worktree agent-7c41e2d0 · Undone", "Put back Oct 26, 09:40."),
-    "undo-refused": change("Removed worktree agent-7c41e2d0", "Not undone: a worktree is already at that path.", UNDO,
-                           ' style="color:var(--danger)"'),
+    "cap": change("Not allowed: set aside worktree agent-91d0c3f27a6e", "This run used its 20 changes."),
+    "failed": change("Couldn’t set aside worktree agent-5b2e8f4c1d09", "git: cannot move a locked working tree"),
+    "undoing": change(ASIDE1, FOR_GOOD, UNDOING),
+    "undoing2": change(ASIDE2, FOR_GOOD, UNDOING),
+    "undone": change(ASIDE1 + " · Undone", "Put back Oct 26, 09:40. This routine leaves it alone from now on."),
+    "undo-refused": change(ASIDE1, "Not undone: a worktree is already at that path.", UNDO, ' style="color:var(--danger)"'),
 }
 
 
-def changed(keys):
-    return '<h2 style="margin-top:20px">What it changed</h2><div class="card chgs">' + "".join(CHANGES[k] for k in keys) + '</div>'
+def changed(keys, undo_all=None):
+    head = '<h2 style="margin-top:20px">What it changed</h2>'
+    if undo_all:
+        btn = UNDOING.replace("Undo, saving", "Undo all, saving") if undo_all == "pressed" else '<span class="btn sm">Undo all</span>'
+        head = f'<div class="chghead"><h2>What it changed</h2>{btn}</div>'
+    return head + '<div class="card chgs">' + "".join(CHANGES[k] for k in keys) + '</div>'
 
 
-ACT_REPORT = ('<p>8 of the 9 worktrees under <code>.claude/worktrees</code> belong to finished work; 6 had nothing in them '
-              'and no commit in seven days. Two branches were merged and checked out nowhere.</p>'
+ACT_REPORT = ('<p>Of the 7 worktrees under <code>.claude/worktrees</code>, 2 belong to finished work and had nothing in them; '
+              'two merged branches were checked out nowhere.</p>'
               '<p>Kept <code>add-offline-sync-for-the-mobile-app</code>: it has uncommitted changes to <code>sync.py</code>.</p>')
+ENDED = ["worktree", "worktree2", "branch", "branch-main", "kept"]
 
 
 def act_run_page(state="ended"):
     meta = '<p class="muted" style="margin:0 0 16px;font-size:13.5px">On its schedule · Sonnet{}</p>'
     if state == "running":
         return (meta.format("") + '<div class="card"><div class="status"><span class="tx"><span class="spin"></span>Running · 3 of 20 min</span>'
-                '<span class="btns"><span class="btn">Stop</span></span></div></div>' + changed(["worktree", "worktree", "kept"])
+                '<span class="btns"><span class="btn">Stop</span></span></div></div>' + changed(["worktree", "kept"])
                 + f'<div class="card" style="margin-top:12px">{SESSION}</div>')
     return (meta.format(" · 4 min · 1.9M tokens")
-            + '<div class="card"><div class="runhead"><span class="d found"></span><b>Found something</b></div>'
-              f'<div class="report">{ACT_REPORT}</div></div>'
-            + changed(["worktree", "branch", "branch-main", "kept"]) + FOLDS)
+            + f'<div class="card"><div class="runhead"><span class="d found"></span><b>Found something</b></div><div class="report">{ACT_REPORT}</div></div>'
+            + changed(ENDED, undo_all=True) + FOLDS)
 
 
 TIDY_HEAD = f'<a class="btn setting-back" href="#">{CHEVL}{P}</a><h1 style="margin-bottom:16px">{TIDY}</h1>'
 TIDY_RUN_HEAD = f'<a class="btn setting-back" href="#">{CHEVL}{TIDY}</a><h1 style="margin-bottom:4px">Run · Today 09:00</h1>'
-board("DesktopActEdit", 1440, 1100, desk(f'<a class="btn setting-back" href="#">{CHEVL}{TIDY}</a><h1>Edit</h1>' + act_form(), h=1100))
-board("PhoneActEdit", 390, 1300, phone(act_form(), back=TIDY, title="Edit", h=1300))
+board("DesktopActEdit", 1440, 1120, desk(f'<a class="btn setting-back" href="#">{CHEVL}{TIDY}</a><h1>Edit</h1>' + act_form(), h=1120))
+board("PhoneActEdit", 390, 1320, phone(act_form(), back=TIDY, title="Edit", h=1320))
 board("DesktopActAgent", 1440, 1000, desk(TIDY_HEAD + act_agent_page(), h=1000))
 board("PhoneActAgent", 390, 1250, phone(act_agent_page(), back=P, title=TIDY, h=1250))
 board("DesktopActRun", 1440, 1000, desk(TIDY_RUN_HEAD + act_run_page(), h=1000))
-board("PhoneActRun", 390, 1150, phone(act_run_page(), back=TIDY, title="Run · Today 09:00", h=1150))
+board("PhoneActRun", 390, 1250, phone(act_run_page(), back="Tidy worktrees…", title="Run · Today 09:00", h=1250))
 
-TIDY_ROW = (TIDY, "Mondays at 09:00 · Removes worktrees and branches nothing needs, with Undo")
-TIDY_SHEET = ("Every Monday at 09:00 it removes worktrees and local branches of harbor that nothing needs: no uncommitted "
-              "change, every commit kept on a branch or merged, and nothing open in them. Each removal is listed on its run’s "
-              "page with Undo. It never touches main, open tasks or GitHub.")
+TIDY_ROW = (TIDY, "Mondays at 09:00 · Clears worktrees and branches nothing needs, with Undo")
+TIDY_SHEET = ("Every Monday at 09:00 it sets aside worktrees and deletes local branches of harbor that nothing needs: no "
+              "uncommitted change, nothing changed in seven days, every commit kept on a branch or merged, and nothing open "
+              "in them. Each is listed on its run’s page with Undo. It never touches main, open tasks or GitHub.")
+ACT_AGENTS = [(TIDY, "Mondays at 09:00 · Changes worktrees and branches · Found something 2 h ago")] + AGENTS
 
 
 def tidy_sheet(saving=False, static=False):
@@ -981,8 +993,9 @@ def tidy_sheet(saving=False, static=False):
             else '<span class="btn primary">Turn on</span>')
     style = ('position:static;box-shadow:none;border:1px solid var(--hairline)' if static
              else 'top:auto;bottom:0;left:0;right:0;border-radius:16px 16px 0 0;padding-bottom:28px')
+    cancel = '<span class="btn" aria-disabled="true">Cancel</span>' if saving else f'<span class="btn"{FOCUS}>Cancel</span>'
     return (f'<div class="dlg" role="dialog" style="{style}"><h2>Turn on {TIDY} for {P}?</h2><p>{TIDY_SHEET}</p>'
-            f'<div class="bt">{turn}<span class="btn"{FOCUS if not saving else " aria-disabled=\"true\""}>Cancel</span></div></div>')
+            f'<div class="bt">{turn}{cancel}</div></div>')
 
 
 board("PhoneActTurnOn", 390, 1000, phone(section(top=False, built=[TIDY_ROW] + BUILTIN), h=1000,
@@ -1000,35 +1013,40 @@ ACT_CELLS = [
      '<div class="card" style="padding-top:0">' + may(False) + '</div>'),
     ("A2 · Form: ticked", "the row’s own line alone", '<div class="card" style="padding-top:0">' + may(True) + '</div>'),
     ("A3 · Form: saving / refused", "Save’s spinner; refused keeps the tick with its reason and Retry",
-     act_form(saving=True).split('<label class="flab">Runs when</label>')[0].replace('<div class="card" style="padding-top:8px">', '<div class="card" style="padding-top:0">')
-     + '</div>' + '<div class="err">Not saved: the routine changed in another window. <a class="u" href="#">Retry</a></div>'),
-    ("A4 · Routine page: may change", "the line after the definition, primary tone", act_definition()),
-    ("A5 · Routine page: only reports", "muted", act_definition(FENCE_OFF)),
-    ("A6 · Built in: the row", "Turn on opens the sheet", '<div class="card alist">' + brow(*TIDY_ROW) + '</div>'),
-    ("A7 · Built in: the sheet", "Cancel focused; Escape and the scrim change nothing; at 390 a bottom sheet", tidy_sheet(static=True)),
-    ("A8 · Built in: turning on / refused", "a spinner in the sheet’s Turn on, Cancel unavailable; refused closes the sheet with the reason under the row",
-     tidy_sheet(saving=True, static=True) + '<div class="card alist" style="margin-top:12px">'
-     + brow(*TIDY_ROW, state="refused") + '</div>'),
-    ("A9 · Run page: running with changes", "the card above the live session, growing as the run asks",
-     changed(["worktree", "worktree", "kept"])),
-    ("A10 · Changes: done", "a worktree, a branch merged by a pull request, a branch merged into main",
-     changed(["worktree", "branch", "branch-main"])),
-    ("A11 · Changes: kept", "each reason Altitude’s own check gives", changed(["kept", "kept-task", "kept-open", "kept-loose"])),
-    ("A12 · Changes: not allowed / failed", "without the permission; past the run’s 20 changes; Git refused",
-     changed(["denied", "cap", "failed"])),
-    ("A13 · Undo: pressed / done / refused", "a spinner in Undo; “Undone” with when; the reason in the danger tone and Undo again",
+     '<div class="card" style="padding-top:0">' + may(True)
+     + '<div style="display:flex;gap:8px;margin-top:20px"><span class="btn primary" style="min-width:72px" aria-label="Save, saving"><span class="spin"></span></span>'
+       '<span class="btn ghost" aria-disabled="true">Cancel</span></div>'
+     + '<div class="err">Not saved: the routine changed in another window. <a class="u" href="#">Retry</a></div></div>'),
+    ("A4 · Routines list", "a routine that may change things names it after its triggers; one that only reports reads as today",
+     '<div class="card alist">' + "".join(arow(*a) for a in ACT_AGENTS[:3]) + '</div>'),
+    ("A5 · Routine page: may change", "the line after the definition, primary tone", act_definition()),
+    ("A6 · Routine page: only reports", "muted", act_definition(FENCE_OFF)),
+    ("A7 · Built in: the row", "Turn on opens the sheet", '<div class="card alist">' + brow(*TIDY_ROW) + '</div>'),
+    ("A8 · Built in: the sheet", "Cancel focused; Escape and the scrim change nothing; at 390 a bottom sheet", tidy_sheet(static=True)),
+    ("A9 · Built in: turning on / refused", "a spinner in the sheet’s Turn on, Cancel unavailable; refused closes the sheet with the reason under the row",
+     tidy_sheet(saving=True, static=True) + '<div class="card alist" style="margin-top:12px">' + brow(*TIDY_ROW, state="refused") + '</div>'),
+    ("A10 · Run page: running with changes", "the card above the live session, growing as the run asks", changed(["worktree", "kept"])),
+    ("A11 · Changes: done, with Undo all", "worktrees set aside, a branch merged by a pull request, one merged into main",
+     changed(["worktree", "worktree2", "branch", "branch-main"], undo_all=True)),
+    ("A12 · Changes: kept", "each reason Altitude’s own check gives",
+     changed(["kept", "kept-recent", "kept-task", "kept-open", "kept-loose", "kept-undone"])),
+    ("A13 · Changes: not allowed / failed / removed for good", "without the permission; past the run’s 20 changes; Git refused; after 14 days",
+     changed(["denied", "cap", "failed", "gone"])),
+    ("A14 · Undo: pressed / done / refused", "a spinner in Undo; Undone with when and that it sticks; the reason in the danger tone and Undo again",
      changed(["undoing", "undone", "undo-refused"])),
-    ("A14 · Chat: a run that changed things", "Altitude’s sentence follows the run’s summary",
-     sysa(TIDY, "found something: 6 worktrees and 2 branches nothing needs. Removed 6 worktrees and 2 branches.", "found")),
-    ("A15 · Offers", "a change to the permission is its own line in the primary tone",
+    ("A15 · Undo all pressed", "every row that can be undone shows its spinner, then its own outcome",
+     changed(["undoing", "undoing2"], undo_all="pressed")),
+    ("A16 · Chat: a run that changed things", "Altitude’s sentence follows the run’s summary",
+     sysa(TIDY, f"found something: {SUMMARY} {DONE}", "found")),
+    ("A17 · Offers", "a change to the permission is its own line in the primary tone",
      act_offer("May now change worktrees and branches") + '<div style="height:10px"></div>'
      + act_offer("No longer changes worktrees and branches")),
 ]
-board("ActStates", 1200, 3800, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Routines that act: states at 1440</h1>'
+board("ActStates", 1200, 4300, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Routines that act: states at 1440</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">Increment 1 of ACTING.md: the fence on the form, '
-      'the routine page, the built-in and its sheet, a run’s changes with Undo, chat and offers.</p></div>'
+      'the list and the routine page, the built-in and its sheet, a run’s changes with Undo, chat and offers.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in ACT_CELLS) + '</div>')
-board("PhoneActStates", 1720, 2600, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Routines that act: states at 390</h1>'
+board("PhoneActStates", 1720, 3200, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Routines that act: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: 44px targets, rows that wrap.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in ACT_CELLS) + '</div>')
 
