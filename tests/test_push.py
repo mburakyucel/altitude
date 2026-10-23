@@ -717,5 +717,71 @@ class TestTheTick(AltitudeCase):
         server._bg["push"].join(10)
 
 
+class TestLegacyKey(AltitudeCase):
+    """A start deletes the signing key releases before the access folder left readable in Altitude's home."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = self.tmp / "altitude"
+        self.home.mkdir()
+        self.patch(config, "ROOT", self.home)
+        self.patch(push, "KEY", self.tmp / "access" / "vapid.key")
+        push.KEY.parent.mkdir()
+        push.KEY.write_text("fixture current key\n")
+        self.logged = []
+
+    def start(self) -> None:
+        push.remove_legacy_key(self.logged.append)
+
+    def test_a_start_removes_the_legacy_key_and_keeps_the_current_one(self):
+        legacy = self.home / "push"
+        legacy.mkdir()
+        (legacy / "vapid.key").write_text("fixture legacy key\n")
+        (legacy / f".{'a' * 32}.key").write_text("fixture half-made key\n")  # a generation a crash interrupted
+        self.start()
+        self.assertFalse(legacy.exists())
+        self.assertEqual(push.KEY.read_text(), "fixture current key\n")
+        self.assertEqual(self.logged, ["push: removed the signing key an earlier release left in Altitude's home"])
+        self.start()  # every later start finds nothing to do
+        self.assertEqual(len(self.logged), 1)
+        self.assertEqual(push.KEY.read_text(), "fixture current key\n")
+
+    def test_a_home_without_the_legacy_key_is_unchanged(self):
+        (self.home / "push.json").write_text("{}\n")
+        before = sorted(path.relative_to(self.tmp) for path in self.tmp.rglob("*"))
+        self.start()
+        self.assertEqual(sorted(path.relative_to(self.tmp) for path in self.tmp.rglob("*")), before)
+        self.assertEqual(self.logged, [])
+
+    def test_only_the_keys_go_from_a_shared_folder(self):
+        legacy = self.home / "push"
+        legacy.mkdir()
+        (legacy / "vapid.key").write_text("fixture legacy key\n")
+        (legacy / "state.json").write_text("{}\n")  # a project named push keeps its state here
+        self.start()
+        self.assertEqual(sorted(path.name for path in legacy.iterdir()), ["state.json"])
+
+    def test_an_empty_folder_of_a_project_named_push_stays(self):
+        (self.home / "push").mkdir()
+        self.start()
+        self.assertTrue((self.home / "push").is_dir())
+        self.assertEqual(self.logged, [])
+
+    def test_an_entry_that_will_not_go_keeps_none_of_the_others_back(self):
+        legacy = self.home / "push"
+        (legacy / "vapid.key").mkdir(parents=True)  # a folder by the key's name refuses unlink
+        (legacy / f".{'b' * 32}.key").write_text("fixture half-made key\n")
+        self.start()
+        self.assertEqual([path.name for path in legacy.iterdir()], ["vapid.key"])
+        self.assertEqual(len(self.logged), 1)
+
+    def test_a_link_in_place_of_the_folder_is_never_followed(self):
+        (self.home / "push").symlink_to(push.KEY.parent)
+        self.start()
+        self.assertEqual(push.KEY.read_text(), "fixture current key\n")
+        self.assertTrue((self.home / "push").is_symlink())
+        self.assertEqual(self.logged, [])
+
+
 if __name__ == "__main__":
     unittest.main()

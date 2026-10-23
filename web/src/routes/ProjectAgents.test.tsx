@@ -17,7 +17,7 @@ const overview = {
     value: null, only: [] },
 };
 const definition = { name: "Dependency check", brief: "Check whether any dependency has a security fix.", schedules: [{ days: [0, 1, 2, 3, 4], time: "07:00" }],
-  events: false, tell: "found", model: null, limit: 20, may: [] };
+  events: false, tell: "found", model: null, limit: 20, may: [], commands: [] };
 const summary = (over: Record<string, unknown> = {}) => ({ id: "dependency-check", name: "Dependency check", state: "on", triggers: "Weekdays at 07:00",
   news: "Found something", news_at: ago(120), cue: null, retired_line: null, may: null, ...over });
 const builtin = { key: "checks", name: "Clean checks", line: "Mondays at 08:00 · Runs the project's checks on a clean copy and says what broke" };
@@ -33,7 +33,7 @@ const run = (n: number, over: Record<string, unknown> = {}) => ({ n, state: "fou
 const skipped = run(1, { state: "skipped", outcome: "Skipped", tone: "muted", minutes: null, tokens: null, line: "Didn't start within 6 hours", page: false, started: null, ended: null });
 const detail = (over: Record<string, unknown> = {}) => ({ id: "dependency-check", name: "Dependency check", state: "on", builtin: null, version: 3,
   status: { line: "Next: tomorrow at 07:00", note: null, actions: ["run", "pause"], run: null, spinning: false }, definition,
-  definition_line: "Weekdays at 07:00 · Tells you when it finds something · Default model · Stops after 20 min", may_line: null, runs: [run(2), skipped], more: false, send: null, ...over });
+  definition_line: "Weekdays at 07:00 · Tells you when it finds something · Default model · Stops after 20 min", may_lines: [], running_commands: [], runs: [run(2), skipped], more: false, send: null, ...over });
 const runDetail = (over: Record<string, unknown> = {}) => ({ ...run(2), agent: { id: "dependency-check", name: "Dependency check" }, model: "Swift",
   limit: 20, brief: "Check whether any **dependency** has a security fix.", report: "Two packages have security fixes:\n\n- `left-pad` 1.3.1\n- `is-odd` 3.0.2",
   session: { engine: "alpha", session_id: "0123456789abcdef", attempt: 0 }, suggested: null, changes: [], undo_all: false, ...over });
@@ -686,15 +686,15 @@ describe("The form", () => {
     const may = screen.getByRole("checkbox", { name: "Worktrees and branches" });
     expect(may).not.toBeChecked();
     expect(may).toHaveAccessibleDescription(/^Sets aside worktrees and deletes branches nothing needs/);
-    expect(screen.getByText("Unticked, it only reports.")).toBeInTheDocument();
+    expect(screen.getByText("Nothing ticked or listed: it only reports.")).toBeInTheDocument();
     await user.click(may);
-    expect(screen.queryByText("Unticked, it only reports.")).toBeNull();
+    expect(screen.queryByText("Nothing ticked or listed: it only reports.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Create routine" }));
     expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(without(presses[0]!)).toEqual({ project: "harbor", action: "create", definition: { name: "Build time",
       brief: "Say whether the build got slower.", schedules: [{ days: [0, 1, 2, 3, 4, 5], time: "06:30" }], events: false, tell: "every",
-      model: { engine: "alpha", model: "swift" }, limit: 60, may: ["worktrees"] } });
+      model: { engine: "alpha", model: "swift" }, limit: 60, may: ["worktrees"], commands: [] } });
     hold.resolve(json({ ok: true, agent: "dependency-check" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/harbor/agents/dependency-check"));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -802,7 +802,7 @@ describe.each([390, 1440])("a routine that may change things at %ipx", (width) =
     expect(screen.getByRole("link", { name: /^Dependency check/ })).toHaveTextContent("Weekdays at 07:00 · Found something 2 h ago");
     await user.click(screen.getByRole("link", { name: /^Dependency check/ }));
     expect(await screen.findByText("Only reports")).toHaveClass("text-muted");
-    state.agent = detail({ may_line: "May change worktrees and branches, with Undo" });
+    state.agent = detail({ may_lines: ["May change worktrees and branches, with Undo"] });
     await user.click(back());
     await user.click(await screen.findByRole("link", { name: /^Dependency check/ }));
     expect(await screen.findByText("May change worktrees and branches, with Undo")).not.toHaveClass("text-muted");
@@ -917,5 +917,133 @@ describe("a routine that may change things", () => {
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Turn on" }));
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Built in" })).toBeNull());
     expect(presses.map(without)).toEqual([{ project: "harbor", action: "builtin", key: "tidy" }, { project: "harbor", action: "builtin", key: "tidy" }]);
+  });
+});
+
+/* Commands you list (design/wireframes/project-agents/COMMANDS.md, "What you see"). */
+const prune = { name: "prune-images", words: "podman image prune --all --force" };
+const cache = { name: "clear-cache", words: "rm -r ~/.cache/harbor-build" };
+const command = (n: number, over: Record<string, unknown> = {}) => ({ n, kind: "command", outcome: "done", head: "Ran", name: "prune-images",
+  note: "Finished in 12 s.", tone: null, undone: false, undo: false, refused: null, stop: false, stopping: false, output: "Deleted: 3 images", ...over });
+const NOTE = "These run as you, outside Altitude’s sandbox, whenever the routine decides. Altitude doesn’t check what they do, and its model reads them and what they print.";
+
+describe.each([390, 1440])("commands you list at %ipx", (width) => {
+  it("the form adds, checks, edits in place and removes commands, one draft at a time, and saves them with the routine", async () => {
+    setViewport(width);
+    const { state, presses } = serve();
+    state.agent = detail({ definition: { ...definition, commands: [prune] } });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/edit" });
+    const group = await screen.findByRole("group", { name: "Commands" });
+    expect(within(group).getByText("prune-images")).toBeInTheDocument();
+    expect(group).toHaveTextContent("prune-imagespodman image prune --all --force");
+    expect(screen.getByText(NOTE)).toBeInTheDocument();
+    expect(screen.queryByText("Nothing ticked or listed: it only reports.")).toBeNull();
+    // A new draft hides Add a command and the other rows' buttons; Done shows what is missing.
+    await user.click(within(group).getByRole("button", { name: "Add a command" }));
+    const draft = within(group).getByRole("group", { name: "New command" });
+    expect(within(group).queryByRole("button", { name: "Add a command" })).toBeNull();
+    expect(within(group).queryByRole("button", { name: "Edit prune-images" })).toBeNull();
+    expect(within(draft).getByText("Starts in harbor’s folder, with its files as they are then. Up to 10 minutes, once a run at most.")).toBeInTheDocument();
+    expect(within(draft).getByRole("textbox", { name: "Name" })).toHaveFocus();
+    await user.click(within(draft).getByRole("button", { name: "Done" }));
+    expect(within(draft).getByRole("textbox", { name: "Name" })).toHaveAccessibleDescription("Give it a name.");
+    expect(within(draft).getByRole("textbox", { name: "Command" })).toHaveAccessibleDescription("Write the command.");
+    await user.type(within(draft).getByRole("textbox", { name: "Name" }), "Clear cache");
+    await user.click(within(draft).getByRole("button", { name: "Done" }));
+    expect(within(draft).getByRole("textbox", { name: "Name" })).toHaveAccessibleDescription("Use lowercase letters, digits and dashes.");
+    await user.clear(within(draft).getByRole("textbox", { name: "Name" }));
+    await user.type(within(draft).getByRole("textbox", { name: "Name" }), "prune-images");
+    await user.click(within(draft).getByRole("button", { name: "Done" }));
+    expect(within(draft).getByRole("textbox", { name: "Name" })).toHaveAccessibleDescription("Another command has that name.");
+    // Save with a draft open saves nothing and says why.
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByText("Finish or cancel the command first.")).toHaveClass("text-danger");
+    expect(presses).toHaveLength(0);
+    await user.clear(within(draft).getByRole("textbox", { name: "Name" }));
+    await user.type(within(draft).getByRole("textbox", { name: "Name" }), cache.name);
+    fireEvent.change(within(draft).getByRole("textbox", { name: "Command" }), { target: { value: `  ${cache.words}\n` } });
+    await user.click(within(draft).getByRole("button", { name: "Done" }));
+    expect(within(group).queryByRole("group", { name: "New command" })).toBeNull();
+    expect(screen.queryByText("Finish or cancel the command first.")).toBeNull();
+    expect(within(group).getByRole("button", { name: "Edit clear-cache" })).toHaveFocus();
+    // Edit opens the row in place; Cancel puts it back as it was.
+    await user.click(within(group).getByRole("button", { name: "Edit prune-images" }));
+    const edit = within(group).getByRole("group", { name: "Edit prune-images" });
+    expect(within(edit).getByRole("textbox", { name: "Command" })).toHaveValue(prune.words);
+    expect(within(group).queryByRole("button", { name: "Remove clear-cache" })).toBeNull();
+    fireEvent.change(within(edit).getByRole("textbox", { name: "Command" }), { target: { value: "podman system prune" } });
+    await user.click(within(edit).getByRole("button", { name: "Cancel" }));
+    expect(within(group).getByRole("button", { name: "Edit prune-images" })).toHaveFocus();
+    expect(group).toHaveTextContent("podman image prune --all --force");
+    await user.click(within(group).getByRole("button", { name: "Remove prune-images" }));
+    expect(within(group).queryByText("prune-images")).toBeNull();
+    expect(within(group).getByRole("button", { name: "Add a command" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(presses).toHaveLength(1));
+    expect(without(presses[0]!)).toEqual({ project: "harbor", action: "set", agent: "dependency-check", version: 3,
+      definition: { ...definition, commands: [cache] } });
+  });
+
+  it("saving says which running command it stops; at ten commands Add a command gives way to the limit", async () => {
+    setViewport(width);
+    const { state } = serve();
+    const ten = Array.from({ length: 10 }, (_, i) => ({ name: `step-${i}`, words: `echo ${i}` }));
+    state.agent = detail({ definition: { ...definition, commands: [prune, ...ten.slice(1)] }, running_commands: ["prune-images"] });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/edit" });
+    const group = await screen.findByRole("group", { name: "Commands" });
+    expect(within(group).queryByRole("button", { name: "Add a command" })).toBeNull();
+    expect(screen.getByText("Ten commands at most.")).toBeInTheDocument();
+    expect(screen.queryByText(/^Saving stops/)).toBeNull();
+    await user.click(within(group).getByRole("button", { name: "Edit prune-images" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Command" }), { target: { value: "podman system prune --force" } });
+    await user.click(within(group).getByRole("button", { name: "Done" }));
+    expect(screen.getByText("Saving stops prune-images, which is running.")).toBeInTheDocument();
+    await user.click(within(group).getByRole("button", { name: "Remove prune-images" }));
+    expect(screen.getByText("Saving stops prune-images, which is running.")).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: "Add a command" })).toBeInTheDocument();
+    expect(screen.queryByText("Ten commands at most.")).toBeNull();
+  });
+
+  it("the routine page says what it may run as you", async () => {
+    setViewport(width);
+    const { state } = serve();
+    state.agent = detail({ may_lines: ["May change worktrees and branches, with Undo", "May run as you: prune-images and clear-cache"] });
+    renderApp({ route: "/projects/harbor/agents/dependency-check" });
+    expect(await screen.findByText("May run as you: prune-images and clear-cache")).not.toHaveClass("text-muted");
+    expect(screen.getByText("May change worktrees and branches, with Undo")).toBeInTheDocument();
+    expect(screen.queryByText("Only reports")).toBeNull();
+  });
+
+  it("a run's page lists each command request: Stop reads Stopping… until the row ends; output folds once it ended", async () => {
+    setViewport(width);
+    const hold = deferred();
+    const { state, presses } = serve({ press: () => hold.promise });
+    state.run = runDetail({ state: "running", outcome: "Running", ended: null, minutes: 3, tokens: null, line: null, report: null, changes: [
+      command(1, { outcome: "running", head: "Running", note: "For 2 min.", stop: true, output: null }),
+      command(2, { outcome: "failed", name: "clear-cache", note: "Exited with 1 after 3 s.", tone: "danger", output: "rm: cannot remove" }),
+      command(3, { outcome: "refused", head: "Not allowed: a command", name: null, note: "The run asked for something that is not a command name.", output: null }),
+    ] });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    const card = (await screen.findByRole("heading", { name: "What it changed" })).closest("section")!;
+    expect([...card.querySelectorAll(".agent-change")].map((row) => row.textContent)).toEqual([
+      "Running prune-imagesFor 2 min.Stop",
+      "Ran clear-cacheExited with 1 after 3 s.Outputrm: cannot remove",
+      "Not allowed: a commandThe run asked for something that is not a command name.",
+    ]);
+    expect(within(card).getByText("Exited with 1 after 3 s.")).toHaveClass("text-danger");
+    expect(within(card).queryByRole("button", { name: /^Undo/ })).toBeNull();
+    const output = within(card).getByText("Output").closest("details")!;
+    expect(output).not.toHaveAttribute("open");
+    await user.click(within(output).getByText("Output"));
+    expect(output).toHaveAttribute("open");
+    const stop = within(card).getByRole("button", { name: "Stop prune-images" });
+    await user.click(stop);
+    expect(stop).toBeDisabled();
+    expect(stop).toHaveTextContent("Stopping…");
+    expect(without(presses[0]!)).toEqual({ project: "harbor", action: "stop_command", agent: "dependency-check", n: 2, change: 1 });
+    state.run = runDetail({ changes: [command(1, { outcome: "stopped", note: "You stopped it after 2 min." })] });
+    hold.resolve(json({ ok: true }));
+    expect(await screen.findByText("You stopped it after 2 min.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop prune-images" })).toBeNull();
   });
 });

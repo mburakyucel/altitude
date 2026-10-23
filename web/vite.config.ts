@@ -1,7 +1,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
-import { terminalRequest } from "./src/data/terminalRequest";
+import { terminalRequest } from "./src/data/terminalRequest.ts";
 
 // Dev server proxies /api and /digest.wav to the altd ALTITUDE_DEV_API names, a backend run for development
 // (docs/DEVELOPMENT.md#ui-development; a self-signed one is accepted, hence secure: false). Without it nothing is

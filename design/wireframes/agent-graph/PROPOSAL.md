@@ -27,8 +27,8 @@ pipeline (Review and Merge columns would sit empty, since both happen inside a r
   counts, on desktop only (§2.2 width ≥ 1024). A segmented control: a bordered group named "Show
   work as" of two toggle buttons with icons, the pressed one filled with the accent tint. Phone Work
   has no switch and always shows the list.
-- **The graph replaces only the Current section.** Altitude repairs, **Done this week** and
-  **Routines · N** stay below it, unchanged. The head's counts are unchanged.
+- **The graph replaces only the Current section.** **Done this week**, **Routines · N** and
+  Altitude repairs stay below it, unchanged. The head's counts are unchanged.
 - **Width.** With Graph chosen the work panel is 480px, the task page's live-panel width (§2.2 gains
   this): inline at ≥ 1280, the existing overlay from 1024 to 1279 (`DesktopOverlay.html`). With List it
   stays 340px. The conversation keeps at least 540px at 1280, as on the task page, and reflows at once

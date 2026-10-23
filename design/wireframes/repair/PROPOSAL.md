@@ -10,7 +10,7 @@ step 3 builds it.
 
 Repairs had a surface of their own: a page, a Needs you section, a Monitor row and a history in
 Settings → About. This revision lets them ride on what Altitude already has. **Work** gains an
-**Altitude repairs** section below its current tasks, shown only while there is a repair to show: the
+**Altitude repairs** section at its bottom, shown only while there is a repair to show: the
 one running and those that ended in the last three days, each a row like a task's. A repair's page
 reads like a task's conversation, with the task page's header, chips, rows and composer. Monitor's
 repair row and About's list of recent repairs go; About keeps **Repair…** and an **All repairs**
@@ -186,8 +186,8 @@ while the user service manager runs; on the Mac it stops at logout, like the ser
 ## Where repairs show
 
 Work, on the phone's Work tab and in the desktop's work panel, has an **Altitude repairs** section
-between **Current** and **Done this week**: the repair running now and every repair that ended in the
-last three days, newest first, each one row opening its page. A repair belongs to Altitude rather
+at the bottom, after **Current**, **Done this week** and **Routines**: the repair running now and
+every repair that ended in the last three days, newest first, each one row opening its page. A repair belongs to Altitude rather
 than a project, so the section is the same in every project's Work, and its heading says whose it is;
 Work's own counts stay the project's. It is absent when there is nothing to show. Needs you keeps a
 repair's questions in its **Altitude** section, the failed-update notice links the running repair,
@@ -301,10 +301,10 @@ the buttons: "A repair is already running. **Open it**", "A repair is running in
 computer.", "No coding agent can run now: Claude's weekly allowance is used. Run `alt repair` in a
 terminal instead.", or "Repairs start only from your own browser or terminal."
 
-**Work's Altitude repairs section**: "Altitude repairs" with its count, after **Current** and
-before **Done this week**; rows in the task row's anatomy (state dot, title, meta, chevron), the
-title "Failed update to 0.9.0", the first line of what you wrote, or "Repair", on one line with an
-ellipsis; the meta wraps as a task row's. Meta: "Repair working · started 12 min ago" (running dot);
+**Work's Altitude repairs section**: "Altitude repairs" with its count, last in Work, after
+**Current**, **Done this week** and **Routines**; rows in the task row's anatomy (state dot, title,
+meta, chevron), the title "Failed update to 0.9.0", the first line of what you wrote, or "Repair", on
+one line with an ellipsis; the meta wraps as a task row's. Meta: "Repair working · started 12 min ago" (running dot);
 "Repair working in a terminal · started 5 min ago"; while it asks, the amber "Your turn · the repair
 asks" line over "Repair waiting · started 7 min ago" (amber dot); "Checking the result · ended just
 now"; then "✓ Repaired · ended yesterday", "Confirm yourself · ended 2d ago", "Stopped · ended 3h

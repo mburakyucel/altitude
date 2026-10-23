@@ -2190,13 +2190,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command == "HEAD":
             return
-        quiet = 0.0
+        quiet, first = 0.0, True
         while True:
             if select.select([self.connection], [], [], 0)[0] and not self.connection.recv(1) or not self._still_admitted():
                 return
-            data, offset, missed, ended = terminal.read(term, offset, TERMINAL_WAIT_SECONDS)
+            # The first read takes, without waiting, what the page has not drawn: the output it catches up on.
+            data, offset, missed, ended, replay, pieces = terminal.read(
+                term, offset, 0 if first else TERMINAL_WAIT_SECONDS, first)
+            first = False
             if data or missed:
-                payload = json.dumps({"offset": offset, "data": base64.b64encode(data).decode(), "missed": missed})
+                payload = json.dumps({"offset": offset, "data": base64.b64encode(data).decode(), "missed": missed,
+                                      "replay": replay, "pieces": pieces})
                 self.wfile.write(f"event: output\ndata: {payload}\n\n".encode())
                 quiet = 0.0
             elif not ended:
@@ -2427,7 +2431,7 @@ class Handler(BaseHTTPRequestHandler):
             if action == "open":
                 return self._json(terminal.open_terminal(project, slug))
             if action == "input":
-                terminal.write(project, slug, ident, body.get("data"))
+                terminal.write(project, slug, ident, body.get("data"), body.get("answer"))
             elif action == "command":
                 terminal.hand(project, slug, ident, body.get("text"), body.get("bracketed"))
             elif action == "resize":
@@ -4125,6 +4129,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
     dispatch.forget_speech_service()
     reinstall_voice = speech.remove_home_runtime()
+    push.remove_legacy_key(log)
     if os.environ.get("ALTITUDE_SERVICE"):  # only the service instance clears the restart-pending flag
         try:
             git_policy.activate_source()

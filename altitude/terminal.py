@@ -14,6 +14,7 @@ its task finishes, its project is removed or altd stops.
 """
 from __future__ import annotations
 
+import bisect
 from contextlib import contextmanager
 import fcntl
 import ipaddress
@@ -70,6 +71,10 @@ class Terminal:
     id: str  # every request names it: a replaced terminal refuses
     buffer: bytearray = field(default_factory=bytearray)
     start: int = 0  # absolute output offset of buffer[0]
+    sent: int = 0  # the end of the output some page has been sent: its queries had their chance to be answered
+    #: Where each piece of output the shell wrote ends, as altd read it: every page draws and answers the same pieces.
+    pieces: list[int] = field(default_factory=list)
+    answered: dict[int, str] = field(default_factory=dict)  # the end of a piece of output -> the page whose answer is typed
     exit_code: int | None = None
     reason: str | None = None  # why it ended: exited, closed, task-finished, project-removed, failed
     error: str | None = None  # why a shell that failed could not run, in the launcher's words
@@ -241,10 +246,12 @@ def _keep(term: Terminal, chunk: bytes) -> None:
         return
     with term.cond:
         term.buffer += chunk
+        term.pieces.append(term.end)
         if len(term.buffer) > REPLAY_BYTES:
             drop = len(term.buffer) - REPLAY_BYTES
             del term.buffer[:drop]
             term.start += drop
+            del term.pieces[:bisect.bisect_right(term.pieces, term.start)]
         term.cond.notify_all()
 
 
@@ -412,13 +419,30 @@ def _notice(term: Terminal, command: dict, what: str, finished: bool = False) ->
     threading.Thread(target=send, name=f"terminal-notice:{term.project}:{term.slug or ''}").start()
 
 
-def write(project: str, slug: str | None, ident, data: str) -> None:
+def write(project: str, slug: str | None, ident, data: str, answer=None) -> None:
     """Type `data`. A program that stops reading its input fills the terminal's queue; the write then gives
-    up after WRITE_SECONDS, or as soon as Close is asked for, rather than holding the terminal."""
+    up after WRITE_SECONDS, or as soon as Close is asked for, rather than holding the terminal.
+
+    `answer` marks `data` as page `page`'s answers to the queries in the piece of output that ends at offset `end`
+    (`read`). Every page showing the terminal answers them, and only the first page's answers to a piece are typed,
+    all of them, however many requests carry them: a second answer would reach the program after it stopped reading,
+    and the shell's prompt as text. Input without `answer`, the operator's own, is always typed."""
     if not isinstance(data, str) or len(data) > INPUT_LIMIT:
         raise TerminalError("Send terminal input as text.", 400)
+    if answer is not None and not (isinstance(answer, dict) and answer.keys() == {"page", "end"}
+                                   and isinstance(answer["page"], str) and answer["page"] and type(answer["end"]) is int):
+        raise TerminalError("Name the output the answer is to.", 400)
     term = _running(project, slug, ident)
     with term.io:
+        if answer is not None:
+            with term.cond:
+                if answer["end"] > term.end:
+                    raise TerminalError("The terminal has not printed the output this answers.", 400)
+                for end in [end for end in term.answered if end <= term.start]:
+                    del term.answered[end]
+                # Output that has left the replay buffer is too old for a program to still wait on.
+                if answer["end"] <= term.start or term.answered.setdefault(answer["end"], answer["page"]) != answer["page"]:
+                    return
         _send(term, data)
         _typed(term, data)
 
@@ -540,16 +564,39 @@ def stream(project: str, slug: str | None, ident) -> Terminal:
     return _named(project, slug, ident)
 
 
-def read(term: Terminal, offset: int, wait: float) -> tuple[bytes, int, bool, bool]:
-    """Output after `offset`, waiting up to `wait` seconds for some: (data, next offset, missed, ended).
-    `missed` says output before the replay buffer's start is gone."""
+def read(term: Terminal, offset: int, wait: float, catching_up: bool = False
+         ) -> tuple[bytes, int, bool, bool, int, list[int]]:
+    """Output a page is sent after `offset`, waiting up to `wait` seconds for some: (data, next offset, missed, ended,
+    replay, pieces). `missed` says output before the replay buffer's start is gone. The first `replay` bytes are output
+    the page catches up on (`catching_up`) or starts over from, whose queries it leaves unanswered (`replayed`). `pieces`
+    are the ends of the live output after them as the shell wrote it, which every page draws and answers one at a time,
+    so `write` types one page's answers to each. The output is recorded as sent in the same step, so two pages never
+    both take one query as unsent."""
     with term.cond:
         if offset >= term.end and not term.ended:
             term.cond.wait(wait)
         missed = offset < term.start
-        begin = max(offset, term.start)
+        begin = min(max(offset, term.start), term.end)
         data = bytes(term.buffer[begin - term.start:])
-        return data, term.end, missed, term.ended and begin + len(data) >= term.end
+        sent, term.sent = term.sent, max(term.sent, term.end)
+        replay = replayed(data, begin, sent) if catching_up or missed else 0
+        pieces = term.pieces[bisect.bisect_right(term.pieces, begin + replay):] if replay < len(data) else []
+        return data, term.end, missed, term.ended and begin + len(data) >= term.end, replay, pieces
+
+
+def replayed(data: bytes, begin: int, sent: int) -> int:
+    """How much of `data`, output from offset `begin` that a page catches up on, is replay: all of it but the escape
+    sequences after its last text beyond offset `sent`, the end of what pages were sent before. A query there may still
+    be waiting, as a shell asking at its start or a command that asked while no page was open. A query a page was sent
+    has had its chance to be answered, and one followed by text belongs to a program that has printed more since or
+    ended. A page whose connection died without closing was sent output it never drew: a program still waiting on a
+    query in it waits for its own timeout or a key, the safe side, since an answer typed twice reaches the prompt."""
+    text = done = 0
+    for match in _ESCAPES.finditer(data):
+        if match.start() > done:
+            text = match.start()
+        done = match.end()
+    return max(len(data) if done < len(data) else text, min(len(data), sent - begin))
 
 
 # --- The reader's read-only view ----------------------------------------------------------------------------------

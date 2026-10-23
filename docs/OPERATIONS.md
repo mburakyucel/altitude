@@ -262,6 +262,20 @@ worktree waits in the worktree folder's `.set-aside` folder for 14 days before i
 branch's commit is kept. The run's page lists **What it changed** with **Undo** on each change and **Undo all**;
 `alt agent undo` does the same from the terminal. What you put back, that routine leaves alone from then on.
 
+**Commands** under What it may change lists commands of your own the routine may ask Altitude to run, each by a
+name: Altitude runs your exact words, as you, outside every sandbox, in the project's folder, at most once a run and
+for up to 10 minutes, with no input from the run. The run chooses only which and when; its model reads each
+command's words and the end of what it printed, so write no secret into one. Altitude does not check what a command does, so keep to the list a grant's purpose keeps to
+([never granted](CLI.md#operator-grant)): nothing that loosens confinement, releases Altitude's gates, reaches
+other tasks' worktrees, prints credentials or steers a routine or task. For example:
+
+- `prune-images`: `podman image prune --all --force`
+- `clear-cache`: `make clean-cache`
+- `free-memory`: `./scripts/stop-idle-previews.sh`
+
+The run's page shows each command it ran with how it ended and its output, and **Stop** while it runs. Stopping
+the run, or saving the routine without that command or with other words, stops it too.
+
 ## Sending events to routines
 
 A routine with the trigger "When it's sent an event" runs on what your own scripts on this computer send it. Its
@@ -467,7 +481,7 @@ manifest, at its next tick or its next start, and sets the outcome:
 - **The repair ended without a report** when the session ended, failed or its terminal closed before
   it reported; it never reads Repaired.
 
-Work shows an **Altitude repairs** section under its current tasks while there is a repair to show:
+Work shows an **Altitude repairs** section at its bottom while there is a repair to show:
 the one running and those that ended in the last three days, the same in every project's Work. Each
 row opens the repair's page, with its report, Altitude's check and its brief. Settings → About's
 **All repairs** lists every repair, including those that left Work or ran before any project
@@ -482,6 +496,10 @@ each request names itself so a double tap or a replay acts once. `alt repair` re
 running in one of Altitude's jobs ("Only you can start a repair, from your own terminal."): its
 agents, coordinator and reviewers, a command under an operator grant or a standing policy, and
 Altitude's terminal on the page, where a `run` block an agent wrote would run on your Enter.
+
+A repair's record, brief and steps, with each command it ran and its output, stay in its folder under
+Altitude's home, which no agent Altitude runs can read: its task workers, coordinators, reviewers, routines and
+other sandboxed runs all see that folder empty or refused.
 
 ## Configuration
 

@@ -7,11 +7,27 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 - The Routines page opens with what routines are for: "Give an agent a job and schedule it or make it
   event-driven." The README, walkthrough and diagrams say the same.
+- Starting Altitude removes a leftover file from older installations.
+- The agents Altitude runs can no longer read repair records, which hold each step a repair took with your full
+  access and its output. Repairs themselves, the app and `alt repair` read them as before. An agent already
+  running when Altitude updates keeps its earlier view until it ends.
+- A terminal open on two devices at once, such as the phone and the desktop, no longer types stray text such as
+  `[18;1R` at its prompt: both screens answer a program's questions about the terminal, and only the first answer
+  reaches the program. Your own typing on either device always arrives.
+- Opening or reconnecting a terminal no longer types stray text such as `11;rgb:1111/1818/2727;1R` at its
+  prompt: answers to questions a program asked earlier (`gh` asks the background colour) are no longer sent again
+  each time the screen redraws its output. A program waiting for an answer still gets it.
+- Altitude repairs sit at the bottom of Work, below the project's finished work and Routines: they are
+  Altitude's own upkeep rather than the project's work.
 - Routines can act, not only report: tick **What it may change** on a routine's form and it may clear the
   project's worktrees and branches that nothing needs. Altitude checks every request itself and keeps anything
   with work in it, a task's own worktree or a task still open; the run's page lists each change with **Undo**, and a set-aside worktree
   stays restorable for 14 days. The new built-in **Tidy worktrees and branches** does this every Monday, and turning
   it on first shows what it may change. A routine without the permission is refused with a plain reason.
+- A routine can run commands you list on its form, each by a name: freeing disk space, pruning images, clearing a
+  cache. The routine decides when; Altitude runs your exact words as you, once a run at most, and the run's page
+  shows each one with its output and **Stop** while it runs. The form says plainly that these run outside the
+  sandbox and that Altitude does not check what they do.
 
 - An answer or message to a waiting task wakes its agent at once, even while an open page is reading the
   project's setup; that read no longer leaves the agent waiting for the next half-minute check.
@@ -53,6 +69,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   walkthrough shows a routine's suggested tasks.
 - Voice input you are recording on a task keeps going when its model switch completes: the page no longer
   briefly drops the message box, and the recording with it, at the moment the task is queued for its new engine.
+- For contributors: the web app builds with Vite 8 and its React plugin 6, tests with Vitest 5 and typechecks with
+  TypeScript 7's native compiler, which checks the app in under a second instead of about five. The route smoke
+  walkthrough reads the route list with Vite's own parser, since TypeScript 7 has no JavaScript API.
 
 ## v0.12.0 — 2026-10-22
 

@@ -6,7 +6,8 @@ import { walkthrough } from "./walkthrough";
  * The operator's terminal (SPEC.md §3.10) against real shells on real pseudo-terminals. Every state is
  * walked at both widths: off, the Settings switch, running, keys and tab completion, copy and paste, the
  * phone's Enter key at a prompt and a hidden password prompt, a
- * running command's close confirmation, reconnecting, typing stopped after failed input, a non-zero and a
+ * running command's close confirmation, reconnecting with a query asked meanwhile answered, live queries answered and
+ * nothing typed as reopening replays them, two pages answering a query once, typing stopped after failed input, a non-zero and a
  * clean exit, task finished, restart pending, refused, closed elsewhere, Altitude restarted and Close; then the
  * soft keyboard opening and closing, a hidden page shown again, a back-forward cache restore, a reload and a
  * rotation. Only the agent check, the restart notice, the keyboard, the page's visibility and a connection that
@@ -162,8 +163,13 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   const lost = panel.getByText("Reconnecting…");
   await walk.state("05-reconnecting", { visible: [lost], hidden: [] });
   expect(await page.locator(".terminal-screen").boundingBox()).toEqual(size);
+  // A program that asks the terminal where its cursor is while the page is away gets its answer once the page is back.
+  await page.keyboard.type("read -rs -d R -p $'\\e[6n' at; echo waited-${#at}");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(1_000);
   await fixture(request, "back");
   await expect(lost).toBeHidden({ timeout: 10_000 });
+  await expect(output).toContainText(/waited-\d/);
   await run(page, "echo back-$((2+2))");
   await expect(output).toContainText("back-4");
 
@@ -254,6 +260,42 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
   await page.keyboard.press("Enter");
   await expect(output).toContainText("kept-9");
   await expect(panel).toBeVisible();
+
+  // Live queries are answered, as `gh` asks them: the screen's background colour and the cursor's place. Opening the
+  // terminal again replays both and types nothing at the prompt.
+  await run(page, "read -rs -d '\\' -p $'\\e]11;?\\e\\\\' bg; read -rs -d R -p $'\\e[6n' at; echo bg-${bg:5:18}-${#at}");
+  await expect(output).toContainText(/bg-rgb:1111\/1818\/2727-\d/);
+  await page.reload();
+  await run(page, "echo clean-$((2+3))");
+  await expect(output).toContainText("clean-5");
+  await walk.state("12b-reopened-types-nothing", { visible: [output.getByText("clean-5")], hidden: [output.getByText(/11;rgb|command not found/)] });
+  // A program answered live that then works quietly, as `gh` waits on the network, is not answered again by a page
+  // opening meanwhile.
+  await run(page, "read -rs -d R -p $'\\e[6n' at; sleep 5; echo quiet-${#at}");
+  await page.waitForTimeout(500);
+  await page.reload();
+  // The page is back while the program still works: its query is the last thing it printed.
+  await expect(output).toContainText("sleep 5; echo quiet");
+  expect(await output.textContent()).not.toMatch(/quiet-\d/);
+  await expect(output).toContainText(/quiet-\d/, { timeout: 10_000 });
+  await run(page, "echo still-clean-$((3+4))");
+  await expect(output).toContainText("still-clean-7");
+  await expect(output.getByText(/command not found|syntax error/)).toHaveCount(0);
+
+  // A second page shows the terminal, as a phone and a desktop do. Both answer a live query: the program reads one answer,
+  // and no second one waits behind it for the prompt. Whichever page typed, the same holds.
+  const other = await page.context().newPage();
+  await other.goto("/projects/atlas/terminal");
+  const otherOutput = other.locator(".terminal-screen .xterm-rows");
+  await expect(otherOutput).toContainText("still-clean-7");
+  const asks = (name: string) => `read -rs -d R -p $'\\e[6n' at; read -rs -t 2 -n 1 extra; echo ${name}-\${#at}-\${#extra}`;
+  await run(page, asks("one"));
+  await expect(output).toContainText(/one-\d+-0/);
+  await run(other, asks("two"));
+  await expect(otherOutput).toContainText(/two-\d+-0/);
+  await expect(output).toContainText(/two-\d+-0/);
+  await walk.state("12c-two-pages-one-answer", { visible: [output.getByText(/two-\d+-0/)], hidden: [output.getByText(/-\d+-1|command not found/)] });
+  await other.close();
 
   // Another tab or device closes it: this page leaves and says so.
   const opened = await (await request.get("/api/terminal/atlas")).json();
