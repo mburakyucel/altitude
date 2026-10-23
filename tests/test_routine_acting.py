@@ -433,7 +433,8 @@ class TestRecordsAndWords(ActingCase):
         self.assertEqual(A._load(self.project)["agents"][-1]["may"], [], "a routine saved before acting only reports")
 
 
-PRUNE = ("prune-images", "printf 'Deleted 3 images\\n'; pwd; cat; env")
+# Its output stays short on any machine: only the environment lines a run's identity could appear in.
+PRUNE = ("prune-images", "printf 'Deleted 3 images\\n'; pwd; cat; env | grep -iE 'altitude|scratch|session' || true")
 CACHE = ("clear-cache", "echo cache is locked >&2; exit 3")
 SLOW = ("wait-a-while", "sleep 30")
 
