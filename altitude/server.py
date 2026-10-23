@@ -1358,7 +1358,9 @@ def tick_project(project: str) -> None:
                 deferred = any(note.startswith("deferred ") for note in notes)
                 if not deferred:
                     with S.project_lock(project):
-                        t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
+                        t2 = S.load_task(project, t["slug"])
+                        if t2["state"] not in S.OPEN_STATES:  # a reopened task is cleaned after it finishes again
+                            t2["cleaned"] = S.now(); S.save_task(project, t2)
                 S.append_event(project, t["slug"], "cleanup", notes=notes)
                 log(f"[{project}/{t['slug']}] cleanup{' deferred' if deferred else ''}: {notes}")
         _failing_since.pop(f"[{project}] tick", None)

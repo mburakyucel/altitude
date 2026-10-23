@@ -362,12 +362,12 @@ describe("Conversation-first decisions", () => {
     expect(screen.queryByRole("button", { name: "Use 7 days & resume" })).toBeNull();
   });
 
-  it("renders archived question history read-only on the phone", async () => {
+  it("renders archived question history read-only on the phone, with only the message box that reopens the task", async () => {
     setViewport(390);
     setup({ archived: true });
     renderApp({ route: path });
     await within(await screen.findByRole("region", { name: "Task conversation" })).findByText("Question closed");
-    expect(screen.queryByRole("textbox", { name: "Message the L2" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Message the L2" })).toHaveAccessibleDescription("Sending reopens the task with your message.");
     expect(screen.queryByRole("button", { name: "Use 7 days & resume" })).toBeNull();
   });
 });

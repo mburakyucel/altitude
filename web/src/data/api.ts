@@ -931,6 +931,9 @@ export const TaskMessageSchema = z
     role: z.string(),
     text: z.string(),
     summary: z.string().nullish(),
+    /** A reopened task's earlier completion, with that completion's digest. */
+    completion: z.boolean().nullish(),
+    digest: z.string().nullish(),
     review_id: z.string().nullish(),
     delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional(), send_now: z.boolean().optional(), send_now_reason: z.string().nullish(), send_now_pending: z.boolean().optional() }).nullish(),
     images: z.array(MessageImageSchema).nullish(),
