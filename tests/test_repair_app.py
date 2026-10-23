@@ -354,9 +354,11 @@ class TheEnd(AppRepairCase):
     def test_a_recorder_that_does_not_answer_is_stopped_with_its_job(self):
         self.planned([{"sleep": 300}])
         ident = self.begin()["id"]
-        row = repair.record(ident)
+        row = self.wait(ident, lambda row: row.get("session"))  # its turn is running and the recorder only polls
         recorder = self.jobs[row["unit"]]
-        os.kill(recorder.pid, signal.SIGSTOP)
+        self.addCleanup(os.kill, self.turns_seen()[0]["pid"], signal.SIGKILL)  # the agent's group is its own
+        with repair._changing(ident):  # it stops outside the record's lock, which the app's Stop takes
+            os.kill(recorder.pid, signal.SIGSTOP)
         self.patch(repair, "STOP_SECONDS", 0.5)
         page = repair.stop(ident, "request-0002")
         self.assertEqual((page["end"], page["stop_unconfirmed"]), ("stop", None))
@@ -433,7 +435,7 @@ class TheEnd(AppRepairCase):
     def test_a_recorder_gone_without_its_end_is_settled_interrupted(self):
         self.planned([{"sleep": 300}])
         ident = self.begin()["id"]
-        row = repair.record(ident)
+        row = self.wait(ident, lambda row: self.turns_seen())  # the engine is running its turn
         os.killpg(self.jobs[row["unit"]].pid, signal.SIGKILL)  # a reboot: nothing ran its end
         self.jobs[row["unit"]].wait()
         os.kill(self.turns_seen()[0]["pid"], signal.SIGKILL)
