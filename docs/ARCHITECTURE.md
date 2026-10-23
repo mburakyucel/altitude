@@ -2864,7 +2864,8 @@ is one record, `chats/<project>/<id>/chat.json` under Altitude's home, changed u
 its name, the model choice and the engine, model and session it answers with, its copy's base commit,
 whether and when it was archived, its messages, its turns and its system lines, each with a sequence
 number that orders the conversation. The operator's images go to the project's image store with the
-message that carries them, and `images` reads a chat's record as it reads a task's.
+message that carries them, where the project's agents can read them as they read a task's, and `images` reads a
+chat's record as it reads a task's.
 
 Each message waits until the chat's previous turn ends; the messages waiting then go together as the
 next turn. A thread of the service (`chats.run`, one per chat) claims them, picks the engine and model

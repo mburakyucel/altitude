@@ -155,7 +155,7 @@ Stop ends the job; a turn survives a service restart and a lost one reads cut of
 restarts with the conversation as quoted context; the copy is made from main, kept while open, removed on
 archive only after the unsaved-changes answer, and ignored by tidy and task cleanup; Make a task pins one
 commit per press, the task starts from it and the chat's copy starts again from main; every route refuses
-agents, L3, the machine key and replays; a boxed chat cannot write outside its copy; with computer access
+agents, L3, the machine key and replays; no agent's sandbox shows the chats, apart from a turn's own engine folder; with computer access
 the hidden places stay unreadable and the checkout read-only, only from a paired browser and only from the
 next turn. Engine calls are fixtures at the engine seam; live engine behaviour and the Mac's native
 confinement stay listed on the issue for the Mac installation.
