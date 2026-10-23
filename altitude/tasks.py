@@ -1738,10 +1738,13 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None,
         effort: str | None = None, image_ids: list[str] | None = None,
         wait: str | None = None, after: str | None = None, offer_turn: str | None = None,
-        improvement: str | None = None) -> dict:
+        improvement: str | None = None, start: str | None = None, context: str | None = None) -> dict:
     """`offer_turn` names the coordinator reply whose Create task press this creation answers (SPEC.md §3.3);
     a reply produces at most one task, however often its turn is retried. `improvement` names the accepted
-    suggestion (`suggestions.parse`) the task carries out; a suggestion has at most one task."""
+    suggestion (`suggestions.parse`) the task carries out; a suggestion has at most one task. `start` is the commit
+    of the project's repository its branch starts from instead of main, made here, before the task exists, so its
+    dispatch always finds it (`dispatch._task_worktree`); `context` follows the request as quoted evidence, which issue
+    intake does not read. Both come from an agent chat's Make a task (`chats.make_task`)."""
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
     if wait is not None and after is not None:
@@ -1768,6 +1771,10 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         raise TransitionError(f"GitHub issue intake failed: {exc}") from exc
     if issue:
         request = request.rstrip() + "\n\n" + issue
+    if context:
+        request = request.rstrip() + "\n\n" + context.strip()
+    if start is not None and not re.fullmatch(r"[0-9a-f]{40}", start):
+        raise TransitionError("a task starts from a full commit name")
     with S.project_lock(project):
         config.project(project)
         if after is not None:
@@ -1783,9 +1790,11 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         refs = image_store.lookup(project, image_ids) if image_ids else []
         base = S.slugify(title)
         slug, n = base, 1
-        while S.task_dir(project, slug).exists():
+        while S.task_dir(project, slug).exists() or (start and _branch_exists(project, f"worktree-{slug}")):
             n += 1
             slug = f"{base}-{n}"
+        if start:
+            _start_branch(project, f"worktree-{slug}", start)
         d = S.tasks_dir(project) / slug
         d.mkdir(parents=True)
         S.atomic_write(d / "request.md", request.rstrip() + "\n")
@@ -1805,11 +1814,30 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
             task["offer_turn"] = offer_turn
         if improvement:
             task["improvement"] = improvement
+        if start:
+            task["start"] = start
         S.save_task(project, task)
         S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True, planned_wait=planned,
                        **({"improvement": improvement} if improvement else {}))
         S.regen_state_md(project)
         return task
+
+
+def _branch_git(project: str, *args: str) -> subprocess.CompletedProcess:
+    repo = config.project_path(project)
+    return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=60,
+                          env=git_policy.git_env(repo))
+
+
+def _branch_exists(project: str, name: str) -> bool:
+    return not _branch_git(project, "show-ref", "--verify", "--quiet", f"refs/heads/{name}").returncode
+
+
+def _start_branch(project: str, name: str, start: str) -> None:
+    made = _branch_git(project, "branch", "--no-track", name, start)
+    if made.returncode:
+        raise TransitionError(f"the task's branch could not start from {start[:12]}: "
+                              f"{(made.stderr or made.stdout).strip()[:300]}")
 
 
 def offered_task(project: str, offer_turn: str) -> str | None:

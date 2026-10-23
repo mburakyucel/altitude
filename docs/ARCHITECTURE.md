@@ -1153,7 +1153,8 @@ evidence available through inspection commands.
 ## Isolation and landing
 
 Each task uses the isolated worktree path `.claude/worktrees/<slug>` and branch `worktree-<slug>`,
-based on the exact fetched `origin/main`. Dispatch and resume switch a clean worktree found on another
+based on the exact fetched `origin/main`, or, for a task made from an agent chat's changes, on the branch made at
+its recorded start commit ([agent chats](#agent-chats)). Dispatch and resume switch a clean worktree found on another
 branch back to its task branch and record a `task-branch-restored` event naming the branch it left, which
 keeps its commits; a dirty worktree, detached HEAD or missing task branch faults `task-git-provenance`
 with the Git step that recovers it. Ownership belongs to the task and PR; commit messages,
@@ -2896,6 +2897,17 @@ on each chat whose turn's worker is running, and its tick finds every chat with 
 (`chats.due`) and follows or starts it again. A turn whose worker is gone, or whose start a restart
 interrupted, reads cut off.
 
+Make a task (`chats.make_task`) makes a task from the chat directly, as `alt task new` does, with the operator
+as its author: the operator's words are its request, and the conversation follows them as quoted evidence, which
+issue intake does not read. When the copy has changes since its base, Altitude saves them as one commit on the
+copy's last commit (`git add -A`, `write-tree`, `commit-tree`, so no project hook runs on the agent's content) and
+`tasks.new` makes the task's branch, `worktree-<slug>`, at that commit before the task record exists and records it
+as the task's `start`; the dispatcher checks the task out on that branch while it is still at `start` and refuses
+it as an orphan otherwise. The copy and its branch are then removed, and the next turn makes a fresh copy of main,
+so the changes live in the task alone. A chat without changes makes a task that starts from main and keeps its
+copy. Make a task refuses while a turn runs or a message waits, and no turn starts while it runs; the conversation
+records a line naming the task, which the page shows with the task's card.
+
 Archive refuses while a turn runs or a message waits, and while the copy has changes (committed or
 not, since its base) the request has not accepted; it then removes the copy, its branch and its
 scratch folder and keeps the conversation and session. Reopen makes a fresh copy of main at the next
@@ -2906,7 +2918,7 @@ removes an archived chat's folder for good, its engine session with it, and anyt
 `GET /api/chats/<project>/<id>` is one chat with its conversation, each turn's steps (read from the
 worker's events as a repair's are, `altitude/steps.py`), its copy's changed files and context.
 `POST /api/chats/<project>` starts a chat with its first message, and
-`/api/chats/<project>/<id>/{message,remove,retry,rename,model,stop,archive,reopen,delete}` change one.
+`/api/chats/<project>/<id>/{message,remove,retry,rename,model,stop,task,archive,reopen,delete}` change one.
 Each request carries an identity the record keeps, so a repeat acts once. Every chat route takes a
 paired device's cookie, passes the page's own-origin and [own agents](#altitudes-own-agents) checks and
 refuses the machine key, as repair routes do: no agent reads or steers a chat through Altitude. Every job in

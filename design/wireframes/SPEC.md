@@ -2873,27 +2873,37 @@ adopts for what ships; [behavior](../../docs/ARCHITECTURE.md#agent-chats)). What
   latest step beneath while it runs, "Worked 3 min · 5 steps" after; its reply. System lines: "Started · <engine>
   · its own copy of main", "Making its copy of main…", "Stopped by you · the command it was running was cut off",
   "Altitude restarted · the reply continued", "New session on <engine> · it was given this conversation so far",
-  "Archived by you", "Reopened · a fresh copy of main". Failures, red, with Retry on the latest turn: "Couldn’t
+  "Task made by you · its changes moved to the task; a fresh copy of main" (or "Task made by you" when the copy
+  had no changes) with the task's card (§3.5) under it, "Archived by you", "Reopened · a fresh copy of main". Failures, red, with Retry on the latest turn: "Couldn’t
   answer: <the engine's reason>. Choose another model below, or Retry after it resets." and "The reply was cut
   off: Altitude stopped while it ran." A message sent while it answers waits as a muted bubble, "Waits for the
   reply · Remove", and goes next. The page follows its newest line.
-- **Menu** (phone bottom sheet, desktop popover from ⋯): Rename; Archive, disabled while it answers ("Available
-  when the reply ends"); then muted "<engine> · started Oct 21 · its copy: 1 changed file" (or "no
+- **Menu** (phone bottom sheet, desktop popover from ⋯): Rename; Make a task…; Archive; the last two disabled
+  while it answers ("Available when the reply ends"); then muted "<engine> · started Oct 21 · its copy: 1 changed file" (or "no
   changes"). Rename edits the name in place ("Chat name", 1–80 characters; Enter or Save saves, Escape or
   Cancel restores; the phone's back hides meanwhile).
+- **Make a task**: a sheet (phone bottom sheet, desktop 480px dialog) "Make a task from this chat": "Title",
+  the chat's name to start (1–120 characters), and "What should it deliver?", which grows with its text
+  (placeholder "For example: ship the faster export with a test"), then muted "Its changes (1 file) move to the
+  task, with this conversation as its context. The chat goes on in a fresh copy of main." or, without changes,
+  "It starts from main, with this conversation as its context."; **Make task**, disabled while either field is
+  empty and "Making…" while it saves, and Cancel. A refusal shows the server's reason in red under the buttons
+  and keeps what was written. Once made, the sheet closes and the system line and card join the conversation.
 - **Archive**: without changes it archives at once; with changes it asks "Archive this chat?", naming the
-  changed files, with **Archive and delete changes** (danger) and Cancel. An archived chat has no composer:
+  changed files, with **Make a task first**, which opens the Make a task sheet, **Archive and delete changes**
+  (danger) and Cancel, stacked full width on the phone. An archived chat has no composer:
   "Archived · Oct 22" with **Reopen** and **Delete…**, which asks "Delete this chat?" with **Delete chat** in red
   and Cancel, then returns to Work.
 - **Monitor** (§3.14): an answering chat is a session row with the chip **Chat**.
 
 Loading shows the conversation's skeleton; a failed read says "Couldn’t load this chat." with Retry; a chat
-that does not exist shows the server's message. Make a task and computer access follow in their own changes.
+that does not exist shows the server's message. Computer access follows in its own change.
 
 `web/e2e/chats.pw.ts` walks Work's section with no chats, every row state, the archived fold and a failed
 refresh; a new chat with an image; answering, a waiting message and Remove, Stop and Esc, stopped; failed, cut
 off, Retry, a new session and a restart; the menu, Rename, Archive with and without changes, Reopen and Delete;
-loading, a failed read and a missing chat; and Monitor's row, at both widths.
+Make a task with and without changes, refused, making and made with its card, Make a task first from Archive and
+the menu while it answers; loading, a failed read and a missing chat; and Monitor's row, at both widths.
 
 ## 4. Behaviour rules
 
