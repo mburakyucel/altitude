@@ -1,32 +1,31 @@
 import { test } from "./fixtures";
 import { readFileSync } from "node:fs";
-import ts from "typescript";
+import { parseSync, type ESTree } from "vite";
 import { expect } from "@playwright/test";
 import { fixtureProject, fixtureTask } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 // Read route declarations without importing React/browser modules into the test runner.
 // Issue #195: a new route cannot silently escape rendered-state coverage.
-const source = ts.createSourceFile("routes.tsx",
-  readFileSync(new URL("../src/routes.tsx", import.meta.url), "utf8"),
-  ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-function paths(node: ts.Node, parent = ""): string[] {
-  if (ts.isObjectLiteralExpression(node)) {
-    const property = (name: string) => node.properties.find((p) =>
-      ts.isPropertyAssignment(p) && p.name.getText(source) === name) as ts.PropertyAssignment | undefined;
-    const path = property("path")?.initializer;
+const { program } = parseSync("routes.tsx", readFileSync(new URL("../src/routes.tsx", import.meta.url), "utf8"));
+function paths(node: unknown, parent = ""): string[] {
+  if (Array.isArray(node)) return node.flatMap((child) => paths(child, parent));
+  if (!node || typeof node !== "object") return [];
+  const object = node as ESTree.Node;
+  if (object.type === "ObjectExpression") {
+    const property = (name: string) => object.properties.find((p): p is ESTree.ObjectProperty =>
+      p.type === "Property" && p.key.type === "Identifier" && p.key.name === name);
+    const path = property("path")?.value;
     const index = property("index");
-    const current = path && ts.isStringLiteral(path)
-      ? path.text.startsWith("/") ? path.text : `${parent}/${path.text}`
+    const current = path?.type === "Literal" && typeof path.value === "string"
+      ? path.value.startsWith("/") ? path.value : `${parent}/${path.value}`
       : parent;
-    const children = property("children")?.initializer;
+    const children = property("children")?.value;
     return [...(path || index ? [current] : []), ...(children ? paths(children, current) : [])];
   }
-  const result: string[] = [];
-  node.forEachChild((child) => { result.push(...paths(child, parent)); });
-  return result;
+  return Object.values(node).flatMap((child) => paths(child, parent));
 }
-const routePaths = [...new Set(paths(source))];
+const routePaths = [...new Set(paths(program))];
 
 for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe(() => {
   const shown = route.includes("/view/");
