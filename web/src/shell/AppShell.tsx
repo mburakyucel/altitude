@@ -52,22 +52,43 @@ export default function AppShell() {
       }
       fullHeight = Math.max(fullHeight, window.innerHeight, viewport.height);
       const editable = document.activeElement?.matches('textarea, input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="password"], input[type="number"], [contenteditable="true"]');
+      const contracted = fullHeight - viewport.height > Math.max(120, fullHeight * 0.2);
       // Toolbar motion and hardware-keyboard focus leave navigation in place. Once detected,
       // follow dismissal even if focus moves to a composer control or into a details sheet.
-      node.toggleAttribute("data-keyboard", Boolean((editable || node.hasAttribute("data-keyboard")) && fullHeight - viewport.height > Math.max(120, fullHeight * 0.2)));
+      const keyboard = contracted && Boolean(editable || node.hasAttribute("data-keyboard"));
+      node.toggleAttribute("data-keyboard", keyboard);
+      if (contracted && !keyboard) {
+        // A deep contraction with no keyboard in use is a stale reading, such as the keyboard-era height iOS
+        // reports when the app returns from the background with no later resize: the shell fills the screen.
+        node.style.removeProperty("--viewport-height");
+        node.style.removeProperty("--viewport-top");
+        return;
+      }
       node.style.setProperty("--viewport-height", `${viewport.height}px`);
       node.style.setProperty("--viewport-top", `${viewport.offsetTop}px`);
     };
+    // The keyboard closes while the app is away, so the keyboard detected before does not outlast it; a return
+    // measures afresh.
+    const away = () => node.removeAttribute("data-keyboard");
+    const shown = () => (document.hidden ? away() : resize());
     resize();
     viewport.addEventListener("resize", resize);
     viewport.addEventListener("scroll", resize);
     document.addEventListener("focusin", resize);
     window.addEventListener("resize", resize);
+    document.addEventListener("visibilitychange", shown);
+    window.addEventListener("pagehide", away);
+    window.addEventListener("pageshow", resize);
+    window.addEventListener("focus", resize);
     return () => {
       viewport.removeEventListener("resize", resize);
       viewport.removeEventListener("scroll", resize);
       document.removeEventListener("focusin", resize);
       window.removeEventListener("resize", resize);
+      document.removeEventListener("visibilitychange", shown);
+      window.removeEventListener("pagehide", away);
+      window.removeEventListener("pageshow", resize);
+      window.removeEventListener("focus", resize);
       node.removeAttribute("data-keyboard");
       node.style.removeProperty("--viewport-height");
       node.style.removeProperty("--viewport-top");
