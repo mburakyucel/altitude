@@ -145,6 +145,7 @@ export function Reply({
  */
 export function Coordination({
   text,
+  label,
   summary,
   at,
   images = 0,
@@ -153,6 +154,8 @@ export function Coordination({
   children,
 }: {
   text: string;
+  /** The folded line, when the row is not L3's message (a reopened task's earlier completion). */
+  label?: string;
   summary?: string | null;
   at?: string | null;
   images?: number;
@@ -166,9 +169,9 @@ export function Coordination({
       <div className="coordination" data-open={open || undefined}>
         <div className="coordination-line">
           <span className="sys-dot" aria-hidden />
-          <span className="coordination-label">{summary ? `L3 · ${summary}` : "L3 messaged the L2"}{images ? ` · ${images} image${images === 1 ? "" : "s"}` : ""}</span>
-          <button type="button" className="link" aria-expanded={open}
-            onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}>{open ? "Hide" : "Show"}</button>
+          <span className="coordination-label">{label ?? (summary ? `L3 · ${summary}` : "L3 messaged the L2")}{images ? ` · ${images} image${images === 1 ? "" : "s"}` : ""}</span>
+          {text ? <button type="button" className="link" aria-expanded={open}
+            onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}>{open ? "Hide" : "Show"}</button> : null}
         </div>
         {open ? <div className="coordination-body">
           <Prose text={text} />

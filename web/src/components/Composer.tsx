@@ -190,6 +190,8 @@ export interface ComposerProps {
   busy?: boolean;
   /** The desktop hint under the field when no state claims it (12px muted). */
   hint?: ReactNode;
+  /** The hint also shows on the phone: a send that changes the task's state, such as reopening a done task. */
+  hintOnPhone?: boolean;
   /** The control beside the message box, such as L3's model button. */
   pill?: ReactNode;
   disabled?: boolean;
@@ -398,6 +400,7 @@ export default function Composer({
   ariaLabel,
   busy = false,
   hint,
+  hintOnPhone = false,
   pill,
   disabled = false,
   shows,
@@ -1038,7 +1041,7 @@ export default function Composer({
     hintRole = voice.host.state === "failed" ? "alert" : setupNeeded ? "status" : undefined;
     hintText = hostVoiceHint(voice);
   } else {
-    routineHint = true;
+    routineHint = !hintOnPhone;
     if (busy) {
       hintRole = "status";
       hintText = "L3 is mid-turn · runs next";

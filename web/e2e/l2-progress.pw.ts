@@ -165,7 +165,7 @@ for (const index of [0, 1]) {
     expect((await task()).question.status).toBe("open");
     await control("finished");
     await page.reload();
-    await walk.state("15-finished-read-only", { visible: [convo.getByText("Pagination and steering are verified.")], hidden: [preview, field, stop] });
+    await walk.state("15-finished-offers-reopening", { visible: [convo.getByText("Pagination and steering are verified."), field, page.getByText("Sending reopens the task with your message.", { exact: true })], hidden: [preview, stop] });
   });
 }
 

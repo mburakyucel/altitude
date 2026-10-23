@@ -315,6 +315,9 @@ its commits are on `origin/main` or a verified PR merged it. A branch with commi
 machine stays; `alt task events <slug> --json` shows the `cleanup-worktree` event with its reason and
 unmerged commit count. Uncommitted changes or commits on no branch keep the worktree with a recorded
 reason. Inspect them in that worktree, then remove it with `git worktree remove` once nothing is needed.
+When your message [reopens a done task](CLI.md#reopen-a-done-task), Altitude restores its worktree before
+the owner starts: on the kept branch, or from current `origin/main` once the merged branch is gone; the
+task is cleaned up again after it finishes.
 A [project agent](ARCHITECTURE.md#project-agents) run's copy, `.claude/worktrees/project-agent-<agent>-<n>`,
 and its scratch folder are removed when the run ends; its prompt, report and session stay in the project's
 `project-agents` folder until the run is pruned, 90 days on and beyond the agent's newest ten runs.
