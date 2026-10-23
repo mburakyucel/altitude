@@ -2085,6 +2085,28 @@ def process_running(pid: int, start: str) -> bool | None:
     return fields[19] == start and fields[0] != "Z"
 
 
+def folder_in_use(path: Path) -> bool:
+    """Whether a process of this account works in `path` or a folder under it, as a terminal or a tool left in a
+    worktree does: the processes' working folders (`/proc` on Linux, `lsof` on macOS). Raises OSError when they
+    cannot be read."""
+    base = os.path.realpath(path)
+    if _darwin():
+        listed = subprocess.run(["/usr/sbin/lsof", "-nP", "-d", "cwd", "-Fn"], capture_output=True, text=True,
+                                timeout=30)
+        if listed.returncode not in (0, 1) or listed.returncode == 1 and listed.stderr.strip():
+            raise OSError(f"lsof: {listed.stderr.strip()[:200]}")
+        folders = [line[1:] for line in listed.stdout.splitlines() if line.startswith("n")]
+    else:
+        folders = []
+        for entry in PROC.iterdir():
+            if entry.name.isdigit():
+                try:
+                    folders.append(os.readlink(entry / "cwd"))
+                except OSError:
+                    continue  # ended meanwhile, or another account's process
+    return any(folder == base or folder.startswith(base + "/") for folder in folders)
+
+
 def process_name(pid: int) -> str | None:
     """The process's short command name, or None when it cannot be read."""
     if _darwin():

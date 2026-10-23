@@ -936,13 +936,14 @@ CHANGES = {
     "kept-task": change("Kept worktree add-a-billing-export-for-team-acc…", "Task “Add a billing export” is still open."),
     "kept-open": change("Kept worktree agent-5b2e8f4c1d09", "A program has it open."),
     "kept-loose": change("Kept branch retry-limit-tests", "It has 2 commits found nowhere else."),
+    "kept-aside": change(ASIDE1, "Still set aside: it contains modified or untracked files, use --force to delete it"),
     "kept-undone": change("Kept branch docs-typo-fix", "You put it back Oct 19."),
     "denied": change("Not allowed: delete branch upload-retry-fix", "This routine only reports."),
-    "cap": change("Not allowed: set aside worktree agent-91d0c3f27a6e", "This run used its 20 changes."),
+    "cap": change("Not allowed: set aside worktree agent-91d0c3f27a6e", "This run used its 20 requests."),
     "failed": change("Couldn’t set aside worktree agent-5b2e8f4c1d09", "git: cannot move a locked working tree"),
     "undoing": change(ASIDE1, FOR_GOOD, UNDOING),
     "undoing2": change(ASIDE2, FOR_GOOD, UNDOING),
-    "undone": change(ASIDE1 + " · Undone", "Put back Oct 26, 09:40. This routine leaves it alone from now on."),
+    "undone": change(ASIDE1 + " · Undone", "Put back Oct 26. This routine leaves it alone from now on."),
     "undo-refused": change(ASIDE1, "Not undone: a worktree is already at that path.", UNDO, ' style="color:var(--danger)"'),
 }
 
@@ -982,20 +983,17 @@ board("DesktopActRun", 1440, 1000, desk(TIDY_RUN_HEAD + act_run_page(), h=1000))
 board("PhoneActRun", 390, 1250, phone(act_run_page(), back="Tidy worktrees…", title="Run · Today 09:00", h=1250))
 
 TIDY_ROW = (TIDY, "Mondays at 09:00 · Clears worktrees and branches nothing needs, with Undo")
-TIDY_SHEET = ("Every Monday at 09:00 it sets aside worktrees and deletes local branches of harbor that nothing needs: no "
+TIDY_SHEET = ("Mondays at 09:00 it sets aside worktrees and deletes local branches of harbor that nothing needs: no "
               "uncommitted change, nothing changed in seven days, every commit kept on a branch or merged, and nothing open "
-              "in them. Each is listed on its run’s page with Undo. It never touches main, open tasks or GitHub.")
+              "in them. Each is listed on its run's page with Undo. It never touches main, open tasks or GitHub.")
 ACT_AGENTS = [(TIDY, "Mondays at 09:00 · Changes worktrees and branches · Found something 2 h ago")] + AGENTS
 
 
-def tidy_sheet(saving=False, static=False):
-    turn = ('<span class="btn primary" aria-label="Turn on, saving"><span class="spin"></span></span>' if saving
-            else '<span class="btn primary">Turn on</span>')
+def tidy_sheet(static=False):
     style = ('position:static;box-shadow:none;border:1px solid var(--hairline)' if static
              else 'top:auto;bottom:0;left:0;right:0;border-radius:16px 16px 0 0;padding-bottom:28px')
-    cancel = '<span class="btn" aria-disabled="true">Cancel</span>' if saving else f'<span class="btn"{FOCUS}>Cancel</span>'
     return (f'<div class="dlg" role="dialog" style="{style}"><h2>Turn on {TIDY} for {P}?</h2><p>{TIDY_SHEET}</p>'
-            f'<div class="bt">{turn}{cancel}</div></div>')
+            f'<div class="bt"><span class="btn primary">Turn on</span><span class="btn"{FOCUS}>Cancel</span></div></div>')
 
 
 board("PhoneActTurnOn", 390, 1000, phone(section(top=False, built=[TIDY_ROW] + BUILTIN), h=1000,
@@ -1023,16 +1021,17 @@ ACT_CELLS = [
     ("A6 · Routine page: only reports", "muted", act_definition(FENCE_OFF)),
     ("A7 · Built in: the row", "Turn on opens the sheet", '<div class="card alist">' + brow(*TIDY_ROW) + '</div>'),
     ("A8 · Built in: the sheet", "Cancel focused; Escape and the scrim change nothing; at 390 a bottom sheet", tidy_sheet(static=True)),
-    ("A9 · Built in: turning on / refused", "a spinner in the sheet’s Turn on, Cancel unavailable; refused closes the sheet with the reason under the row",
-     tidy_sheet(saving=True, static=True) + '<div class="card alist" style="margin-top:12px">' + brow(*TIDY_ROW, state="refused") + '</div>'),
+    ("A9 · Built in: turning on / refused", "the sheet closes and the row’s Turn on spins, as the Weekly review’s does; refused, the reason under the row",
+     '<div class="card alist">' + brow(*TIDY_ROW, state="saving") + '</div><div class="card alist" style="margin-top:12px">'
+     + brow(*TIDY_ROW, state="refused") + '</div>'),
     ("A10 · Run page: running with changes", "the card above the live session, growing as the run asks", changed(["worktree", "kept"])),
     ("A11 · Changes: done, with Undo all", "worktrees set aside, a branch merged by a pull request, one merged into main",
      changed(["worktree", "worktree2", "branch", "branch-main"], undo_all=True)),
     ("A12 · Changes: kept", "each reason Altitude’s own check gives",
      changed(["kept", "kept-recent", "kept-task", "kept-open", "kept-loose", "kept-undone"])),
-    ("A13 · Changes: not allowed / failed / removed for good", "without the permission; past the run’s 20 changes; Git refused; after 14 days",
-     changed(["denied", "cap", "failed", "gone"])),
-    ("A14 · Undo: pressed / done / refused", "a spinner in Undo; Undone with when and that it sticks; the reason in the danger tone and Undo again",
+    ("A13 · Changes: not allowed / failed / removed for good", "without the permission; past the run’s 20 requests; Git refused; after 14 days; Git refused the removal",
+     changed(["denied", "cap", "failed", "gone", "kept-aside"])),
+    ("A14 · Undo: pressed / done / refused", "a spinner in Undo; Undone with the day and that it sticks; the reason in the danger tone and Undo again",
      changed(["undoing", "undone", "undo-refused"])),
     ("A15 · Undo all pressed", "every row that can be undone shows its spinner, then its own outcome",
      changed(["undoing", "undoing2"], undo_all="pressed")),

@@ -239,10 +239,11 @@ project is selected. `alt project remove <name>` uses the same checks. See
 
 A [routine](ARCHITECTURE.md#routines) is a brief Altitude runs for a project on a schedule, when your
 own scripts send it an event, or when you press Run now. Each run reads the project in its own fresh copy and the
-public web, and only reports. Open **Routines…** in the project's **More actions** menu:
+public web, and reports; one you let change things asks Altitude to make each change. Open **Routines…** in the
+project's **More actions** menu:
 
-- **Turn on** a built-in routine (Dependency check, Build health or What landed) to use it as it is; **Edit**
-  changes it later.
+- **Turn on** a built-in routine (Dependency check, Build health, What landed or Tidy worktrees and branches) to use
+  it as it is; **Edit** changes it later.
 - **New routine** opens the form: a name, what it does, when it runs, what it tells you in chat, its model and how
   long each run may take. A new routine starts off, so you can try it with **Run now** before you turn it on.
 - Ask L3 in chat to set one up; it drafts the routine as a card under its reply, and only your **Create routine**
@@ -252,6 +253,13 @@ public web, and only reports. Open **Routines…** in the project's **More actio
 The weekly budget on the Routines page caps the time all of a project's runs take, counted from Monday. A run that
 finds something says so in chat as **Tell me** allows, keeps its report on its page, and may suggest up to three
 tasks, which L3 checks before they wait for you under Suggestions in Needs you.
+
+**What it may change** on the form lets a routine clear worktrees and branches nothing needs; unticked, it only
+reports. Altitude checks each request itself and keeps anything with work in it: uncommitted changes, commits
+found nowhere else, a change in the last seven days, a task still open, or a program with it open. A set-aside
+worktree waits in the worktree folder's `.set-aside` folder for 14 days before it is removed for good; a deleted
+branch's commit is kept. The run's page lists **What it changed** with **Undo** on each change and **Undo all**;
+`alt agent undo` does the same from the terminal. What you put back, that routine leaves alone from then on.
 
 ## Sending events to routines
 

@@ -68,6 +68,16 @@
 .agent-fold > summary::before { content: "›"; display: inline-block; width: 12px; transition: transform 120ms; }
 .agent-fold[open] > summary::before { transform: rotate(90deg); }
 .agent-fold-body { padding: 4px 0 8px 20px; overflow-wrap: anywhere; }
+/* What it changed: one row per request, Undo at its right; Undo all in the heading's row. */
+.agent-changes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.agent-changes { padding: 0; }
+.agent-change { display: flex; align-items: center; gap: 12px; padding: 11px 16px; }
+.agent-change + .agent-change { border-top: 1px solid var(--hairline); }
+.agent-change-words { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.agent-change-words > strong { font-weight: 500; }
+.agent-change-words > small { font-size: var(--text-meta); line-height: 1.45; }
+.agent-change .btn, .agent-changes-head .btn { flex: none; min-height: 30px; padding-inline: 12px; font-size: var(--text-meta); }
+.shell[data-phone] .agent-change .btn, .shell[data-phone] .agent-changes-head .btn { min-height: 44px; min-width: 64px; }
 .agent-run-session .live-panel { width: auto; height: min(70vh, 640px); border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; }
 
 /* The form. */
@@ -87,6 +97,10 @@
 .agent-trigger-add { align-items: flex-start; }
 .agent-trigger-words { display: flex; flex-direction: column; min-width: 0; }
 .agent-trigger-words > small { font-size: var(--text-meta); }
+/* What it may change: one checkbox row, 44px tall on the phone. */
+.agent-may { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; cursor: pointer; }
+.agent-may > input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+.shell[data-phone] .agent-may { min-height: 44px; }
 /* + Add a trigger's menu opens under the button, its items 44px tall on the phone. */
 .menu.agent-trigger-menu { top: calc(100% - 6px); left: 12px; right: auto; }
 .shell[data-phone] .agent-trigger-menu .menu-item { min-height: 44px; }
@@ -119,6 +133,7 @@
 .agent-offer > small { font-size: var(--text-meta); }
 .agent-offer > .agent-brief-wrap, .agent-offer > .agent-offer-changes { margin-top: 6px; }
 .agent-offer-changes { padding-left: 20px; list-style: disc; }
+.agent-offer-may { font-size: var(--text-meta); }
 .agent-offer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .agent-offer-actions .btn[aria-disabled="true"] { opacity: 0.6; pointer-events: none; }
 .agent-offer-done { margin-top: 8px; color: var(--success-text); }

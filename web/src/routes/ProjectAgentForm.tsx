@@ -4,7 +4,7 @@ import { useBlocker, useNavigate, useParams, useSearchParams } from "react-route
 import { useQueryClient } from "@tanstack/react-query";
 import { pressId, sendProjectAgent, useProjectAgent, useProjectAgents } from "../data/api";
 import type { AgentClock, ProjectAgentDefinition } from "../data/api";
-import { DAY_NAMES, LIMITS, NEW_DEFINITION, NEW_SCHEDULE, TELL, refusal } from "../data/projectAgents";
+import { DAY_NAMES, LIMITS, MAY_LINE, NEW_DEFINITION, NEW_SCHEDULE, TELL, refusal } from "../data/projectAgents";
 import { AgentFrame } from "../components/ProjectAgentParts";
 import { ChoiceButton } from "../components/ModelMenu";
 import { BusyLabel, StatusMark } from "../components/StatusMark";
@@ -181,6 +181,16 @@ function Form({ project, id, read, latest, start, offer, clock }: {
       onChange={(event) => set({ brief: event.target.value })} />
     {incomplete && !draft.brief.trim() ? <p id="agent-brief-missing" className="text-meta text-danger">Say what it does.</p> : null}
     <p id="agent-brief-hint" className="text-meta text-muted">Write it as you would brief a task. It can use anything in the repository.</p>
+    <fieldset className="agent-fieldset">
+      <legend className="agent-label">What it may change</legend>
+      <label className="agent-triggers agent-may">
+        <input type="checkbox" checked={draft.may.includes("worktrees")} aria-labelledby="agent-may-name" aria-describedby="agent-may-line"
+          onChange={(event) => set({ may: event.target.checked ? ["worktrees"] : [] })} />
+        <span className="agent-trigger-words"><strong id="agent-may-name">Worktrees and branches</strong>
+          <small id="agent-may-line" className="text-muted">{MAY_LINE}</small></span>
+      </label>
+      {draft.may.length ? null : <p className="text-meta text-muted">Unticked, it only reports.</p>}
+    </fieldset>
     <fieldset className="agent-fieldset">
       <legend className="agent-label">Runs when</legend>
       <div className="agent-triggers">

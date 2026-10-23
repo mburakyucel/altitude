@@ -1,6 +1,7 @@
-# Routines that act: proposal
+# Routines that act
 
-Status: proposal for the operator's checkpoint, not approved. It extends the approved
+Status: the operator chose increment 1 on 2026-10-22, built as [Increment 1 in detail](#increment-1-in-detail)
+describes; increments 2 and 3 stay proposals until each returns with its own held pull request. It extends the approved
 [routines design](PROPOSAL.md), replacing its step 6 (#1109), on the operator's direction of 2026-10-22: a
 routine is an agent with a reusable job that runs on a schedule or an event, and the job can be any action,
 such as sending a notification or a report, cleaning up resources, or opening dependency-upgrade pull
@@ -130,18 +131,20 @@ rule is code, shared with task cleanup where the two overlap; the brief can narr
 
 - it is registered with the project's repository and its folder is directly under `.claude/worktrees`;
   never main's checkout, never a run's copy;
-- its task has ended (done or rejected), or no task record names it; and no task that was open when it was
-  made is still open, so a helper copy of a running or blocked task stays until that task ends;
+- it is not locked, and its own task has ended (done or rejected); or no task record names it and no task
+  that was open when it was made is still open, so a helper copy of a running or blocked task stays until
+  that task ends;
 - nothing in it changed for seven days: no commit, checkout or staging (its Git record), and no file in its
   folder, ignored files included;
 - no program has its folder as its working folder (the platform seam: `/proc` on Linux, `lsof` on the Mac);
 - it has no uncommitted change and no commit found on no branch or remote.
 
-Set aside means `git worktree move` into `.claude/worktrees/.set-aside/<run>-<n>/`, the same disk, so
+Set aside means `git worktree move` into `.claude/worktrees/.set-aside/<routine>-<run>-<change>/`, the same disk, so
 nothing is copied and Undo moves it back exactly, ignored files (`.env`, local databases, installed
 packages) included. After 14 days the tick deletes the folder and its Git record for good, and its row
 reads "Removed for good Nov 9."; from then Undo restores it from its branch, without ignored files, and says
-so.
+so. When Git refuses to remove it (something changed inside it meanwhile), it stays set aside with Git's reason
+and its Undo.
 
 **A branch** is deleted when:
 
@@ -151,25 +154,6 @@ so.
   (looked up by branch on GitHub when no task record names the pull request);
 - it has not moved for seven days (its newest reflog entry, else its tip's commit time), so a branch you
   just made from main is kept.
-
-## Security review questions
-
-The proposal review should test, at least:
-
-1. Can a run do any of the four without the permission, through `alt act`, the files it can write, Git, or
-   a command it influences?
-2. Can a run's request text change what altd does beyond choosing among targets altd itself enumerated
-   (path tricks, symlinks, ref names that look like options, a command name that matches two)?
-3. Is "nothing is lost, nothing is in use" sound: ignored files (build output, installed packages) are
-   removed with a worktree; a program working in a worktree without its folder open; squash merges;
-   detached worktrees; a task reopened at the same moment?
-4. Do commands with optional input open a new way out (the text reaches wherever your command sends it)
-   beyond the network a run already has?
-5. Do pull requests from a run that read the web add risk beyond today's task flow, given the task owner
-   reads the run's change and words as claims, the repository's publication rules apply, and the merge
-   stays yours?
-6. Does anything let a permission widen without your own press: L3's offers, a built-in's update, an
-   edit made while a run is running?
 
 ## Increments
 
@@ -208,20 +192,19 @@ The interface for each arrives with it; nothing is drawn or built before its inc
 - **A first run that only previews** ("would remove 6 worktrees", then a press). Considered for trust;
   Undo covers the same need without a second press each time, and Run now is still the test.
 
-## Decisions that are yours
+## Decisions
 
-| Decision | Recommendation | Alternatives |
-| --- | --- | --- |
-| How a routine acts | The run asks with `alt act`; Altitude acts within the fence | A wider box for the run; or your grant applied to a run |
-| The permissions | Worktrees and branches, commands you list, pull requests, your devices | Fewer, or more fixed kinds in place of commands |
-| First increment | The fence with Worktrees and branches and its built-in Tidy routine | Tidy done by Altitude itself with no model; commands first; or pull requests first |
-| Pull requests | Each becomes a task held for your merge | Altitude opens the pull request itself, held, with no task owner |
+The operator chose the first increment as recommended: the run asks with `alt act` and Altitude acts within the
+fence, starting with Worktrees and branches and its built-in Tidy routine. The further permissions (commands you
+list, your devices) and whether each pull request becomes a task held for your merge are decided with their
+increments.
 
 ## Increment 1 in detail
 
 Boards in this folder, written by `gen.py`: `DesktopActEdit`, `PhoneActEdit` (the form), `DesktopActAgent`,
 `PhoneActAgent` (the routine page), `DesktopActRun`, `PhoneActRun` (a run that changed things),
-`PhoneActTurnOn` (the built-in's sheet), `ActStates` and `PhoneActStates` (every state below at each width).
+`PhoneActTurnOn` (the built-in's sheet), `ActStates` and `PhoneActStates` (every state below at each width). The
+walkthrough `web/e2e/routine-acting.pw.ts` walks them at both widths against real records and Git.
 
 **The form.** After **What it does** comes **What it may change**: a bordered list with one row, a
 checkbox (44px target on the phone), **Worktrees and branches** in semibold, and under it, muted: "Sets
@@ -241,12 +224,12 @@ branches, with Undo" in the primary text tone, or "Only reports" muted.
 **The built-in.** **Tidy worktrees and branches** appears in Built in with "Mondays at 09:00 · Clears
 worktrees and branches nothing needs, with Undo" and **Turn on**. Turn on opens a sheet, as the Weekly
 review's terms do (bottom sheet at 390px, centred at 1440px): **Turn on Tidy worktrees and branches for
-harbor?**, "Every Monday at 09:00 it sets aside worktrees and deletes local branches of harbor that nothing
+harbor?**, "Mondays at 09:00 it sets aside worktrees and deletes local branches of harbor that nothing
 needs: no uncommitted change, nothing changed in seven days, every commit kept on a branch or merged, and
 nothing open in them. Each is listed on its run's page with Undo. It never touches main, open tasks or
-GitHub.", **Cancel** (focused) and the primary **Turn on**. Cancel, Escape and the scrim change nothing.
-While it saves, Turn on shows a spinner and Cancel is unavailable; a refusal closes the sheet with "Not
-turned on: <reason>" under the row. Its brief asks the run to say in its report what it kept and why.
+GitHub.", the primary **Turn on** and **Cancel** (focused). Cancel, Escape and the scrim change nothing.
+Turn on closes the sheet and the row's Turn on spins until the routine reads as on, as the Weekly review's
+does; a refusal shows "Not turned on: <reason>" under the row. Its brief asks the run to say in its report what it kept and why.
 
 **The run.** The run's prompt lists what it may change and how to ask: `alt act set-aside-worktree PATH` and
 `alt act delete-branch NAME`, each answering "Set aside …", "Deleted …", "Kept: <reason>." or "Not
@@ -265,12 +248,16 @@ pressed, every such row shows its spinner, then reads as undone or refused on it
 | Set aside a worktree | "Set aside worktree agent-7c41e2d0" | "Removed for good Nov 9 unless you undo it." | **Undo** |
 | Deleted a branch | "Deleted branch upload-retry-fix" | "Merged by #214." or "Merged into main." | **Undo** |
 | Removed for good | "Set aside worktree agent-7c41e2d0" | "Removed for good Nov 9. Undo restores it from its branch, without ignored files." | **Undo** |
-| Kept | "Kept worktree add-offline-sync-for-the-mobile" | "It has uncommitted changes." / "It changed 2 days ago." / "Task “…” is still open." / "A program has it open." / "Its commits are on no branch." / "Branch … has commits found nowhere else." / "You put it back Oct 19." | none |
-| Not allowed | "Not allowed: delete branch upload-retry-fix" | "This routine only reports." / "This run used its 20 changes." | none |
+| Still set aside | "Set aside worktree agent-7c41e2d0" | "Still set aside: <Git's reason>" | **Undo** |
+| Kept | "Kept worktree add-offline-sync-for-the-mobile" | "It has uncommitted changes." / "It changed 2 days ago." / "Task “…” is still open." / "A program has it open." / "Its commits are on no branch." / "It has 2 commits found nowhere else." / "It moved 3 days ago." / "It is the main branch." / "You put it back Oct 19." | none |
+| Not allowed | "Not allowed: delete branch upload-retry-fix" | "This routine only reports." / "This run used its 20 requests." | none |
 | Failed | "Couldn't set aside worktree agent-7c41e2d0" | Git's message, one line | none |
 | Undoing | the row's line | its muted line | Undo shows a spinner |
-| Undone | the row's line, then " · Undone" | "Put back Oct 26, 09:40. This routine leaves it alone from now on." | none |
+| Undone | the row's line, then " · Undone" | "Put back Oct 26. This routine leaves it alone from now on." | none |
 | Undo refused | the row's line | "Not undone: a worktree is already at that path." in the danger tone | **Undo** returns |
+
+A press refused as a whole (a run pruned meanwhile) says "Not undone: <reason>" under the card and returns every
+Undo.
 
 Names are cut in the middle at 40 characters with the full name on hover and for screen readers; rows wrap
 on the phone, with Undo at the row's right at both widths (44px on the phone). With no requests, the card is
@@ -297,7 +284,7 @@ include `--may`.
 | Form | Unticked / ticked / saving / refused | "Unticked, it only reports."; the row's line alone; Save's spinner; "Not saved: <reason>" and Retry, the tick kept |
 | Routines list | May change / only reports | "· Changes worktrees and branches ·" after the triggers; as today |
 | Routine page | May change / only reports | "May change worktrees and branches, with Undo"; "Only reports" muted |
-| Built in | Row / sheet / turning on / refused | The row with Turn on; the sheet, Cancel focused; a spinner in the sheet's Turn on, Cancel unavailable; the sheet closes and "Not turned on: <reason>" under the row |
+| Built in | Row / sheet / turning on / refused | The row with Turn on; the sheet, Cancel focused; the sheet closed and the row's Turn on spinning; "Not turned on: <reason>" under the row |
 | Run page | Running with changes / ended with changes / none | The card above the live session, growing; the card under the report; no card |
 | Change row | Set aside / deleted / removed for good / kept / not allowed / failed / undoing / undone / undo refused | As the table above |
 | Undo all | Shown / pressed | At the card's header while two or more rows can be undone; each row's spinner, then its own outcome |

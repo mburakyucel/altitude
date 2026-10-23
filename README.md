@@ -34,8 +34,9 @@ One engine is enough, and each integration is
 - **Self-improving.** Altitude learns from its own finished work and fixes what slowed it down.
 - **Routines that keep watch.** Give a project standing briefs that run on a schedule or when your own scripts
   send an event, like a look at each merge. A routine works on a throwaway copy, tells you what it found and
-  suggests the tasks worth doing; one tap makes one a task. A dependency check, a build health check and a
-  weekly summary of what landed come built in.
+  suggests the tasks worth doing; one tap makes one a task. Allow one to, and it clears worktrees and branches
+  nothing needs, each with Undo. A dependency check, a build health check, a weekly summary of what landed and a
+  weekly tidy-up come built in.
 - **Parallel without collisions.** Many tasks at once, each on its own copy of the code.
 - **Balanced quotas.** By default, each task goes to the engine that has used less of its week, so both are
   used evenly.

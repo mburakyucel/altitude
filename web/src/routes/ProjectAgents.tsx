@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { sendProjectAgent, sendWeekly, useProjectAgents, useSaveAgentBudget } from "../data/api";
 import type { AgentClock, ProjectAgentSummary, ProjectAgents, WeeklyTerms } from "../data/api";
 import { durationText, newsAgo, refusal, zoned } from "../data/projectAgents";
-import { AgentFrame, Chevron, PauseMark, WeeklyTermsSheet } from "../components/ProjectAgentParts";
+import { AgentFrame, Chevron, PauseMark, TermsSheet } from "../components/ProjectAgentParts";
 import { BusyLabel, StatusMark } from "../components/StatusMark";
 
 /*
@@ -15,7 +15,8 @@ import { BusyLabel, StatusMark } from "../components/StatusMark";
  */
 
 function AgentRow({ project, agent, clock }: { project: string; agent: ProjectAgentSummary; clock: AgentClock }) {
-  const line = agent.retired_line ?? `${zoned(agent.triggers, clock)} · ${agent.news}${agent.news_at ? ` ${newsAgo(agent.news_at)}` : ""}`;
+  const line = agent.retired_line ?? [zoned(agent.triggers, clock), agent.may, `${agent.news}${agent.news_at ? ` ${newsAgo(agent.news_at)}` : ""}`]
+    .filter(Boolean).join(" · ");
   return <Link className="settings-row agents-row" to={`/projects/${project}/agents/${agent.id}`}>
     <span><strong>{agent.name}</strong>
       <small className="agents-row-line">
@@ -51,13 +52,14 @@ function Budget({ project, budget }: { project: string; budget: ProjectAgents["b
 }
 
 /** Built in: Turn on spins until the routine reads as on, when its row leaves; a refusal returns the button with why.
- * The Weekly improvement review's Turn on shows its terms first and agrees to the version shown. */
+ * The Weekly improvement review's Turn on shows its terms first and agrees to the version shown; a routine that may
+ * change things shows what it may change first. */
 function BuiltIn({ project, builtins, terms, clock }: { project: string; builtins: ProjectAgents["builtins"]; terms?: WeeklyTerms; clock: AgentClock }) {
   const client = useQueryClient();
   const [turning, setTurning] = useState<string | null>(null);
   const [refused, setRefused] = useState<{ key: string; message: string } | null>(null);
   // The open sheet keeps the terms it showed: a read behind it never changes its text or the version Turn on sends.
-  const [sheet, setSheet] = useState<WeeklyTerms | null>(null);
+  const [sheet, setSheet] = useState<{ key: string; title: string; body: string; version?: string } | null>(null);
   const turnOn = async (key: string, agreed?: string) => {
     setSheet(null);
     setTurning(key);
@@ -78,13 +80,16 @@ function BuiltIn({ project, builtins, terms, clock }: { project: string; builtin
         <span><strong>{item.name}</strong><small>{zoned(item.line, clock)}</small>
           {refused?.key === item.key ? <small role="alert" className="text-danger">{refusal("Not turned on", refused.message)}</small> : null}
         </span>
-        <button type="button" className="btn" disabled={turning !== null} aria-haspopup={item.key === "weekly" ? "dialog" : undefined}
-          onClick={() => item.key === "weekly" && terms ? setSheet(terms) : void turnOn(item.key)}>
+        <button type="button" className="btn" disabled={turning !== null}
+          aria-haspopup={item.key === "weekly" || item.terms ? "dialog" : undefined}
+          onClick={() => item.key === "weekly" && terms ? setSheet({ key: "weekly", ...terms })
+            : item.terms ? setSheet({ key: item.key, title: `Turn on ${item.name} for ${project}?`, body: zoned(item.terms, clock) })
+              : void turnOn(item.key)}>
           <BusyLabel busy={turning === item.key} label="Turn on" working={`Turning on ${item.name}`} />
         </button>
       </div>)}
     </div>
-    {sheet ? <WeeklyTermsSheet terms={sheet} onAgree={() => void turnOn("weekly", sheet.version)} onClose={() => setSheet(null)} /> : null}
+    {sheet ? <TermsSheet title={sheet.title} body={sheet.body} onAgree={() => void turnOn(sheet.key, sheet.version)} onClose={() => setSheet(null)} /> : null}
   </section>;
 }
 

@@ -10,9 +10,9 @@ const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOSt
 const overview = { projects: [{ name: "harbor", managed: true }], queue: [], wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false },
   engines: [{ engine: "alpha", label: "Alpha", week: null, known: false, stale: false, at: null, reserve: 90 }] };
 const definition = { name: "Dependency check", brief: "Check whether any dependency has a security fix.", schedules: [{ days: [0, 1, 2, 3, 4], time: "07:00" }],
-  events: false, tell: "found", model: null, limit: 20 };
+  events: false, tell: "found", model: null, limit: 20, may: [] };
 const offer = (over: Record<string, unknown> = {}) => ({ id: "o1", turn_id: "t1", kind: "new", agent: null, agent_name: null, definition,
-  line: "Weekdays at 07:00 · Tells you when it finds something", changes: [], on: true, state: "open", reason: null, result_agent: null, ...over });
+  line: "Weekdays at 07:00 · Tells you when it finds something", changes: [], may: null, on: true, state: "open", reason: null, result_agent: null, ...over });
 const runs = [{ agent: "dependency-check", name: "Dependency check", n: 3, state: "running" as const, line: "Routine run · 2 of 20 min" },
   { agent: "merge-review", name: "Review each merge", n: 7, state: "waiting" as const, line: "Routine run · waiting to start" }];
 const project = (agents: Record<string, unknown> | null = { runs, count: 4, offers: [] }) => ({ name: "harbor", l3: {}, busy: false,
@@ -168,5 +168,25 @@ describe("Routines in the project", () => {
     expect(screen.getByRole("link", { name: "Edit first" })).toHaveAttribute("aria-disabled", "true");
     finish(json({ ok: true, agent: "dependency-check" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Create routine" })).toBeEnabled());
+  });
+});
+
+describe("an offer that changes what a routine may change", () => {
+  it("a new routine's card says so under its triggers; a change lists it as its own line", async () => {
+    const offers = [
+      offer({ may: "May change worktrees and branches", definition: { ...definition, may: ["worktrees"] } }),
+      offer({ id: "o2", turn_id: "t2", kind: "change", agent: "dependency-check", agent_name: "Dependency check", on: false,
+        changes: ["May now change worktrees and branches"], definition: { ...definition, may: ["worktrees"] } }),
+      offer({ id: "o3", turn_id: "t3", kind: "change", agent: "dependency-check", agent_name: "Dependency check", on: false,
+        changes: ["No longer changes worktrees and branches"] }),
+    ];
+    serve({ project: () => project({ runs: [], count: 1, offers }), history: ["t1", "t2", "t3"].flatMap((t, i) => ask(t, 50 - i * 5)) });
+    renderApp({ route: "/projects/harbor" });
+    const card = (id: string) => document.querySelector<HTMLElement>(`[data-offer="${id}"]`)!;
+    await waitFor(() => expect(card("o1")).not.toBeNull());
+    expect(card("o1")).toHaveTextContent("New routineDependency checkWeekdays at 07:00 · Tells you when it finds something · On when createdMay change worktrees and branches");
+    expect(within(card("o2")).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["May now change worktrees and branches"]);
+    expect(within(card("o3")).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["No longer changes worktrees and branches"]);
+    expect(card("o2")).not.toHaveTextContent("May change worktrees and branches");
   });
 });

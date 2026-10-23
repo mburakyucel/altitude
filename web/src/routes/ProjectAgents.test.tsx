@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import { runTime } from "../data/projectAgents";
@@ -17,9 +17,9 @@ const overview = {
     value: null, only: [] },
 };
 const definition = { name: "Dependency check", brief: "Check whether any dependency has a security fix.", schedules: [{ days: [0, 1, 2, 3, 4], time: "07:00" }],
-  events: false, tell: "found", model: null, limit: 20 };
+  events: false, tell: "found", model: null, limit: 20, may: [] };
 const summary = (over: Record<string, unknown> = {}) => ({ id: "dependency-check", name: "Dependency check", state: "on", triggers: "Weekdays at 07:00",
-  news: "Found something", news_at: ago(120), cue: null, retired_line: null, ...over });
+  news: "Found something", news_at: ago(120), cue: null, retired_line: null, may: null, ...over });
 const builtin = { key: "checks", name: "Clean checks", line: "Mondays at 08:00 · Runs the project's checks on a clean copy and says what broke" };
 const list = (over: Record<string, unknown> = {}) => ({ clock: { zone: "Istanbul", offset: here() },
   budget: { minutes: 120, choices: [30, 60, 120, 300, 600], used: 70, spent: false },
@@ -33,10 +33,10 @@ const run = (n: number, over: Record<string, unknown> = {}) => ({ n, state: "fou
 const skipped = run(1, { state: "skipped", outcome: "Skipped", tone: "muted", minutes: null, tokens: null, line: "Didn't start within 6 hours", page: false, started: null, ended: null });
 const detail = (over: Record<string, unknown> = {}) => ({ id: "dependency-check", name: "Dependency check", state: "on", builtin: null, version: 3,
   status: { line: "Next: tomorrow at 07:00", note: null, actions: ["run", "pause"], run: null, spinning: false }, definition,
-  definition_line: "Weekdays at 07:00 · Tells you when it finds something · Default model · Stops after 20 min", runs: [run(2), skipped], more: false, send: null, ...over });
+  definition_line: "Weekdays at 07:00 · Tells you when it finds something · Default model · Stops after 20 min", may_line: null, runs: [run(2), skipped], more: false, send: null, ...over });
 const runDetail = (over: Record<string, unknown> = {}) => ({ ...run(2), agent: { id: "dependency-check", name: "Dependency check" }, model: "Swift",
   limit: 20, brief: "Check whether any **dependency** has a security fix.", report: "Two packages have security fixes:\n\n- `left-pad` 1.3.1\n- `is-odd` 3.0.2",
-  session: { engine: "alpha", session_id: "0123456789abcdef", attempt: 0 }, suggested: null, ...over });
+  session: { engine: "alpha", session_id: "0123456789abcdef", attempt: 0 }, suggested: null, changes: [], undo_all: false, ...over });
 const kept = (n: number, title: string) => ({ ref: `agent:dependency-check/2/${n}`, n, title, explanation: "Bump it to the fixed release and run the tests.",
   seen: [], count: null, state: "undecided", task: null, undo: false, opening: false, waits: true });
 const suggested = (over: Record<string, unknown> = {}) => ({ kind: "agent", id: "agent:dependency-check/2", agent: "dependency-check", n: 2,
@@ -682,12 +682,19 @@ describe("The form", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Each run stops after" }), "60");
     await user.click(screen.getByRole("button", { name: /^Model and effort for this routine/ }));
     await user.click(screen.getByRole("menuitemradio", { name: "Swift" }));
+    // What it may change: a new routine only reports until its box is ticked, and the muted line goes with the tick.
+    const may = screen.getByRole("checkbox", { name: "Worktrees and branches" });
+    expect(may).not.toBeChecked();
+    expect(may).toHaveAccessibleDescription(/^Sets aside worktrees and deletes branches nothing needs/);
+    expect(screen.getByText("Unticked, it only reports.")).toBeInTheDocument();
+    await user.click(may);
+    expect(screen.queryByText("Unticked, it only reports.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Create routine" }));
     expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(without(presses[0]!)).toEqual({ project: "harbor", action: "create", definition: { name: "Build time",
       brief: "Say whether the build got slower.", schedules: [{ days: [0, 1, 2, 3, 4, 5], time: "06:30" }], events: false, tell: "every",
-      model: { engine: "alpha", model: "swift" }, limit: 60 } });
+      model: { engine: "alpha", model: "swift" }, limit: 60, may: ["worktrees"] } });
     hold.resolve(json({ ok: true, agent: "dependency-check" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/harbor/agents/dependency-check"));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -757,7 +764,7 @@ describe("The form", () => {
   it("?offer fills the form from L3's offer and the save names it; the zone follows the time when the clocks differ", async () => {
     const offer = { id: "offer-1", turn_id: "turn-1", kind: "new", agent: null, agent_name: null, line: "Weekdays at 06:00 · Tells you every run",
       definition: { ...definition, name: "Build time", brief: "Say whether the build got slower.", schedules: [{ days: [0], time: "06:00" }], tell: "every" },
-      changes: [], on: false, state: "open", reason: null, result_agent: null };
+      changes: [], may: null, on: false, state: "open", reason: null, result_agent: null };
     const { state, presses } = serve();
     state.agents = list({ offers: [offer], clock: { zone: "Istanbul", offset: here() + 60 } });
     const { user } = renderApp({ route: "/projects/harbor/agents/new?offer=offer-1" });
@@ -769,5 +776,146 @@ describe("The form", () => {
     await user.click(screen.getByRole("button", { name: "Create routine" }));
     await waitFor(() => expect(presses).toHaveLength(1));
     expect(without(presses[0]!)).toEqual({ project: "harbor", action: "create", definition: offer.definition, offer: "offer-1" });
+  });
+});
+
+/* A routine that may change worktrees and branches (design/wireframes/project-agents/ACTING.md, "Increment 1 in detail"). */
+const change = (n: number, over: Record<string, unknown> = {}) => ({ n, kind: "worktree", outcome: "done", head: "Set aside worktree",
+  name: `agent-7c41e2d${n}`, note: "Removed for good Nov 9 unless you undo it.", undone: false, undo: true, refused: null, ...over });
+const changes = [
+  change(1),
+  change(2, { kind: "branch", head: "Deleted branch", name: "upload-retry-fix", note: "Merged by #214." }),
+  change(3, { outcome: "kept", head: "Kept worktree", name: "add-offline-sync-for-the-mobile-app-and-tablets", note: "It has uncommitted changes.", undo: false }),
+  change(4, { kind: "branch", outcome: "refused", head: "Not allowed: delete branch", name: "docs-typo-fix", note: "This run used its 20 requests.", undo: false }),
+  change(5, { outcome: "failed", head: "Couldn't set aside worktree", name: "agent-5b2e8f4c", note: "git: cannot move a locked working tree", undo: false }),
+];
+const busy = (button: HTMLElement) => button.querySelector("[aria-busy]") !== null;
+
+describe.each([390, 1440])("a routine that may change things at %ipx", (width) => {
+  it("the list adds what it may change after its triggers, the routine page says so, and one that only reports says that", async () => {
+    setViewport(width);
+    const { state } = serve();
+    state.agents = list({ agents: [summary({ name: "Tidy worktrees and branches", id: "tidy", triggers: "Mondays at 09:00", may: "Changes worktrees and branches" }), summary()] });
+    const { user } = renderApp({ route: "/projects/harbor/agents" });
+    expect(await screen.findByRole("link", { name: /^Tidy worktrees and branches/ }))
+      .toHaveTextContent("Mondays at 09:00 · Changes worktrees and branches · Found something 2 h ago");
+    expect(screen.getByRole("link", { name: /^Dependency check/ })).toHaveTextContent("Weekdays at 07:00 · Found something 2 h ago");
+    await user.click(screen.getByRole("link", { name: /^Dependency check/ }));
+    expect(await screen.findByText("Only reports")).toHaveClass("text-muted");
+    state.agent = detail({ may_line: "May change worktrees and branches, with Undo" });
+    await user.click(back());
+    await user.click(await screen.findByRole("link", { name: /^Dependency check/ }));
+    expect(await screen.findByText("May change worktrees and branches, with Undo")).not.toHaveClass("text-muted");
+    expect(screen.queryByText("Only reports")).toBeNull();
+  });
+
+  it("ended: What it changed under the report, one row per request; Undo spins until the row reads as undone", async () => {
+    setViewport(width);
+    const hold = deferred();
+    const { state, presses } = serve({ press: () => hold.promise });
+    state.run = runDetail({ changes, undo_all: true });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    const card = (await screen.findByRole("heading", { name: "What it changed" })).closest("section")!;
+    expect(card.compareDocumentPosition(screen.getByText("Two packages have security fixes:")) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    const rows = [...card.querySelectorAll(".agent-change")].map((row) => row.textContent);
+    expect(rows).toEqual([
+      "Set aside worktree agent-7c41e2d1Removed for good Nov 9 unless you undo it.Undo",
+      "Deleted branch upload-retry-fixMerged by #214.Undo",
+      "Kept worktree add-offline-sync-for…ile-app-and-tabletsadd-offline-sync-for-the-mobile-app-and-tabletsIt has uncommitted changes.",
+      "Not allowed: delete branch docs-typo-fixThis run used its 20 requests.",
+      "Couldn't set aside worktree agent-5b2e8f4cgit: cannot move a locked working tree",
+    ]);
+    expect(within(card).getByTitle("add-offline-sync-for-the-mobile-app-and-tablets")).toBeInTheDocument();
+    const undo = within(card).getByRole("button", { name: "Undo: Set aside worktree agent-7c41e2d1" });
+    await user.click(undo);
+    expect(busy(undo)).toBe(true);
+    expect(undo).toBeDisabled();
+    expect(within(card).getByRole("button", { name: "Undo all" })).toBeDisabled();
+    expect(without(presses[0]!)).toEqual({ project: "harbor", action: "undo", agent: "dependency-check", n: 2, change: 1 });
+    state.run = runDetail({ changes: [change(1, { undone: true, undo: false, note: "Put back Oct 26. This routine leaves it alone from now on." }),
+      ...changes.slice(1)], undo_all: false });
+    hold.resolve(json({ ok: true, agent: "dependency-check", n: 2, undone: [1], refused: [] }));
+    expect(await within(card).findByText("Put back Oct 26. This routine leaves it alone from now on.")).toBeInTheDocument();
+    expect(within(card).getByText(/^Set aside worktree.* · Undone$/)).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Undo all" })).toBeNull();
+    expect(within(card).getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("Undo all spins every row it puts back, then each says on its own whether it was put back", async () => {
+    setViewport(width);
+    const hold = deferred();
+    const { state, presses } = serve({ press: () => hold.promise });
+    state.run = runDetail({ changes: changes.slice(0, 2), undo_all: true });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    await user.click(await screen.findByRole("button", { name: "Undo all" }));
+    const card = screen.getByRole("heading", { name: "What it changed" }).closest("section")!;
+    expect(within(card).getAllByRole("button", { name: /^Undo: / }).map(busy)).toEqual([true, true]);
+    expect(busy(within(card).getByRole("button", { name: "Undo all" }))).toBe(true);
+    expect(without(presses[0]!)).toEqual({ project: "harbor", action: "undo", agent: "dependency-check", n: 2, change: "all" });
+    state.run = runDetail({ changes: [change(1, { undone: true, undo: false, note: "Put back Oct 26. This routine leaves it alone from now on." }),
+      { ...changes[1]!, refused: "a branch with that name is already there." }], undo_all: false });
+    hold.resolve(json({ ok: true, agent: "dependency-check", n: 2, undone: [1], refused: [{ n: 2, reason: "a branch with that name is already there." }] }));
+    expect(await within(card).findByText("Not undone: a branch with that name is already there.")).toHaveClass("text-danger");
+    const again = within(card).getByRole("button", { name: "Undo: Deleted branch upload-retry-fix" });
+    expect(again).toBeEnabled();
+    expect(busy(again)).toBe(false);
+    expect(within(card).getByText("Put back Oct 26. This routine leaves it alone from now on.")).toBeInTheDocument();
+  });
+});
+
+describe("a routine that may change things", () => {
+  it("running: the card sits above the live session; a run with no requests has no card", async () => {
+    const { state } = serve();
+    state.run = runDetail({ state: "running", outcome: "Running", ended: null, minutes: 3, tokens: null, line: null, report: null, changes: [changes[0]] });
+    renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    const heading = await screen.findByRole("heading", { name: "What it changed" });
+    const session = await screen.findByText("Reading the lock file.");
+    expect(heading.compareDocumentPosition(session) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Running · 3 of 20 min")).toBeInTheDocument();
+    cleanup();
+    state.run = runDetail();
+    renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    expect(await screen.findByText("Two packages have security fixes:")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "What it changed" })).toBeNull();
+  });
+
+  it("a refused Undo says Not undone: under the card and returns every button", async () => {
+    const { state } = serve({ press: () => json({ error: "That change has nothing to undo." }, 409) });
+    state.run = runDetail({ changes: [changes[0]] });
+    const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
+    await user.click(await screen.findByRole("button", { name: "Undo: Set aside worktree agent-7c41e2d1" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not undone: That change has nothing to undo.");
+    expect(screen.getByRole("button", { name: "Undo: Set aside worktree agent-7c41e2d1" })).toBeEnabled();
+  });
+
+  it("Built in: Turn on shows what it may change, Cancel focused; Cancel changes nothing; Turn on turns it on; a refusal says why under the row", async () => {
+    let refuse = true;
+    const tidy = { key: "tidy", name: "Tidy worktrees and branches", line: "Mondays at 09:00 · Clears worktrees and branches nothing needs, with Undo",
+      terms: "Mondays at 09:00 it sets aside worktrees and deletes local branches of harbor that nothing needs: no uncommitted change, nothing changed in seven days, every commit kept on a branch or merged, and nothing open in them. Each is listed on its run's page with Undo. It never touches main, open tasks or GitHub." };
+    const { state, presses } = serve({ press: async () => {
+      if (refuse) return json({ error: "Only one Tidy worktrees and branches." }, 409);
+      state.agents = list({ builtins: [] });
+      return json({ ok: true, agent: "tidy" });
+    } });
+    state.agents = list({ builtins: [tidy] });
+    const { user } = renderApp({ route: "/projects/harbor/agents" });
+    const turnOn = await screen.findByRole("button", { name: "Turn on" });
+    expect(turnOn).toHaveAttribute("aria-haspopup", "dialog");
+    await user.click(turnOn);
+    const sheet = screen.getByRole("dialog", { name: "Turn on Tidy worktrees and branches for harbor?" });
+    expect(sheet).toHaveTextContent(tidy.terms);
+    expect(within(sheet).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.click(within(sheet).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(presses).toHaveLength(0);
+    await user.click(turnOn);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Turn on" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not turned on: Only one Tidy worktrees and branches.");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    refuse = false;
+    await user.click(screen.getByRole("button", { name: "Turn on" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Turn on" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Built in" })).toBeNull());
+    expect(presses.map(without)).toEqual([{ project: "harbor", action: "builtin", key: "tidy" }, { project: "harbor", action: "builtin", key: "tidy" }]);
   });
 });
