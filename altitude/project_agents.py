@@ -545,7 +545,7 @@ def _undo(project: str, record: dict, fields: dict, *, by: str, source: str, now
     for row in rows:
         try:
             tidy.undo(project, row)
-        except (tidy.Kept, OSError, subprocess.SubprocessError) as exc:
+        except (tidy.Kept, RuntimeError, OSError, subprocess.SubprocessError) as exc:
             row["undo"] = {"state": "refused", "reason": _line(str(exc)), "at": _at(now), "by": by}
             refused.append({"n": row["n"], "reason": row["undo"]["reason"]})
         else:
@@ -1301,6 +1301,12 @@ def act(project: str, ref: str, body: dict, *, now: datetime | None = None) -> d
             or any(c in target for c in "\0\n\r")):
         raise ValueError("Ask with alt act set-aside-worktree NAME or alt act delete-branch NAME.")
     kind, permission = ACTIONS[action]
+    looked, record = None, _load(project)
+    if kind == "branch" and permission in _agent(record, door_run(project, ref, record=record)["agent"])["may"]:
+        try:
+            looked = tidy.merged_tip(project, target.strip())
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            pass  # checked again under the lock
     with S.project_lock(project):
         record = _load(project)
         run = door_run(project, ref, record=record)
@@ -1324,7 +1330,8 @@ def act(project: str, ref: str, body: dict, *, now: datetime | None = None) -> d
                     found = tidy.check_worktree(project, row["target"], put_back=_put_back(record, agent), now=now)
                     row.update(outcome="done", target=found["name"], **tidy.set_aside(project, found, key, now))
                 else:
-                    found = tidy.check_branch(project, row["target"], put_back=_put_back(record, agent), now=now)
+                    found = tidy.check_branch(project, row["target"], put_back=_put_back(record, agent), now=now,
+                                             looked=looked)
                     row.update(outcome="done", **tidy.delete_branch(project, found, key))
             except tidy.Kept as kept:
                 row.update(outcome="kept", reason=str(kept))

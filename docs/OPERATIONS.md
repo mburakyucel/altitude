@@ -256,7 +256,8 @@ tasks, which L3 checks before they wait for you under Suggestions in Needs you.
 
 **What it may change** on the form lets a routine clear worktrees and branches nothing needs; unticked, it only
 reports. Altitude checks each request itself and keeps anything with work in it: uncommitted changes, commits
-found nowhere else, a change in the last seven days, a task still open, or a program with it open. A set-aside
+found nowhere else, a change in the last seven days, a task still open or a task's own worktree, which goes when the
+task ends, or a program with it open. A set-aside
 worktree waits in the worktree folder's `.set-aside` folder for 14 days before it is removed for good; a deleted
 branch's commit is kept. The run's page lists **What it changed** with **Undo** on each change and **Undo all**;
 `alt agent undo` does the same from the terminal. What you put back, that routine leaves alone from then on.

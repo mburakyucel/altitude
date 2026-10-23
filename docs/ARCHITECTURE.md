@@ -2533,8 +2533,8 @@ NAME. The operator can undo it until <day>.", "Deleted branch NAME. Merged into 
 
 **The tidy rule** (`altitude/tidy.py`) matches the name exactly against what Git lists and passes only its own
 values to Git. A worktree directly under the project's worktree root, not a routine run's copy, is set aside only
-when it is not locked, its own task is not open, a worktree no task names was not made while a task that is still
-open was, nothing in its record or folder changed for seven days, no program has it as its working folder
+when it is not locked, it is no task's own worktree (end-of-task cleanup removes those, and reopening a task checks
+its branch out there again), it was not made while a task that is still open was, nothing in its record or folder changed for seven days, no program has it as its working folder
 (`platform.folder_in_use`: the processes' working folders on Linux, `lsof` on the Mac; a check that cannot tell
 keeps it), it has no uncommitted change and its commits are on a branch. A local branch is deleted only when it is
 not main or the default branch, not checked out, not an open task's, has not moved for seven days, and its tip is

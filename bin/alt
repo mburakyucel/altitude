@@ -652,7 +652,6 @@ def main(argv=None) -> None:
     if ACTOR == "project-agent-run":
         if c != "act":
             sys.exit("alt: a routine run reports in its final answer; its one verb is alt act")
-        from altitude import door
         try:
             say(door.call("act", {"action": args.action, "target": args.target})["said"]); return
         except door.DoorError as exc:

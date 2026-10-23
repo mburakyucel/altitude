@@ -7,7 +7,9 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import unittest
+from unittest import mock
 from datetime import timedelta
 from pathlib import Path
 
@@ -199,12 +201,12 @@ class TestTheTidyRule(ActingCase):
         platform.folder_in_use.side_effect = OSError("lsof failed")
         self.assertEqual(self.kept(agent, "agent-open"), "Kept: Altitude could not tell whether a program has it open.")
 
-    def test_a_worktree_of_an_open_task_or_made_while_one_was_open_is_kept(self):
+    def test_a_tasks_own_worktree_or_one_made_while_a_task_was_open_is_kept(self):
         agent = self.running()
         self.helper("fix-upload-retry")
         S.save_task(self.project, {"slug": "fix-upload-retry", "title": "Fix the upload retry", "state": "blocked",
                                    "created": (NOW - timedelta(days=30)).isoformat()})
-        self.assertEqual(self.kept(agent, "fix-upload-retry"), "Kept: Task “Fix the upload retry” is still open.")
+        self.assertEqual(self.kept(agent, "fix-upload-retry"), "Kept: It is task “Fix the upload retry”’s worktree.")
         self.helper()
         self.assertEqual(self.kept(agent, HELPER),
                          "Kept: Task “Fix the upload retry” was open when it was made and still is.",
@@ -212,7 +214,8 @@ class TestTheTidyRule(ActingCase):
         S.save_task(self.project, {"slug": "fix-upload-retry", "title": "Fix the upload retry", "state": "done",
                                    "created": (NOW - timedelta(days=30)).isoformat()})
         self.assertTrue(self.act(agent, "set-aside-worktree", HELPER).startswith("Set aside"))
-        self.assertTrue(self.act(agent, "set-aside-worktree", "fix-upload-retry").startswith("Set aside"))
+        self.assertEqual(self.kept(agent, "fix-upload-retry"), "Kept: It is task “Fix the upload retry”’s worktree.",
+                         "an ended task's worktree stays task cleanup's, so reopening the task checks out its branch")
 
     def test_a_branch_is_deleted_only_when_merged_quiet_and_free_and_comes_back_at_its_recorded_commit(self):
         agent = self.running()
@@ -252,6 +255,51 @@ class TestTheTidyRule(ActingCase):
         self.assertEqual(self.change("undo", agent=agent, n=1, change="all")["undone"], [len(cases) + 1, len(cases) + 2])
         self.assertEqual(git("rev-parse", "refs/heads/docs-typo-fix", cwd=self.repo).strip(), sha)
         self.assertEqual(git("for-each-ref", "refs/altitude", cwd=self.repo), "", "Undo drops what it kept")
+
+    def test_github_is_asked_before_the_project_lock_is_taken(self):
+        agent = self.running()
+        sha = self.branch("upload-retry-fix", commit=True)
+        free = []
+
+        def take():
+            with S.project_lock(self.project):
+                pass
+
+        def lookup(*_args, **_kwargs):
+            taker = threading.Thread(target=take, daemon=True)
+            taker.start()
+            taker.join(5)
+            free.append(not taker.is_alive())
+            return [{"number": 214, "headRefOid": sha, "isCrossRepository": False}]
+        verify.gh.side_effect = lookup
+        self.assertEqual(self.act(agent, "delete-branch", "upload-retry-fix"),
+                         "Deleted branch upload-retry-fix. Merged by #214.")
+        self.assertEqual(free, [True], "the project's other writers are not held up while GitHub answers")
+
+    def test_nothing_changes_when_altitude_cannot_keep_the_commit_for_undo(self):
+        path = self.helper()
+        self.branch("docs-typo-fix")
+        agent = self.running()
+        git("update-ref", f"refs/altitude/undo/{agent}/1", "main", cwd=self.repo)  # its undo refs cannot be written
+        self.assertTrue(self.act(agent, "set-aside-worktree", HELPER).startswith("Failed: "))
+        self.assertTrue(self.act(agent, "delete-branch", "docs-typo-fix").startswith("Failed: "))
+        self.assertTrue(path.is_dir())
+        self.assertIn("docs-typo-fix", git("branch", "--list", "docs-typo-fix", cwd=self.repo))
+        self.assertEqual([r["outcome"] for r in A._load(self.project)["runs"][-1]["changes"]], ["failed", "failed"])
+
+    def test_undo_all_records_each_row_when_git_fails_for_one(self):
+        path = self.helper()
+        self.branch("docs-typo-fix")
+        agent = self.running()
+        self.act(agent, "set-aside-worktree", HELPER)
+        self.act(agent, "delete-branch", "docs-typo-fix")
+        with mock.patch.object(tidy, "_branches", side_effect=RuntimeError("not a git repository")):
+            receipt = self.change("undo", agent=agent, n=1, change="all")
+        self.assertEqual(receipt["undone"], [1])
+        self.assertEqual(receipt["refused"], [{"n": 2, "reason": "not a git repository"}])
+        self.assertTrue(path.is_dir())
+        self.assertEqual([(r["undone"], r["undo"]) for r in self.rows(agent)], [(True, False), (False, True)])
+        self.assertEqual([e["outcome"] for e in self.events("routine-undo")], ["undone", "refused"])
 
     def test_a_set_aside_worktree_is_removed_for_good_after_fourteen_days(self):
         agent = self.running()

@@ -152,15 +152,16 @@ def check_worktree(project: str, target: str, *, put_back: dict, now: datetime) 
     except (git_policy.GitPolicyError, OSError):
         raise Kept("Its Git record is not in order.") from None
     tasks = _tasks(project)
+    # A task's own worktree is task cleanup's, which removes it once the task ends and nothing in it would be lost;
+    # one set aside here would stop the operator's reopening of the task from checking out its branch again.
     own = next((t for t in tasks if t["slug"] == name), None)
-    if own and own["state"] in S.OPEN_STATES:
-        raise Kept(f"Task “{_title(own)}” is still open.")
-    if not own:
-        # A helper copy of a task that is still open stays until that task ends.
-        older = next((t for t in tasks if t["state"] in S.OPEN_STATES
-                      and datetime.fromisoformat(t["created"]).timestamp() <= made), None)
-        if older:
-            raise Kept(f"Task “{_title(older)}” was open when it was made and still is.")
+    if own:
+        raise Kept(f"It is task “{_title(own)}”’s worktree.")
+    # A helper copy of a task that is still open stays until that task ends.
+    older = next((t for t in tasks if t["state"] in S.OPEN_STATES
+                  and datetime.fromisoformat(t["created"]).timestamp() <= made), None)
+    if older:
+        raise Kept(f"Task “{_title(older)}” was open when it was made and still is.")
     cutoff = (now - QUIET).timestamp()
     changed = max(_newest(record, cutoff), _newest(path, cutoff))
     if changed > cutoff:
@@ -203,9 +204,17 @@ def _moved(project: str, name: str, sha: str) -> float:
     return float(_git(repo, "log", "-1", "--format=%ct", sha).stdout.strip() or 0)
 
 
-def check_branch(project: str, target: str, *, put_back: dict, now: datetime) -> dict:
+def merged_tip(project: str, target: str) -> tuple[str, str | None] | None:
+    """The branch's tip and how it reached main, looked up before the project lock, as task cleanup does: GitHub can
+    take a minute to answer."""
+    sha = _branches(project).get(target)
+    return (sha, _merged(project, target, sha)) if sha else None
+
+
+def check_branch(project: str, target: str, *, put_back: dict, now: datetime,
+                 looked: tuple[str, str | None] | None = None) -> dict:
     """The local branch `target` names, with its tip and how it merged, when the rule lets Altitude delete it now;
-    raises Kept otherwise."""
+    raises Kept otherwise. `looked` is `merged_tip`'s answer, used only while the tip is still the one it names."""
     sha = _branches(project).get(target)
     if not sha:
         raise Kept("It is not one of this project's local branches.")
@@ -224,7 +233,7 @@ def check_branch(project: str, target: str, *, put_back: dict, now: datetime) ->
     moved = _moved(project, target, sha)
     if moved > (now - QUIET).timestamp():
         raise Kept(f"It moved {_ago(moved, now)}.")
-    merged = _merged(project, target, sha)
+    merged = looked[1] if looked and looked[0] == sha else _merged(project, target, sha)
     if not merged:
         ahead = _git(repo, "rev-list", "--count", sha, "--not", "refs/remotes/origin/main").stdout.strip()
         raise Kept(f"It has {ahead or 'some'} commit{'' if ahead == '1' else 's'} found nowhere else.")
@@ -238,7 +247,9 @@ def set_aside(project: str, found: dict, key: str, now: datetime) -> dict:
     undo_ref, aside = f"{UNDO}/{key}", root(project) / SET_ASIDE / key.replace("/", "-") / found["name"]
     aside.parent.mkdir(parents=True, exist_ok=True)
     if found["head"]:
-        _git(repo, "update-ref", undo_ref, found["head"])
+        kept = _git(repo, "update-ref", undo_ref, found["head"])
+        if kept.returncode:
+            raise RuntimeError(_said(kept))
     moved = _git(repo, "worktree", "move", str(found["path"]), str(aside))
     if moved.returncode:
         _git(repo, "update-ref", "-d", undo_ref)
@@ -250,7 +261,9 @@ def set_aside(project: str, found: dict, key: str, now: datetime) -> dict:
 def delete_branch(project: str, found: dict, key: str) -> dict:
     """Delete a checked branch only while it is still at the tip Altitude checked, keeping that commit for Undo."""
     repo, undo_ref = config.project_path(project), f"{UNDO}/{key}"
-    _git(repo, "update-ref", undo_ref, found["sha"])
+    kept = _git(repo, "update-ref", undo_ref, found["sha"])
+    if kept.returncode:
+        raise RuntimeError(_said(kept))
     deleted = _git(repo, "update-ref", "-d", f"refs/heads/{found['name']}", found["sha"])
     if deleted.returncode:
         _git(repo, "update-ref", "-d", undo_ref)

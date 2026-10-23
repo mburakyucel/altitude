@@ -7,7 +7,7 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 - Routines can act, not only report: tick **What it may change** on a routine's form and it may clear the
   project's worktrees and branches that nothing needs. Altitude checks every request itself and keeps anything
-  with work in it or a task still open; the run's page lists each change with **Undo**, and a set-aside worktree
+  with work in it, a task's own worktree or a task still open; the run's page lists each change with **Undo**, and a set-aside worktree
   stays restorable for 14 days. The new built-in **Tidy worktrees and branches** does this every Monday, and turning
   it on first shows what it may change. A routine without the permission is refused with a plain reason.
 

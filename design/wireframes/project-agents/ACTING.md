@@ -131,8 +131,9 @@ rule is code, shared with task cleanup where the two overlap; the brief can narr
 
 - it is registered with the project's repository and its folder is directly under `.claude/worktrees`;
   never main's checkout, never a run's copy;
-- it is not locked, and its own task has ended (done or rejected); or no task record names it and no task
-  that was open when it was made is still open, so a helper copy of a running or blocked task stays until
+- it is not locked and no task names it as its own: task cleanup removes those when the task ends, and reopening
+  a task checks its branch out there again;
+- no task that was open when it was made is still open, so a helper copy of a running or blocked task stays until
   that task ends;
 - nothing in it changed for seven days: no commit, checkout or staging (its Git record), and no file in its
   folder, ignored files included;
@@ -249,7 +250,7 @@ pressed, every such row shows its spinner, then reads as undone or refused on it
 | Deleted a branch | "Deleted branch upload-retry-fix" | "Merged by #214." or "Merged into main." | **Undo** |
 | Removed for good | "Set aside worktree agent-7c41e2d0" | "Removed for good Nov 9. Undo restores it from its branch, without ignored files." | **Undo** |
 | Still set aside | "Set aside worktree agent-7c41e2d0" | "Still set aside: <Git's reason>" | **Undo** |
-| Kept | "Kept worktree add-offline-sync-for-the-mobile" | "It has uncommitted changes." / "It changed 2 days ago." / "Task “…” is still open." / "A program has it open." / "Its commits are on no branch." / "It has 2 commits found nowhere else." / "It moved 3 days ago." / "It is the main branch." / "You put it back Oct 19." | none |
+| Kept | "Kept worktree add-offline-sync-for-the-mobile" | "It has uncommitted changes." / "It changed 2 days ago." / "It is task “…”’s worktree." / "Task “…” is still open." / "A program has it open." / "Its commits are on no branch." / "It has 2 commits found nowhere else." / "It moved 3 days ago." / "It is the main branch." / "You put it back Oct 19." | none |
 | Not allowed | "Not allowed: delete branch upload-retry-fix" | "This routine only reports." / "This run used its 20 requests." | none |
 | Failed | "Couldn't set aside worktree agent-7c41e2d0" | Git's message, one line | none |
 | Undoing | the row's line | its muted line | Undo shows a spinner |
