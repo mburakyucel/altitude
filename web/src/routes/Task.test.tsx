@@ -1079,7 +1079,7 @@ describe("Task on desktop", () => {
     expect(screen.queryByRole("link", { name: /PR #202/ })).toBeNull();
   });
 
-  it("reads a done task read-only with its PR in the header", async () => {
+  it("reads a done task with its PR in the header and a message box that reopens it", async () => {
     setViewport(1440);
     stub({ ...done, updated: ago(1) }); // the module's fixtures are as old as the run that reaches this case
     const { user } = renderApp({ route });
@@ -1087,14 +1087,37 @@ describe("Task on desktop", () => {
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByText("Done")).toBeInTheDocument();
     expect(screen.getByText("PR #202 merged · main checks passed")).toHaveAttribute("data-tone", "ok");
-    expect(screen.queryByLabelText("Message the L2")).toBeNull();
+    expect(screen.getByLabelText("Message the L2")).toHaveAccessibleDescription("Sending reopens the task with your message.");
+    expect(screen.getByText("Sending reopens the task with your message.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Task model/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
     expect(screen.getByText("No messages on this task.")).toBeInTheDocument();
     const panel = screen.getByRole("region", { name: "Live session" });
     expect(await within(panel).findByText("Session ended")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Task details$/ }));
     expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText("attempt 1 · done 1 min ago")).toBeInTheDocument();
+  });
+
+  it("folds a reopened task's earlier completion into one Done row whose Show opens its digest", async () => {
+    stub({ ...running, messages: [
+      { id: "c-1", at: ago(30), role: "system", by: "altd", completion: true, text: "Fixed the timer default.", digest: "Fixed the timer default.\n\nPR #202 merged." },
+      { id: "c-2", at: ago(20), role: "system", by: "altd", completion: true, text: "", digest: "" },
+      { id: "m-9", at: ago(10), role: "operator", text: "Does the old default still apply anywhere?" },
+    ] });
+    const { user } = renderApp({ route });
+
+    const row = await screen.findByText("Done · Fixed the timer default.");
+    expect(screen.getByText("Done")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Show" })).toHaveLength(1);
+    expect(screen.queryByText("PR #202 merged.")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show" }));
+    expect(screen.getByText("PR #202 merged.")).toBeInTheDocument();
+    expect(row.closest(".coordination")).toHaveAttribute("data-open");
+    await user.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.queryByText("PR #202 merged.")).toBeNull();
+    expect(screen.getByLabelText("Message the L2")).toHaveAttribute("placeholder", "Message the L2");
   });
 
   it("reads a rejected task the same way", async () => {
@@ -2130,6 +2153,7 @@ describe("L2 activity and steering", () => {
     expect(screen.queryByRole("region", { name: "L2 activity" })).toBeNull();
     expect(screen.getByText(decision.question)).toBeInTheDocument();
     await update({ ...done, steering: { ...steering, state: "idle" } });
-    expect(screen.queryByRole("textbox")).toBeNull(); expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    expect(screen.getByRole("textbox")).toHaveAccessibleDescription("Sending reopens the task with your message.");
+    expect(screen.queryByRole("region", { name: "L2 activity" })).toBeNull(); expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
   });
 });
