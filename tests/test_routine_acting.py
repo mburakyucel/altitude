@@ -276,6 +276,36 @@ class TestTheTidyRule(ActingCase):
                          "Deleted branch upload-retry-fix. Merged by #214.")
         self.assertEqual(free, [True], "the project's other writers are not held up while GitHub answers")
 
+    def test_a_tip_that_moves_while_github_answers_is_kept(self):
+        agent = self.running()
+        stamp = f"@{int((NOW - timedelta(days=10)).timestamp())} +0000"
+        old = {**os.environ, "GIT_COMMITTER_DATE": stamp, "GIT_AUTHOR_DATE": stamp}
+
+        def move(name: str, to: str, env: dict | None = None) -> None:
+            subprocess.run(["git", "update-ref", f"refs/heads/{name}", to], cwd=self.repo, env=env, check=True)
+
+        def on_top(sha: str) -> str:
+            tree = git("rev-parse", f"{sha}^{{tree}}", cwd=self.repo).strip()
+            return subprocess.run(["git", "commit-tree", tree, "-p", sha, "-m", "more fictional work"], cwd=self.repo,
+                                  env=old, check=True, capture_output=True, text=True).stdout.strip()
+        cases = {"a new tip whose move looks old": ("upload-retry-fix", lambda sha: move(
+                     "upload-retry-fix", on_top(sha), old), "Kept: It has 2 commits found nowhere else."),
+                 "away and back to the same tip": ("retry-limit-tests", lambda sha: (
+                     move("retry-limit-tests", on_top(sha)), move("retry-limit-tests", sha)), "Kept: It moved today.")}
+        for case, (name, moving, said) in cases.items():
+            with self.subTest(case):
+                sha = self.branch(name, commit=True)
+                calls = []
+
+                def lookup(*_args, **_kwargs):
+                    if not calls:
+                        moving(sha)
+                    calls.append(1)
+                    return [{"number": 214, "headRefOid": sha, "isCrossRepository": False}]
+                verify.gh.side_effect = lookup
+                self.assertEqual(self.act(agent, "delete-branch", name), said)
+                self.assertTrue(git("branch", "--list", name, cwd=self.repo).strip(), "the branch stays")
+
     def test_nothing_changes_when_altitude_cannot_keep_the_commit_for_undo(self):
         path = self.helper()
         self.branch("docs-typo-fix")
@@ -489,14 +519,23 @@ class TestTheRunsBoxForReal(ActingCase):
         writable, read_only = git_policy.worker_git_access(copy, shared=False)
         temporary = self.tmp / "job-tmp"
         temporary.mkdir()
-        argv = platform.bubblewrap_profile([str(copy), *map(str, writable)], [str(p) for p in read_only],
-                                           temporary=str(temporary))
+        # A real project sits in the home folder, which the box shows read-only; this fictional one sits under /tmp,
+        # which the box replaces with the job's own folder, so it is shown read-only here the same way.
+        argv = platform.bubblewrap_profile([str(copy), *map(str, writable)],
+                                           [str(self.repo), *(str(p) for p in read_only)], temporary=str(temporary))
+
+        def boxed(*command: str) -> subprocess.CompletedProcess:
+            return subprocess.run([*argv, *command], capture_output=True, text=True, timeout=60, cwd=copy)
+        seen = boxed("git", "-C", str(self.repo), "branch", "--list", "docs-typo-fix")
+        self.assertEqual((seen.returncode, seen.stdout.strip()), (0, "docs-typo-fix"), seen.stderr)
+        self.assertEqual(boxed("test", "-f", str(helper / "README.md")).returncode, 0, "the run sees the worktree")
         for command in (["git", "-C", str(self.repo), "branch", "-D", "docs-typo-fix"],
-                        ["git", "-C", str(self.repo), "worktree", "move", str(helper), str(self.tmp / "away")],
+                        ["git", "-C", str(self.repo), "worktree", "move", str(helper), str(self.repo / "away")],
                         ["rm", "-rf", str(helper)]):
             with self.subTest(command=command[3:5]):
-                done = subprocess.run([*argv, *command], capture_output=True, text=True, timeout=60, cwd=copy)
+                done = boxed(*command)
                 self.assertNotEqual(done.returncode, 0, done.stdout)
+                self.assertIn("Read-only file system", done.stderr)
         self.assertTrue((helper / "README.md").is_file())
         self.assertTrue(git("branch", "--list", "docs-typo-fix", cwd=self.repo).strip())
 

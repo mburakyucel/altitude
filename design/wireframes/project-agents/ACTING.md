@@ -74,9 +74,9 @@ and with which sign-in; Altitude ships example scripts as it does for events.
 - Anything on the never-granted list in [docs/CLI.md](../../../docs/CLI.md#operator-grant): loosening any
   sandbox, engine permission or Altitude guard, other tasks' worktrees or other projects' data, releasing
   Altitude's own gates (merge holds, review findings, approvals), entering or printing credentials. Tidy
-  grants the run no access to other tasks' worktrees: altd carries out its own cleanup rule on worktrees
-  whose task has ended or that no task record names, never an open task's, as it already does for every
-  finished task. The CLI paragraph says so in increment 1.
+  grants the run no access to other tasks' worktrees: altd carries out its own cleanup rule only on worktrees
+  that no task names as its own, never a task's, which task cleanup removes when the task ends. The CLI
+  paragraph says so in increment 1.
 - Merging anything, answering questions, approving, starting or steering tasks, messaging L3, changing
   routines or sending events. A routine never acts in your place in Altitude itself.
 - Main, the project's own checkout, remote branches on GitHub, anything outside the routine's project.
@@ -152,7 +152,7 @@ and its Undo.
 - it is a local branch of the project's repository: never main or the default branch, never checked out in
   any worktree (a set-aside one included), never an open task's branch;
 - its tip is on `origin/main`, or a pull request into main of this repository merged exactly that tip
-  (looked up by branch on GitHub when no task record names the pull request);
+  (looked up by branch on GitHub, before the project lock and used only while the tip is unchanged);
 - it has not moved for seven days (its newest reflog entry, else its tip's commit time), so a branch you
   just made from main is kept.
 
