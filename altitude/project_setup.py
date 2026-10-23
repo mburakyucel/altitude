@@ -40,15 +40,17 @@ def save(project: str, **updates) -> dict:
 
 
 @contextmanager
-def operation_lock(project: str, *, wait: bool = False):
+def operation_lock(project: str, *, wait: bool = False, probe: bool = False):
     """A dead runner releases its lock; saved progress alone never proves it is running.
 
-    Probes never wait. The runner waits, so a read holding the lock delays an accepted repair
-    instead of losing its wake (setup walkthrough interrupted-retry, 2026-09-23).
+    The runner and launch preflight hold the lock alone. The runner waits, so a read holding the lock
+    delays an accepted repair instead of losing its wake (setup walkthrough interrupted-retry, 2026-09-23).
+    Probes share it and never wait, so concurrent reads never take each other for a running setup and skip
+    an answer's resume wake (question feedback walkthrough, 2026-10-22).
     """
     with storage.runtime_lock(config.project_dir(project) / ".setup.lock") as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+            fcntl.flock(handle, (fcntl.LOCK_SH | fcntl.LOCK_NB) if probe else fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:
             yield False
             return
@@ -94,7 +96,7 @@ def request(project: str, action: str, *, actor: str, expected: str | None = Non
         record = read(project)
         operation = record.get("operation") or {}
         if operation.get("state") == "running":
-            with operation_lock(project) as free:
+            with operation_lock(project, probe=True) as free:
                 if free:
                     operation["state"] = "interrupted"
         if operation.get("state") in ("pending", "running"):
@@ -204,7 +206,7 @@ def observe(project: str) -> dict:
     config.project(project)
     record = read(project)
     view = _observe(project, record)
-    with operation_lock(project) as free:
+    with operation_lock(project, probe=True) as free:
         current = read(project)
         # Repair may finish during inspection; refresh its receipts and Git evidence together.
         if current != record or free and (current.get("operation") or {}).get("state") == "running":

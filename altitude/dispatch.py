@@ -1663,7 +1663,7 @@ def resume_ready(project: str, task: dict) -> bool:
             return False
     if (task.get("resume_after") or "") > S.now() or resume_engine_hold(task):
         return False
-    with project_setup.operation_lock(project) as ready:
+    with project_setup.operation_lock(project, probe=True) as ready:
         return ready
 
 

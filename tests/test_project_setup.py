@@ -148,6 +148,20 @@ class ProjectSetup(AltitudeCase):
         self.assertEqual(S.load_task(self.project, slug)["state"], "running")
         self.assertEqual(T.pending(self.project, slug), [])
 
+    def test_setup_read_in_flight_keeps_the_message_wake(self):
+        # A concurrent page read of setup once made an operator answer's immediate wake skip its resume.
+        task, _ = self.blocked_owner()
+        slug = task["slug"]
+        T.message(self.project, slug, "burak", "Continue saved session", by="burak")
+        with mock.patch.object(server, "spawn", return_value=True) as spawn:
+            with setup.operation_lock(self.project, probe=True) as reading:
+                self.assertTrue(reading)
+                self.assertEqual(setup.observe(self.project)["project"], self.project)
+                self.assertTrue(server.request_task_resume(self.project, slug))
+                with setup.operation_lock(self.project) as running:
+                    self.assertFalse(running)
+            spawn.assert_called_once_with(f"resume:{self.project}:{slug}", dispatch.resume, self.project, slug)
+
     def test_new_question_during_contention_supersedes_resume_without_fault(self):
         task, _ = self.blocked_owner()
         slug = task["slug"]
