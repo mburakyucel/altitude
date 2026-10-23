@@ -185,11 +185,18 @@ def append_event(project: str, slug: str, kind: str, **data) -> dict:
 
 
 def read_events(project: str, slug: str) -> list[dict]:
-    p = task_dir(project, slug) / "events.log"
-    if not p.exists():
+    """Like `load_task`, a read that misses the live log after an archive moves the task reads the archived one."""
+    slug = require_task_slug(slug)
+    for parent in (tasks_dir(project), archive_dir(project)):
+        try:
+            text = (parent / slug / "events.log").read_text()
+            break
+        except FileNotFoundError:
+            pass
+    else:
         return []
     out = []
-    for line in p.read_text().splitlines():
+    for line in text.splitlines():
         try:
             out.append(json.loads(line))
         except ValueError:

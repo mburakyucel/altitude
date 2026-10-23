@@ -291,6 +291,8 @@ The task-read regressions archive a real task between the live status lookup and
 crossing poll and task action response return the archived record, a missing task returns ordinary
 404, and corrupt state still logs a failure.
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
+The overview regression archives a task between the overview's task listing and its event read, and
+the overview still answers without a logged failure.
 Question-response, failed-setup and first-conversation retry checkpoints join their owned workflows before observing the
 scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
 The change-stream outage fixture reports its captured shutdown targets; connection cleanup cannot
