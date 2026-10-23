@@ -2,7 +2,7 @@ import type { AgentRow, Attention, Decision, Overview, Step, TaskMessage } from 
 
 /** An operator step belongs to the project, not a task (SPEC.md §3.8.4). */
 export const isStep = (row: Attention): row is Step => row.kind === "step";
-/** An agent that paused itself belongs to the project too (design/wireframes/project-agents/PROPOSAL.md). */
+/** A routine that paused itself belongs to the project too (design/wireframes/project-agents/PROPOSAL.md). */
 export const isAgentRow = (row: Attention): row is AgentRow => row.kind === "agent";
 /** A task's own question, review, stop or fault: every row with a task. */
 export const isTaskDecision = (row: Attention): row is Decision => row.slug !== null;
@@ -28,7 +28,7 @@ export function attentionSummary(rows: Attention[]): string {
   const stopped = decisions.filter((row) => !row.id && row.kind === "stopped").length;
   const reviews = decisions.filter((row) => !row.id && row.kind === "review").length;
   const faults = decisions.length - questions - stopped - reviews;
-  return [[questions, "question"], [steps, "step"], [agents, "paused agent"], [reviews, "review"], [stopped, "stopped task"], [faults, "fault"]]
+  return [[questions, "question"], [steps, "step"], [agents, "paused routine"], [reviews, "review"], [stopped, "stopped task"], [faults, "fault"]]
     .filter(([count]) => count).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ");
 }
 
@@ -84,7 +84,7 @@ export function decisionKind(decision: Pick<Decision, "kind" | "asked_by">): { l
   if (decision.kind === "fault") return { label: "Fault", tone: "danger" };
   if (decision.kind === "stopped") return { label: "Stopped mid-task", tone: "danger" };
   if (decision.kind === "review") return { label: "Review before merge", tone: "claimed" };
-  if (decision.kind === "agent") return { label: "Agent paused itself", tone: "danger" };
+  if (decision.kind === "agent") return { label: "Routine paused itself", tone: "danger" };
   return { label: decision.asked_by === "l3" ? "L3 brought this to you" : "The L2 asks", tone: "accent" };
 }
 

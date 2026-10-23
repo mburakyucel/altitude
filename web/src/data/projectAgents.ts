@@ -2,7 +2,7 @@ import type { AgentClock, ProjectAgentDefinition, ProjectAgentRun } from "./api"
 import { agoText, clockText, dayText, stampText } from "./observed";
 
 /*
- * The words the agent pages add to what the server writes (design/wireframes/project-agents/PROPOSAL.md): run times,
+ * The words the routine pages add to what the server writes (design/wireframes/project-agents/PROPOSAL.md): run times,
  * minutes, tokens and the machine's zone after a schedule's time when the browser's clock differs.
  */
 
@@ -56,6 +56,6 @@ export const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"
 export const LIMITS = [{ minutes: 10, label: "10 min" }, { minutes: 20, label: "20 min" }, { minutes: 60, label: "1 hour" }];
 export const TELL = [{ value: "found", label: "When it finds something" }, { value: "every", label: "Every run" }, { value: "never", label: "Never" }] as const;
 
-/** A new agent: weekdays at 07:00, telling you when it finds something, on the default model, stopping after 20 min. */
+/** A new routine: weekdays at 07:00, telling you when it finds something, on the default model, stopping after 20 min. */
 export const NEW_SCHEDULE = { days: [0, 1, 2, 3, 4], time: "07:00" };
 export const NEW_DEFINITION: ProjectAgentDefinition = { name: "", brief: "", schedules: [NEW_SCHEDULE], events: false, tell: "found", model: null, limit: 20 };

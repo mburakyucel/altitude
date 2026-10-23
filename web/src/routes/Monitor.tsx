@@ -27,11 +27,11 @@ import { age, agoText, exactTime, localTimes, modelName, older, SESSION_STALE_MS
  *
  * Age is the point of the page. A figure with no data at all says "No reading" and what produces one;
  * a figure whose snapshot has aged past what the router itself trusts is stale: shown, dimmed,
- * labelled. `/api/monitor` lists only the sessions Altitude runs (L3, L2 and running project agents). Its rows are
- * passthrough, so the fields only some kinds carry (edits, agent, model, rotate_next, an agent run's name, limit and
+ * labelled. `/api/monitor` lists only the sessions Altitude runs (L3, L2 and running routines). Its rows are
+ * passthrough, so the fields only some kinds carry (edits, agent, model, rotate_next, a routine run's name, limit and
  * minutes) arrive typed `unknown` and are narrowed here rather than in api.ts.
  *
- * Agents come last: every project agent Monitor lists, each a link to its page with what it does next and the latest
+ * Routines come last: every routine Monitor lists, each a link to its page with what it does next and the latest
  * run that ran. With none, the section and its heading are absent.
  */
 
@@ -291,7 +291,7 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
   return (
     <li className="card monitor-card monitor-session" data-stale={stale || undefined}>
       <div className="monitor-row">
-        <span className="chip">{run ? "Agent" : session.kind.toUpperCase()}</span>
+        <span className="chip">{run ? "Routine" : session.kind.toUpperCase()}</span>
         <b className="monitor-session-title" title={title}>
           {title}
         </b>
@@ -310,7 +310,7 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
 }
 
 /** "Last: Found something · 2 h ago · 6 min · 3.9M tokens", leaving out what the run lacks; "No runs yet." for an
- * idle agent that never ran, and nothing under the first run while it waits or runs. */
+ * idle routine that never ran, and nothing under the first run while it waits or runs. */
 function lastText({ last, cue }: MonitorAgent): string | null {
   if (!last) return cue === "running" || cue === "waiting" ? null : "No runs yet.";
   return ["Last: " + last.outcome, last.at ? newsAgo(last.at) : "", last.minutes != null ? `${last.minutes} min` : "",
@@ -321,7 +321,7 @@ function AgentsSection({ agents, clock }: { agents: MonitorAgent[]; clock: Agent
   if (!agents.length) return null;
   return (
     <section className="monitor-section" aria-labelledby="monitor-agents">
-      <h2 id="monitor-agents" className="monitor-head">Agents ({agents.length})</h2>
+      <h2 id="monitor-agents" className="monitor-head">Routines ({agents.length})</h2>
       <div className="settings-group">
         {agents.map((agent) => (
           <Link key={`${agent.project}/${agent.id}`} className="settings-row monitor-agent" to={`/projects/${agent.project}/agents/${agent.id}`}>
@@ -393,7 +393,7 @@ export default function Monitor() {
             </h2>
             <p className="monitor-muted">
               Past the mark at {monitor.data.reserve}%, or without a current reading, Altitude skips optional work such as
-              agent runs and the Weekly review.
+              routine runs.
             </p>
             <div className="monitor-seats">
               {(monitor.data.seats ?? []).map((row) => (

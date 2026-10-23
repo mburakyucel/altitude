@@ -4,7 +4,7 @@ import { durationText, newsAgo, refusal, runCost, runTime, runWhen, tokensText, 
 
 const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
 
-describe("project agent words", () => {
+describe("routine words", () => {
   it("writes budgets and limits in hours and minutes", () => {
     expect([30, 60, 70, 120, 600].map(durationText)).toEqual(["30 min", "1 h", "1 h 10 min", "2 h", "10 h"]);
     expect(durationText(0)).toBe("0 min");
@@ -44,6 +44,6 @@ describe("project agent words", () => {
 
   it("puts a refusal under its verb unless the server already did", () => {
     expect(refusal("Not saved", "The name is taken.")).toBe("Not saved: The name is taken.");
-    expect(refusal("Not saved", "Not turned on: the agents changed in another window.")).toBe("Not turned on: the agents changed in another window.");
+    expect(refusal("Not saved", "Not turned on: the routines changed in another window.")).toBe("Not turned on: the routines changed in another window.");
   });
 });
