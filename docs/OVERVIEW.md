@@ -138,7 +138,7 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   [Times](CLI.md#times), [inspection](CLI.md#inspection), [project heads-ups](CLI.md#project-heads-ups),
   [coordinator information messages](CLI.md#coordinator-information-messages),
   [superseded PR closure](CLI.md#superseded-pr-closure),
-  [improvement suggestions](CLI.md#improvement-suggestions), [routines](CLI.md#routines),
+  [improvement suggestions](CLI.md#improvement-suggestions), [routines](CLI.md#routines), [agent chats](CLI.md#agent-chats),
   [GitHub issues](CLI.md#github-issues)
   (including [incremental delivery](CLI.md#incremental-issue-delivery)),
   [task file lists](CLI.md#task-file-lists), [dirty-checkout recovery](CLI.md#dirty-checkout-recovery),
@@ -213,6 +213,7 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   [steer a task without going through L3](WALKTHROUGH.md#steer-a-task-without-going-through-l3),
   [let L3 answer what the project already knows](WALKTHROUGH.md#let-l3-answer-what-the-project-already-knows),
   [bring delivery back to the project](WALKTHROUGH.md#bring-delivery-back-to-the-project),
+  [agent chats](WALKTHROUGH.md#agent-chats),
   [see the features](WALKTHROUGH.md#see-the-features),
   [capture source and maintenance](WALKTHROUGH.md#capture-source-and-maintenance).
 - [Wireframe spec](../design/wireframes/SPEC.md): the approved UI design and its standing tenet.
