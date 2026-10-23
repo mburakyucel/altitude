@@ -9,6 +9,7 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   Work starts one in its own copy of the code, made from main; you watch its steps as it works, and it resumes where you
   left off every time, survives Altitude restarting, and takes images, voice and a choice of model. Rename,
   archive, reopen and delete it from its menu; `alt chats list` and `alt chats show` read chats in your terminal.
+- Starting Altitude removes a leftover file from older installations.
 - The agents Altitude runs can no longer read repair records, which hold each step a repair took with your full
   access and its output. Repairs themselves, the app and `alt repair` read them as before. An agent already
   running when Altitude updates keeps its earlier view until it ends.
