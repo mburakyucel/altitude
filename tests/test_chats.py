@@ -339,6 +339,12 @@ class TestCopyAndLife(ChatCase):
     def test_the_list_orders_by_the_latest_message_or_reply(self):
         older = self.new("First")
         newer = self.new("Second")
+        for chat_id, at in ((older, "2026-10-20T10:00:00+00:00"), (newer, "2026-10-21T10:00:00+00:00")):
+            with S.project_lock(self.project):
+                record = self.chat(chat_id)
+                record["messages"][0]["at"] = at
+                chats._save(self.project, record)
+        self.assertEqual([r["id"] for r in chats.listing(self.project)["chats"]], [newer, older])
         self.answered_all(older)
         rows = chats.listing(self.project)["chats"]
         self.assertEqual([r["id"] for r in rows], [older, newer])

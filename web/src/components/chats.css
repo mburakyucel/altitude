@@ -1,0 +1,56 @@
+/* Agent chats (SPEC.md §3.17): Work's section, and the chat page in a task's form. Its header, chips, conversation
+   rows and composer come from the task page's own styles; its sheets from the repair sheet's. */
+
+/* Work: the heading with New chat at its right; names on one line. */
+.work-chats-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chat-new {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 12px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--card); color: var(--text-primary); font-size: var(--text-meta); text-decoration: none;
+}
+.chat-new:hover { background: var(--hairline); }
+.shell[data-phone] .chat-new { min-height: 44px; }
+.chat-row .chat-row-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-row .task-card-meta[data-tone="danger"] { color: var(--danger); }
+.wp-row[data-archived] .task-card { opacity: 0.7; }
+
+/* The page. */
+.chat-empty { margin: auto 0 0; text-align: center; font-size: var(--text-meta); }
+.chip[data-tone="accent"] { border-color: var(--accent-tint-border); background: var(--accent-tint); color: var(--accent-text); }
+.chat-say { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: var(--text-meta); }
+
+/* A turn's steps folded to one line; while it works the latest one shows under the line. */
+.chat-worked { display: flex; flex-direction: column; gap: 6px; }
+.chat-worked > details > summary {
+  display: flex; align-items: center; gap: 6px; min-height: 32px; color: var(--text-muted); font-size: var(--text-meta);
+  cursor: pointer; list-style: none;
+}
+.chat-worked > details > summary::-webkit-details-marker { display: none; }
+.shell[data-phone] .chat-worked > details > summary { min-height: 44px; }
+.chat-worked[data-live] > details > summary { color: var(--text-secondary); }
+.chat-worked .spinner { width: 12px; height: 12px; }
+.chat-worked-caret { flex: none; transition: transform 0.15s; }
+.chat-worked > details[open] .chat-worked-caret { transform: rotate(90deg); }
+.chat-worked > details > .agent-steps, .chat-latest { padding-left: 20px; }
+@media (prefers-reduced-motion: reduce) { .chat-worked .spinner { animation: none; } .chat-worked-caret { transition: none; } }
+
+/* ⋯: a popover on desktop, a bottom sheet on the phone, with what the chat runs on under its items. */
+.menu.chat-menu { width: min(320px, calc(100vw - 24px)); }
+.chat-sheet { display: flex; flex-direction: column; padding: 20px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
+.chat-sheet .chat-menu .menu-item { min-height: 52px; font-size: 16px; border-top: 1px solid var(--hairline); border-radius: 0; }
+.chat-sheet .chat-menu .menu-item:first-child { border-top: 0; }
+.chat-menu .menu-item:disabled { color: var(--text-muted); cursor: default; }
+.chat-menu-meta { margin: 6px 12px 4px; }
+
+/* Rename in place of the title. */
+.chat-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.chat-rename-field {
+  flex: 1; min-width: 0; min-height: 36px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-control);
+  background: var(--card); color: var(--text-primary); font: inherit; font-size: 17px; font-weight: 600;
+}
+.chat-rename-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chat-rename-error { flex-basis: 100%; }
+.shell[data-phone] .chat-rename .btn { min-height: 44px; }
+
+/* An archived chat's dock: when, Reopen and Delete…. */
+.chat-archived-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px; }
+.shell[data-phone] .chat-archived-row .btn { min-height: 44px; }

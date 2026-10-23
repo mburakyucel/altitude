@@ -2190,7 +2190,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = chats.new(project, o.get("text"), request, uploads=uploads, image_ids=image_ids,
                                    choice=o.get("choice"))
                 spawn(f"chat:{project}:{result['id']}", chats.run, project, result["id"])
-                return self._json(result)
+                return self._json(chats.view(project, result["id"]))
             chat_id, action = parts[3], parts[4] if len(parts) == 5 else ""
             if action == "message":
                 if uploads or image_ids:
@@ -2216,7 +2216,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "not found"}, 404)
             if action in ("message", "retry", "stop"):
                 spawn(f"chat:{project}:{chat_id}", chats.run, project, chat_id)
-            return self._json(result)
+            return self._json(chats.view(project, result["id"]))
         except chats.Refused as exc:
             return self._json({"error": str(exc)}, 409)
         except chats.Missing as exc:

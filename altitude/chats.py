@@ -141,12 +141,13 @@ def _name_from(text: str) -> str:
 
 
 def _choice(value) -> dict | None:
-    """The model pill's choice: an engine, model and effort Altitude offers, or None for New tasks' default."""
-    if value is None:
-        return None
-    if not isinstance(value, dict) or value.get("engine") not in config.ENGINES:
-        raise Refused("Choose a model Altitude offers.")
-    return {"engine": value["engine"], "model": value.get("model") or None, "effort": value.get("effort") or None}
+    """The model pill's choice (`config.validate_choice`): an engine, its model, an effort, or None for New tasks'
+    default."""
+    try:
+        config.validate_choice(value)
+    except ValueError as exc:
+        raise Refused(f"Choose a model Altitude offers: {exc}.") from None
+    return value and {key: value.get(key) for key in ("engine", "model", "effort")}
 
 
 def _images(project: str, message_id: str, uploads, image_ids) -> list[dict]:

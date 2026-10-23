@@ -1,0 +1,8 @@
+/* An agent's steps in a conversation (SPEC.md §3.15, §3.17): system lines and Live session's rows, consecutive ones
+   together; the phone leaves out their times. */
+.agent-sys-time { font-family: var(--font-mono); font-size: var(--text-label); }
+.agent-steps { display: flex; flex-direction: column; gap: 6px; }
+.agent-step .session-hint .spinner { width: 10px; height: 10px; vertical-align: -1px; }
+.agent-step[data-error="true"] { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.shell[data-phone] .agent-step .session-time { display: none; }
+@media (prefers-reduced-motion: reduce) { .agent-step .spinner { animation: none; } }
