@@ -5,6 +5,14 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Pictures open in a full-screen viewer that works like a phone's photo app: pinch, double-tap or the wheel
+  zooms toward your fingers or pointer, a zoomed picture pans and stops at its edges, the next picture follows
+  your finger as you swipe, and a swipe down or Escape closes it back into its thumbnail. The bar says where the
+  picture came from and offers Share or Download on a phone, and Copy, Download or Open in new tab on a computer.
+  Chat, shown files, documents, a held PR's pictures and validation captures all open in it, and a picture you
+  picked can be checked there before sending. Chat thumbnails show the picture's own shape, four make a 2 × 2 grid
+  on a phone, and every failed thumbnail offers Retry. The viewer reads one picture ahead each way and keeps only
+  those three, in memory, while it is open.
 - Opening or reconnecting a terminal no longer types stray text such as `11;rgb:1111/1818/2727;1R` at its
   prompt: answers to questions a program asked earlier (`gh` asks the background colour) are no longer sent again
   each time the screen redraws its output. A program waiting for an answer still gets it.

@@ -33,7 +33,7 @@ export function ShownReader({ project, slug, shownId, revision, known, panel }: 
   const name = set?.document?.name ?? (images.length === 1 ? images[0]!.name : images.length ? `${images.length} images` : "Preview");
   const newer = set?.newer_url;
   const denied = files.error instanceof ApiError && [401, 403].includes(files.error.status);
-  const open = (index: number) => gallery(images.map((image) => ({ key: image.url, name: image.name, url: image.url })), index);
+  const open = (index: number) => gallery(images.map((image) => ({ key: image.url, name: image.name, url: image.url, context: name, width: image.width, height: image.height })), index);
 
   useEffect(() => {
     if (!panel) root.current?.focus({ preventScroll: true });

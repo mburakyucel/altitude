@@ -1,7 +1,8 @@
 # Image viewer: proposal
 
-Status: proposed for the operator's checkpoint, revised after its design review. The boards beside this file are written by `gen.py`
-(`python3 design/wireframes/image-viewer/gen.py`); review captures stay in the ignored `captures/`.
+Status: approved by the operator on 2026-10-23 with the bars always showing, and folded into
+[SPEC §3.9.3](../SPEC.md#393-image-viewer), which outranks this record. The boards beside this file are written by
+`gen.py` (`python3 design/wireframes/image-viewer/gen.py`); review captures stay in the ignored `captures/`.
 
 ## What it is for
 

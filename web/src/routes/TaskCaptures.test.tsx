@@ -1,5 +1,5 @@
 import { fireEvent, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { renderApp } from "../test/render";
 
 const route = "/projects/atlas/tasks/send-flow/captures/m-7";
@@ -16,6 +16,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 function mockCaptures(read: () => Response | Promise<Response> = () => json(view)) {
   const fetch = vi.fn(async (input: RequestInfo | URL) => {
     const path = String(input);
+    if (path.endsWith(".gif")) return new Response("GIF89a", { headers: { "Content-Type": "image/gif" } });
     if (path.startsWith("/api/captures/")) return read();
     if (path.startsWith("/api/overview")) return json({ projects: [], queue: [], wip: { per_project: {}, machine: 0 }, quota: {} });
     return json({ name: "atlas" });
@@ -25,10 +26,12 @@ function mockCaptures(read: () => Response | Promise<Response> = () => json(view
 }
 
 describe("TaskCaptures", () => {
-  it("loads one reply's captures, each looping at its recorded size with its meta", async () => {
+  it("loads one reply's captures, each at its recorded size with its meta, and opens them in the viewer as one run", async () => {
     let release!: (response: Response) => void;
     const fetch = mockCaptures(() => new Promise((resolve) => { release = resolve; }));
-    renderApp({ route });
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute("open", ""); };
+    onTestFinished(() => { Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal"); });
+    const { user } = renderApp({ route });
     expect(await screen.findByText("Loading captures…")).toBeVisible();
     expect(screen.getByRole("link", { name: "← Back to conversation" })).toHaveAttribute("href", "/projects/atlas/tasks/send-flow");
     release(json(view));
@@ -38,15 +41,21 @@ describe("TaskCaptures", () => {
     expect(fetch.mock.calls.map(([path]) => String(path)).filter((path) => path.startsWith("/api/captures/"))).toEqual(["/api/captures/atlas/send-flow/m-7"]);
     const phone = screen.getByRole("figure", { name: "Phone send" });
     expect(within(phone).getByText("299 KiB · 9.8 s · 11 frames")).toBeVisible();
-    expect(within(phone).getByText("Loading capture…")).toBeVisible();
-    const image = phone.querySelector("img")!;
+    // A grey block at the capture's saved size holds its place while it loads.
+    const image = within(phone).getByRole("img", { name: "Phone send" });
     expect(image).toHaveAttribute("src", view.captures[0]!.url);
     expect(image).toHaveAttribute("width", "390");
     expect(image).toHaveAttribute("height", "600");
+    expect(image).toHaveAttribute("data-loading");
     fireEvent.load(image);
-    expect(within(phone).getByRole("img", { name: "Phone send" })).toBeVisible();
-    expect(within(phone).queryByText("Loading capture…")).toBeNull();
+    expect(image).not.toHaveAttribute("data-loading");
     expect(within(screen.getByRole("figure", { name: "Desktop send" })).getByText("1 KiB · 2 s · 1 frame")).toBeVisible();
+    await user.click(within(phone).getByRole("button", { name: "Open capture Phone send" }));
+    const dialog = screen.getByRole("dialog", { name: "Image Phone send" });
+    expect(dialog).toHaveTextContent("Validation run 7");
+    expect(dialog).toHaveTextContent("1 / 2");
+    // A GIF copied would keep only its first frame, so captures offer no Copy.
+    expect(within(dialog).queryByRole("button", { name: "Copy image" })).toBeNull();
   });
 
   it("shows an unavailable capture beside the others and retries it with a fresh request", async () => {
@@ -55,18 +64,15 @@ describe("TaskCaptures", () => {
     const desktop = await screen.findByRole("figure", { name: "Desktop send" });
     fireEvent.load(screen.getByRole("figure", { name: "Phone send" }).querySelector("img")!);
     fireEvent.error(desktop.querySelector("img")!);
-    expect(within(desktop).getByRole("alert")).toHaveTextContent("Capture unavailable.");
+    expect(within(desktop).getByRole("group", { name: "Desktop send unavailable" })).toHaveTextContent("Capture unavailable");
     expect(desktop.querySelector("img")).toBeNull();
-    expect(within(desktop).queryByText(/KiB/)).toBeNull();
     expect(within(screen.getByRole("figure", { name: "Phone send" })).getByRole("img", { name: "Phone send" })).toBeVisible();
-    await user.click(within(desktop).getByRole("button", { name: "Retry capture" }));
-    expect(within(desktop).getByText("Loading capture…")).toBeVisible();
-    expect(within(desktop).queryByRole("alert")).toBeNull();
-    const retried = desktop.querySelector("img")!;
+    await user.click(within(desktop).getByRole("button", { name: "Retry" }));
+    const retried = within(desktop).getByRole("img", { name: "Desktop send" });
     expect(retried).toHaveAttribute("src", `${view.captures[1]!.url}?retry=1`);
+    expect(retried).toHaveAttribute("data-loading");
     fireEvent.load(retried);
-    expect(within(desktop).getByRole("img", { name: "Desktop send" })).toBeVisible();
-    expect(within(desktop).queryByText("Loading capture…")).toBeNull();
+    expect(retried).not.toHaveAttribute("data-loading");
   });
 
   it.each([[404, "These captures could not be loaded."], [403, "Access to these captures is unavailable."]])("explains an unavailable read (%s) and retries to the captures", async (status, explanation) => {

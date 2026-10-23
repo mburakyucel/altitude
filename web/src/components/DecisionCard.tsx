@@ -218,7 +218,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       {!resolved && !question.response && question.ran ? <Ran ran={question.ran} /> : null}
       {!resolved && question.response ? <Receipt response={question.response} picked={options.find((option) => option.text === question.response!.text)?.label}
         delivery={deliveries?.[question.response.message_id]} /> : null}
-      {question.shown ? <ShownFiles shown={question.shown} state={from ? { from, tab: from === "needs" ? "needs" : "work" } : undefined} onOpen={(event) => {
+      {question.shown ? <ShownFiles shown={question.shown} context="Shown with a question" state={from ? { from, tab: from === "needs" ? "needs" : "work" } : undefined} onOpen={(event) => {
         if (!plainClick(event)) return;
         setSelectedProject(question.project);
         keepForVisit(location.key, "origin", { project: question.project, slug: question.slug, id: question.id } satisfies QuestionOrigin);

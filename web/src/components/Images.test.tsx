@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
@@ -8,6 +8,7 @@ import Composer, { returnToComposer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import type { ImageSubmission } from "./ImageDraft";
 import { ImageViewerHost, MessageImages } from "./MessageImages";
+import { ShownFiles } from "./Shown";
 import { hostMicrophone, hostVoiceServer, installVoiceBrowser, speak } from "./voiceTest";
 
 const capability = { available: true, max_count: 4, max_bytes: 10 << 20, max_total_bytes: 20 << 20, max_pixels: 25_000_000, max_dimension: 8192 };
@@ -411,10 +412,10 @@ describe("private image reads", () => {
     vi.stubGlobal("fetch", vi.fn(async () => json({}, status)));
     const user = userEvent.setup();
     render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={[{ id: "abc", name: "screen.png", mime_type: "image/png", size: 12, width: 2, height: 2, source_message_id: "message" }]} /></ImageViewerHost>, { wrapper: MemoryRouter });
-    expect(await screen.findByRole("alert")).toHaveTextContent("Image access denied.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Access denied");
     status = 404;
     await user.click(screen.getByRole("button", { name: "Retry image screen.png" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Image unavailable.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Image unavailable");
     expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual(["/api/images/alpha/abc", "/api/images/alpha/abc"]);
   });
 
@@ -442,7 +443,7 @@ describe("private image reads", () => {
     status = 403;
     const refused = render(shown(), { wrapper: MemoryRouter });
     await act(async () => answer());
-    expect(await screen.findByRole("alert")).toHaveTextContent("Image access denied.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Access denied");
     expect(screen.queryByRole("img")).toBeNull();
     refused.unmount();
 
@@ -460,10 +461,49 @@ describe("private image reads", () => {
     expect(vi.mocked(fetch).mock.calls.length).toBe(calls + 1);
   });
 
+  it("shapes one picture by its size between 9:16 and 16:9, and tiles between 3:4 and 4:3", () => {
+    browser();
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    const image = (id: string, width: number, height: number) => ({ id, name: `${id}.png`, mime_type: "image/png", size: 16, width, height, source_message_id: "message" });
+    const aspect = (name: string) => Number(screen.getByText(name).closest("figure")!.style.getPropertyValue("--aspect"));
+    const one = render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={[image("phone", 1170, 2532)]} /></ImageViewerHost>, { wrapper: MemoryRouter });
+    expect(aspect("phone.png")).toBeCloseTo(9 / 16);
+    one.unmount();
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={[image("tall", 1170, 2532), image("wide", 1600, 900)]} /></ImageViewerHost>, { wrapper: MemoryRouter });
+    expect(aspect("tall.png")).toBeCloseTo(3 / 4);
+    expect(aspect("wide.png")).toBeCloseTo(4 / 3);
+  });
+});
+
+/** Reduced motion lands every movement at once, so a test reads the viewer's resting states. */
+function still() {
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce"), media: query, addEventListener() {}, removeEventListener() {} }));
+}
+
+/** Object URLs still held: what the page reads into memory and has not released. */
+function objectUrls() {
+  const live = new Set<string>();
+  let next = 0;
+  vi.stubGlobal("URL", class extends URL {
+    static override createObjectURL() { const url = `blob:image-${++next}`; live.add(url); return url; }
+    static override revokeObjectURL(url: string) { live.delete(url); }
+  });
+  return live;
+}
+
+const raster = () => vi.fn(async (_url: string) => new Response("fictional raster", { headers: { "Content-Type": "image/png" } }));
+const pictures = (...names: string[]) => names.map((name) => ({ id: name, name: `${name}.png`, mime_type: "image/png", size: 16, width: 2000, height: 1000, source_message_id: "message" }));
+const stage = () => document.querySelector<HTMLElement>(".image-viewer-stage")!;
+const current = () => within(screen.getByRole("dialog")).getByRole("img");
+const touch = (type: "pointerDown" | "pointerMove" | "pointerUp", x: number, y: number, pointerId = 1, pointerType = "touch") =>
+  fireEvent[type](stage(), { pointerId, pointerType, clientX: x, clientY: y, button: 0 });
+const pause = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+
+describe("image viewer", () => {
   it("keeps an open viewer and its zoom when the opener's row is replaced, then focuses the replacement", async () => {
     const revoke = browser();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));
-    modal();
+    vi.stubGlobal("fetch", raster());
+    modal(); still();
     const user = userEvent.setup();
     const images = [{ id: "abc", name: "queued.png", mime_type: "image/png", size: 16, width: 2, height: 2, source_message_id: "message" }];
     // Queued and stored rows are separate subtrees, as in the project conversation.
@@ -472,13 +512,15 @@ describe("private image reads", () => {
     </ImageViewerHost>;
     const view = render(<Page admitted={false} />, { wrapper: MemoryRouter });
     await user.click(await screen.findByRole("button", { name: "Open image queued.png" }));
-    await user.click(screen.getByRole("button", { name: "Zoom image" }));
+    expect(screen.getByRole("button", { name: "Close image" })).toHaveFocus();
+    await user.click(await screen.findByRole("button", { name: "Zoom image" }));
     const dialog = screen.getByRole("dialog", { name: "Image queued.png" });
     view.rerender(<Page admitted />);
     await screen.findByRole("button", { name: "Open image queued.png" });
     expect(screen.getByRole("dialog", { name: "Image queued.png" })).toBe(dialog);
-    expect(screen.getByRole("button", { name: "Fit image" })).toBeInTheDocument();
-    expect(fetch).toHaveBeenCalledTimes(2); // The viewer keeps its own images; only the new row reads.
+    expect(screen.getByRole("button", { name: "Fit image" })).toHaveAttribute("aria-pressed", "true");
+    // The thumbnail, the viewer's own copy and the new row each read once; the viewer is not disturbed.
+    expect(fetch).toHaveBeenCalledTimes(3);
     await user.click(screen.getByRole("button", { name: "Close image" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open image queued.png" })).toHaveFocus();
@@ -489,16 +531,16 @@ describe("private image reads", () => {
 
   it("moves through a message's images within one history entry, and Back closes it", async () => {
     browser();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));
-    modal();
+    vi.stubGlobal("fetch", raster());
+    modal(); still();
     const user = userEvent.setup();
-    const images = ["first", "second", "third"].map((name) => ({ id: name, name: `${name}.png`, mime_type: "image/png", size: 16, width: 2, height: 2, source_message_id: "message" }));
     let back = () => {};
     const History = () => { const navigate = useNavigate(); back = () => void navigate(-1); return <span data-testid="entry">{useLocation().key}</span>; };
-    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={images} /><History /></ImageViewerHost>, { wrapper: MemoryRouter });
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={pictures("first", "second", "third")} context="You · 14:05" /><History /></ImageViewerHost>, { wrapper: MemoryRouter });
     const page = screen.getByTestId("entry").textContent;
     await user.click(await screen.findByRole("button", { name: "Open image second.png" }));
     expect(screen.getByRole("dialog", { name: "Image second.png" })).toHaveTextContent("2 / 3");
+    expect(screen.getByRole("dialog")).toHaveTextContent("You · 14:05");
     const entry = screen.getByTestId("entry").textContent;
     expect(entry).not.toBe(page);
     await user.click(screen.getByRole("button", { name: "Next image" }));
@@ -514,12 +556,212 @@ describe("private image reads", () => {
     expect(screen.getByTestId("entry").textContent).toBe(page);
   });
 
+  it("fits a picture between the bars, zooms by double-tap, wheel, pinch and keys, and pans with its edges held", async () => {
+    browser();
+    vi.stubGlobal("fetch", raster());
+    modal(); still();
+    const user = userEvent.setup();
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={pictures("wide")} /></ImageViewerHost>, { wrapper: MemoryRouter });
+    await user.click(await screen.findByRole("button", { name: "Open image wide.png" }));
+    await waitFor(() => expect(current()).toHaveAttribute("src", "blob:image-2"));
+    // 2000 × 1000 on a 1024 × 768 screen, 88 px kept at each side: fitted at 0.424, centred.
+    const fitted = { width: "848px", height: "424px", transform: "translate(88px, 172px)" };
+    expect(current()).toHaveStyle(fitted);
+    // A double-tap zooms toward the point to the picture's own pixels; a second one returns to fit.
+    for (const _ of [0, 1]) { touch("pointerDown", 512, 384); touch("pointerUp", 512, 384); }
+    expect(current()).toHaveStyle({ width: "2000px", height: "1000px", transform: "translate(-488px, -116px)" });
+    expect(screen.getByRole("button", { name: "Fit image" })).toHaveAttribute("aria-pressed", "true");
+    // Zoomed, one finger pans and the edges hold: the picture's left edge never leaves the screen's.
+    touch("pointerDown", 400, 400); touch("pointerMove", 420, 400); touch("pointerMove", 2000, 400);
+    await pause(120);
+    touch("pointerMove", 2000, 401); touch("pointerUp", 2000, 401);
+    expect(current()).toHaveStyle({ transform: "translate(0px, -115px)" });
+    expect(screen.getByRole("dialog", { name: "Image wide.png" })).toBeInTheDocument();
+    for (const _ of [0, 1]) { touch("pointerDown", 512, 384); touch("pointerUp", 512, 384); }
+    expect(current()).toHaveStyle(fitted);
+    // A mouse wheel notch zooms toward the pointer; a trackpad's scroll does nothing at fit.
+    fireEvent.wheel(stage(), { deltaY: 10, clientX: 512, clientY: 384 });
+    expect(current()).toHaveStyle(fitted);
+    fireEvent.wheel(stage(), { deltaY: -100, clientX: 512, clientY: 384 });
+    expect(current()).toHaveStyle({ width: "1060px", height: "530px" });
+    fireEvent.keyDown(document.body, { key: "0" });
+    expect(current()).toHaveStyle(fitted);
+    fireEvent.keyDown(document.body, { key: "+" });
+    expect(current()).toHaveStyle({ width: "1272px" });
+    fireEvent.keyDown(document.body, { key: "-" });
+    expect(current()).toHaveStyle(fitted);
+    // Two fingers pinch around their middle; released past the most zoom it settles back to the limit.
+    touch("pointerDown", 412, 384, 1); touch("pointerDown", 612, 384, 2);
+    touch("pointerMove", 812, 384, 2);
+    expect(current()).toHaveStyle({ width: "1696px" });
+    touch("pointerMove", 8000, 384, 2);
+    touch("pointerUp", 8000, 384, 2); touch("pointerUp", 412, 384, 1);
+    expect(current()).toHaveStyle({ width: "4000px", height: "2000px" });
+  });
+
+  it("follows a swipe to the next picture, springs back from a short one, and closes on a swipe down", async () => {
+    browser();
+    vi.stubGlobal("fetch", raster());
+    modal(); still();
+    const user = userEvent.setup();
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={pictures("first", "second")} /></ImageViewerHost>, { wrapper: MemoryRouter });
+    await user.click(await screen.findByRole("button", { name: "Open image first.png" }));
+    await waitFor(() => expect(current()).toHaveAttribute("src"));
+    touch("pointerDown", 700, 400); touch("pointerMove", 680, 400); touch("pointerMove", 640, 400);
+    // The neighbour slides in beside it, 16 px behind.
+    const slides = document.querySelectorAll<HTMLElement>(".image-viewer-slide");
+    expect([...slides].map((slide) => slide.style.transform)).toEqual(["translateX(-60px)", "translateX(980px)"]);
+    await pause(120);
+    touch("pointerMove", 641, 400); touch("pointerUp", 641, 400);
+    expect(screen.getByRole("dialog", { name: "Image first.png" })).toBeInTheDocument();
+    expect(document.querySelectorAll(".image-viewer-slide")).toHaveLength(1);
+    // At the first picture a swipe the other way only resists.
+    touch("pointerDown", 300, 400); touch("pointerMove", 330, 400); touch("pointerMove", 600, 400);
+    expect(document.querySelector<HTMLElement>(".image-viewer-slide")!.style.transform).toBe("translateX(100px)");
+    await pause(120);
+    touch("pointerMove", 600, 401); touch("pointerUp", 600, 401);
+    // Past a third of the width it carries on.
+    touch("pointerDown", 800, 400); touch("pointerMove", 780, 400); touch("pointerMove", 300, 400); touch("pointerUp", 300, 400);
+    expect(screen.getByRole("dialog", { name: "Image second.png" })).toHaveTextContent("2 / 2");
+    touch("pointerDown", 500, 300); touch("pointerMove", 500, 320); touch("pointerMove", 500, 480);
+    expect(screen.getByRole("dialog").style.getPropertyValue("--dim")).toBe(String(1 - 180 / 360));
+    touch("pointerUp", 500, 480);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open image first.png" })).toHaveFocus();
+  });
+
+  it("closes on a click in the dark outside the picture, never on the picture or after a drag", async () => {
+    browser();
+    vi.stubGlobal("fetch", raster());
+    modal(); still();
+    const user = userEvent.setup();
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={pictures("wide")} /></ImageViewerHost>, { wrapper: MemoryRouter });
+    await user.click(await screen.findByRole("button", { name: "Open image wide.png" }));
+    await waitFor(() => expect(current()).toHaveAttribute("src"));
+    touch("pointerDown", 512, 384, 1, "mouse"); touch("pointerUp", 512, 384, 1, "mouse");
+    touch("pointerDown", 512, 100, 1, "mouse"); touch("pointerMove", 520, 100, 1, "mouse"); touch("pointerUp", 520, 100, 1, "mouse");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    touch("pointerDown", 512, 100, 1, "touch"); touch("pointerUp", 512, 100, 1, "touch");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    touch("pointerDown", 512, 100, 1, "mouse"); touch("pointerUp", 512, 100, 1, "mouse");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("reads the current picture, then its neighbours, holds at most three, releases them while hidden and all on close", async () => {
+    browser();
+    const live = objectUrls();
+    vi.stubGlobal("fetch", raster());
+    modal(); still();
+    const user = userEvent.setup();
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={pictures("a", "b", "c", "d")} /></ImageViewerHost>, { wrapper: MemoryRouter });
+    await user.click(await screen.findByRole("button", { name: "Open image b.png" }));
+    await waitFor(() => expect(live.size).toBe(4 + 3));
+    const read = () => vi.mocked(fetch).mock.calls.slice(4).map(([url]) => String(url).split("/").at(-1));
+    expect(read()).toEqual(["b", "a", "c"]);
+    await user.click(screen.getByRole("button", { name: "Next image" }));
+    await waitFor(() => expect(read()).toEqual(["b", "a", "c", "d"]));
+    await waitFor(() => expect(live.size).toBe(4 + 3));
+    const visibility = (state: DocumentVisibilityState) => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+      act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    };
+    visibility("hidden");
+    expect(live.size).toBe(4 + 1);
+    visibility("visible");
+    await waitFor(() => expect(live.size).toBe(4 + 3));
+    expect(read()).toEqual(["b", "a", "c", "d", "b", "d"]);
+    await user.click(screen.getByRole("button", { name: "Close image" }));
+    expect(live.size).toBe(4);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  it("offers Zoom, Copy, Download and Open on desktop, disabled while loading and gone when the picture fails", async () => {
+    browser();
+    modal(); still();
+    let answer: ((response: Response) => void) | undefined;
+    vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("/later") ? new Promise<Response>((resolve) => { answer = resolve; })
+      : Promise.resolve(new Response("fictional raster", { headers: { "Content-Type": "image/png" } }))));
+    const write = vi.fn(async (_items: unknown[]) => {});
+    vi.stubGlobal("ClipboardItem", class { constructor(readonly items: Record<string, unknown>) {} });
+    const opened = vi.spyOn(window, "open").mockReturnValue(null);
+    const saved: { href: string; download: string }[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { saved.push({ href: this.href, download: this.download }); });
+    const user = userEvent.setup();
+    // After user-event's setup, which brings its own clipboard.
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { write } });
+    const shown = { available: true, url: "/view", document: null, newer_url: null,
+      images: ["/api/shown/one", "/api/shown/later"].map((url, index) => ({ name: `shot-${index + 1}.png`, path: `shot-${index + 1}.png`, url, width: 800, height: 600, embedded: false })) };
+    render(<ImageViewerHost scope="/"><ShownFiles shown={shown as never} context="L2 · 14:05" /></ImageViewerHost>, { wrapper: MemoryRouter });
+    await user.click(screen.getByRole("button", { name: "Open image shot-1.png" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("L2 · 14:05");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copy image" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Copy image" }));
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("Image copied");
+    await user.click(screen.getByRole("button", { name: "Download image" }));
+    expect(saved).toEqual([{ href: expect.stringMatching(/^blob:/), download: "shot-1.png" }]);
+    await user.click(screen.getByRole("button", { name: "Open in new tab" }));
+    expect(opened).toHaveBeenCalledWith("/api/shown/one", "_blank", "noopener");
+    await user.click(screen.getByRole("button", { name: "Next image" }));
+    for (const name of ["Zoom image", "Copy image", "Download image", "Open in new tab"]) expect(screen.getByRole("button", { name })).toBeDisabled();
+    await act(async () => answer!(new Response("{}", { status: 404 })));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Image unavailable");
+    for (const name of ["Zoom image", "Copy image", "Download image", "Open in new tab"]) expect(screen.queryByRole("button", { name })).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/later"))).toHaveLength(2));
+    expect(within(dialog).getByText("Loading image…")).toBeInTheDocument();
+    Reflect.deleteProperty(navigator, "clipboard");
+  });
+
+  it("shares the held picture as a file on a phone, quietly when cancelled", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+    browser();
+    vi.stubGlobal("fetch", raster());
+    modal(); still();
+    const share = vi.fn(async (_data: ShareData) => {});
+    Object.assign(navigator, { canShare: () => true, share });
+    const user = userEvent.setup();
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={pictures("phone")} /></ImageViewerHost>, { wrapper: MemoryRouter });
+    await user.click(await screen.findByRole("button", { name: "Open image phone.png" }));
+    const button = await screen.findByRole("button", { name: "Share image" });
+    expect(screen.queryByRole("button", { name: "Download image" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Zoom image" })).toBeNull();
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    const file = share.mock.calls[0]![0].files![0]!;
+    expect([file.name, file.type]).toEqual(["phone.png", "image/png"]);
+    share.mockRejectedValueOnce(new DOMException("Cancelled", "AbortError"));
+    await user.click(button);
+    expect(within(screen.getByRole("dialog")).getByRole("status")).toBeEmptyDOMElement();
+    share.mockRejectedValueOnce(new Error("Refused"));
+    await user.click(button);
+    expect(within(screen.getByRole("dialog")).getByRole("status")).toHaveTextContent("Could not share the image");
+    Reflect.deleteProperty(navigator, "canShare");
+    Reflect.deleteProperty(navigator, "share");
+  });
+
+  it("opens a picked picture from the composer as not sent yet, with no actions", async () => {
+    browser();
+    modal(); still();
+    const user = userEvent.setup();
+    render(<ImageViewerHost scope="/"><Harness /></ImageViewerHost>, { wrapper: MemoryRouter });
+    await act(async () => { await capabilityRead; });
+    fireEvent.change(screen.getByLabelText("Choose images"), { target: { files: [image()] } });
+    await user.click(await screen.findByRole("button", { name: "Open image screen.png" }));
+    const dialog = screen.getByRole("dialog", { name: "Image screen.png" });
+    expect(dialog).toHaveTextContent("Not sent yet");
+    for (const name of ["Zoom image", "Copy image", "Download image", "Open in new tab", "Share image"]) expect(within(dialog).queryByRole("button", { name })).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Close image" }));
+    expect(screen.getByRole("button", { name: "Remove image screen.png" })).toBeInTheDocument();
+  });
+
   it("closes the viewer when the page scope changes", async () => {
     browser();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));
-    modal();
+    vi.stubGlobal("fetch", raster());
+    modal(); still();
     const user = userEvent.setup();
-    const images = [{ id: "abc", name: "screen.png", mime_type: "image/png", size: 16, width: 2, height: 2, source_message_id: "message" }];
+    const images = pictures("screen");
     const view = render(<ImageViewerHost scope="/projects/alpha"><MessageImages project="alpha" images={images} /></ImageViewerHost>, { wrapper: MemoryRouter });
     await user.click(await screen.findByRole("button", { name: "Open image screen.png" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();

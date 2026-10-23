@@ -3486,9 +3486,11 @@ the composer stays free. Submitted captions use the existing text recovery; imag
 bytes are not persisted in browser storage. Private thumbnails belong to the original saved
 message. A saved message the page itself sent starts each thumbnail from the picture its outbox
 entry holds, and keeps that picture only until the thumbnail's own read, which starts at once on screen or off, replaces it or
-shows its error; a queued project message's turn row, which replaces its queued row, reads again. The shell owns one modal viewer per page (`ImageViewerHost`): it holds its own copy of the
-opened image's bytes, so it outlives the queued row that opened it when history admission replaces
-that row, and closes when the route changes. Image interaction states and boundaries are specified in
+shows its error; a queued project message's turn row, which replaces its queued row, reads again. The shell owns one modal viewer per page (`ImageViewerHost`): it reads the opened picture's bytes
+itself, so it outlives the queued row that opened it when history admission replaces that row, then
+reads the previous and next pictures and holds at most those three in memory. Moving on releases a
+picture more than one step away, a hidden page releases the neighbours, and closing or a route change
+releases everything; nothing is written to browser storage. Image interaction states and boundaries are specified in
 `design/wireframes/IMAGE_INPUT.md` and walked at both viewports by `web/e2e/image-input.pw.ts`.
 
 The L2 task's phone tabs replace the current router history entry and retain its location state;
@@ -4036,7 +4038,8 @@ an **Image not shown** box with its path. Web and mail links open in a new tab w
 a `#heading` link scrolls within the document, and other relative links stay text with their target
 as a title. Headings carry GitHub's `user-content-` anchors. The gallery (`ImageViewerHost`) adds one
 history entry while open, so Back closes it; it moves between a set's images with buttons, arrow keys
-and a horizontal swipe, zooms, and shows **Image unavailable** with Retry when a copy fails to load.
+and a finger-following swipe, zooms by pinch, double-tap, wheel and keys, and shows **Image unavailable**
+with Retry when a copy fails to load ([SPEC §3.9.3](../design/wireframes/SPEC.md#393-image-viewer)).
 
 Validation captures follow the same fixed-evidence path ([validation captures](DEVELOPMENT.md#validation-captures)).
 `alt task reply --capture <run>` reads that run's GIFs from the task's own `validation/` evidence through
