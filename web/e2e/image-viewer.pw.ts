@@ -323,7 +323,7 @@ test("the viewer reads the picture on screen and one each side, shows the thumbn
   });
 
   // While its own read is on its way the viewer shows the thumbnail's picture, and the actions wait.
-  await walk.state("01-reading-shows-thumbnail", { action: () => openers[1]!.click(),
+  await walk.state("01-reading-shows-thumbnail", { action: async () => { await openers[1]!.click(); await settled(page); },
     visible: [v.dialog.getByRole("status", { name: "Loading image…" }), v.picture, v.count("2 / 4")], hidden: [] });
   await expect(v.picture).toHaveAttribute("data-placeholder", "true");
   await expect(v.dialog.getByRole("button", { name: "Download image", exact: true })).toBeDisabled();
