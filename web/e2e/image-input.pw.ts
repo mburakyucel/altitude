@@ -539,8 +539,9 @@ test("task: image-only checkpoint delivery and archived viewing retain the origi
   await walk.state("01-image-only-delivered-at-checkpoint", { visible: [v.preview, page.getByText("I can inspect 1 attached image(s).", { exact: true })], hidden: [v.strip] });
   expect((await request.post("/fixture/archive-task")).ok()).toBe(true);
   await page.reload();
-  await walk.state("02-archived-image-conversation", { visible: [v.preview], hidden: [v.composer] });
-  await walk.state("03-archived-image-viewer", { action: () => v.preview.click(), visible: [page.getByRole("dialog", { name: "Image timer.png" })], hidden: [v.composer] });
+  // A done task keeps the message box that reopens it.
+  await walk.state("02-archived-image-conversation", { visible: [v.preview, page.getByText("Sending reopens the task with your message.", { exact: true })], hidden: [] });
+  await walk.state("03-archived-image-viewer", { action: () => v.preview.click(), visible: [page.getByRole("dialog", { name: "Image timer.png" })], hidden: [] });
   await page.getByRole("button", { name: "Close image", exact: true }).click();
   await expect(v.preview).toBeFocused();
 });

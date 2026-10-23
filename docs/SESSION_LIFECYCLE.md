@@ -621,7 +621,8 @@ rechecks delivery and writes a fresh report, even when replayed guidance adds no
 persona requires all prior deliveries, exact remaining scope and holds
 to survive; chat acknowledgement cannot substitute for reporting.
 The old report file remains readable until replacement, with its historical copy retained in events.
-Archived/done/rejected tasks remain read-only; archived restoration is not part of this lifecycle.
+Rejected tasks remain read-only. The operator's message reopens a done task through this same
+path, after moving it out of the archive and superseding its report ([reopen a done task](CLI.md#reopen-a-done-task)).
 
 On phone and desktop the reported composer uses the ordinary empty, draft, sending, listening,
 transcribing, denied and error states. A receipt clears the submitted draft and settles the pending bubble in place;

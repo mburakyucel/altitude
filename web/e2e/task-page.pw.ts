@@ -336,7 +336,7 @@ test("a blocked task: the question at the end of the chat, waiting for L3, a fau
   });
 });
 
-test("done and rejected tasks read read-only, the PR in the header", async ({ page, request }, info) => {
+test("done tasks offer a message box that reopens them, rejected tasks read read-only, the PR in the header", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -348,8 +348,8 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
 
   await walk.open(taskPath(project.name, done!.slug));
   await walk.state("01-done", {
-    visible: [v.heading(doneTitle), v.main.getByText("Done", { exact: true }).first(), ...(!v.phone && pr ? [v.main.locator(".task-chips").getByText(`PR #${pr} merged`, { exact: false })] : [])],
-    hidden: [v.composer, v.stop, v.reject],
+    visible: [v.heading(doneTitle), v.main.getByText("Done", { exact: true }).first(), v.main.getByText("Sending reopens the task with your message.", { exact: true }), ...(!v.phone && pr ? [v.main.locator(".task-chips").getByText(`PR #${pr} merged`, { exact: false })] : [])],
+    hidden: [v.stop, v.reject],
   });
   await walk.state("02-done-session-ended", {
     action: () => v.showLive(),

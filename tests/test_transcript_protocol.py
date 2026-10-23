@@ -101,9 +101,10 @@ class TestTranscriptProtocol(_CodexTranscriptCase):
     def test_untimed_start_takes_its_completion_time_but_never_turn_or_file_time(self):
         for timestamp in (None, "not a date"):
             with self.subTest(timestamp=timestamp):
+                completed = _stamp(5)
                 records = [{"type": "item.started", "timestamp": timestamp, "item": {
                     "id": "command", "type": "command_execution", "command": "true", "status": "in_progress"}},
-                    {"type": "item.completed", "timestamp": _stamp(5), "item": {
+                    {"type": "item.completed", "timestamp": completed, "item": {
                         "id": "command", "type": "command_execution", "command": "true", "status": "completed",
                         "aggregated_output": "done", "duration_ms": 4000}}]
                 self.write(records[:1])
@@ -112,7 +113,7 @@ class TestTranscriptProtocol(_CodexTranscriptCase):
                 self.write(records[1:], append=True)
                 row, = self._view(mode="delta", cursor=first["cursor"], lower="")["events"]
                 self.assertEqual(row["status"], "completed")
-                self.assertEqual(row["at"], _stamp(5))
+                self.assertEqual(row["at"], completed)
                 self.assertEqual(row["output"], "done")
 
     def test_bursts_are_byte_bounded_and_continuations_never_skip_equal_time_siblings(self):
