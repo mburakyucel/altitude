@@ -175,7 +175,8 @@ The daemon waits without a timeout. Confirmed exit, a recorded usage limit or re
 the stopping phase commits. Neither silence nor network failure forces a switch. The entire worker
 job must be confirmed stopped before requeue. The durable request fences the observed attempt,
 worker/session and block, refuses active claims/reviews and explicit pins, and retains its receipt
-across restart. Its `next_engine` confines the next launch to that
+across restart. The requeue is saved just before that receipt; a task read in between shows the switch
+done, by the rule the daemon finishes it with, so the page keeps its composer and any recording. Its `next_engine` confines the next launch to that
 engine's configured options and is consumed when dispatch binds the fresh attempt. Pins and
 availability are checked again before execution and launch. `route.pick_task` supplies the same
 target-aware availability and pin explanation to dispatch and the queue. A fresh attempt clears current
@@ -3879,6 +3880,9 @@ types refuse the whole set, so nothing is published. References that cannot be c
 `not_shown`; remote images are never fetched.
 
 The copies are content-named files in the task folder's `shown/` directory and follow task archival.
+A save makes only that directory, never the task folder: one that crosses an archive writes into the moved
+folder or, finding no live folder, saves nothing, so the merge card's unlocked first view cannot recreate an
+archived task.
 The record on the reply row or question revision holds paths, content names, sizes and dimensions, the
 document's first heading and opening paragraph, and a hash of itself as its identity; it never holds
 the document text. A question showing identical files keeps its revision, changed files advance it,
