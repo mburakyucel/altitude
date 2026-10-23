@@ -32,8 +32,8 @@ One engine is enough, and each integration is
 
 - **Self-healing.** When something breaks, it gets repaired and the work picks up where it stopped.
 - **Self-improving.** Altitude learns from its own finished work and fixes what slowed it down.
-- **Routines.** Give an agent a job and schedule it or make it event-driven: send a report, clean up stale
-  branches, open upgrade pull requests.
+- **Routines.** Give an agent a job and schedule it or make it event-driven: send a report, check your
+  dependencies, clean up stale branches.
 - **Parallel without collisions.** Many tasks at once, each on its own copy of the code.
 - **Balanced quotas.** By default, each task goes to the engine that has used less of its week, so both are
   used evenly.
