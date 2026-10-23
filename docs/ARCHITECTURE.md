@@ -2903,8 +2903,9 @@ worker's events as a repair's are, `altitude/steps.py`), its copy's changed file
 `/api/chats/<project>/<id>/{message,remove,retry,rename,model,stop,archive,reopen,delete}` change one.
 Each request carries an identity the record keeps, so a repeat acts once. Every chat route takes a
 paired device's cookie, passes the page's own-origin and [own agents](#altitudes-own-agents) checks and
-refuses the machine key, as repair routes do: no agent reads or steers a chat, so what one chat's agent
-saw reaches no other. The operator's terminal reads chats with `alt chats`. A chat's file changes
+refuses the machine key, as repair routes do: no agent reads or steers a chat through Altitude. A chat's
+agent, task workers and routine runs see only their own folders, so none reaches another chat's files; L3's
+sandbox reads Altitude's home, chats' folders included, as it reads repairs'. The operator's terminal reads chats with `alt chats`. A chat's file changes
 publish the change stream's project key, which refreshes its reads; a running turn is a Monitor
 session row. Chats never appear in Needs you, the project's tasks in flight or L3's records.
 
