@@ -164,8 +164,46 @@ class TestTurns(ChatCase):
                                     "engine": "claude", "model": "fixture-model", "answer": None, "error": None})
             chats._save(self.project, record)
         self.assertEqual(chats.due(self.project), [chat_id])
+        chats.service_started()  # it did not go on, so no line says it continued
         chats.run(self.project, chat_id)
         self.assertEqual(self.chat(chat_id)["turns"][0]["state"], "cut")
+        self.assertEqual(self.chat(chat_id)["events"], [])
+        self.assertEqual(self.launches, [])
+
+    def test_stop_pressed_while_a_turn_starts_stops_its_worker_once_known(self):
+        chat_id = self.new()
+        original = self.start
+
+        def pressed(*a, **kw):
+            chats.stop(self.project, chat_id, self.request())
+            return original(*a, **kw)
+        self.patch(engines, "start_chat_turn", side_effect=pressed)
+        chats.run(self.project, chat_id)
+        self.stopped.assert_called_once()
+        self.assertEqual(self.chat(chat_id)["turns"][0]["state"], "stopped")
+
+    def test_a_message_sent_as_the_thread_ends_goes_next_without_waiting_for_the_tick(self):
+        chat_id = self.new()
+        self.answered_all(chat_id)
+        original, sent = chats._start, []
+
+        def ending(project, chat):
+            started = original(project, chat)
+            if started is False and not sent:  # the route's thread found this one still alive
+                sent.append(chats.message(project, chat, "One more thing.", self.request()))
+            return started
+        self.patch(chats, "_start", side_effect=ending)
+        chats.run(self.project, chat_id)
+        self.assertEqual([t["state"] for t in self.chat(chat_id)["turns"]], ["done", "done"])
+        self.assertEqual(self.launches[-1]["prompt"], "One more thing.")
+
+    def test_main_that_cannot_be_fetched_fails_the_turn_with_retry(self):
+        chat_id = self.new()
+        self.patch(git_policy, "fetch_origin", side_effect=git_policy.FetchError("could not read from remote"))
+        chats.run(self.project, chat_id)
+        turn = self.chat(chat_id)["turns"][0]
+        self.assertEqual((turn["state"], turn["error"]),
+                         ("failed", "Its copy of main could not be made: could not read from remote"))
         self.assertEqual(self.launches, [])
 
     def test_a_running_turn_survives_a_restart_and_says_so(self):
@@ -286,6 +324,7 @@ class TestCopyAndLife(ChatCase):
         self.assertTrue(copy.is_dir())
         self.assertFalse((copy / "export.py").exists())
         self.assertEqual(self.launches[-1]["resume"], "claude-session")
+        self.assertEqual(self.launches[-1]["prompt"], chats.FRESH + "More?")
         self.assertEqual([e["kind"] for e in self.chat(chat_id)["events"]], ["archived", "reopened"])
 
     def test_committed_changes_count_and_archive_waits_for_the_reply(self):
@@ -301,6 +340,21 @@ class TestCopyAndLife(ChatCase):
             "commit", "-q", "-m", "a", cwd=copy)
         (copy / "b.txt").write_text("b\n")
         self.assertEqual(chats.changes(self.project, chat_id), 2)
+
+    def test_a_copy_whose_folder_went_missing_comes_back_on_its_branch(self):
+        chat_id = self.new()
+        self.answered_all(chat_id)
+        copy = chats.worktree(self.project, chat_id)
+        (copy / "a.txt").write_text("a\n")
+        git("add", "a.txt", cwd=copy)
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+            "commit", "-q", "-m", "a", cwd=copy)
+        made = git("rev-parse", "HEAD", cwd=copy).strip()
+        subprocess.run(["rm", "-rf", str(copy)], check=True)
+        chats.message(self.project, chat_id, "Go on.", self.request())
+        self.answered_all(chat_id)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=copy).strip(), made)
+        self.assertEqual(self.launches[-1]["prompt"], "Go on.")
 
     def test_delete_takes_an_archived_chat_for_good(self):
         chat_id = self.new()
@@ -354,6 +408,10 @@ class TestCopyAndLife(ChatCase):
         chat_id = self.new()
         self.answered_all(chat_id)
         self.assertNotIn(f"chat-{chat_id}", tidy._candidates(self.project))
+        # A task's worktree whose name merely starts like a chat's stays a candidate.
+        git("worktree", "add", "-q", "-b", "chat-export-polish", str(config.task_worktree(self.project, "chat-export-polish")),
+            cwd=self.repo)
+        self.assertIn("chat-export-polish", tidy._candidates(self.project))
 
 
 class TestLaunch(ChatCase):

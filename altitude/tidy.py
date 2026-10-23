@@ -14,6 +14,7 @@ write refs.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,7 +25,7 @@ QUIET = timedelta(days=7)
 ASIDE = timedelta(days=14)
 SET_ASIDE = ".set-aside"
 #: Folders under the worktree root that are never a target: routine runs' and agent chats' own copies.
-RUN_COPY = ("project-agent-", "chat-")
+RUN_COPY = re.compile(r"project-agent-|chat-[0-9a-f]{12}$")
 UNDO = "refs/altitude/undo"
 #: Lines the run's inventory lists at most, of worktrees and of branches each.
 LISTED = 100
@@ -77,7 +78,7 @@ def _candidates(project: str) -> dict[str, dict]:
     out = {}
     for entry in worktrees(project):
         path = Path(entry["path"])
-        if (os.path.realpath(path.parent) != base or path.name.startswith((".", *RUN_COPY)) or path.is_symlink()
+        if (os.path.realpath(path.parent) != base or path.name.startswith(".") or RUN_COPY.match(path.name) or path.is_symlink()
                 or not path.is_dir()):
             continue
         out[path.name] = {**entry, "name": path.name, "path": path}

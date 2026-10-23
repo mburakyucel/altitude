@@ -32,6 +32,9 @@ ACTOR = "chat"
 FROM_BROWSER = "Agent chats change only from your own browser."
 PAGE_FROM_BROWSER = "An agent chat opens only in your own browser or terminal."
 ANSWERING = ("starting", "answering")
+#: Ahead of the first message after the copy was made again from main, so the session does not count on earlier work.
+FRESH = ("(Altitude: your copy of the code was made again from main since your last turn; earlier changes and "
+         "commits in it are gone.)\n\n")
 
 
 class Refused(ValueError):
@@ -309,6 +312,7 @@ def delete(project: str, chat_id: str) -> dict:
         if not record["archived"]:
             raise Refused("Archive this chat before deleting it.")
         shutil.rmtree(folder(project, chat_id))
+    _remove_copy(project, chat_id)  # whatever an interrupted archive left behind
     return {"deleted": chat_id}
 
 
@@ -337,10 +341,17 @@ def changes(project: str, chat_id: str) -> int:
     return len(names)
 
 
-def _make_copy(project: str, chat_id: str) -> str:
-    """The chat's copy at the fetched main, on its own branch, made again from main when a reopening removed it."""
+def _make_copy(project: str, chat_id: str, base: str | None) -> str:
+    """The chat's copy on its own branch: the branch again when only the folder went missing, so its commits stay;
+    otherwise the fetched main, for a new chat or one reopened."""
     from . import dispatch
     repo = config.project_path(project)
+    if base and not _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch(chat_id)}").returncode:
+        _git(repo, "worktree", "prune")
+        made = _git(repo, "worktree", "add", str(worktree(project, chat_id)), branch(chat_id))
+        if made.returncode:
+            raise RuntimeError(f"git worktree add failed: {(made.stderr or made.stdout).strip()[:300]}")
+        return base
     with dispatch.publication_settlement(project):
         sha = git_policy.fetch_origin(repo, "main")
     copy = worktree(project, chat_id)
@@ -369,33 +380,42 @@ _running: set[tuple[str, str]] = set()
 _running_lock = threading.Lock()
 
 
+def _due(record: dict) -> bool:
+    return not record["archived"] and bool(_turn(record) or _waiting(record))
+
+
 def due(project: str) -> list[str]:
     """The project's chats whose turn a thread should follow or start: one in progress or messages waiting."""
-    return [r["id"] for r in records(project) if not r["archived"] and (_turn(r) or _waiting(r))]
+    return [r["id"] for r in records(project) if _due(r)]
 
 
 def run(project: str, chat_id: str) -> None:
     """Start the chat's next turn while messages wait and follow each until its worker ends. One thread per chat; the
     service's tick starts one again after a restart."""
     key = (project, chat_id)
-    with _running_lock:
-        if key in _running:
-            return
-        _running.add(key)
-    try:
-        while True:
-            turn = _turn(load(project, chat_id))
-            if turn and turn.get("worker"):
-                _follow(project, chat_id, turn["n"])
-                continue
-            if turn:  # claimed and never launched: a restart interrupted its start
-                _end(project, chat_id, turn["n"], "cut", None)
-                continue
-            if not _start(project, chat_id):
-                return
-    finally:
+    while True:
         with _running_lock:
-            _running.discard(key)
+            if key in _running:
+                return
+            _running.add(key)
+        try:
+            while True:
+                turn = _turn(load(project, chat_id))
+                if turn and turn.get("worker"):
+                    _follow(project, chat_id, turn["n"])
+                    continue
+                if turn:  # claimed and never launched: a restart interrupted its start
+                    _end(project, chat_id, turn["n"], "cut", None)
+                    continue
+                started = _start(project, chat_id)
+                if not started:
+                    break
+        finally:
+            with _running_lock:
+                _running.discard(key)
+        # A message sent as this thread ended found it still alive, so no other thread started for it: take it now.
+        if started is None or not _due(load(project, chat_id)):
+            return
 
 
 def _option(record: dict, project: str) -> dict:
@@ -408,12 +428,12 @@ def _option(record: dict, project: str) -> dict:
     return {"engine": picked.get("engine"), "model": picked.get("model"), "effort": picked.get("effort")}
 
 
-def _start(project: str, chat_id: str) -> bool:
-    """Claim the waiting messages as the next turn and start its worker; False when nothing waits or the service is
-    restarting, whose tick starts it afterwards."""
+def _start(project: str, chat_id: str) -> bool | None:
+    """Claim the waiting messages as the next turn and start its worker; False when nothing waits, None when the service
+    is restarting, whose tick starts it afterwards."""
     with config.provider_admission() as held, config.restart_lock() as ready:
         if held or not ready or config.restart_in_progress():
-            return False
+            return None
         with S.project_lock(project):
             record = load(project, chat_id)
             waiting = _waiting(record)
@@ -435,6 +455,8 @@ def _start(project: str, chat_id: str) -> bool:
             _save(project, record)
         try:
             launched = _launch(project, chat_id, n, option)
+        except git_policy.FetchError as exc:  # the reply says so, and Retry tries again
+            launched = {"worker": None, "error": _line(f"Its copy of main could not be made: {exc}")}
         except Exception as exc:
             _end(project, chat_id, n, "failed", _line(str(exc)))
             raise
@@ -449,14 +471,15 @@ def _launch(project: str, chat_id: str, n: int, option: dict) -> dict:
     record = load(project, chat_id)
     base = record.get("base")
     if not base or not worktree(project, chat_id).is_dir():
-        base = _make_copy(project, chat_id)
+        base = _make_copy(project, chat_id, base)
         _record(project, chat_id, base=base)
+    fresh = base != record.get("base") and any(t["n"] < n for t in record["turns"])
     sent = [m for m in record["messages"] if m.get("turn") == n]
     resume = record["session"] if record["engine"] == option["engine"] else None
-    result = _turn_worker(project, chat_id, n, option, sent, resume, record)
+    result = _turn_worker(project, chat_id, n, option, sent, resume, record, fresh)
     if resume and result.get("returncode") and not result.get("rejection"):
         resume = None  # the engine lost the session: a new one is given the conversation so far
-        result = _turn_worker(project, chat_id, n, option, sent, None, record)
+        result = _turn_worker(project, chat_id, n, option, sent, None, record, fresh)
     worker = result.get("agent") or {}
     if result.get("rejection"):
         route.note_rejection(option, result["rejection"])
@@ -478,8 +501,10 @@ def _launch(project: str, chat_id: str, n: int, option: dict) -> dict:
 
 
 def _turn_worker(project: str, chat_id: str, n: int, option: dict, sent: list[dict], resume: str | None,
-                 record: dict) -> dict:
+                 record: dict, fresh: bool) -> dict:
     text = "\n\n".join(m["text"] for m in sent if m["text"]) or "(Images only.)"
+    if fresh:
+        text = FRESH + text
     if not resume and any(t["n"] < n for t in record["turns"]):
         text = _history(record, n) + text
     refs = [ref for m in sent for ref in m.get("images", [])]
@@ -580,7 +605,7 @@ def service_started() -> None:
     for project in config.load_projects():
         with S.project_lock(project):
             for record in records(project):
-                if _turn(record):
+                if (_turn(record) or {}).get("worker"):  # one never launched is cut off (`run`)
                     _event(record, "restarted")
                     _save(project, record)
 

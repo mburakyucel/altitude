@@ -2873,8 +2873,10 @@ links, no GitHub sign-in, no Send now), except that it writes the git objects an
 copy, so it can commit there. Its `alt` admits only the read commands a task worker has
 (`ALTITUDE_ACTOR=chat`). Its persona is `personas/chat.md`. The chat's copy is a worktree on the
 `chat-<id>` branch in the project's worktree folder, made with `--no-track` from the fetched main when
-the first turn starts; tidy and task cleanup leave names starting `chat-` alone. A turn takes no task
-slot and waits only while Altitude restarts.
+the first turn starts. A copy whose folder went missing comes back on its branch, keeping its commits;
+main is fetched again only for a chat without a copy, and a copy main cannot be fetched for fails the turn
+with Retry. Tidy and task cleanup leave `chat-<id>` copies alone. A turn takes no task slot and waits only
+while Altitude restarts.
 
 The first turn's session is the chat's session, and later turns resume it from the chat's own engine
 folder (`<project>/chats/<id>/l2-engine`). When the answering engine is not the one holding the session,
@@ -2882,16 +2884,17 @@ because the operator chose another model or a resume fails, the turn starts a ne
 conversation so far as quoted evidence, and the conversation shows that line. The thread follows the
 worker (`engines.owned_worker`), records the session's context, and records the turn's end: its
 answer (`engines.worker_answer`), Stop, or why it could not answer, with Retry, which sends the same
-messages again. The worker's job outlives a restart of the service: the service records a restart line
-on each chat with a turn running, and its tick finds every chat with a turn running or messages waiting
+messages again. A message sent as the thread ends is taken by that thread, which another could not start
+beside it. The worker's job outlives a restart of the service: the service records a restart line
+on each chat whose turn's worker is running, and its tick finds every chat with a turn running or messages waiting
 (`chats.due`) and follows or starts it again. A turn whose worker is gone, or whose start a restart
 interrupted, reads cut off.
 
 Archive refuses while a turn runs or a message waits, and while the copy has changes (committed or
 not, since its base) the request has not accepted; it then removes the copy, its branch and its
 scratch folder and keeps the conversation and session. Reopen makes a fresh copy of main at the next
-turn, which continues the same session. Delete removes an archived chat's folder for good, its engine
-session with it.
+turn, which continues the same session and is told first that its earlier changes are gone. Delete
+removes an archived chat's folder for good, its engine session with it, and anything left of its copy.
 
 `GET /api/chats/<project>` lists a project's chats with their state and latest activity;
 `GET /api/chats/<project>/<id>` is one chat with its conversation, each turn's steps (read from the

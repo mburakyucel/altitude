@@ -2764,8 +2764,8 @@ adopts for what ships; [behavior](../../docs/ARCHITECTURE.md#agent-chats)). What
   answer: <the engine's reason>. Choose another model below, or Retry after it resets." and "The reply was cut
   off: Altitude stopped while it ran." A message sent while it answers waits as a muted bubble, "Waits for the
   reply · Remove", and goes next. The page follows its newest line.
-- **Menu** (phone bottom sheet, desktop popover from ⋯): Rename and Archive, both disabled while it answers
-  ("Available when the reply ends"), then muted "<engine> · started Oct 21 · its copy: 1 changed file" (or "no
+- **Menu** (phone bottom sheet, desktop popover from ⋯): Rename; Archive, disabled while it answers ("Available
+  when the reply ends"); then muted "<engine> · started Oct 21 · its copy: 1 changed file" (or "no
   changes"). Rename edits the name in place ("Chat name", 1–80 characters; Enter or Save saves, Escape or
   Cancel restores; the phone's back hides meanwhile).
 - **Archive**: without changes it archives at once; with changes it asks "Archive this chat?", naming the
