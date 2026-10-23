@@ -214,6 +214,15 @@ test.describe(() => {
     await expect(chat.getByText("Dock task 35 is on track.", { exact: true })).toBeVisible();
     await expect(ending).toHaveCount(0);
     await walk.open("/projects/delta/agents/weekly");
+    // As in CI, the chat's first read is still on its way when the project names the run: it is held until the chat
+    // reads back to the run, so a page that waits for that first read to land never reaches the run.
+    let reached = () => {};
+    const reaching = new Promise<void>((resolve) => { reached = resolve; });
+    await page.route((url) => url.pathname === "/api/chat/delta", async (route) => {
+      if (new URL(route.request().url()).searchParams.has("reach")) reached();
+      else await reaching;
+      await route.continue();
+    });
     await press(page.getByRole("main").locator(".agent-run").filter({ hasText: "Stopped by you" }));
     await expect(page).toHaveURL(/\/projects\/delta#improvement-[0-9a-f]{12}$/);
     await walk.state("50-older-run-in-chat", { visible: [ending], hidden: [] });

@@ -7,6 +7,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 - An answer or message to a waiting task wakes its agent at once, even while an open page is reading the
   project's setup; that read no longer leaves the agent waiting for the next half-minute check.
+- Opening an older Weekly improvement review run from its page takes the chat back to that run every time, rather
+  than sometimes showing the latest conversation until the next refresh.
 - The overview no longer fails to load when a task is archived while it is being read: the task's history is
   read from wherever the archive has just moved it.
 - Work can show your agents as a graph: on a computer, the List | Graph switch beside Work puts every current
@@ -26,7 +28,7 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - A finished task takes your follow-up: message a done task from its page or with `alt task message` and it
   reopens in place, with its conversation, session and earlier PRs, its working copy rebuilt if cleanup removed
   it. The agent answers or does the work and finishes again; the earlier finish stays as a Done row you can open.
-- The README and the overview show how Altitude fits together: you, the coordinator and project agents above altd,
+- The README and the overview show how Altitude fits together: you, the coordinator and routines above altd,
   which keeps every record and gates every merge, and task agents, independent review and GitHub below it.
 - A release approval names the version and its notes, and also covers changes that merge before the notes once
   their checks pass and the notes mention anything you would notice; the release owner tells you what joined
@@ -34,6 +36,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   needs a longer trial or brings a security fix the notes miss, and you can still ask for one exact commit.
 - Retry in voice settings is no longer refused now and then as "Voice is already being set up", and the automatic
   voice update at startup is no longer skipped, when a page happened to read voice's status at that moment.
+- A project's standing briefs are called routines, so they read apart from the agents that work on your tasks: the
+  Routines page and menu item, New routine, Work, Needs you, Monitor, chat and the docs all use the name. They are
+  still read and changed with `alt agent`.
+- The README's feature list describes routines and the terminal steps that wait for your Enter, and the
+  walkthrough shows a routine's suggested tasks.
 
 ## v0.12.0 — 2026-10-22
 

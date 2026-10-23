@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { Link, useLocation, useMatch, useNavigate, useParams, useSearchParams } from "react-router";
-import type { UseQueryResult } from "@tanstack/react-query";
+import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { BusyLabel } from "../components/StatusMark";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useWaitsForTool } from "../data/api";
 import type { Attention, ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
@@ -137,7 +137,7 @@ export function WorkPanel({
       <TaskCard project={name} task={task} variant="row" />
     </div>
   );
-  // Agent runs waiting or running sit in Current as rows of their own; they are not tasks, so nothing else counts them.
+  // Routine runs waiting or running sit in Current as rows of their own; they are not tasks, so nothing else counts them.
   const agents = project.data?.project_agents;
   const runs = agents?.runs ?? [];
   const inCurrent = current.length + runs.length;
@@ -210,7 +210,7 @@ export function WorkPanel({
           ) : null}
           {agents?.count ? (
             <Link className="wp-agents" to={`/projects/${name}/agents`} state={{ from: "project", tab: "work" }}>
-              Agents · {agents.count}
+              Routines · {agents.count}
               <svg aria-hidden viewBox="0 0 20 20" width="16" height="16">
                 <path d="M8 5l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -235,7 +235,7 @@ export function statusParts(
   if (chat?.active) {
     parts.push(chat.active.trigger === "chat" ? "L3 is answering" : `L3 is handling ${handling(chat.active.trigger)}`);
   } else if (chat) {
-    // An agent run's result line is Altitude's, not an answer from L3.
+    // A routine run's result line is Altitude's, not an answer from L3.
     const last = [...chat.history].reverse().find((row) => row.role === "assistant" && row.trigger !== "project-agent");
     if (last) {
       const label = engines.find((e) => e.engine === last.engine)?.label;
@@ -337,7 +337,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
   const menu = (
         <div role="menu" className="menu project-menu" aria-label="Project actions" onKeyDown={onMenuKey}>
           <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => settings(`/settings/projects/${name}`)}>Project settings…</button>
-          <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => navigate(`/projects/${name}/agents`)}>Agents…</button>
+          <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => navigate(`/projects/${name}/agents`)}>Routines…</button>
           <button type="button" role="menuitem" className="menu-item" data-action="setup" aria-label={`Setup: ${setup.label}`} aria-haspopup="dialog" disabled={pending} onClick={() => { close(true); setup.open(); }}>
             Setup…<span className="menu-item-meta">{setup.label}</span>
           </button>
@@ -496,9 +496,12 @@ export default function ProjectPage() {
   const reach = named && project.data?.improvements?.some((run) => run.id === named) ? named : undefined;
   const chat = useChat(name, 60, managed, reach);
   const refetchChat = chat.refetch;
+  const queryClient = useQueryClient();
+  // The read that reaches back replaces one already on its way: a refetch joins a first read in flight, which would
+  // land without the run (both start together when the page opens from the run's link).
   useEffect(() => {
-    if (reach) void refetchChat();
-  }, [reach, refetchChat]);
+    if (reach) void queryClient.cancelQueries({ queryKey: ["chat", name], exact: true }).then(() => refetchChat());
+  }, [name, queryClient, reach, refetchChat]);
   const { phone, panelInline } = useViewport();
   const [search] = useSearchParams();
   const tab = search.get("tab") === "work" ? "work" : "chat";

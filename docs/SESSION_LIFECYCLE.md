@@ -1330,7 +1330,7 @@ while no L3 option is available. A notification that later state already answers
 restart notice replaces the queued one, a newer block notification replaces the one queued for its task
 (it names every question then open), and each drain, with or without an engine, drops a block
 notification whose task has no open question left and a turn queued with a deadline that has passed (an
-agent run's or the Weekly improvement review's L3 check), recording an `l3-notice-dropped` project event.
+routine run's or the Weekly improvement review's L3 check), recording an `l3-notice-dropped` project event.
 A turn past its deadline is never claimed, even when it expires while the drain runs other turns.
 A turn that every option refuses before any provider output keeps its rows.
 An owner's `alt task reply --to l3` queues one owner-message notification per reply, never replaced.

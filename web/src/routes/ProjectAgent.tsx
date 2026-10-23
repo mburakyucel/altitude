@@ -10,9 +10,9 @@ import { CodeBlock, CopyButton } from "../components/CodeBlock";
 import { Overlay } from "../shell/Overlay";
 
 /*
- * One agent (design/wireframes/project-agents/PROPOSAL.md, "One agent"): its status with the actions the server
- * offers, recent runs, what it does with Edit, and Retire. A retired agent's page keeps its runs and definition as
- * text. Every press holds its button until a read of the agent shows the result.
+ * One routine (design/wireframes/project-agents/PROPOSAL.md, "One agent"): its status with the actions the server
+ * offers, recent runs, what it does with Edit, and Retire. A retired routine's page keeps its runs and definition as
+ * text. Every press holds its button until a read of the routine shows the result.
  */
 
 const LABELS: Record<Exclude<ProjectAgentAction, "open">, string> = { run: "Run now", pause: "Pause", resume: "Resume", turn_on: "Turn on", stop: "Stop" };
@@ -107,7 +107,7 @@ function SendSection({ send }: { send: NonNullable<ProjectAgentDetail["send"]> }
     <p className="text-meta text-muted">From a script or your terminal on this computer:</p>
     <CodeBlock text={send.command} info="" />
     {send.id ? <p className="text-meta text-muted">The examples use its id, <code>{send.id}</code>, so they keep working after a rename.</p> : null}
-    <p className="text-meta text-muted">To try it first, use <code>agent run</code> in place of <code>agent send</code>: it starts a run now, even before the agent is on.</p>
+    <p className="text-meta text-muted">To try it first, use <code>agent run</code> in place of <code>agent send</code>: it starts a run now, even before the routine is on.</p>
     <details className="agent-fold">
       <summary>Examples</summary>
       <div className="agent-recipes">
@@ -123,7 +123,7 @@ function SendSection({ send }: { send: NonNullable<ProjectAgentDetail["send"]> }
 
 type Retiring = { state: "idle" | "retiring" } | { state: "refused"; message: string };
 
-/** Retire: Cancel first and focused; Retiring… holds both buttons until the agent reads as retired. */
+/** Retire: Cancel first and focused; Retiring… holds both buttons until the routine reads as retired. */
 function RetireDialog({ name, retiring, onRetire, onClose }: { name: string; retiring: Retiring; onRetire: () => void; onClose: () => void }) {
   const busy = retiring.state === "retiring";
   return <Overlay label={`Retire ${name}?`} side="center" onClose={() => { if (!busy) onClose(); }}>
@@ -163,8 +163,8 @@ export default function ProjectAgentPage() {
     }
   };
   return <AgentFrame back={{ to: `/projects/${name}/agents`, label: name }} title={data?.name ?? ""}>
-    {agent.isPending ? <div className="settings-card"><StatusMark label="Loading this agent…" /></div>
-      : !data ? <div className="settings-card" role="alert"><p>Could not load this agent.</p>
+    {agent.isPending ? <div className="settings-card"><StatusMark label="Loading this routine…" /></div>
+      : !data ? <div className="settings-card" role="alert"><p>Could not load this routine.</p>
         <button type="button" className="btn agents-retry" onClick={() => void agent.refetch()}>Retry</button></div>
         : <ProseScope project={name}>
           {retired ? <p className="text-muted agent-retired-line">{data.status.line}</p> : <StatusCard project={name} agent={data} clock={clock} onRead={() => void agent.refetch()} />}
@@ -179,7 +179,7 @@ export default function ProjectAgentPage() {
             </div>
           </section>
           {retired ? null : <section className="settings-section" aria-labelledby="agent-retire">
-            <h2 id="agent-retire">Retire agent</h2>
+            <h2 id="agent-retire">Retire routine</h2>
             <div className="settings-group"><div className="settings-row agent-retire">
               <button type="button" className="btn btn-outline-danger" aria-haspopup="dialog" onClick={() => { setRetiring({ state: "idle" }); setDialog(true); }}>Retire…</button>
             </div></div>

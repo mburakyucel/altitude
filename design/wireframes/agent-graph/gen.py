@@ -36,7 +36,7 @@ TASKS = [
     ("Upgrade the payment SDK", "", "The task session ended before completion. Waiting for the coordinator to check the blocker.",
      "danger", False, 0, None, "task"),
     ("Update the onboarding copy", "", "Queued · waits for a free task slot", "idle", False, 0, None, "task"),
-    ("Dependency check", "", "Agent run · 4 of 20 min", "running", True, 0, None, "run"),
+    ("Dependency check", "", "Routine run · 4 of 20 min", "running", True, 0, None, "run"),
 ]
 
 
@@ -143,7 +143,7 @@ def constellation(tasks=TASKS, l3="Answering", l3_live=True, focus=None, still=F
 
 def foot():
     return (f'<div class="wfold">{CHEVR}Done this week (3)</div>'
-            f'<div class="wagents">Agents · 2{CHEVR}</div>')
+            f'<div class="wagents">Routines · 2{CHEVR}</div>')
 
 
 DOTS = {"running": "", "waiting": "held", "danger": "bad", "idle": "idle"}
@@ -167,7 +167,7 @@ RAIL = ('<aside class="rail"><div class="brand"><span class="mark"><svg viewBox=
 
 CONVO = ('<div class="day">Today</div>'
          '<div class="me">What is running right now?</div>'
-         '<div class="l3"><p>Five tasks and one agent run. The login fix waits on your answer about session length; '
+         '<div class="l3"><p>Five tasks and one routine run. The login fix waits on your answer about session length; '
          'the payment SDK upgrade ended early and I am looking at why.</p></div>'
          '<div class="me">Start the export dashboard once the pipeline rework lands.</div>'
          '<div class="l3"><p>Planned it after the pipeline rework. It starts on its own when that task is done.</p></div>')

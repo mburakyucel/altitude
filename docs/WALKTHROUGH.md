@@ -163,7 +163,7 @@ session.
 </picture>
 
 **Take the terminal.** The billing owner hands you a step only you can take; it waits typed in the
-task's terminal until you press Enter.
+task's terminal until you press Enter, and the owner reads the result.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-terminal-phone.webp">
@@ -192,6 +192,14 @@ task.
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-improve-phone.webp">
   <img src="images/feature-improve.webp" alt="Improvement suggestions from finished work, each citing the tasks it came from; the first is accepted and the coordinator is opening a task." width="860">
+</picture>
+
+**Routines that keep watch.** Harbor's built-in dependency check found two security fixes; the tasks it
+suggested wait in Needs you, each a tap from becoming one.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-routines-phone.webp">
+  <img src="images/feature-routines.webp" alt="Harbor's routines: the dependency check, which found something an hour ago, and Review each merge, which runs when it's sent an event, with Build health and What landed ready to turn on; beside it, Needs you with the dependency check's two suggested tasks, each with Make a task." width="860">
 </picture>
 
 ## Capture source and maintenance

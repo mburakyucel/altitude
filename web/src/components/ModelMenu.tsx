@@ -295,7 +295,7 @@ export function RoleModelButton({ project, variant = "pill" }: { project?: strin
 // ---- A form's choice: a pick changes only the form ---------------------------------------------
 
 /**
- * The model button inside a form (a project agent's Model): the same panel, with Default where a role has Auto. A
+ * The model button inside a form (a routine's Model): the same panel, with Default where a role has Auto. A
  * pick only changes the form's value, saved with the form.
  */
 export function ChoiceButton({ value, onChange, label }: { value: Choice; onChange: (value: Choice) => void; label: string }) {

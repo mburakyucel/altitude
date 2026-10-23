@@ -61,7 +61,7 @@ Owners rebase before landing and keep edits in shared documents to their own sec
 
 Inspect routing, usage windows and observed sessions in **Monitor**. Missing or stale readings
 remain explicit. The mark on each seat window's meter is Altitude's reserve, 90% of the window: past
-it, or while a reading is missing or stale, optional work on that engine (project agent runs and the
+it, or while a reading is missing or stale, optional work on that engine (routine runs and the
 Weekly improvement review) is skipped so tasks keep the remaining allowance; tasks still start past it.
 **Settings → This project**, opened from the project's three dots, sets independent model and effort
 defaults for L3 and L2 on each engine. These settings preserve running task attempts;
@@ -235,44 +235,44 @@ resume waiting messages. Removing the last project opens First run; otherwise a 
 project is selected. `alt project remove <name>` uses the same checks. See
 [project lifecycle](CLI.md#project-lifecycle).
 
-## Project agents
+## Routines
 
-A [project agent](ARCHITECTURE.md#project-agents) is a brief Altitude runs for a project on a schedule, when your
+A [routine](ARCHITECTURE.md#routines) is a brief Altitude runs for a project on a schedule, when your
 own scripts send it an event, or when you press Run now. Each run reads the project in its own fresh copy and the
-public web, and only reports. Open **Agents…** in the project's **More actions** menu:
+public web, and only reports. Open **Routines…** in the project's **More actions** menu:
 
-- **Turn on** a built-in agent (Dependency check, Build health or What landed) to use it as it is; **Edit**
+- **Turn on** a built-in routine (Dependency check, Build health or What landed) to use it as it is; **Edit**
   changes it later.
-- **New agent** opens the form: a name, what it does, when it runs, what it tells you in chat, its model and how
-  long each run may take. A new agent starts off, so you can try it with **Run now** before you turn it on.
-- Ask L3 in chat to set one up; it drafts the agent as a card under its reply, and only your **Create agent**
+- **New routine** opens the form: a name, what it does, when it runs, what it tells you in chat, its model and how
+  long each run may take. A new routine starts off, so you can try it with **Run now** before you turn it on.
+- Ask L3 in chat to set one up; it drafts the routine as a card under its reply, and only your **Create routine**
   press saves it.
-- From this computer's terminal, `alt agent new` saves one ([CLI](CLI.md#project-agents)).
+- From this computer's terminal, `alt agent new` saves one ([CLI](CLI.md#routines)).
 
-The weekly budget on the Agents page caps the time all of a project's runs take, counted from Monday. A run that
+The weekly budget on the Routines page caps the time all of a project's runs take, counted from Monday. A run that
 finds something says so in chat as **Tell me** allows, keeps its report on its page, and may suggest up to three
 tasks, which L3 checks before they wait for you under Suggestions in Needs you.
 
-## Sending agents events
+## Sending events to routines
 
-An agent with the trigger "When it's sent an event" runs on what your own scripts on this computer send it. Its
-page shows the command with its name filled in, quoted for the shell, or its id when another agent shares the name:
+A routine with the trigger "When it's sent an event" runs on what your own scripts on this computer send it. Its
+page shows the command with its name filled in, quoted for the shell, or its id when another routine shares the name:
 
 ```sh
 alt --project harbor agent send 'Review each merge' "PR #812 merged"
 ```
 
-The examples below use the agent's id, which keeps working after a rename.
+The examples below use the routine's id, which keeps working after a rename.
 
-Events that arrive during a run go to its next run together. `--key` makes a send safe to repeat: the agent
+Events that arrive during a run go to its next run together. `--key` makes a send safe to repeat: the routine
 ignores a key it already took, so a script can send the latest few things it sees every time it runs and needs
 no record of its own. A refused send ("Not sent: Review each merge is paused." and the like, on standard
-error with exit status 1) keeps nothing, and an event no run read gives its key back when the agent is paused,
-retired or pauses itself, or its run is skipped or stopped before it starts, so the script's next run brings it in again. To try an agent first, `alt agent run`
-in place of `alt agent send` starts a run now with your text, even before the agent is on.
+error with exit status 1) keeps nothing, and an event no run read gives its key back when the routine is paused,
+retired or pauses itself, or its run is skipped or stopped before it starts, so the script's next run brings it in again. To try a routine first, `alt agent run`
+in place of `alt agent send` starts a run now with your text, even before the routine is on.
 
 A run has your code and the network, so send numbers and your own words, never text anyone else can write, such
-as an issue's title; the run reads the pull request or issue itself. These examples, which the agent's page also
+as an issue's title; the run reads the pull request or issue itself. These examples, which the routine's page also
 shows for its own id and repository (the two GitHub ones only when the project's origin is on GitHub), run from
 cron every few minutes; a line starting `#` holds the crontab entry.
 They use the GitHub CLI, signed in as you already are, and `PATH` finds `alt` and `gh` from cron on Linux and the
@@ -304,7 +304,7 @@ When a command of yours fails:
 make bench >/dev/null 2>&1 || alt --project harbor agent send 3f9a2c1b0e4d "Benchmarks failed on $(git rev-parse --short HEAD)"
 ```
 
-Only you send events: task workers, L3 and agent runs cannot, and nothing new listens on the network.
+Only you send events: task workers, L3 and routine runs cannot, and nothing new listens on the network.
 
 ## Worktree and source export retention
 
@@ -318,9 +318,9 @@ reason. Inspect them in that worktree, then remove it with `git worktree remove`
 When your message [reopens a done task](CLI.md#reopen-a-done-task), Altitude restores its worktree before
 the owner starts: on the kept branch, or from current `origin/main` once the merged branch is gone; the
 task is cleaned up again after it finishes.
-A [project agent](ARCHITECTURE.md#project-agents) run's copy, `.claude/worktrees/project-agent-<agent>-<n>`,
+A [routine](ARCHITECTURE.md#routines) run's copy, `.claude/worktrees/project-agent-<agent>-<n>`,
 and its scratch folder are removed when the run ends; its prompt, report and session stay in the project's
-`project-agents` folder until the run is pruned, 90 days on and beyond the agent's newest ten runs.
+`project-agents` folder until the run is pruned, 90 days on and beyond the routine's newest ten runs.
 
 A source deployment removes `.altitude-source/<sha>` exports that nothing names: the running service's
 export, the target of `current` and exports named by an unfinished or not yet cleaned-up task's brief

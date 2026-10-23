@@ -136,10 +136,10 @@ distinct from the fictional local UI harness.
 | `/projects/:name/tasks/:slug/terminal` | the same page with the task's terminal in front (phone tab, desktop panel view) | new |
 | `/projects/:name/terminal` | the project with its folder's terminal in the right panel; full screen on phone | new |
 | `/projects/:name/tasks/:slug/report` | the task's full report, with its digest at `#digest` | new |
-| `/projects/:name/agents` | the project's agents (§3.17) | new |
-| `/projects/:name/agents/new`, `/projects/:name/agents/:id[/edit]` | the agent form; one agent's page and its form (§3.17) | new |
+| `/projects/:name/agents` | the project's routines (§3.17) | new |
+| `/projects/:name/agents/new`, `/projects/:name/agents/:id[/edit]` | the routine form; one routine's page and its form (§3.17) | new |
 | `/projects/:name/agents/weekly` | the Weekly improvement review's page, in Altitude's own project (§3.17) | new |
-| `/projects/:name/agents/:id/runs/:n` | one agent run's page (§3.17) | new |
+| `/projects/:name/agents/:id/runs/:n` | one routine run's page (§3.17) | new |
 | `/monitor` | Monitor | unchanged |
 | `/repairs/:id` | one repair's page in a task's form (§3.15); Work is lit, or no tab before any project exists | new |
 | `/projects`, `/chat/:name` | redirect to the first managed project, or to `/projects/:name` | the Projects list |
@@ -255,8 +255,8 @@ A healthy project's header holds no Setup control. **Setup…** in the overflow 
 configuration checklist without replacing the conversation or draft; the header shows Setup only
 while setup needs attention (§3.12).
 
-Overflow menu: **Project settings…** (opens `/settings/projects/<name>`), **Agents…** (opens the project's
-agents, §3.17), **Setup…** with the current
+Overflow menu: **Project settings…** (opens `/settings/projects/<name>`), **Routines…** (opens the project's
+routines, §3.17), **Setup…** with the current
 setup status in muted text (§3.12), **Reset L3 conversation…** (confirm inline; `POST /api/l3/reset`),
 **All settings…** (opens Settings with this project under **This project**), **Design boards ↗**
 (present only when `GET /api/project/<name>` reports a design URL; opens in a new tab). The menu
@@ -288,7 +288,7 @@ links; no headings, no tables. A task card (§3.5) sits under an L3 reply whose 
 and Create task (below) under the latest reply that offered one. An improvement review shows at its
 run's row as a line or one card, and a running review as a line with Stop at the end
 ([improvement suggestions](improvement-review/PROPOSAL.md#where-suggestions-appear)). When a change of
-terms turns Weekly off, one line says so and links to its page on the Agents page (§3.17).
+terms turns Weekly off, one line says so and links to its page on the Routines page (§3.17).
 System turns render as system lines (§3.4). Hovering a row shows its time in the gutter; on the
 phone a long-press shows it. The phone layout is portrait 390 wide only; landscape is unsupported.
 The conversation scrolls inside the fixed shell, shrinks above the keyboard, and follows its newest
@@ -889,15 +889,15 @@ releasing the task. There is no release button in Work or the task conversation.
 one in the accent tint. List is the default; the choice is remembered by this browser (`altitude.workView`,
 a display preference and nothing else) and lasts for the page when storage is unavailable. Phone Work
 has no switch and always shows the list. Graph replaces only Current: Altitude repairs, Done this week
-and Agents stay below, and the counts are unchanged.
+and Routines stay below, and the counts are unchanged.
 
 The graph ([design record](agent-graph/PROPOSAL.md), boards beside it) puts every current task and
-agent run on a ring around L3: the operator's turns first at the top, then the list's order, clockwise.
+routine run on a ring around L3: the operator's turns first at the top, then the list's order, clockwise.
 Up to seven sit on a 150px circle; beyond, the ring stretches into a racetrack that keeps 132px between
 neighbours and the panel scrolls. L3 in the middle is a quiet outlined label, not a control, with the
 header's compact word under it (**Answering**, **Handling …**, **Busy**, **Ready**, **Not started**);
 hairline spokes join it to each node. A node is a 40px disc in its row's dot colour (dashed muted ring
-for queued, planned and paused work; a rounded square for an agent run) with its label under it: the
+for queued, planned and paused work; a rounded square for a routine run) with its label under it: the
 title on at most two lines, ending in a chevron, then the state line in the row's own words — the
 attention text whole ("Your turn · 1 question", amber, with the open-question count as a badge), else
 the meta up to its first " · " or a fault's first sentence (red). Each node is one link opening what
@@ -923,11 +923,11 @@ answers or handles something.
 | Keyboard | Tab: the switch, then each node in ring order; Enter opens. L3 is not a stop. |
 | Reduced motion | Nothing breathes, glides or fades; a live node keeps a still halo. |
 
-A waiting or running [project agent](#317-project-agents) run is a row in Current with the ordinary dot
-and chevron: the agent's name over "Agent run · 2 of 20 min", "Agent run · waiting to start" or
-"Agent run · waiting while <agent> runs"; it opens the run's page and counts in Current. Runs are not tasks: the
-project header's tasks in flight and Done this week leave them out, and a finished run leaves Work. After Done this week, **Agents · N** with a chevron
-opens the Agents page; with no agents the row is absent and the project menu's **Agents…** remains.
+A waiting or running [routine](#317-routines) run is a row in Current with the ordinary dot
+and chevron: the routine's name over "Routine run · 2 of 20 min", "Routine run · waiting to start" or
+"Routine run · waiting while <routine> runs"; it opens the run's page and counts in Current. Runs are not tasks: the
+project header's tasks in flight and Done this week leave them out, and a finished run leaves Work. After Done this week, **Routines · N** with a chevron
+opens the Routines page; with no routines the row is absent and the project menu's **Routines…** remains.
 
 Work and Needs you add no voice controls. Listening, transcribing, denied and send-failure states
 remain in the owning conversation (§3.6); sending leaves no extra transcript field.
@@ -1058,7 +1058,7 @@ at most — never question, conversation or incident text. What a banner names, 
 whether they sound follow the device's choices in Settings (§3.15); the formats below are the default,
 project and task. A question asked again after the operator replied
 alerts again, the same way; a rewording, an escalation or L3 settling one member while it waits does not. Activating it opens that decision in the running
-app. Faults, stopped tasks, reviews, agents that paused themselves (§3.17) and completed work stay in Needs you without an alert. A grouped
+app. Faults, stopped tasks, reviews, routines that paused themselves (§3.17) and completed work stay in Needs you without an alert. A grouped
 ask alerts once. On a device without push, a decision already on screen, in Needs you or its owning task,
 is recorded without alerting; a device push wakes gets the alert without sound while Altitude is on screen.
 Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the switch on never
@@ -2057,13 +2057,13 @@ their existing recovery, answer and navigation controls remain visible.
 
 Anatomy: **Monitor** title; on phone the **New tasks** control (§3.6.1) beside the same quota;
 **Altitude update** (§3.13); **Seats**, one card per configured engine in the API's order and under
-its label; **Routing now**; **Sessions (N)**; **Agents (N)**. Each seat shows the windows it reports, their
+its label; **Routing now**; **Sessions (N)**; **Routines (N)**. Each seat shows the windows it reports, their
 percentages and reset times in relative and clock terms, a meter with the reserve line, the
 plan when supplied, and "reading 3m old". The reserve line sits at the `reserve` `/api/monitor` sends (90%), the
 share of a window from which Altitude skips optional work; a window's fill turns `--danger` there, and a
 card-coloured gap keeps the mark visible over the fill. Under the **Seats** heading, before the cards, one muted
-line names it: "Past the mark at 90%, or without a current reading, Altitude skips optional work such as agent
-runs and the Weekly review." (a stale or missing reading also skips it). Model allowance meters draw no reserve
+line names it: "Past the mark at 90%, or without a current reading, Altitude skips optional work such as routine
+runs." (a stale or missing reading also skips it). Model allowance meters draw no reserve
 line and never turn `--danger`, because the reserve reads only the seat's shared windows; a rejected model still
 says "Unavailable: <reason>". Session context meters draw no reserve line and turn `--danger` when their
 session's context state is warn or act. Exact reading times appear on hover.
@@ -2077,9 +2077,9 @@ a reading with model rows but no account windows says "No account windows report
 Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
 <project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"
 in `--danger`, with the router's reason below. Rows wrap within the card. Sessions are only the ones
-Altitude runs: each project's coordinator (L3), its live task owners (L2) and its running project agents,
+Altitude runs: each project's coordinator (L3), its live task owners (L2) and its running routine runs,
 after the project's tasks; a repair shows in Work (§3.7). Session rows show their kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
-age such as "3 min ago". An agent's row has the chip **Agent**, the title "<project> / <agent name>" and
+age such as "3 min ago". A routine run's row has the chip **Routine**, the title "<project> / <routine name>" and
 "<engine> · <model> · context 6% · 4 of 20 min"; before its first reading it says "context unknown" with no
 age and no meter; its age is that of its session's newest request, so a reading older than five minutes is
 stale as a running task's is (meter at half
@@ -2087,19 +2087,19 @@ opacity, "Stale" for screen readers). A waiting run is not a session, and the We
 is one engine call, never a session. Session rows are readings, not links. Sessions are the process
 information on this page; there is no raw worker process list.
 
-**Agents (N)** comes last and lists, across projects, every agent that is not retired and is on with a
+**Routines (N)** comes last and lists, across projects, every routine that is not retired and is on with a
 schedule or the event trigger, has a run waiting or running, paused itself, or had a run in the last seven days; in Altitude's own
 project the Weekly improvement review once it is the operator's, on the same terms. Projects come in Monitor's
-order, each project's agents in its Agents page's order. No such agent: no section and no heading. One card
-holds whole-row links to each agent's page, separated by hairlines, each with a chevron: the title
-"<project> / <agent name>" in semibold; what comes next, the first that applies: a pulsing dot and "Running",
+order, each project's routines in its Routines page's order. No such routine: no section and no heading. One card
+holds whole-row links to each routine's page, separated by hairlines, each with a chevron: the title
+"<project> / <routine name>" in semibold; what comes next, the first that applies: a pulsing dot and "Running",
 "Waiting", "Not on yet", a pause mark and "Paused itself", "Paused" or "Paused: its terms changed", "Weekly
 budget used" (the project's weekly budget is used, until Monday unless it is raised), "Next tomorrow at 07:00" (the computer's zone after the
 time when the browser is in another), "When it's sent an event", "Only when you run it"; then, muted, "Last: <outcome> · <when> ·
 <minutes> min · <tokens> tokens" for the latest run that ran, its missing parts left out and skips never
-shown, or "No runs yet." for an agent that never ran, absent under a first run that is running or waiting. On desktop what comes next sits right-aligned on the title's line and never wraps;
+shown, or "No runs yet." for a routine that never ran, absent under a first run that is running or waiting. On desktop what comes next sits right-aligned on the title's line and never wraps;
 on the phone each row stacks the title, what comes next in the secondary tone, and Last.
-[The project agents proposal](project-agents/PROPOSAL.md#monitor-step-3) holds its boards.
+[The routines proposal](project-agents/PROPOSAL.md#monitor-step-3) holds its boards.
 
 Each L2 session adds one **L2 usage details** disclosure. Collapsed, it shows only the control;
 helper counts, token totals and audit rows are absent. Expansion shows the shared task token readout
@@ -2121,10 +2121,10 @@ States: loading (seat, routing and session skeletons); error ("Could not read th
 Retry); no reading ("No reading." with the seat's sentence explaining what produces one); stale
 (reading kept, amber Stale chip using `--chip-claimed-*`, meter at 50% opacity); one configured
 engine (one seat card, no empty column); no routing ("No roles to route."); no sessions ("No live
-sessions."); no agents (no Agents section). Agents share the page's loading and error.
+sessions."); no routines (no Routines section). Routines share the page's loading and error.
 
 Data: `GET /api/monitor` `seats[]` identifies each seat by its configured engine and supplies its
-label, windows, plan and reading metadata, and `models[]` with each routed model's own reading and rejection; `routing[]` and `sessions[]` supply their rows; `agents[]` supplies each Agents row (project, id, name,
+label, windows, plan and reading metadata, and `models[]` with each routed model's own reading and rejection; `routing[]` and `sessions[]` supply their rows; `agents[]` supplies each Routines row (project, id, name,
 `next`, `cue`, `last`) and `clock` the computer's zone and offset.
 L2 `sessions[].token_usage` is the same persisted accounting snapshot as task/status/report reads,
 including `helpers`; opening Monitor starts no provider collection. Archived tasks retain the
@@ -2617,30 +2617,30 @@ ignoring certificate errors, to Not trusted yet with no Pair item. `web/e2e/trus
 desktop steps in both widths: the hosting computer's `alt trust`, its steps by hand and Trusted removing
 them, and each **Steps for** choice with a switch to another.
 
-### 3.17 Project agents
+### 3.17 Routines
 
-A project's agents run briefs on a schedule, on events the operator sends or when asked, and report what they found
+A project's routines run briefs on a schedule, on events the operator sends or when asked, and report what they found
 ([design](project-agents/PROPOSAL.md#screens), whose screens, exact text and states table this section
-adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
+adopts; [behavior](../../docs/ARCHITECTURE.md#routines)). What ships:
 
-- **Agents page** (`/projects/:name/agents`): **‹ <project>** back, **Agents** over "Each one runs a brief
-  when its trigger fires, and tells you what it found.", one card of agent rows (name; triggers · latest
-  news, with a running dot or pause mark), **New agent** under it, and "N retired" opening the retired rows.
-  **Built in** lists each built-in agent not on with **Turn on**. Last, **Weekly budget**: "Agents may use up to"
+- **Routines page** (`/projects/:name/agents`): **‹ <project>** back, **Routines** over "Each one runs a brief
+  when its trigger fires, and tells you what it found.", one card of routine rows (name; triggers · latest
+  news, with a running dot or pause mark), **New routine** under it, and "N retired" opening the retired rows.
+  **Built in** lists each built-in routine not on with **Turn on**. Last, **Weekly budget**: "Routines may use up to"
   with its select (30 min · 1 h · 2 h · 5 h · 10 h) over "N used this week", amber when spent. A spent budget also
   says so once in amber under the intro: "This week’s budget is used: no new runs until Monday unless you raise
   it."
-- **One agent** (`/projects/:name/agents/:id`): the status card and its actions (Run now, Pause, Resume, Turn
+- **One routine** (`/projects/:name/agents/:id`): the status card and its actions (Run now, Pause, Resume, Turn
   on, Stop, Open), with a muted note under its line when one applies ("No event yet, so Run now runs without
   one.", "3 events wait for the next run."); Recent runs with **Show older**, a run that took events named by
-  them ("For “PR #810 merged” and 2 more: …"); What it does with **Edit**; and **Retire agent** with **Retire…**,
-  whose dialog says what retiring does. A retired agent's page is read-only.
+  them ("For “PR #810 merged” and 2 more: …"); What it does with **Edit**; and **Retire routine** with **Retire…**,
+  whose dialog says what retiring does. A retired routine's page is read-only.
 - **Send it an event**: with the event trigger, What it does gains this section before Edit: "From a script or
-  your terminal on this computer:" over the `alt agent send` command with **Copy**, naming the agent by its name
+  your terminal on this computer:" over the `alt agent send` command with **Copy**, naming the routine by its name
   quoted for the shell (`alt --project harbor agent send 'Review each merge' "what happened"`), or by its id when
-  another agent not retired shares the name or the name starts with `-`; under a command that uses the name, muted,
+  another routine not retired shares the name or the name starts with `-`; under a command that uses the name, muted,
   "The examples use its id, 553012b713c4, so they keep working after a rename."; "To try it
-  first, use `agent run` in place of `agent send`: it starts a run now, even before the agent is on."; **Examples**
+  first, use `agent run` in place of `agent send`: it starts a run now, even before the routine is on."; **Examples**
   folded, three scripts each under its muted label with **Copy** at its right, the code keeping its lines and
   scrolling sideways; and "Send numbers and your own words, not text anyone else can write: a run has your code
   and the network."
@@ -2657,7 +2657,7 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   without target, Seen in or count; then **Not offered · N**, folded, opening to each title with L3's reason, or
   "Not offered · N · not checked in time" opening to the titles. It loads and fails with the page.
 - **The form** (`…/agents/new`, `…/:id/edit`): Name, What it does, Runs when, Tell me in chat, Model (§3.6.1)
-  and Each run stops after. A new agent is saved not on. Runs when lists schedule rows (seven day toggles and a
+  and Each run stops after. A new routine is saved not on. Runs when lists schedule rows (seven day toggles and a
   time) and the event row (a bolt, "When it’s sent an event" over "You send it from this computer; its page shows
   how.") each with Remove, or "Only when you run it" with none. **+ Add a trigger** opens a menu under it of
   **On a schedule** and **When it’s sent an event** (items 44px tall on the phone; Escape or a press outside
@@ -2666,24 +2666,24 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   next run together." follows the list while the event row is in it. Under Tell me's choices one muted line reads
   "Suggested tasks wait in Needs you whatever you choose." A press with the name or brief missing puts "Give it a
   name." or "Say what it does." in the danger tone under each missing field, described by it, and focuses the first;
-  each line goes once its field is filled. A new agent's form ends with a muted line under its buttons: "It starts
+  each line goes once its field is filled. A new routine's form ends with a muted line under its buttons: "It starts
   off: try it with Run now, then turn it on."
-- **Needs you**: an agent that paused itself waits as a card after its project's questions: "Agent paused
-  itself" in the danger tone with its age, the agent's name linking to its page with a chevron, "3 runs in a row
+- **Needs you**: a routine that paused itself waits as a card after its project's questions: "Routine paused
+  itself" in the danger tone with its age, the routine's name linking to its page with a chevron, "3 runs in a row
   couldn't finish. The last: <reason>", a bordered **Resume** and the link **Open the last run**. Resume spins
-  until the agent reads as on and the card leaves; a refusal brings the button back with "Not resumed: <reason>"
-  under it. Resume, a saved edit or Retire clears it. It counts as "1 paused agent" in the summary and the
+  until the routine reads as on and the card leaves; a refusal brings the button back with "Not resumed: <reason>"
+  under it. Resume, a saved edit or Retire clears it. It counts as "1 paused routine" in the summary and the
   badge and never alerts a device.
   Under **Suggestions**, a run whose kept suggestion waits shows as a card among the project's improvement cards,
-  newest first: the agent's name, bold, with the run's time; under it, muted, what fired the run; its kept
+  newest first: the routine's name, bold, with the run's time; under it, muted, what fired the run; its kept
   suggestions; and the underlined **Open the run**. It is never counted, never alerts a device and shows whatever Tell
   me says. A suggestion waits while undecided, or accepted without its task for seven days after the last press,
   Make a task; deciding it here or on the run page changes both. One whose task L3 did not make reads "Accepted ·
   no task yet · Make a task", the underlined link pressing Make a task again; a failed press says "Not saved."
-- **Chat**: one system line per ending as Tell me allows, led by the agent's name with **Open**; L3's offer card
-  under its reply with **Create agent** or **Save change** and **Edit first**, created, refused and lapsed. A switch L3
+- **Chat**: one system line per ending as Tell me allows, led by the routine's name with **Open**; L3's offer card
+  under its reply with **Create routine** or **Save change** and **Edit first**, created, refused and lapsed. A switch L3
   makes on your word adds one quiet line ("Paused Dependency check", "Resumed …", "Turned on …", "Retired …",
-  "Stopped …'s run") whose **Open** leads to the agent, where Resume is.
+  "Stopped …'s run") whose **Open** leads to the routine, where Resume is.
 
 - **Weekly improvement review** (Altitude's own project only;
   [design](project-agents/PROPOSAL.md#the-weekly-improvement-review)): the first **Built in** row, "Mondays at
@@ -2692,9 +2692,9 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#project-agents)). What ships:
   Weekly improvement review for <name>?**, what the model reads and how much of the plan it uses, **Cancel**
   (focused) and the primary **Turn on**, which agrees and turns it on; Cancel, Escape and the scrim change
   nothing. Turn on spins until the list reads it as yours; a refusal says "Not turned on: <reason>" under the
-  row. Once agreed to, switched or run, it is the first of your agents ("Mondays at 08:00 · Reading 6 tasks",
+  row. Once agreed to, switched or run, it is the first of your routines ("Mondays at 08:00 · Reading 6 tasks",
   "· Paused", "· Paused: its terms changed", "· 3 suggestions 2 d ago", "· Never run") and counts in Work's
-  Agents. Its page (`/projects/:name/agents/weekly`, title **Weekly improvement review**, "Loading Weekly
+  Routines. Its page (`/projects/:name/agents/weekly`, title **Weekly improvement review**, "Loading Weekly
   improvement review…", "Could not load the Weekly improvement review." with **Retry**) has the status card:
   "Next: Monday, Oct 26" (", if 2 more tasks finish" while fewer than five have) with **Run now** and
   **Pause** and "Reads the 6 tasks finished since Oct 19." under it; a Run now that cannot run looks disabled
@@ -2719,8 +2719,8 @@ stopped, Pause refused and Paused, too few tasks with the reason on press and a 
 line with Open and the page's changed terms, every kind of run with the totals, and an older run opening its
 line in chat back past the conversation the chat loads at first, at both widths.
 
-`web/e2e/project-agent-events.pw.ts` walks an agent running with events waiting, runs named by their events,
-Send it an event folded and with its examples, a run's events and a replay, an agent with no event yet, the
+`web/e2e/project-agent-events.pw.ts` walks a routine running with events waiting, runs named by their events,
+Send it an event folded and with its examples, a run's events and a replay, a routine with no event yet, the
 trigger menu with Escape, the event row and its hint, a schedule added at once, the event row removed, and Needs
 you's card with Resume refused, resuming and resumed, at both widths.
 

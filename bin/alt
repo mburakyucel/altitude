@@ -577,7 +577,7 @@ def main(argv=None) -> None:
     from altitude import improve
     sub.add_parser("improve", parents=[improve.parser()], add_help=False, help="improvement suggestions: status here; the rest through the project's coordinator")
     from altitude import project_agents
-    sub.add_parser("agent", parents=[project_agents.parser()], add_help=False, help="briefs a project runs on a schedule, when sent an event or when asked: list, show, new, set, on, pause, resume, retire, run, send, stop")
+    sub.add_parser("agent", parents=[project_agents.parser()], add_help=False, help="routines a project runs on a schedule, when sent an event or when asked: list, show, new, set, on, pause, resume, retire, run, send, stop")
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
@@ -647,7 +647,7 @@ def main(argv=None) -> None:
         config.ensure_root()
     c = args.cmd
     if ACTOR == "project-agent-run":
-        sys.exit("alt: a project agent run reports in its final answer and has no alt verbs")
+        sys.exit("alt: a routine run reports in its final answer and has no alt verbs")
     if c == "project" and args.pcmd in ("message", "terminal", "step"):
         sys.exit(f"alt project {args.pcmd} is available only through the project's coordinator socket")
     if c == "task" and args.tcmd == "offer":
