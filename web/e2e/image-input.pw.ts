@@ -1,6 +1,7 @@
 import { expect, type Page, type TestInfo } from "@playwright/test";
 import { test } from "./fixtures";
 import { fixtureHost } from "./hostVoice";
+import { viewer, zoomIn } from "./viewer";
 import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "image-input-service.py" });
@@ -27,7 +28,8 @@ function controls(page: Page, scope: Scope) {
     add: page.getByRole("button", { name: "Add images", exact: true }),
     strip: page.getByLabel("Selected images", { exact: true }),
     send: composer.getByRole("button", { name: /^(Send|Queue)$/ }),
-    preview: page.getByRole("button", { name: "Open image timer.png", exact: true }),
+    // A sent message's picture; the composer's own picked picture opens the viewer too.
+    preview: page.locator(".message-images").getByRole("button", { name: "Open image timer.png", exact: true }),
     remove: page.getByRole("button", { name: "Remove image timer.png", exact: true }),
   };
 }
@@ -125,12 +127,9 @@ for (const scope of ["project", "task"] as const) {
     expect(await page.evaluate(() => (window as unknown as { placeholder?: boolean }).placeholder), "the sent picture stays until the saved one").toBe(false);
     await expect(v.field).toBeEnabled(); await expect(v.field).toHaveValue("");
     await walk.state("06-view-image", { action: () => v.preview.click(), visible: [page.getByRole("dialog", { name: "Image timer.png" })], hidden: [] });
-    const fullImage = page.getByRole("dialog").getByRole("img");
-    const fittedWidth = await fullImage.evaluate((node) => node.getBoundingClientRect().width);
-    await walk.state("07-zoom-image", { action: async () => {
-      await page.getByRole("button", { name: "Zoom image", exact: true }).click();
-      await expect.poll(() => fullImage.evaluate((node) => node.getBoundingClientRect().width)).toBeGreaterThan(fittedWidth);
-    }, visible: [page.getByRole("button", { name: "Fit image", exact: true })], hidden: [page.getByRole("button", { name: "Zoom image", exact: true })] });
+    const phone = info.project.name === "phone";
+    await walk.state("07-zoom-image", { action: () => zoomIn(page, phone), visible: [viewer(page).zoomed, ...phone ? [] : [page.getByRole("button", { name: "Fit image", exact: true })]],
+      hidden: [page.getByRole("button", { name: "Zoom image", exact: true })] });
     await page.keyboard.press("Escape");
     await expect(v.preview).toBeFocused();
     expect(stopRequests).toEqual([]);
@@ -224,11 +223,11 @@ for (const scope of ["project", "task"] as const) {
     // While the saved image is read, the message keeps the picture that was sent.
     await walk.state("03-sent-image-keeps-its-picture", { action: () => v.send.click(), visible: [v.preview], hidden: [v.strip, page.getByText("Loading image…", { exact: true })] });
     mode = "denied"; release();
-    await walk.state("04-private-image-denied", { visible: [page.getByText("Image access denied.", { exact: true })], hidden: [v.preview] });
+    await walk.state("04-private-image-denied", { visible: [page.getByText("Access denied", { exact: true })], hidden: [v.preview] });
     mode = "missing";
-    await walk.state("05-private-image-missing", { action: () => page.getByRole("button", { name: "Retry image timer.png", exact: true }).click(), visible: [page.getByText("Image unavailable.", { exact: true })], hidden: [page.getByText("Image access denied.", { exact: true })] });
+    await walk.state("05-private-image-missing", { action: () => page.getByRole("button", { name: "Retry image timer.png", exact: true }).click(), visible: [page.getByText("Image unavailable", { exact: true })], hidden: [page.getByText("Access denied", { exact: true })] });
     mode = "normal";
-    await walk.state("06-private-image-recovered", { action: () => page.getByRole("button", { name: "Retry image timer.png", exact: true }).click(), visible: [v.preview], hidden: [page.getByText("Image unavailable.", { exact: true })] });
+    await walk.state("06-private-image-recovered", { action: () => page.getByRole("button", { name: "Retry image timer.png", exact: true }).click(), visible: [v.preview], hidden: [page.getByText("Image unavailable", { exact: true })] });
     await expect(page.locator(".bubble").filter({ hasText: caption })).toBeVisible();
     // A page that did not send the image reads it behind an image-sized placeholder.
     mode = "loading"; gate = new Promise<void>((resolve) => { release = resolve; });
@@ -422,11 +421,12 @@ test("project: a viewer opened on a queued image stays open through history admi
   const queued = page.getByRole("list", { name: "Queued messages", exact: true });
   const queuedOpener = queued.getByRole("button", { name: "Open image queued.png", exact: true });
   const dialog = page.getByRole("dialog", { name: "Image queued.png" });
-  const fit = page.getByRole("button", { name: "Fit image", exact: true });
+  const phone = info.project.name === "phone";
+  const zoomed = viewer(page).zoomed;
   // The modal makes the page behind it inert, so the history row is located by markup, not role.
   const stored = page.locator(".bubble .message-image");
   await walk.state("01-queued-image-viewer", { action: () => queuedOpener.click(), visible: [dialog], hidden: [] });
-  await page.getByRole("button", { name: "Zoom image", exact: true }).click();
+  await zoomIn(page, phone);
   await dialog.evaluate((node) => { (node as HTMLElement & { probe?: boolean }).probe = true; });
   let releaseRead: () => void = () => undefined;
   const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
@@ -436,23 +436,25 @@ test("project: a viewer opened on a queued image stays open through history admi
   });
   await walk.state("02-admitted-behind-open-viewer", {
     action: () => request.post("/fixture/release/alpha"),
-    visible: [dialog, fit, stored.getByText("Loading image…", { exact: true })], hidden: [queued],
+    visible: [dialog, zoomed, stored.getByText("Loading image…", { exact: true })], hidden: [queued],
   });
   expect(await dialog.evaluate((node) => (node as HTMLElement & { probe?: boolean }).probe)).toBe(true);
-  await expect(fit).toBeFocused();
+  // Focus stays in the viewer: on the Fit image button the desktop pressed, or in the viewer the phone tapped.
+  if (phone) expect(await dialog.evaluate((node) => node.contains(document.activeElement))).toBe(true);
+  else await expect(page.getByRole("button", { name: "Fit image", exact: true })).toBeFocused();
   await expect(dialog.getByRole("img")).toHaveJSProperty("complete", true);
   expect(await dialog.getByRole("img").evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(640);
   releaseRead();
   const retry = page.getByRole("button", { name: "Retry image queued.png", exact: true });
-  await walk.state("03-history-read-error-behind-viewer", { visible: [dialog, fit, stored.getByText("Image unavailable.", { exact: true })], hidden: [] });
+  await walk.state("03-history-read-error-behind-viewer", { visible: [dialog, zoomed, stored.getByText("Image unavailable", { exact: true })], hidden: [] });
   await page.keyboard.press("Escape");
   await walk.state("04-dismissed-focus-on-history-image", { visible: [retry], hidden: [dialog] });
   await expect(retry).toBeFocused();
   await page.unrouteAll({ behavior: "ignoreErrors" });
   const opener = page.locator(".bubble").getByRole("button", { name: "Open image queued.png", exact: true });
   await walk.state("05-history-retry-loads", { action: () => retry.click(), visible: [opener], hidden: [retry] });
-  await walk.state("06-history-viewer", { action: () => opener.click(), visible: [dialog, page.getByRole("button", { name: "Zoom image", exact: true })], hidden: [fit] });
-  await page.getByRole("button", { name: "Close image", exact: true }).click();
+  await walk.state("06-history-viewer", { action: () => opener.click(), visible: [dialog, viewer(page).close], hidden: [zoomed] });
+  await viewer(page).close.click();
   await expect(dialog).toBeHidden();
   await expect(opener).toBeFocused();
   await page.reload();

@@ -29,7 +29,7 @@ import { TransferCard, TransferDialog, useTaskTransfer } from "../components/Tas
 import { TaskModelButton } from "../components/ModelMenu";
 import type { Transfer } from "../components/TaskTransfer";
 import type { ImageSubmission } from "../components/ImageDraft";
-import { MessageImages, PendingImages } from "../components/MessageImages";
+import { MessageImages, PendingImages, sentBy } from "../components/MessageImages";
 import { ShownFiles } from "../components/Shown";
 import { ShownReader } from "./ShownReader";
 import { Question, QuestionSet, ReviewDecision, StepBody } from "../components/DecisionCard";
@@ -549,14 +549,14 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         return;
       }
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at} enter={enter(`msg:${key}`)}
-        images={<MessageImages project={project} images={message.images} previews={outbox.find((entry) => entry.id === message.id)?.images} />}
+        images={<MessageImages project={project} images={message.images} previews={outbox.find((entry) => entry.id === message.id)?.images} context={sentBy("You", message.at)} />}
         state={message.delivery?.state}
         side={message.delivery?.removable ? <RemoveMessage message={message.text} removing={removal.isPending && removal.variables === message.id}
           disabled={removeBlocked} onClick={() => removal.mutate(message.id)} /> : undefined}>
         {queueActions}
       </Bubble> :
-        message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} enter={enter(`msg:${key}`)} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
-        : <Reply key={key} text={message.text} at={message.at} role={message.role} enter={enter(`msg:${key}`)}><MessageImages project={project} images={message.images} />{message.shown ? <ShownFiles shown={message.shown} /> : null}<CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
+        message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} enter={enter(`msg:${key}`)} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} context={sentBy("L3", message.at)} /></Coordination>
+        : <Reply key={key} text={message.text} at={message.at} role={message.role} enter={enter(`msg:${key}`)}><MessageImages project={project} images={message.images} context={sentBy(message.role.toUpperCase(), message.at)} />{message.shown ? <ShownFiles shown={message.shown} context={sentBy(message.role.toUpperCase(), message.at)} /> : null}<CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
     }
   });
   for (const entry of pending) {

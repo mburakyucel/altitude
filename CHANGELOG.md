@@ -5,6 +5,14 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Pictures open in a full-screen viewer that works like a phone's photo app: pinch, double-tap or the wheel
+  zooms toward your fingers or pointer, a zoomed picture pans and stops at its edges, the next picture follows
+  your finger as you swipe, and a swipe down or Escape closes it back into its thumbnail. The bar says where the
+  picture came from and offers Share or Download on a phone, and Copy, Download or Open in new tab on a computer.
+  Chat, shown files, documents, a held PR's pictures and validation captures all open in it, and a picture you
+  picked can be checked there before sending. Chat thumbnails show the picture's own shape, four make a 2 × 2 grid
+  on a phone, and every failed thumbnail offers Retry. The viewer reads one picture ahead each way and keeps only
+  those three, in memory, while it is open.
 - Starting Altitude removes a leftover file from older installations.
 - The agents Altitude runs can no longer read repair records, which hold each step a repair took with your full
   access and its output. Repairs themselves, the app and `alt repair` read them as before. An agent already

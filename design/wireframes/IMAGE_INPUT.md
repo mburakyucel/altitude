@@ -34,8 +34,11 @@ message settles it. Navigation remains available. No artificial percentage impli
 
 When Altitude's record takes the message over, each saved thumbnail starts from the picture that was
 sent and switches to the saved copy once that loads, so the image never blinks to a placeholder. Saved
-thumbnails stay with their caption and open in a full-image modal on phone/desktop, with
-Fit/Zoom, scrolling, Close/Escape and focus return. A viewer opened on a queued project image stays
+thumbnails stay with their caption and open in the app's image viewer ([SPEC §3.9.3](SPEC.md#393-image-viewer))
+on phone and desktop: pinch, double-tap, wheel and keys to zoom, a finger-following swipe between the
+message's pictures, swipe down or Escape to close, Share or Download on the phone and Copy, Download or
+Open in new tab on desktop, all from the viewer's own private reads, and focus return. A picked picture
+opens there too before Send, marked Not sent yet and without actions. A viewer opened on a queued project image stays
 open, with its zoom, while history admission replaces the queued row; closing it then focuses that
 image's stored thumbnail, or its Retry or placeholder while the new row reads. Leaving the page
 closes the viewer. Loading (of an image the page did not just send, or of a queued project message once its turn begins), missing and denied reads keep an

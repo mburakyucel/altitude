@@ -33,6 +33,12 @@ system docs; each later rollout step does the same and walks its own states.
 and the constellation, folded into [SPEC §2.2 and §3.7](SPEC.md#37-work-panel). `agent-graph/gen.py`
 writes the boards beside it; `web/e2e/agent-graph.pw.ts` walks its states.
 
+## Image viewer
+
+[The viewer design](image-viewer/PROPOSAL.md) the operator approved on 2026-10-23, folded into
+[SPEC §3.9.3](SPEC.md#393-image-viewer). `image-viewer/gen.py` writes the boards beside it; review captures
+stay in its ignored `captures/`. `web/e2e/image-viewer.pw.ts` walks its states.
+
 ## Approved image-input interaction
 
 [Images in project and task chats](IMAGE_INPUT.md) describes the interaction approved on 2026-09-10.
