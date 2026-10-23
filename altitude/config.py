@@ -54,6 +54,8 @@ ALTITUDE_REPOSITORY = "mburakyucel/altitude"
 PR_CHECK_WORKFLOW = ".github/workflows/hosted-checks.yml"
 PR_CHECK_NAME = "check"
 PERSONAS = SOURCE / "personas"
+#: Altitude's documentation, which every coordinator reads to answer how Altitude works.
+DOCS = SOURCE / "docs"
 SCHEMAS = SOURCE / "schemas"
 TEMPLATES = SOURCE / "templates"
 WEB_DIST = REPO / "web" / "dist"

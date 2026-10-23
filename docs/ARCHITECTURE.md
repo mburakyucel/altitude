@@ -235,6 +235,11 @@ resumes and engine changes. Historical evidence is not new authority: current in
 records govern, and the coordinator checks temporary conditions and later corrections before action.
 See [source references and bounds](CLI.md#historical-evidence-search).
 
+Every L3 turn's header also names Altitude's documentation folder (`docs=`): `docs/` of the activated
+source or the installed release, which ships it. The coordinator answers how Altitude works from it
+for any project. A Claude turn adds that folder beside the project's repository and the Altitude home
+as a readable directory, and the Codex profile names it readable; neither engine can write it.
+
 Tasks and L3 session records carry `engine_model` and `engine_reasoning_effort`. The engine adapter
 reads Codex's rollout `turn_context` after the thread starts, recording the actual model and effort
 for the current turn. altd reads the provider home; the sandboxed worker does not. Missing or delayed
@@ -3776,7 +3781,8 @@ of `host.update`: `preparing`, `downloading` with bytes, `waiting`, `checking`, 
 Settings shows phase/progress with Cancel or Retry; ready voice remains usable. Unsupported voice links
 to the running update instead of offering a duplicate setup.
 
-One file lock admits setup across CLI and daemon. Workers inherit a shared use lock; verification,
+One file lock admits setup across CLI and daemon. Status reads probe it, and setup takes it, only under
+the voice control lock, so a read never makes setup look already running. Workers inherit a shared use lock; verification,
 promotion and cleanup acquire it exclusively. Active recordings finish before the idle worker exits
 for the update. Finished response replay remains available. Staging temporarily uses another runtime's
 disk space; preflight budgets downloads and bounded wheel expansion. Cancel or failure deletes staging

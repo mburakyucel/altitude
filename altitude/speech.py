@@ -352,7 +352,7 @@ def remove_home_runtime() -> bool:
 def _setting_up() -> bool:
     if not (ROOT / ".lock").exists():
         return False
-    with open(ROOT / ".lock", "a") as handle:
+    with _guard(), open(ROOT / ".lock", "a") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -469,18 +469,22 @@ def _unpack(wheel: Path, site: Path) -> int:
 
 
 def _lock(wait: float = 0):
+    """The setup lock. It is taken, like `_setting_up` probes it, only under the control lock, so a status probe's
+    momentary hold never reads as a setup already running."""
     ROOT.mkdir(parents=True, exist_ok=True)
     handle = open(ROOT / ".lock", "a")
     deadline = time.monotonic() + wait
     while True:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return handle
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                handle.close()
-                raise SpeechError("Voice is already being set up.", 409) from None
-            time.sleep(0.05)
+        with _guard():
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return handle
+            except BlockingIOError:
+                pass
+        if time.monotonic() >= deadline:
+            handle.close()
+            raise SpeechError("Voice is already being set up.", 409)
+        time.sleep(0.05)
 
 
 def _lease(exclusive: bool, cancel=None, timeout: float | None = None):

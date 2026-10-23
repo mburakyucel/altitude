@@ -65,7 +65,7 @@ class ReleaseArchive(AltitudeCase):
 
     def test_builder_packages_committed_cli_daemon_resources_and_built_ui(self):
         make_repo(self.repo)
-        for name in ("altitude", "bin", "personas", "hooks", "schemas", "templates", "container"):
+        for name in ("altitude", "bin", "personas", "hooks", "schemas", "templates", "container", "docs"):
             shutil.copytree(REPO / name, self.repo / name,
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         (self.repo / "web").mkdir()
@@ -117,8 +117,17 @@ class ReleaseArchive(AltitudeCase):
         self.assertEqual((output / "SHA256SUMS").read_text().splitlines(), [
             f"{checksum}  {archive.name}", f"{installer}  install.py",
             f"{hashlib.sha256(script.encode()).hexdigest()}  install.sh"])
-        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md", "docs/OVERVIEW.md", "docs/ARCHITECTURE.md"):
             self.assertEqual((package / name).read_text(), (REPO / name).read_text())
+        # Every coordinator reads the docs from the installed release, so a release declaring none is refused.
+        undocumented = self.tmp / "undocumented"
+        shutil.copytree(package, undocumented)
+        shutil.rmtree(undocumented / "docs")
+        manifest = json.loads((undocumented / "release.json").read_text())
+        manifest["files"] = {name: digest for name, digest in manifest["files"].items() if not name.startswith("docs/")}
+        (undocumented / "release.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "missing required application resources"):
+            installation.metadata(undocumented, archive=True)
         self.assertFalse((package / ".git").exists())
         self.assertFalse((package / "web/node_modules").exists())
         (self.repo / "altitude/config.py").write_text("uncommitted change")
