@@ -201,7 +201,7 @@ page lists each change with Undo.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-routines-phone.webp">
-  <img src="images/feature-routines.webp" alt="Harbor's routines: the dependency check, which found something an hour ago, and Review each merge, which runs when it's sent an event, with Build health and What landed ready to turn on; beside it, Needs you with the dependency check's two suggested tasks, each with Make a task." width="860">
+  <img src="images/feature-routines.webp" alt="Harbor's routines: the dependency check, which found something an hour ago, and Review each merge, which runs when it's sent an event, with Build health, Tidy worktrees and branches and What landed ready to turn on; beside it, Needs you with the dependency check's two suggested tasks, each with Make a task." width="860">
 </picture>
 
 ## Capture source and maintenance
