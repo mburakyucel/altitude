@@ -79,9 +79,10 @@ the run wrote itself, never through a command that runs as you ([COMMANDS.md](CO
   paragraph says so in increment 1.
 - Merging anything, answering questions, approving, starting or steering tasks, messaging L3, changing
   routines or sending events. A routine never acts in your place in Altitude itself.
-- A command you list keeps to this list as a grant's purpose does: it runs as you, so Altitude records it
-  rather than judging its shell text, and you list none that does these ([COMMANDS.md](COMMANDS.md)).
-- Main, the project's own checkout, remote branches on GitHub, anything outside the routine's project.
+- These bind the commands you list as they bind a grant's purpose: a command runs as you, Altitude records
+  it without checking what it does, and you list none that does these ([COMMANDS.md](COMMANDS.md)).
+- Main, the project's own checkout, remote branches on GitHub, anything outside the routine's project, as
+  targets of the run's requests. A command you list starts in the project's folder and reads it as it is.
 - Commands the run writes. Only commands you wrote run outside its box.
 
 ## How the fence holds

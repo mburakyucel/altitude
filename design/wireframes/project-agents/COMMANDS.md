@@ -1,7 +1,7 @@
 # Routines that act: commands you list
 
 Status: proposal for the second step of [ACTING.md](ACTING.md), which the operator asked for on 2026-10-23
-after merging the first; revised after two design reviews. The boards are `DesktopCmdEdit`, `PhoneCmdEdit`,
+after merging the first; revised after three design reviews. The boards are `DesktopCmdEdit`, `PhoneCmdEdit`,
 `DesktopCmdRun`, `PhoneCmdRun`, `CmdStates` and `PhoneCmdStates` beside this file; this text outranks them.
 
 ## The idea
@@ -22,15 +22,18 @@ so the fence is the list itself and what the run can pass in:
 - **The run chooses only which command and when, once each a run.** It sends a name and nothing else: no
   arguments, no input, no environment. A command's input is empty. Altitude starts it from your login
   environment without the run's door, session or files.
-- **The words are yours; what they call is as you keep it.** A command that runs a script, `make` or
-  `npm run` runs that file as the project's folder holds it then. The run cannot write that folder, but a
-  merged change can. The form's hint says so, and a command that should not follow the project can name a
-  script outside it.
-- **The never-granted list applies to what you list,** as it applies to a grant's purpose
-  ([docs/CLI.md](../../../docs/CLI.md#operator-grant)): no command loosens confinement, releases Altitude's
-  gates (merging, approving, answering), reaches other tasks' worktrees or prints credentials, and none
-  starts or steers a routine or task. As with a grant, Altitude records each command rather than judging its
-  shell text, and the record on the run's page makes any departure visible.
+- **The words are yours; what they call is as you keep it.** A command starts in the project's folder and
+  reads its files and settings as they are then: a script, `make` or `npm run` runs that file as the folder
+  holds it, and a tool reads the folder's own settings (an `.npmrc`, a `Makefile`). The run cannot write
+  that folder, but a merged change can. The form says so, and a command that should not follow the project
+  can name a script outside it or `cd` elsewhere first.
+- **What it prints goes to the run,** and on to its model's provider, as everything the run reads does. The
+  form says so too.
+- **The never-granted list is yours to keep** ([docs/CLI.md](../../../docs/CLI.md#operator-grant)), as it is
+  for a grant's purpose: list no command that loosens confinement, releases Altitude's gates (merging,
+  approving, answering), reaches other tasks' worktrees, prints credentials, or starts, steers or changes a
+  routine or task. Altitude does not check what a command does: it records each one, and the run's page shows
+  what ran and what it printed.
 
 ## What the run can ask, and what Altitude checks
 
@@ -39,40 +42,53 @@ so the fence is the list itself and what the run can pass in:
 - **Altitude runs it only when** a command of that name with the same words is on the routine both in the
   version the run started with and now, the routine is not retired, the command has not run in this run
   yet, and the run has requests left (the 20 a run the first step set, shared by every kind of action).
-  Otherwise it is refused with a plain reason the run reads at once.
+  Otherwise it is refused with a plain reason the run reads at once: no command of that name on the routine
+  now, one whose words differ from the version the run started with (or that it did not have), a retired
+  routine, a second request, or no requests left.
 - **How it runs**: through the runner `alt task run` uses for an operator grant: your login shell
   (`bash -lc`), the project's folder as its working folder, as its own job that stops after 10 minutes. One
   command at a time per run; the run waits for its result. Its time counts toward the run's own limit.
 - **What comes back**: the exit status and the last 4,000 characters of its output go back to the run, so it
-  can say in its report what happened. The run's page keeps the last 16 KB.
+  can say in its report what happened. The run's page keeps the last 16 KB, shown once the command ends.
 - **What stops it**: **Stop** on its row (the run goes on and reads that you stopped it), stopping the run,
   the run reaching its limit, retiring the routine, or saving the routine without that command or with
   different words. Each stops the job by its name, after a restart of Altitude too, and is recorded.
 
 ## Who can set commands
 
-Only your press on the form, or `alt agent set` in your own terminal, adds, changes or removes a command,
-as only your press saves a routine. L3's offers cannot carry commands: an offer for a routine that has
-commands keeps them as they are. As with worktrees and branches, L3 cannot turn on, resume or Run now a
-routine that has commands; it can pause, stop and undo.
+Your press on the form, or `alt agent new` and `alt agent set` in your terminal, add, change or remove
+commands: `--command NAME='WORDS'`, once for each, gives the whole list, and `--no-commands` empties it. L3's
+offers cannot carry commands: an offer for a routine that has commands keeps them as they are. As with
+worktrees and branches, L3 cannot turn on, resume or Run now a routine that has commands; it can pause, stop
+and undo.
+
+A command you list is you, so one that runs `alt` changes routines and answers questions as your terminal
+would; Altitude does not tell it apart. That is why the list above is yours to keep.
 
 ## What you see
 
 **The form.** **What it may change** is the whole fence. After Worktrees and branches, inside the same
 section, comes **Commands**:
 
+- **Commands** is a smaller sub-label inside the section, not a heading of its own.
 - Each command is a row: its name in bold, its words below in monospace, and two labelled buttons, **Edit**
   and **Remove** (aria-labels "Edit NAME" and "Remove NAME"), 44 px tall on the phone. Words wrap only at
   spaces; a single word longer than the line breaks anywhere.
+- Under the rows, whenever one is listed, a note reads: "These run as you, outside Altitude's sandbox,
+  whenever the routine decides. Altitude doesn't check what they do, and what they print goes to its
+  model."
 - **Remove** takes the row away at once, as removing a trigger does; nothing changes until Save, and Cancel
   keeps it.
-- **Add a command** (or Edit) opens the row as a draft: **Name** (hint: "Lowercase letters, digits and
-  dashes; the routine asks for it by this name.") and **Command** (a monospace text area; hint: "Runs as you
-  in harbor's folder for up to 10 minutes, once a run at most, whenever the routine decides, with the
-  scripts it calls as they are then."), then **Done** and **Cancel**. Done checks the draft and shows errors
+- **Add a command** opens a draft at the end of the list; **Edit** opens that row in place as a draft with
+  its name and words. A draft has **Name** (hint: "Lowercase letters, digits and dashes; the routine asks
+  for it by this name.") and **Command** (a monospace text area; hint: "Starts in harbor's folder, with its
+  files as they are then. Up to 10 minutes, once a run at most."), then **Done** and **Cancel**, both
+  secondary buttons, so Save stays the form's one primary action. Done checks the draft and shows errors
   under its fields: "Give it a name.", "Use lowercase letters, digits and dashes.", "Another command has that
-  name.", "Write the command.", "Keep it under 2,000 characters." While a draft is open, Add a command is
-  hidden.
+  name.", "Write the command.", "Keep it under 2,000 characters." Cancel puts the row back as it was. While a
+  draft is open, Add a command and the other rows' Edit and Remove are hidden.
+- **Save** with a draft open saves nothing and the line beside it reads "Finish or cancel the command
+  first." The form's own Cancel leaves without saving anything, drafts and Done commands included.
 - At ten commands, Add a command gives way to the hint "Ten commands at most."
 - The hint under the section reads "Nothing ticked or listed: it only reports." and shows only then.
 - When saving would stop a command that is running now, the line beside Save reads "Saving stops
@@ -80,26 +96,28 @@ section, comes **Commands**:
 
 **The routines list and the routine page.** The list line names what a routine may do after its
 triggers: "Changes worktrees and branches", "Runs 2 commands", or both joined by " · ". The routine page's
-lines under its definition read "May change worktrees and branches, with Undo" and "May run prune-images and
-clear-cache", each when it applies, or "Only reports".
+lines under its definition read "May change worktrees and branches, with Undo" and "May run as you:
+prune-images and clear-cache", each when it applies, or "Only reports".
 
 **A run's page.** **What it changed** lists each command request in order, with the first step's rows:
 
 | State | Row | Note |
 | --- | --- | --- |
-| Running | "Running prune-images" | "For 2 min." and a **Stop** button (aria "Stop prune-images"), 44 px tall on the phone |
-| Done | "Ran prune-images" | "Finished in 12 s." with an **Output** fold showing the kept output in monospace |
+| Running | "Running prune-images" | "For 2 min." and a **Stop** button (aria "Stop prune-images"), 44 px tall on the phone; pressed, it reads "Stopping…" and is disabled until the row ends |
+| Done | "Ran prune-images" | "Finished in 12 s." with an **Output** fold (44 px tall on the phone) showing the kept output in monospace |
 | Failed | "Ran clear-cache" | "Exited with 1 after 3 s." in the danger tone, with **Output** |
 | Timed out | "Ran prune-images" | "Stopped after 10 min." in the danger tone, with **Output** |
 | Stopped | "Ran prune-images" | "You stopped it after 2 min." / "Stopped with the run after 4 min." / "Stopped when you changed the routine." with **Output** |
 | Couldn’t start | "Couldn’t run prune-images" | "Altitude could not start it, so nothing ran." |
-| Not allowed | "Not allowed: run prune-images" | "This routine has no command by that name." / "This command changed after the run started." / "It already ran in this run." / "This run used its 20 requests." |
+| Not allowed | "Not allowed: run prune-images" | "This routine has no command by that name." / "This command changed after the run started." / "This routine is retired." / "It already ran in this run." / "This run used its 20 requests." |
 | Not a name | "Not allowed: a command" | "The run asked for something that is not a command name." |
 
-A command row has no Undo, and Undo all skips it.
+A command row has no Undo, and Undo all skips it. A Stop that arrives after the command ended changes
+nothing; the row already shows how it ended.
 
-**Chat.** Altitude's sentence after the run's summary adds the commands: "Ran prune-images and
-clear-cache." With a failure: "Ran prune-images; clear-cache failed."
+**Chat.** Altitude's sentence after the run's summary adds the commands that started: "Ran prune-images and
+clear-cache." With a failure, a timeout or a start that failed: "Ran prune-images; clear-cache failed." With
+a stop: "Ran prune-images; clear-cache was stopped." A refused request is on the run's page only.
 
 ## Records
 
@@ -125,8 +143,9 @@ Decided myself, open to change:
   characters to the run.
 - No built-in routine uses commands in this step; the docs give three example commands instead.
 
-For you: what a command prints goes back to the run and on to its engine's provider, as everything the
-run reads does, so a command should not print secrets.
+- Commands start in the project's folder, as the hint says, rather than an empty one: `make clean` or
+  `./scripts/tidy.sh` is the common case, and a command that should not follow the project names a path or
+  `cd`s elsewhere.
 
 ## Mac
 

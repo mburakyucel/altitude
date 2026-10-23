@@ -1056,8 +1056,9 @@ CLEAN_BRIEF = ("Check the machine's disk and memory. When container images take 
 CMDS = [("prune-images", "podman image prune --all --force --filter until=168h"),
         ("clear-cache", "npm cache clean --force && podman builder prune --all --force")]
 NAME_HINT = "Lowercase letters, digits and dashes; the routine asks for it by this name."
-CMD_HINT = (f"Runs as you in {P}’s folder for up to 10 minutes, once a run at most, whenever the routine decides, "
-            "with the scripts it calls as they are then.")
+CMD_HINT = f"Starts in {P}’s folder, with its files as they are then. Up to 10 minutes, once a run at most."
+CMD_NOTE = ("These run as you, outside Altitude’s sandbox, whenever the routine decides. Altitude doesn’t check what "
+            "they do, and what they print goes to its model.")
 
 
 def words(text):
@@ -1065,10 +1066,10 @@ def words(text):
     return " ".join(f'<span class="w">{w}</span>' for w in text.split(" "))
 
 
-def cmd_row(name, text):
-    return (f'<div class="tr cmd"><span class="tx"><b>{name}</b><code>{words(text)}</code></span>'
-            f'<span class="acts"><span class="btn sm" aria-label="Edit {name}">Edit</span>'
-            f'<span class="btn sm" aria-label="Remove {name}">Remove</span></span></div>')
+def cmd_row(name, text, buttons=True):
+    acts = (f'<span class="acts"><span class="btn sm" aria-label="Edit {name}">Edit</span>'
+            f'<span class="btn sm" aria-label="Remove {name}">Remove</span></span>') if buttons else ""
+    return f'<div class="tr cmd"><span class="tx"><b>{name}</b><code>{words(text)}</code></span>{acts}</div>'
 
 
 def cmd_open(name="", text="", errors=()):
@@ -1080,14 +1081,17 @@ def cmd_open(name="", text="", errors=()):
             + (f'<div class="err">{e["name"]}</div>' if "name" in e else f'<span class="hint">{NAME_HINT}</span>')
             + f'<label class="flab">Command</label><div class="field ta mono">{tx}</div>'
             + (f'<div class="err">{e["text"]}</div>' if "text" in e else f'<span class="hint">{CMD_HINT}</span>')
-            + '<div class="draft"><span class="btn primary sm">Done</span><span class="btn sm">Cancel</span></div></div>')
+            + '<div class="draft"><span class="btn sm">Done</span><span class="btn sm">Cancel</span></div></div>')
 
 
-def commands(rows=CMDS, opened=None, full=False):
-    body = "".join(cmd_row(*r) for r in rows) + (opened or "")
+def commands(rows=CMDS, opened=None, full=False, editing=None):
+    """The command rows, with a draft added at the end (`opened`) or in place of row `editing`."""
+    body = "".join(opened if i == editing else cmd_row(*r, buttons=opened is None) for i, r in enumerate(rows))
+    body += opened if opened and editing is None else ""
     add = "" if full or opened else '<div class="add"><span class="btn sm">Add a command</span></div>'
     cap = '<span class="hint">Ten commands at most.</span>' if full else ""
-    return f'<div class="sublab">Commands</div><div class="trig">{body}{add}</div>{cap}'
+    note = f'<span class="hint">{CMD_NOTE}</span>' if rows else ""
+    return f'<div class="sublab">Commands</div><div class="trig">{body}{add}</div>{cap}{note}'
 
 
 def fence(ticked=False, rows=CMDS, opened=None, full=False):
@@ -1103,9 +1107,14 @@ def cmd_form(rows=CMDS, opened=None, ticked=False):
     return html.replace('<label class="flab">Runs when</label>', fence(ticked, rows, opened) + '<label class="flab">Runs when</label>', 1)
 
 
-SAVE_STOPS = ('<div class="form actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">'
-              '<span class="btn primary">Save</span><span class="btn ghost">Cancel</span>'
-              '<span class="hint" style="margin:0">Saving stops prune-images, which is running.</span></div>')
+def save_line(text):
+    return ('<div class="form actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">'
+            '<span class="btn primary">Save</span><span class="btn ghost">Cancel</span>'
+            f'<span class="hint" style="margin:0">{text}</span></div>')
+
+
+SAVE_STOPS = save_line("Saving stops prune-images, which is running.")
+SAVE_DRAFT = save_line("Finish or cancel the command first.")
 
 
 def fold(text=None):
@@ -1121,8 +1130,10 @@ def danger(text):
 
 OUT_PRUNE = "Deleted Images\n3f1c2a9e0b7d…\n91aa04c6e2f1…\nTotal reclaimed space: 23.4GB"
 STOP = '<span class="btn sm" aria-label="Stop prune-images">Stop</span>'
+STOPPING = '<span class="btn sm" aria-disabled="true" style="opacity:.6">Stopping…</span>'
 CMD_CHANGES = {
     "running": change("Running prune-images", "For 2 min.", STOP),
+    "stopping": change("Running prune-images", "For 2 min.", STOPPING),
     "ran": change("Ran prune-images", "Finished in 12 s." + fold(OUT_PRUNE)),
     "ran-closed": change("Ran prune-images", "Finished in 12 s." + fold()),
     "cleared": change("Ran clear-cache", "Finished in 4 s." + fold()),
@@ -1138,6 +1149,7 @@ CMD_CHANGES = {
     "cap": change("Not allowed: run clear-cache", "This run used its 20 requests."),
     "notname": change("Not allowed: a command", "The run asked for something that is not a command name."),
     "again": change("Not allowed: run prune-images", "It already ran in this run."),
+    "retired": change("Not allowed: run prune-images", "This routine is retired."),
 }
 
 
@@ -1161,7 +1173,7 @@ board("PhoneCmdEdit", 390, 1750, phone(cmd_form(), back=CLEAN, title="Edit", h=1
 board("DesktopCmdRun", 1440, 1000, desk(CLEAN_RUN_HEAD + cmd_run_page(), h=1000))
 board("PhoneCmdRun", 390, 1150, phone(cmd_run_page(), back="Clean up the m…", title="Run · Today 06:00", h=1150))
 
-CMD_LINES = (FENCE_ON + '<p style="margin:6px 0 0;font-size:14px">May run prune-images and clear-cache</p>')
+CMD_LINES = (FENCE_ON + '<p style="margin:6px 0 0;font-size:14px">May run as you: prune-images and clear-cache</p>')
 
 
 def cell(body):
@@ -1170,35 +1182,40 @@ def cell(body):
 
 CMD_CELLS = [
     ("C1 · Form: nothing ticked or listed", "the one hint that it only reports", cell(fence(rows=[]))),
-    ("C2 · Form: two commands", "inside the fence; words wrap at spaces; Edit and Remove", cell(fence())),
-    ("C3 · Form: adding", "a draft with Done and Cancel; Add a command hidden meanwhile", cell(commands(CMDS[:1], cmd_open()))),
+    ("C2 · Form: two commands", "inside the fence; words wrap at spaces; Edit and Remove; the note under them", cell(fence())),
+    ("C3 · Form: adding", "a draft with Done and Cancel; the other rows’ buttons and Add a command hidden meanwhile",
+     cell(commands(CMDS[:1], cmd_open()))),
+    ("C3b · Form: editing", "the row opens in place with its name and words", cell(commands(CMDS, cmd_open(*CMDS[1]), editing=1))),
     ("C4 · Form: errors on Done", "under their fields",
      cell(commands(CMDS[:1], cmd_open("Prune images", "", (("name", "Use lowercase letters, digits and dashes."), ("text", "Write the command.")))))),
     ("C5 · Form: ten commands", "three of the ten rows drawn; the hint replaces Add a command",
      cell(commands([(f"step-{i}", "/opt/harbor/bin/step.sh") for i in range(1, 4)], full=True))),
     ("C6 · Form: saving while a command runs", "the line beside Save names it", cell(SAVE_STOPS)),
+    ("C6b · Form: Save with a draft open", "nothing is saved; the line beside Save says why", cell(SAVE_DRAFT)),
     ("C7 · Routines list", "what it may do after its triggers",
      '<div class="card alist">' + arow(CLEAN, "Daily at 06:00 · Runs 2 commands · Found something 2 h ago")
      + arow(TIDY, "Mondays at 09:00 · Changes worktrees and branches · Nothing found 3 d ago") + '</div>'),
     ("C8 · Routine page", "a line for each thing it may do",
      act_definition(CMD_LINES).replace(TIDY_BRIEF, CLEAN_BRIEF).replace("Mondays at 09:00", "Daily at 06:00")),
-    ("C9 · Run: running", "how long, and Stop for this command", cmd_changed(["running"])),
+    ("C9 · Run: running", "how long, and Stop for this command; pressed, Stopping… until the row ends; no output yet",
+     cmd_changed(["running", "stopping"])),
     ("C10 · Run: done", "Output open and folded", cmd_changed(["ran", "ran-closed"])),
     ("C11 · Run: failed, timed out, couldn’t start", "danger tone for the command’s own failure",
      cmd_changed(["failed", "timeout", "nostart"])),
     ("C12 · Run: stopped", "by you, with the run, by a change to the routine",
      cmd_changed(["stopped", "stopped-run", "stopped-edit"])),
-    ("C13 · Run: not allowed", "no such command; changed since the start; already ran; past 20 requests; not a name",
-     cmd_changed(["unknown", "changed", "again", "cap", "notname"])),
+    ("C13 · Run: not allowed", "no such command; changed since the start; retired; already ran; past 20 requests; not a name",
+     cmd_changed(["unknown", "changed", "retired", "again", "cap", "notname"])),
     ("C14 · Chat", "Altitude’s sentence after the summary",
      sysa(CLEAN, "found something: Container images took 31 GB. Ran prune-images and clear-cache.", "found")
-     + '<div style="height:10px"></div>' + sysa(CLEAN, "found something: Container images took 31 GB. Ran prune-images; clear-cache failed.", "found")),
+     + '<div style="height:10px"></div>' + sysa(CLEAN, "found something: Container images took 31 GB. Ran prune-images; clear-cache failed.", "found")
+     + '<div style="height:10px"></div>' + sysa(CLEAN, "found something: Container images took 31 GB. Ran prune-images; clear-cache was stopped.", "found")),
 ]
-board("CmdStates", 1200, 3900, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Commands you list: states at 1440</h1>'
+board("CmdStates", 1200, 4700, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Commands you list: states at 1440</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:900px">COMMANDS.md: the fence on the form, '
       'the list and routine page lines, a run’s command rows, and chat.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*c) for c in CMD_CELLS) + '</div>')
-board("PhoneCmdStates", 1720, 2650, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Commands you list: states at 390</h1>'
+board("PhoneCmdStates", 1720, 3200, '<div style="padding:36px 40px 14px"><h1 style="font-size:20px;font-weight:600;margin:0">Commands you list: states at 390</h1>'
       '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px">The same states at phone width: 44px targets, words that wrap at spaces.</p></div>'
       '<div class="sheetgrid phonesheet">' + "".join(st(*c) for c in CMD_CELLS) + '</div>')
 
