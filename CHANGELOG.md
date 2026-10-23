@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Opening an older Weekly improvement review run from its page takes the chat back to that run every time, rather
+  than sometimes showing the latest conversation until the next refresh.
+- The overview no longer fails to load when a task is archived while it is being read: the task's history is
+  read from wherever the archive has just moved it.
 - Work can show your agents as a graph: on a computer, the List | Graph switch beside Work puts every current
   task around L3, the ones waiting on you at the top, with arrows for tasks planned after another, a soft halo
   on work that is active right now and a dot for each helper it is running. Each node opens what its row opens.
@@ -15,6 +19,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Ask the coordinator how Altitude or one of its parts works and it answers in that turn, in plain words, from
   the documentation, naming the section it drew on, and says so when the documentation does not cover the
   point. The overview carries a short map of which document answers which kind of question.
+- The coordinator of every project, not only Altitude's own, can read Altitude's documentation to answer those
+  questions; installed releases include the documentation.
 - The required pull-request check no longer loses a shard for 30 minutes to a slow package mirror: its install
   steps give up within minutes and retry once, the system packages from the runner's next mirror.
 - A finished task takes your follow-up: message a done task from its page or with `alt task message` and it
@@ -26,8 +32,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   their checks pass and the notes mention anything you would notice; the release owner tells you what joined
   before it publishes. It asks again when a late change is breaking, turns a fix release into a feature release,
   needs a longer trial or brings a security fix the notes miss, and you can still ask for one exact commit.
-- Opening an older Weekly improvement review run from its page takes the chat back to that run every time, rather
-  than sometimes showing the latest conversation until the next refresh.
+- Retry in voice settings is no longer refused now and then as "Voice is already being set up", and the automatic
+  voice update at startup is no longer skipped, when a page happened to read voice's status at that moment.
 
 ## v0.12.0 — 2026-10-22
 

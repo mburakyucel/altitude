@@ -132,6 +132,8 @@ class InstallationCase(unittest.TestCase):
         (folder / "web/dist/assets").mkdir(parents=True)
         (folder / "web/dist/index.html").write_text('<html><script src="/assets/app.js"></script></html>')
         (folder / "web/dist/assets/app.js").write_text("console.log('fixture');\n")
+        (folder / "docs").mkdir()
+        (folder / "docs/OVERVIEW.md").write_text("# Fixture overview\n")
         if edited:
             (folder / "personas/l2.md").write_text("Reviewed next application version\n")
         release = {"version": version, "commit": ("b" if edited else "a") * 40,
