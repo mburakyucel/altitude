@@ -1594,8 +1594,8 @@ export async function terminalOpen(project: string, task?: string): Promise<Term
 /** Input, resize and close for terminal `id`, and `command`: the chat command for altd to type at the prompt (as a paste
  * when `bracketed`), which the terminal's reader (the task's owner, or the coordinator) hears about once it has run. Each
  * answers ok or the server's error: why the command wasn't typed, or 410 once the terminal was replaced. */
-/** Input that is page `page`'s answers to the queries in output `from` to `to`: Altitude types the first page's only. */
-export type TerminalAnswer = { page: string; from: number; to: number };
+/** Input that is page `page`'s answers to the queries in the piece of output ending at `end`: altd types the first page's only. */
+export type TerminalAnswer = { page: string; end: number };
 
 export function terminalSend(project: string, action: "input" | "command" | "resize" | "close", body: { task?: string; id: string; data?: string; answer?: TerminalAnswer; text?: string; bracketed?: boolean; cols?: number; rows?: number }) {
   return post(`${terminalPath(project)}/${action}`, body);

@@ -340,8 +340,8 @@ describe("the terminal screen", () => {
   });
 
   // Two pages showing one terminal both answered a live query: the program read one answer and the other reached the
-  // shell's prompt as text. Each answer names its page and the output it answers, and Altitude types the first only.
-  it("names this page and the live output each answer is to, and never names the operator's typing as an answer", async () => {
+  // shell's prompt as text. Each answer names its page and the piece of output it answers, and altd types the first only.
+  it("names this page and the piece of live output each answer is to, and never names the operator's typing as an answer", async () => {
     open();
     const phone = { stream: streams[0]!, type: term.data! };
     open();
@@ -349,12 +349,12 @@ describe("the terminal screen", () => {
     for (const stream of [phone.stream, desktop]) act(() => output(2, "$ ", false, 0, stream));
     for (const stream of [phone.stream, desktop]) act(() => output(2 + queries.length, queries, false, 0, stream));
     expect(typed()).toEqual([answers, answers]);
-    const [first, second] = tagged() as { page: string; from: number; to: number }[];
-    expect([first!.from, first!.to, second!.from, second!.to]).toEqual([2, 2 + queries.length, 2, 2 + queries.length]);
+    const [first, second] = tagged() as { page: string; end: number }[];
+    expect([first!.end, second!.end]).toEqual([2 + queries.length, 2 + queries.length]);
     expect(first!.page).not.toBe(second!.page);
-    // A page catching up from the middle of its output names only the part it answers.
+    // A page catching up answers the live piece its replay ends with.
     await act(async () => output(400_000, `$ ${queries}`, true, 2, desktop));
-    expect(tagged().at(-1)).toEqual({ page: second!.page, from: 400_000 - queries.length, to: 400_000 });
+    expect(tagged().at(-1)).toEqual({ page: second!.page, end: 400_000 });
     await act(async () => phone.type("x"));
     expect(typed().at(-1)).toBe("x");
     expect(tagged().at(-1)).toBeUndefined();

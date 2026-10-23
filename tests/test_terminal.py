@@ -218,7 +218,7 @@ class TestTerminalLifecycle(TerminalCase):
         self.assertEqual(terminal.replayed(history, 100, 100 + len(history)), len(history))
         self.assertEqual(terminal.replayed(history + queries, 100, 100 + len(history)), len(history))
 
-    def test_only_the_first_pages_answer_to_a_query_is_typed(self):
+    def test_only_the_first_pages_answer_to_each_piece_of_output_is_typed(self):
         # Two pages showing one terminal both answered a live query: the program read one answer and the other reached
         # the shell's prompt as text.
         self.turn(True)
@@ -226,34 +226,31 @@ class TestTerminalLifecycle(TerminalCase):
         self.output(until="$ ")
         term = self.current()
 
-        def ask():
-            self.type("read -rs -d R -p $'\\033[6n' at; echo got-${at#*[}\n")
-            self.wait(lambda: bytes(term.buffer).endswith(b"\x1b[6n"))
-            return term.end - len(b"\x1b[6n"), term.end
+        def answer(page, data, end):
+            terminal.write(self.project, None, ident, data, {"page": page, "end": end})
 
-        def answer(page, data, at):
-            terminal.write(self.project, None, ident, data, {"page": page, "from": at[0], "to": at[1]})
-
-        at = ask()
-        answer("phone", "\x1b[5;9R", at)
-        answer("desktop", "\x1b[7;7R", at)
-        answer("desktop", "\x1b[7;7R", (at[0] - 4, at[1] + 4))  # the same query, read in other pieces
-        # The other page's keys still reach the shell.
+        self.type("read -rs -d R -p $'\\033[6n' a; read -rs -d R -p $'\\033[6n' b; echo got-${a#*[}-${b#*[}\n")
+        self.wait(lambda: bytes(term.buffer).endswith(b"\x1b[6n"))
+        first = term.end
+        answer("phone", "\x1b[5;9R", first)
+        answer("desktop", "\x1b[7;7R", first)
+        # The phone goes quiet after the first query; the desktop, which read both pieces, answers the second.
+        self.wait(lambda: term.end > first and bytes(term.buffer).endswith(b"\x1b[6n"))
+        second = term.end
+        before = term.pieces[term.pieces.index(first) - 1]
+        data, offset, *_ = terminal.read(term, before, 0)
+        self.assertEqual((offset, data[-4:]), (first, b"\x1b[6n"))  # one piece at a time, as every page draws them
+        answer("desktop", "\x1b[3;", second)
+        answer("phone", "\x1b[1;1R", second)  # back in time to answer too
+        answer("desktop", "4R", second)  # the rest of the desktop's answer, in a request of its own
+        # The phone's keys still reach the shell.
         self.type("echo next-$((1+1))\n")
-        seen = self.output(until="next-2", offset=at[1])
-        self.assertIn("got-5;9", seen)
+        seen = self.output(until="next-2", offset=first)
+        self.assertIn("got-5;9-3;4", seen)
         self.assertNotIn("7;7", seen)
-        # The phone has gone quiet: the desktop's answer to the next query is typed, also in pieces.
-        at = ask()
-        answer("desktop", "\x1b[3;", at)
-        answer("desktop", "4R", at)
-        answer("phone", "\x1b[5;9R", at)
-        self.type("echo next-$((2+2))\n")
-        seen = self.output(until="next-4", offset=at[1])
-        self.assertIn("got-3;4", seen)
-        self.assertNotIn("5;9", seen)
-        for wrong in ({"page": "phone", "from": 1}, {"page": "", "from": 0, "to": 1}, {"page": "a", "from": 2, "to": 1},
-                      {"page": "a", "from": True, "to": 1}, [0, 1]):
+        self.assertNotIn("1;1", seen)
+        for wrong in ({"page": "phone"}, {"page": "", "end": 1}, {"page": "a", "end": True}, {"page": "a", "end": 10**9},
+                      {"page": "a", "end": 1, "from": 0}, [0, 1]):
             with self.subTest(answer=wrong), self.assertRaises(terminal.TerminalError):
                 terminal.write(self.project, None, ident, "\x1b[1;1R", wrong)
 

@@ -108,20 +108,21 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
     // xterm answers a query in the output it parses (a colour, the cursor's place, what terminal it is) through onData,
     // as it does keys. Each write's callback runs right after its output is parsed, in the same task, so what xterm
     // emits while output waits to be parsed is held: the callback takes the answers to that output and sends them only
-    // when it is live, output `from` to `to`, never for output only replayed, whose programs have moved on. Every page
-    // showing the terminal answers, naming that output and this page, and Altitude types the first page's answer only.
+    // when it is live, never for output only replayed, whose programs have moved on. altd sends live output in the
+    // pieces the shell wrote; every page showing the terminal answers each piece, naming its end and this page, and
+    // altd types the first page's answers to it only.
     // The operator's keys, pastes, mouse and focus arrive in tasks of their own, so what is held outside a parse goes
     // on as that task ends, as typing.
     const page = crypto.randomUUID();
     let parsing = 0;
     let held = "";
-    const draw = (data: string | Uint8Array, live?: { from: number; to: number }) => {
+    const draw = (data: string | Uint8Array, end?: number) => {
       parsing += 1;
       term.write(data, () => {
         parsing -= 1;
         const answers = held;
         held = "";
-        if (live && answers) deliver(answers, { page, ...live });
+        if (end !== undefined && answers) deliver(answers, { page, end });
       });
     };
     const release = () => {
@@ -163,9 +164,8 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
         // Output already there as the stream opened is replayed, apart from queries a program may still wait on (altd's `replay`).
         const data = bytes(chunk.data);
         const replay = chunk.replay ?? 0;
-        const begin = chunk.offset - data.length;
         if (replay) draw(data.subarray(0, replay));
-        if (replay < data.length) draw(data.subarray(replay), { from: begin + replay, to: chunk.offset });
+        if (replay < data.length) draw(data.subarray(replay), chunk.offset);
         offset = chunk.offset;
         output.current.seen = true;
         output.current.at = Date.now();
