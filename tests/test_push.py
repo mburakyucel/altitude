@@ -761,6 +761,20 @@ class TestLegacyKey(AltitudeCase):
         self.start()
         self.assertEqual(sorted(path.name for path in legacy.iterdir()), ["state.json"])
 
+    def test_an_empty_folder_of_a_project_named_push_stays(self):
+        (self.home / "push").mkdir()
+        self.start()
+        self.assertTrue((self.home / "push").is_dir())
+        self.assertEqual(self.logged, [])
+
+    def test_an_entry_that_will_not_go_keeps_none_of_the_others_back(self):
+        legacy = self.home / "push"
+        (legacy / "vapid.key").mkdir(parents=True)  # a folder by the key's name refuses unlink
+        (legacy / f".{'b' * 32}.key").write_text("fixture half-made key\n")
+        self.start()
+        self.assertEqual([path.name for path in legacy.iterdir()], ["vapid.key"])
+        self.assertEqual(len(self.logged), 1)
+
     def test_a_link_in_place_of_the_folder_is_never_followed(self):
         (self.home / "push").symlink_to(push.KEY.parent)
         self.start()

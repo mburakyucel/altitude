@@ -3060,7 +3060,7 @@ alerts on keeps its change stream while hidden; every other hidden tab still clo
 
 A device is also woken while Altitude is closed. `altitude/push.py` keeps the VAPID signing key in
 the access folder, which no Altitude sandbox can read, and the subscribed endpoints in `~/.altitude/push.json`, both written only by the
-daemon; each start deletes the key earlier releases kept in `~/.altitude/push/` and logs the removal; turning alerts on registers the device's endpoint through `/api/alerts/subscription` and reads the public key
+daemon; each start removes a file earlier releases left in Altitude's home and logs it; turning alerts on registers the device's endpoint through `/api/alerts/subscription` and reads the public key
 from `/api/alerts`, and with alerts on subscribes and tells it again each time Altitude opens or returns to
 the screen there, one step at a time with the switch. The answer says whether altd still held the endpoint
 and whether that device's push service refuses Altitude's alerts; the page replaces a subscription made with
