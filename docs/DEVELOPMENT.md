@@ -295,6 +295,8 @@ crossing poll and task action response return the archived record, a missing tas
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
 The overview regression archives a task between the overview's task listing and its event read, and
 the overview still answers without a logged failure.
+The held-PR pictures regression archives the task after the merge card's first view resolves the live
+folder and before it saves the pictures: no live folder reappears and the archived record reads whole.
 Question-response, failed-setup and first-conversation retry checkpoints join their owned workflows before observing the
 scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
 The change-stream outage fixture reports its captured shutdown targets; connection cleanup cannot

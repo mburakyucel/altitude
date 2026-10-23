@@ -3880,6 +3880,9 @@ types refuse the whole set, so nothing is published. References that cannot be c
 `not_shown`; remote images are never fetched.
 
 The copies are content-named files in the task folder's `shown/` directory and follow task archival.
+A save makes only that directory, never the task folder: one that crosses an archive writes into the moved
+folder or, finding no live folder, saves nothing, so the merge card's unlocked first view cannot recreate an
+archived task.
 The record on the reply row or question revision holds paths, content names, sizes and dimensions, the
 document's first heading and opening paragraph, and a hash of itself as its identity; it never holds
 the document text. A question showing identical files keeps its revision, changed files advance it,
