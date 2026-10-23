@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlencode
 
-from . import config, engines, git_policy, images, platform, project_setup, route, state as S, storage, tasks as T
+from . import config, engines, git_policy, images, platform, project_setup, route, state as S, storage, tasks as T, tidy
 
 
 class DispatchFailure(T.TransitionError):
@@ -2158,12 +2158,9 @@ def cleanup_task(project: str, task: dict) -> list[str]:
         fetch = git("fetch", "-q", "origin", "main")
         if fetch.returncode != 0:
             return keep(f"could not refresh origin/main: {(fetch.stderr or fetch.stdout).strip()[:120]}", retry=True)
-        status = git("status", "--porcelain", "--untracked-files=all", cwd=Path(wt))
-        if status.returncode != 0 or status.stdout.strip():
-            return keep("worktree has uncommitted changes")
-        loose = git("rev-list", "-n1", "HEAD", "--not", "--branches", "--remotes", cwd=Path(wt))
-        if loose.returncode != 0 or loose.stdout.strip():
-            return keep("worktree has commits on no branch")
+        lost = tidy.unsaved(Path(wt))
+        if lost:
+            return keep("worktree has uncommitted changes" if lost == "uncommitted" else "worktree has commits on no branch")
         tip = git("rev-parse", "--verify", "-q", f"refs/heads/{branch}").stdout.strip()
         merged = bool(tip) and (git("merge-base", "--is-ancestor", tip, "refs/remotes/origin/main").returncode == 0
                                 or _pr_merged_at(repo, task, tip))

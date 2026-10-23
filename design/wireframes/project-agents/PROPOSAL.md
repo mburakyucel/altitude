@@ -4,7 +4,7 @@ Status: approved by the operator on 2026-10-19 with one addition: Altitude ships
 including the Weekly improvement review, that you turn on with one press. Steps 1 to 5 are built
 ([The Weekly improvement review](#the-weekly-improvement-review), [Monitor](#monitor-step-3), [Events you
 send](#events-you-send-step-4) and [Suggestions](#suggestions-step-5)); the rollout converged after step 5,
-and step 6, acting, is #1109. How each step is built lives in `docs/ARCHITECTURE.md` and SPEC §3.17. In
+and step 6, acting, is [Routines that act](ACTING.md) (#1109). How each step is built lives in `docs/ARCHITECTURE.md` and SPEC §3.17. In
 the interface the feature is called **Routines**; one of them is "a routine", and one time it works is "a run". This
 replaces the earlier scheduled-only proposal: a schedule is one kind of trigger, not the definition.
 
@@ -888,8 +888,9 @@ Each step was its own held pull request and came back to you before it was built
 5. **Suggestions.** A run may propose up to three tasks. L3 checks them first, and those it keeps wait
    on the improvement suggestion card under Suggestions in Needs you, with Make a task and Dismiss;
    tasks made from one show "from <routine>" in Work.
-6. **Acting.** A per-routine choice to open pull requests, each held for your merge as a review card, and
-   to list issues for L3 to file. Not built; it is #1109.
+6. **Acting.** [Routines that act](ACTING.md) replaces this step: a routine may ask Altitude to make each
+   change within what its form allows. Its first increment, Worktrees and branches with Undo, is built; pull
+   requests and the rest follow as its later increments (#1109).
 
 ## Mac verification
 

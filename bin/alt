@@ -577,7 +577,10 @@ def main(argv=None) -> None:
     from altitude import improve
     sub.add_parser("improve", parents=[improve.parser()], add_help=False, help="improvement suggestions: status here; the rest through the project's coordinator")
     from altitude import project_agents
-    sub.add_parser("agent", parents=[project_agents.parser()], add_help=False, help="routines a project runs on a schedule, when sent an event or when asked: list, show, new, set, on, pause, resume, retire, run, send, stop")
+    sub.add_parser("agent", parents=[project_agents.parser()], add_help=False, help="routines a project runs on a schedule, when sent an event or when asked: list, show, new, set, on, pause, resume, retire, run, send, stop, undo")
+    acting = sub.add_parser("act", help="inside a routine run that may change things: ask Altitude to make one change, which it checks itself")
+    acting.add_argument("action", choices=("set-aside-worktree", "delete-branch"))
+    acting.add_argument("target", help="the worktree's or branch's name")
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
@@ -647,7 +650,14 @@ def main(argv=None) -> None:
         config.ensure_root()
     c = args.cmd
     if ACTOR == "project-agent-run":
-        sys.exit("alt: a routine run reports in its final answer and has no alt verbs")
+        if c != "act":
+            sys.exit("alt: a routine run reports in its final answer; its one verb is alt act")
+        try:
+            say(door.call("act", {"action": args.action, "target": args.target})["said"]); return
+        except door.DoorError as exc:
+            sys.exit(f"alt act: {exc}")
+    if c == "act":
+        sys.exit("alt act: only a routine run asks Altitude to change something, through its door")
     if c == "project" and args.pcmd in ("message", "terminal", "step"):
         sys.exit(f"alt project {args.pcmd} is available only through the project's coordinator socket")
     if c == "task" and args.tcmd == "offer":

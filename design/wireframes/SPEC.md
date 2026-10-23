@@ -2668,6 +2668,15 @@ adopts; [behavior](../../docs/ARCHITECTURE.md#routines)). What ships:
   name." or "Say what it does." in the danger tone under each missing field, described by it, and focuses the first;
   each line goes once its field is filled. A new routine's form ends with a muted line under its buttons: "It starts
   off: try it with Run now, then turn it on."
+- **What it may change** ([design](project-agents/ACTING.md#increment-1-in-detail), whose text and states table
+  this section adopts; [behavior](../../docs/ARCHITECTURE.md#routines-that-act)): after What it does, the form's
+  bordered checkbox row **Worktrees and branches** over its muted line, and "Unticked, it only reports." under it
+  while unticked. The routines list adds "Changes worktrees and branches" after a routine's triggers; its page
+  says "May change worktrees and branches, with Undo", or "Only reports" muted. The built-in **Tidy worktrees and
+  branches** opens a sheet of what it may change before it turns on. A run's page shows **What it changed** under
+  the report (above the live session while it runs), one row per request with **Undo**, and **Undo all** while two
+  or more can be undone; names longer than 40 characters are cut in the middle. Altitude's own sentence of what
+  it changed follows the run's summary in chat and Recent runs; an offer shows the permission it adds or removes.
 - **Needs you**: a routine that paused itself waits as a card after its project's questions: "Routine paused
   itself" in the danger tone with its age, the routine's name linking to its page with a chevron, "3 runs in a row
   couldn't finish. The last: <reason>", a bordered **Resume** and the link **Open the last run**. Resume spins
