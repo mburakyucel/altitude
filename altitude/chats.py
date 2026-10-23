@@ -1,14 +1,14 @@
 """Agent chats: conversations the operator drives with one of the project's coding agents, from their browser, with no
 brief, proposal or pull request (docs/ARCHITECTURE.md#agent-chats).
 
-A chat is a record under the project (`<project>/chats/<id>/chat.json`): its name, the engine and model it answers
+A chat is a record in Altitude's chats folder (`chats/<project>/<id>/chat.json`), which every agent's sandbox hides: its name, the engine and model it answers
 with, its engine session, its copy of the code and its conversation. Each message the operator sends waits until the
 chat's previous turn ends, and the messages waiting then go together as its next turn: a worker job of the chat role,
 restricted as a routine run is but committing on its own branch (`engines.start_chat_turn`), in the chat's own copy of
 the project, a worktree on the `chat-<id>` branch made from the fetched main at its first turn, resuming the chat's one
 session from its own engine folder. A thread of the service (`run`) starts each turn, follows its worker and records
 the answer; the worker's job outlives a restart of the service, whose tick follows it again. A chat changes only from a
-paired browser and reads only there and in the operator's terminal (`alt chats`), never by an Altitude agent.
+paired browser and reads only there and in the operator's terminal (`alt chats`).
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ class Missing(KeyError):
 # ---- the record ---------------------------------------------------------------------------------------------------
 
 def home(project: str) -> Path:
-    return config.project_dir(project) / "chats"
+    return config.CHATS / config.require_project_name(project)
 
 
 def folder(project: str, chat_id: str) -> Path:

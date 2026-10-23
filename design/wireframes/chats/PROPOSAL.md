@@ -75,7 +75,8 @@ available when no reply is running and comes from a paired browser only.
 
 ## Access
 
-**Boxed (the default).** The agent writes only its copy, its branch and its own folders, keeps the network
+**Boxed (the default).** The agent writes its copy, the project's Git store as a task worker does, and its own
+folders, keeps the network
 for installs and tests, reaches no user services, and has no GitHub sign-in, since a chat publishes
 nothing. Its `alt` admits only the read commands a task worker has.
 
@@ -126,7 +127,7 @@ pill offers another. Engine differences stay behind the seam.
 `GET /api/chats/<project>` lists a project's chats; `GET /api/chats/<project>/<id>` is one chat with its
 conversation, running turn and steps; `POST /api/chats` takes `new`, `message`, `rename`, `stop`, `access`,
 `task`, `archive`, `reopen` and `delete`, each with a request id whose repeat returns the first result.
-Records live in `<project>/chats/<id>/` under Altitude's home: `chat.json` (name, engine, model, session,
+Records live in `chats/<project>/<id>/` under Altitude's home, a folder every agent's sandbox hides: `chat.json` (name, engine, model, session,
 copy, access, archived) and `conversation.jsonl`; images go to the project's image store. `alt chats list
 [--archived] [--json]` and `alt chats show <chat> [--json]` read them and are in no agent's `alt`.
 

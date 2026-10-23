@@ -183,6 +183,9 @@ PROJECTS_FILE = ROOT / "projects.json"
 MONITOR_DIR = ROOT / "monitor"
 INCIDENT_INDEX = ROOT / "incidents.jsonl"
 DIGEST_FILE = ROOT / "DIGEST.md"
+#: Agent chats, every project's (`chats`): only the operator reads them, so every agent session's sandbox hides this
+#: folder, apart from a chat turn's own engine folder (`platform.job_command`).
+CHATS = ROOT / "chats"
 
 
 def task_effort(engine: str | None, effort: str | None, *, role: str = "l2") -> str | None:

@@ -12,8 +12,8 @@ import threading
 from pathlib import Path
 
 from tests.support import REPO, AltitudeCase, git, make_repo
-from altitude import (access, chats, config, engines, git_policy, images, monitor, route, server, state as S, terminal,
-                      tidy)
+from altitude import (access, chats, config, engines, git_policy, images, monitor, platform, route, server, state as S,
+                      terminal, tidy)
 
 PNG = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 
@@ -435,6 +435,38 @@ class TestLaunch(ChatCase):
             self.assertTrue(set(shared) <= set(writable), engine)
             _, _, writable, *_ = native.prepare_worker("p/chat-x", "hi", **kw)
             self.assertFalse(shared[0] in writable, engine)
+
+    def test_every_agents_sandbox_hides_the_chats_and_a_turn_reopens_only_its_own_engine_folder(self):
+        chats_folder = os.path.realpath(config.CHATS)
+        hidden = platform._operator_places()
+        self.assertIn(chats_folder, hidden, "present or not, every job's sandbox hides it")
+        other = os.path.realpath(chats.folder(self.project, "0" * 12))
+        copy = self.repo / ".claude" / "worktrees" / "chat-x"
+        git("worktree", "add", "-q", "--detach", str(copy), cwd=self.repo)
+        for engine in config.ENGINES:
+            native = engines.common.implementation(engine)
+            if hasattr(native, "claude_agents"):
+                self.patch(native, "claude_agents", return_value=[])
+            _, _, writable, read_only, *_ = native.prepare_worker(
+                "p/chat-x", "hi", cwd=copy, scratch=self.tmp / "scratch", persona=None, model=None, settings=None,
+                effort=None, resume=None, images=(), restricted=True, commits=True,
+                job_root=chats.folder(self.project, "a" * 12) / "l2-engine")
+            writable = [os.path.realpath(path) for path in writable]
+            own = next(path for path in writable if path.startswith(chats_folder + os.sep))
+            argv = platform.bubblewrap_profile(writable, [str(path) for path in read_only],
+                                               temporary=str(self.tmp / "job-tmp"), hidden=hidden)
+            spans = [argv[n:n + 3] for n in range(len(argv))]
+            hide = [span[:2] for span in spans].index(["--tmpfs", chats_folder])
+            self.assertLess(hide, spans.index(["--bind", own, own]), f"{engine}: the turn's own folder is mounted after")
+            self.assertFalse([arg for arg in argv if arg.startswith(other)], engine)
+            profile = platform.seatbelt_profile(writable, [str(path) for path in read_only],
+                                                temporary=str(self.tmp / "job-tmp"), hidden=hidden)
+            deny = profile.index(f'(deny file-read* file-write* (subpath "{chats_folder}"))')
+            self.assertGreater(profile.index(f'(allow file-read* file-write* (subpath "{own}"))'), deny,
+                               f"{engine}: Seatbelt's later rule reopens the turn's own folder")
+            self.assertNotIn(other, profile, engine)
+        rules = next(s for s in engines.codex_l3_permissions(copy, project=self.project) if ".filesystem=" in s)
+        self.assertIn(f'"{chats_folder}"="deny"', rules, "the Codex coordinator, outside Altitude's sandbox, too")
 
 
 class TestWhoReads(ChatCase):

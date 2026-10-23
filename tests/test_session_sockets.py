@@ -209,18 +209,19 @@ class HomeSandboxCase(AltitudeCase):
         if why:
             self.skipTest(f"the platform's sandbox does not start here: {why}")
 
-    def sandbox(self, read_only=(), hidden=()) -> list[str]:
+    def sandbox(self, read_only=(), hidden=(), writable=()) -> list[str]:
+        roots = [str(self.work), *map(str, writable)]
         if NATIVE_PLATFORM == "darwin":
-            return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile([str(self.work)], list(read_only),
+            return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile(roots, list(read_only),
                                                                             temporary=self.temporary, hidden=hidden)]
-        return platform.bubblewrap_profile([str(self.work)], list(read_only), temporary=self.temporary, hidden=hidden)
+        return platform.bubblewrap_profile(roots, list(read_only), temporary=self.temporary, hidden=hidden)
 
-    def job(self, files: dict, write: Path, listing: Path, read_only=(), hidden=(), before=None) -> dict:
+    def job(self, files: dict, write: Path, listing: Path, read_only=(), hidden=(), before=None, writable=()) -> dict:
         """What a job sees of `files`, the write and the listing; `before` runs once the job has started, before it
         looks."""
         go = self.work / "go"
         wait = f"import os, time\nwhile not os.path.exists({str(go)!r}): time.sleep(0.05)\n"
-        job = subprocess.Popen([*self.sandbox(read_only, hidden), sys.executable, "-I", "-c", wait + FILES,
+        job = subprocess.Popen([*self.sandbox(read_only, hidden, writable), sys.executable, "-I", "-c", wait + FILES,
                                 json.dumps({name: str(path) for name, path in files.items()}), str(write), str(listing)],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.work)
         if before:
@@ -385,6 +386,28 @@ class TestOperatorsCredentials(HomeSandboxCase):
         self.assertEqual(seen["url"], [0, "https://github.com/fixture/demo.git"])
         self.assertEqual(seen["credential"], [0, "protocol=https\nhost=github.com\nusername=x-access-token\n"
                                                  "password=fictional-token"])
+
+
+class TestAgentChats(HomeSandboxCase):
+    """Agent chats (`config.CHATS`), which only the operator reads: a job sees none of them, and a chat turn reopens
+    only its own engine folder inside them."""
+
+    def test_a_chat_turn_reads_and_writes_its_own_engine_folder_and_nothing_else_of_the_chats(self):
+        chats_folder = Path(os.path.realpath(self.tmp)) / "altitude" / "chats"
+        self.patch(config, "CHATS", chats_folder)
+        own, other = chats_folder / "atlas/aaaaaaaaaaaa", chats_folder / "atlas/bbbbbbbbbbbb"
+        engine = own / "l2-engine/claude"
+        engine.mkdir(parents=True)
+        other.mkdir(parents=True)
+        for path in (own / "chat.json", other / "chat.json", engine / "session.jsonl"):
+            path.write_text("fictional chat")
+        files = {"own record": own / "chat.json", "other chat": other / "chat.json", "session": engine / "session.jsonl"}
+        seen = self.job(files, engine / "written", engine, hidden=platform._operator_places(), writable=[engine])
+        # Linux shows the hidden folder empty; Seatbelt refuses it.
+        refused = errno.EPERM if NATIVE_PLATFORM == "darwin" else errno.ENOENT
+        self.assertEqual(seen, {"own record": refused, "other chat": refused, "session": "fictional chat",
+                                "write": "written", "listing": ["session.jsonl", "written"]})
+        self.assertTrue((engine / "written").exists(), "the turn's own folder is the host's")
 
 
 class TestJobTemporaryFolder(AltitudeCase):
