@@ -281,6 +281,8 @@ only one project runs is tagged `@phone-only` or `@desktop-only`, which the othe
 The README service seeds its example records without flushing each to disk, so two services
 starting together on a loaded runner stay inside that start limit.
 The Weekly improvement review walkthrough releases a held press only after it reaches the route.
+The transfer listening walkthrough holds a model switch's receipt after its requeue, so the page reads that
+moment before the receipt every run, then releases it.
 The image stream/admission walkthrough holds a real admission receipt until a history poll shows
 its image, then holds later reads while verifying that receipt cannot recreate a queued copy.
 The image selection/viewer/reload journey holds completion after the active turn clears and before
@@ -293,6 +295,8 @@ crossing poll and task action response return the archived record, a missing tas
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
 The overview regression archives a task between the overview's task listing and its event read, and
 the overview still answers without a logged failure.
+The held-PR pictures regression archives the task after the merge card's first view resolves the live
+folder and before it saves the pictures: no live folder reappears and the archived record reads whole.
 Question-response, failed-setup and first-conversation retry checkpoints join their owned workflows before observing the
 scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
 The change-stream outage fixture reports its captured shutdown targets; connection cleanup cannot

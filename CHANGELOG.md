@@ -11,6 +11,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   than sometimes showing the latest conversation until the next refresh.
 - The overview no longer fails to load when a task is archived while it is being read: the task's history is
   read from wherever the archive has just moved it.
+- A task archived just as you first open its pull request's merge card keeps its whole history: the card's
+  pictures are never saved into an empty copy of the task that would hide its documents and conversation.
 - Work can show your agents as a graph: on a computer, the List | Graph switch beside Work puts every current
   task around L3, the ones waiting on you at the top, with arrows for tasks planned after another, a soft halo
   on work that is active right now and a dot for each helper it is running. Each node opens what its row opens.
@@ -41,6 +43,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   still read and changed with `alt agent`.
 - The README's feature list describes routines and the terminal steps that wait for your Enter, and the
   walkthrough shows a routine's suggested tasks.
+- Voice input you are recording on a task keeps going when its model switch completes: the page no longer
+  briefly drops the message box, and the recording with it, at the moment the task is queued for its new engine.
 
 ## v0.12.0 — 2026-10-22
 

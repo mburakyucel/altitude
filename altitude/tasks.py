@@ -392,9 +392,12 @@ def _shown(paths: list[str], fetch) -> tuple[dict, dict[str, bytes]]:
 
 def _save_files(project: str, slug: str, files: dict[str, bytes], folder: str = SHOWN_FOLDER,
                 limit: int = SHOWN_IMAGE_LIMIT) -> None:
-    """Content-named `files` in the task's `folder`, written without following links."""
-    relative = (S.task_dir(project, slug) / folder).relative_to(config.ROOT)
-    with storage.runtime_directory(list(relative.parts), create=True) as directory:
+    """Content-named `files` in the task's `folder`, written without following links. Only `folder` is made, never the
+    task's own: an archive moving the task mid-save carries the open folder with it, and one just before leaves no live
+    folder to open, so an unlocked read cannot recreate an archived task."""
+    task = S.task_dir(project, slug).relative_to(config.ROOT)
+    with storage.runtime_directory(list(task.parts)) as parent, \
+            storage.directory(parent, [folder], create=True) as directory:
         for name, data in files.items():
             try:
                 saved = os.stat(name, dir_fd=directory, follow_symlinks=False)
