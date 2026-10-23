@@ -1058,7 +1058,7 @@ CMDS = [("prune-images", "podman image prune --all --force --filter until=168h")
 NAME_HINT = "Lowercase letters, digits and dashes; the routine asks for it by this name."
 CMD_HINT = f"Starts in {P}’s folder, with its files as they are then. Up to 10 minutes, once a run at most."
 CMD_NOTE = ("These run as you, outside Altitude’s sandbox, whenever the routine decides. Altitude doesn’t check what "
-            "they do, and what they print goes to its model.")
+            "they do, and its model reads them and what they print.")
 
 
 def words(text):
@@ -1148,7 +1148,7 @@ CMD_CHANGES = {
     "changed": change("Not allowed: run prune-images", "This command changed after the run started."),
     "cap": change("Not allowed: run clear-cache", "This run used its 20 requests."),
     "notname": change("Not allowed: a command", "The run asked for something that is not a command name."),
-    "again": change("Not allowed: run prune-images", "It already ran in this run."),
+    "busy": change("Not allowed: run clear-cache", "Another of its commands is still running."),
     "retired": change("Not allowed: run prune-images", "This routine is retired."),
 }
 
@@ -1205,7 +1205,7 @@ CMD_CELLS = [
     ("C12 · Run: stopped", "by you, with the run, by a change to the routine",
      cmd_changed(["stopped", "stopped-run", "stopped-edit"])),
     ("C13 · Run: not allowed", "no such command; changed since the start; retired; already ran; past 20 requests; not a name",
-     cmd_changed(["unknown", "changed", "retired", "again", "cap", "notname"])),
+     cmd_changed(["unknown", "changed", "retired", "busy", "cap", "notname"])),
     ("C14 · Chat", "Altitude’s sentence after the summary",
      sysa(CLEAN, "found something: Container images took 31 GB. Ran prune-images and clear-cache.", "found")
      + '<div style="height:10px"></div>' + sysa(CLEAN, "found something: Container images took 31 GB. Ran prune-images; clear-cache failed.", "found")

@@ -494,7 +494,7 @@ allowed: <reason>." or "Failed: <reason>.". A run whose routine only reports is 
 only reports; the operator can let it change worktrees and branches on its form.". `alt act run NAME` asks for
 one of the routine's commands by name and waits for it, up to its 10 minutes, printing how it ended and the end of
 its output ("Ran NAME: it exited with 0 after 12 s.", "Failed: …", "Stopped: …" or "Not allowed: …"); asked again
-while it runs, it waits for the same result. Every other `alt` verb in a run, and `alt act` anywhere else, is
+in the same run, it runs nothing and prints the same result, waiting while the command runs. Every other `alt` verb in a run, and `alt act` anywhere else, is
 refused.
 
 ## GitHub issues

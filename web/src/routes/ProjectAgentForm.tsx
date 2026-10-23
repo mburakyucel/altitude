@@ -188,7 +188,7 @@ function Commands({ project, commands, draft, onDraft, onChange }: {
     </div>
     {!draft && commands.length >= COMMANDS ? <p className="text-meta text-muted">Ten commands at most.</p> : null}
     {commands.length ? <p className="text-meta text-muted">These run as you, outside Altitude’s sandbox, whenever the routine decides.
-      Altitude doesn’t check what they do, and what they print goes to its model.</p> : null}
+      Altitude doesn’t check what they do, and its model reads them and what they print.</p> : null}
   </>;
 }
 

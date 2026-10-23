@@ -177,9 +177,10 @@ test("commands you list: the form's list and draft, the routine page, a run's co
   await walk.state("c03-run-commands", {
     visible: [row("Ran prune-images").getByText(/^Finished in \d+ s\.$/), row("Ran clear-cache").getByText(/^Exited with 1 after \d+ s\.$/),
       row("Not allowed: a command").getByText("The run asked for something that is not a command name.", { exact: true }),
-      row("Not allowed: run prune-images").getByText("It already ran in this run.", { exact: true })],
+      row("Not allowed: run wait-for-mirror").getByText("This routine has no command by that name.", { exact: true })],
     hidden: [card.getByRole("button"), page.getByText("Prune Images!")],
   });
+  // Asking again for prune-images answered with its result and added no row.
   await expect(card.locator(".agent-change")).toHaveCount(4);
   await expect(row("Ran clear-cache").getByText(/^Exited with 1/)).toHaveClass(/text-danger/);
   const output = row("Ran clear-cache").locator("summary", { hasText: "Output" });

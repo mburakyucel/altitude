@@ -2565,16 +2565,19 @@ to ten `{name, words}`: a name of lowercase letters, digits and dashes of at mos
 2,000 characters. `alt act run NAME` asks for one by name through the run's door; a target that is not a command
 name is refused without recording its text. Under the project lock altd records the request as a change of kind
 `command` and refuses it ("Not allowed: …") unless the routine is not retired, has a command of that name with the
-same words both now and in the version the run ran with, the command has not already started in this run, no other
-of the run's commands is running and the run has requests left (the same 20). Otherwise it claims the job, saves the
+same words both now and in the version the run ran with, no other of the run's commands is running and the run has
+requests left (the same 20). Otherwise it claims the job, saves the
 row as running and, outside the lock, runs the words through `engines.machine_command`, the runner of `alt task
 run`: the operator's login shell (`bash -lc`) in the project's folder as its own service-manager job, with
 Altitude's clean environment, no run identity and empty input, ending after `config.MACHINE_COMMAND_TIMEOUT`. A
 command runs as the operator, outside every sandbox, so the list is the fence: no text from the run reaches it, and
-Altitude does not judge what it does; the form says so beside the list. The answer names how it ended (done,
-failed, timed_out, stopped, or not_started when the job could not launch) with the last 4,000 characters of its
-output; the run page shows the kept log (`machine_output`). A repeated request id, or another request for a command
-still running, waits for that command's result, so a run whose own tool call timed out asks again for it.
+Altitude does not judge what it does; the form says so beside the list, and that the run's model reads each
+command's words and output. The answer names how it ended (done, failed, timed_out, stopped, or not_started when the
+job never opened its log, the one outcome after which the run may ask for it again) with the last 4,000 characters
+of its output; the run page shows the kept log (`machine_output`). Exit 0 is done even when a stop arrived as it
+ended. A repeated request id, or another request for a command that already started in this run, runs nothing and
+answers with that command's result, waiting while it runs, so a run whose own tool call timed out asks again for
+it. A run's box cannot write its run folder, where the job's log and exit file live.
 
 A watcher stops the job (`machine_stop`) and records who in `stopping`, then `by`: `you` when the operator presses
 Stop on its row (`POST /api/agents` action `stop_command`, `{agent, n, change}`, refused to L3), `run` when the run

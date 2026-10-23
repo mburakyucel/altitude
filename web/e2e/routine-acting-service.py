@@ -2,8 +2,8 @@
 and Git: Clear old worktrees may change them, and its last run set two helper worktrees aside, deleted a merged
 branch and kept a worktree with uncommitted work and a branch with work found nowhere else; Dependency check only
 reports, and its last run's one request was refused; the built-in Tidy worktrees and branches waits to be turned on.
-Free disk space lists three commands: its last run ran one, saw one fail and was refused twice, and the run it has
-going now waits on its third. Only the engine seam is replaced, and GitHub's answer about merged pull requests:
+Free disk space lists two commands: its last run ran one, asked for it again, saw the other fail and was refused
+twice; then wait-for-mirror was added, and the run it has going now waits on it. Only the engine seam is replaced, and GitHub's answer about merged pull requests:
 workers are fictional records, so nothing launches a provider, and the listed commands run in a plain shell of their
 own instead of the operator's service manager."""
 import os
@@ -158,11 +158,15 @@ def main():
     disk = make("Free disk space", "When the disk is nearly full, free space with the commands listed. Say what you ran "
                 "and how much it freed.", [], [
                     {"name": "prune-images", "words": "printf 'Deleted 3 images\\nTotal reclaimed space: 1.2 GB\\n'"},
-                    {"name": "clear-cache", "words": "echo 'harbor-build: cache folder is busy' >&2; exit 1"},
-                    {"name": "wait-for-mirror", "words": "echo 'Waiting for the mirror…'; sleep 120"}])
+                    {"name": "clear-cache", "words": "echo 'harbor-build: cache folder is busy' >&2; exit 1"}])
     run(disk, NOW - timedelta(hours=3), [("run", "prune-images"), ("run", "clear-cache"), ("run", "Prune Images!"),
-                                         ("run", "prune-images")],
+                                         ("run", "prune-images"), ("run", "wait-for-mirror")],
         "Found: the disk was 94% full.\n\nPruning images freed 1.2 GB; clearing the cache failed.")
+    saved = A.agent_view(PROJECT, disk)
+    A.change(PROJECT, "set", {"agent": disk, "version": saved["version"], "definition": {
+        **saved["definition"], "commands": [*saved["definition"]["commands"],
+                                            {"name": "wait-for-mirror", "words": "echo 'Waiting for the mirror…'; sleep 120"}]}},
+             by="operator", source="fixture", now=NOW - timedelta(hours=2))
     n = start(disk, NOW - timedelta(minutes=3))
     threading.Thread(target=ask, args=(disk, n, "run", "wait-for-mirror", f"{disk}-{n}-0"), daemon=True).start()
     serve()

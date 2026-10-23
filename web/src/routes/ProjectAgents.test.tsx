@@ -925,7 +925,7 @@ const prune = { name: "prune-images", words: "podman image prune --all --force" 
 const cache = { name: "clear-cache", words: "rm -r ~/.cache/harbor-build" };
 const command = (n: number, over: Record<string, unknown> = {}) => ({ n, kind: "command", outcome: "done", head: "Ran", name: "prune-images",
   note: "Finished in 12 s.", tone: null, undone: false, undo: false, refused: null, stop: false, stopping: false, output: "Deleted: 3 images", ...over });
-const NOTE = "These run as you, outside Altitude’s sandbox, whenever the routine decides. Altitude doesn’t check what they do, and what they print goes to its model.";
+const NOTE = "These run as you, outside Altitude’s sandbox, whenever the routine decides. Altitude doesn’t check what they do, and its model reads them and what they print.";
 
 describe.each([390, 1440])("commands you list at %ipx", (width) => {
   it("the form adds, checks, edits in place and removes commands, one draft at a time, and saves them with the routine", async () => {

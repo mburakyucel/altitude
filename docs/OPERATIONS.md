@@ -264,8 +264,8 @@ branch's commit is kept. The run's page lists **What it changed** with **Undo** 
 
 **Commands** under What it may change lists commands of your own the routine may ask Altitude to run, each by a
 name: Altitude runs your exact words, as you, outside every sandbox, in the project's folder, at most once a run and
-for up to 10 minutes, with no input from the run. The run chooses only which and when, and reads the end of what
-each printed. Altitude does not check what a command does, so keep to the list a grant's purpose keeps to
+for up to 10 minutes, with no input from the run. The run chooses only which and when; its model reads each
+command's words and the end of what it printed, so write no secret into one. Altitude does not check what a command does, so keep to the list a grant's purpose keeps to
 ([never granted](CLI.md#operator-grant)): nothing that loosens confinement, releases Altitude's gates, reaches
 other tasks' worktrees, prints credentials or steers a routine or task. For example:
 

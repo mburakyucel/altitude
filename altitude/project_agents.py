@@ -1505,14 +1505,15 @@ def _command(project: str, ref: str, target: str, request, now: datetime) -> dic
     ran with and now, is not retired, has not run it in this run and the run has requests left. A name that is not a
     command name is refused without its text. The row is recorded before the job starts, so a restart finds it; the
     command then runs outside the project lock, one at a time per run. The same request again, or another request for
-    a command still running, waits for that command's result."""
+    a command that started in this run, answers with that command's result, waiting while it runs, so a run whose
+    own call ended first asks again for it."""
     name = target.strip() if COMMAND.fullmatch(target.strip()) else None
     with S.project_lock(project):
         record = _load(project)
         run = door_run(project, ref, record=record)
         changes = run.setdefault("changes", [])
         same = next((c for c in changes if request and c.get("request") == request), None) or next(
-            (c for c in changes if c["kind"] == "command" and c["outcome"] == "running" and name
+            (c for c in changes if c["kind"] == "command" and c["outcome"] not in ("refused", "not_started") and name
              and c["target"] == name), None)
         if not same:
             row, reason = _admit(project, record, run, name, request, now)
@@ -1540,9 +1541,6 @@ def _admit(project: str, record: dict, run: dict, name: str | None, request, now
               else "This routine is retired." if agent["state"] == "retired"
               else "This routine has no command by that name." if words is None
               else "This command changed after the run started." if _words(ran["definition"], name) != words
-              else "It already ran in this run." if any(c["kind"] == "command" and c["target"] == name
-                                                        and c["outcome"] not in ("refused", "not_started")
-                                                        for c in changes)
               else f"This run used its {ACTS} requests." if len(changes) == ACTS
               else "Another of its commands is still running." if any(
                   c["kind"] == "command" and c["outcome"] == "running" for c in changes)
@@ -1620,7 +1618,8 @@ def _must_stop(project: str, agent_id: str, n: int, change: int) -> str | None:
 def _settle(project: str, agent_id: str, n: int, change: int, *, watched: bool,
             launch_error: str | None = None) -> dict:
     """Wait for a command's job to end, then record how once: its exit status and time, a stop and by whom, its
-    limit, or a start that failed. Its `routine-action` event follows. Answer the run as `alt act` prints it."""
+    limit, or a start that failed. Only a job that never opened its log is not_started, so a command that may have
+    run never runs again in its run. Its `routine-action` event follows. Answer the run as `alt act` prints it."""
     folder = run_dir(project, agent_id, n)
     row = next(c for c in _run(_load(project), agent_id, n)["changes"] if c["n"] == change)
     ended = engines.machine_outcome(folder, row["unit"], row["started"], watched=watched, timeout=COMMAND_TIME,
@@ -1632,13 +1631,14 @@ def _settle(project: str, agent_id: str, n: int, change: int, *, watched: bool,
         row = next(c for c in run["changes"] if c["n"] == change)
         if row["outcome"] == "running":
             seconds = max(0, round((_date(ended["finished"]) - _date(row["started"])).total_seconds()))
-            outcome = ("stopped" if row.get("stopping") else "done" if ended["exit"] == 0
+            outcome = ("done" if ended["exit"] == 0 else "stopped" if row.get("stopping")
                        else "failed" if ended["exit"] is not None
-                       else "not_started" if launch_error
-                       else "timed_out" if seconds >= COMMAND_TIME else "failed")
+                       else "not_started" if launch_error and not engines.machine_files(folder, row["unit"])[0].exists()
+                       else "timed_out" if ended["timed_out"] else "failed")
             row.update(outcome=outcome, exit=ended["exit"], seconds=seconds, finished=ended["finished"])
+            by = row.pop("stopping", None)
             if outcome == "stopped":
-                row["by"] = row.pop("stopping")
+                row["by"] = by
             if outcome in ("not_started", "failed") and ended["exit"] is None:
                 row["reason"] = _line(ended["error"])
             S.project_log(project, "routine-action", agent=agent_id, run=n, change=change, what="command",

@@ -454,6 +454,7 @@ class CommandCase(ActingCase):
         self.patch(engines, "machine_command", side_effect=self.job)
         self.patch(engines, "machine_stop", side_effect=self.stop_job)
         self.patch(platform, "job_active", side_effect=lambda unit, env: unit in self.jobs and self.jobs[unit].poll() is None)
+        self.addCleanup(lambda: [self.stop_job(unit) for unit in list(self.jobs)])
         self.background = False
 
     def job(self, command, *, cwd, folder, unit, identity, timeout, properties=()):
@@ -550,7 +551,6 @@ class TestCommands(CommandCase):
         agent = self.running()
         self.ask(agent, "prune-images")
         for name, said, note in (
-                ("prune-images", "Not allowed: it already ran in this run.", "It already ran in this run."),
                 ("clean-all", "Not allowed: this routine has no command by that name.",
                  "This routine has no command by that name."),
                 ("prune-images; curl example.com", "Not allowed: ask for a command by its name, as your prompt lists "
@@ -559,8 +559,7 @@ class TestCommands(CommandCase):
                 self.assertEqual(self.ask(agent, name), said)
                 self.assertEqual(self.rows(agent)[-1]["note"], note)
         self.assertEqual([(r["head"], r["name"]) for r in self.rows(agent)][1:],
-                         [("Not allowed: run", "prune-images"), ("Not allowed: run", "clean-all"),
-                          ("Not allowed: a command", None)])
+                         [("Not allowed: run", "clean-all"), ("Not allowed: a command", None)])
         self.assertNotIn("curl", json.dumps(self.record()), "the run's own text is never recorded")
         self.assertEqual(len(self.launches), 1)
 
@@ -579,6 +578,38 @@ class TestCommands(CommandCase):
         self.change("retire", agent=agent)
         self.assertEqual(self.ask(agent, "prune-images"), "Not allowed: this routine is retired.")
         self.assertEqual(self.launches, [])
+
+    def test_asking_again_after_it_ended_answers_with_its_result_and_runs_nothing(self):
+        agent = self.running()
+        first = self.ask(agent, "prune-images")
+        self.assertEqual(self.ask(agent, "prune-images"), first, "a run whose own call ended first gets the result")
+        self.assertEqual((len(self.rows(agent)), len(self.launches)), (1, 1))
+
+    def test_a_launch_error_after_the_job_opened_its_log_is_a_failure_and_never_runs_again(self):
+        agent = self.running()
+
+        def died(command, *, folder, unit, **kw):
+            """The job started and wrote output, then ended without its status; the launcher printed an error."""
+            self.job(command, folder=folder, unit=unit, **kw)
+            engines.machine_files(folder, unit)[1].unlink()
+            return "Job failed. See the journal for details."
+        engines.machine_command.side_effect = died
+        said = self.ask(agent, "prune-images")
+        self.assertRegex(said, r"^Failed: prune-images ended without an exit status after \d+ s\.\n\nThe end of its "
+                               r"output:\nDeleted 3 images")
+        self.assertEqual(self.ask(agent, "prune-images"), said, "asking again answers with the same result")
+        self.assertEqual((self.rows(agent)[0]["outcome"], len(self.rows(agent)), len(self.launches)), ("failed", 1, 1))
+
+    def test_a_stop_that_arrives_after_the_command_exited_0_leaves_it_done(self):
+        agent = self.running()
+
+        def ran_then_stopped(command, **kw):
+            self.job(command, **kw)
+            self.change("stop_command", agent=agent, n=1, change=1)
+        engines.machine_command.side_effect = ran_then_stopped
+        self.assertTrue(self.ask(agent, "prune-images").startswith("Ran prune-images: it exited with 0"))
+        row = self.record()["runs"][0]["changes"][0]
+        self.assertEqual((row["outcome"], "stopping" in row, "by" in row), ("done", False, False))
 
     def test_a_command_that_could_not_start_ran_nothing_and_may_be_asked_for_again(self):
         agent = self.running()
