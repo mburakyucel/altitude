@@ -32,7 +32,7 @@ Decided myself, within the brief: a chat keeps its conversation and its engine s
 and its copy until you archive it; chats never appear in Needs you, since you are the one driving and a
 question from the agent is just its reply; a running reply shows in Monitor like a routine run; messages
 sent while it answers wait and go together as its next message; no time limit on a reply, Stop ends it; no
-device alert when a reply ends in this version; `alt chat list` and `alt chat show` read chats from your
+device alert when a reply ends in this version; `alt chats list` and `alt chats show` read chats from your
 terminal, and every change comes from the app.
 
 ## How it works
@@ -127,8 +127,8 @@ pill offers another. Engine differences stay behind the seam.
 conversation, running turn and steps; `POST /api/chats` takes `new`, `message`, `rename`, `stop`, `access`,
 `task`, `archive`, `reopen` and `delete`, each with a request id whose repeat returns the first result.
 Records live in `<project>/chats/<id>/` under Altitude's home: `chat.json` (name, engine, model, session,
-copy, access, archived) and `conversation.jsonl`; images go to the project's image store. `alt chat list
-[--archived] [--json]` and `alt chat show <chat> [--json]` read them and are in no agent's `alt`.
+copy, access, archived) and `conversation.jsonl`; images go to the project's image store. `alt chats list
+[--archived] [--json]` and `alt chats show <chat> [--json]` read them and are in no agent's `alt`.
 
 ## What it reuses and removes
 
@@ -144,7 +144,7 @@ independent review:
 
 1. **Agent chats.** The Work section, the chat page, new, rename, archive, reopen and delete, turns on the
    shared recorder that resume and survive restarts, the model pill, Stop, waiting messages, the Monitor
-   row, `alt chat list|show`, and the docs with one README line.
+   row, `alt chats list|show`, and the docs with one README line.
 2. **Make a task.** The sheet and press, the pinned commit, the task made from it and the chat's fresh copy.
 3. **Computer access.** The switch, its sheet and chip, the wider sandbox on Linux and macOS, and a security
    review.

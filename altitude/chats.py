@@ -8,7 +8,7 @@ restricted as a routine run is but committing on its own branch (`engines.start_
 the project, a worktree on the `chat-<id>` branch made from the fetched main at its first turn, resuming the chat's one
 session from its own engine folder. A thread of the service (`run`) starts each turn, follows its worker and records
 the answer; the worker's job outlives a restart of the service, whose tick follows it again. A chat changes only from a
-paired browser and reads only there and in the operator's terminal (`alt chat`), never by an Altitude agent.
+paired browser and reads only there and in the operator's terminal (`alt chats`), never by an Altitude agent.
 """
 from __future__ import annotations
 

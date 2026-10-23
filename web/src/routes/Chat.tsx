@@ -18,7 +18,7 @@ import { useViewport } from "../shell/breakpoints";
 import "../components/chats.css";
 
 /*
- * One agent chat (SPEC.md §3.17, design/wireframes/chats/PROPOSAL.md): a task page's header with the Work crumb, its
+ * One agent chat (SPEC.md §3.18, design/wireframes/chats/PROPOSAL.md): a task page's header with the Work crumb, its
  * name, Stop while it answers and ⋯ (Rename, Archive); one conversation of your messages, each turn's steps folded
  * under one line, and its reply; the composer with the model pill. `/chats/new` is the empty chat that the first
  * message makes.

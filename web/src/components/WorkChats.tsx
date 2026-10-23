@@ -5,7 +5,7 @@ import { agoText, modelName, when } from "../data/observed";
 import "./chats.css";
 
 /*
- * Work's Agent chats (SPEC.md §3.17): the project's chats in task rows, newest activity first, with New chat on the
+ * Work's Agent chats (SPEC.md §3.18): the project's chats in task rows, newest activity first, with New chat on the
  * heading and the archived ones folded at the end. While the list loads the section is absent; a failed refresh keeps
  * the rows it has.
  */

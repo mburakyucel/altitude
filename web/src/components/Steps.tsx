@@ -5,7 +5,7 @@ import { StatusMark } from "./StatusMark";
 import "./steps.css";
 
 /*
- * What an agent's session did, in a conversation (SPEC.md §3.15, §3.17): a system line, and each step as one of Live
+ * What an agent's session did, in a conversation (SPEC.md §3.15, §3.18): a system line, and each step as one of Live
  * session's rows. A repair's page and an agent chat's turns show them.
  */
 

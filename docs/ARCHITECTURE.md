@@ -624,7 +624,7 @@ Altitude records what a paired device sends as the operator's, and grants, merge
 it, so no agent may send it. Every POST without this machine's key that does not come through the
 [task door](#task-door) is refused with 403, before its body is read, when it comes from one of Altitude's
 own agents: chat and task messages, answers, decisions, task actions and reviews, settings, devices,
-sign-in, trust, pairing, voice, repairs and any route added later. The page's reads are not refused. The
+sign-in, trust, pairing, voice, repairs, agent chats and any route added later. The page's reads are not refused. The
 machine key keeps its routes, since no sandbox can read it; the terminal, voice, device sharing, update
 and validation controls refuse an agent even with it, and the repair routes refuse the key itself. One check decides, once per connection, for all of
 them: `terminal.agent_connection`, which names the process that opened the connection's client end
@@ -2853,6 +2853,57 @@ carries the running repair and the newest app repair's questions, open or expire
 the update notice and Needs you. Reads go
 through `storage`, so a link planted in a repair's folder reads as no record or no brief. A change to a
 repair publishes the change stream's repairs key, which refreshes the shell's repair reads.
+
+### Agent chats
+
+An agent chat is a conversation the operator drives with one of a project's coding agents, from a paired
+browser, with no brief, proposal or pull request ([walkthrough](WALKTHROUGH.md#agent-chats)). Each chat
+is one record, `<project>/chats/<id>/chat.json` under Altitude's home, changed under the project lock:
+its name, the model choice and the engine, model and session it answers with, its copy's base commit,
+whether and when it was archived, its messages, its turns and its system lines, each with a sequence
+number that orders the conversation. The operator's images go to the project's image store with the
+message that carries them, and `images` reads a chat's record as it reads a task's.
+
+Each message waits until the chat's previous turn ends; the messages waiting then go together as the
+next turn. A thread of the service (`chats.run`, one per chat) claims them, picks the engine and model
+the way New tasks does (`route.pick_engine("l2")` with the chat's choice), and starts the turn's
+worker with `engines.start_chat_turn`: the engine's headless worker in a detached job of its own, as a
+task's worker runs, inside Altitude's sandbox and restricted as a routine run is (no operator engine
+links, no GitHub sign-in, no Send now), except that it writes the git objects and branches of its own
+copy, so it can commit there. Its `alt` admits only the read commands a task worker has
+(`ALTITUDE_ACTOR=chat`). Its persona is `personas/chat.md`. The chat's copy is a worktree on the
+`chat-<id>` branch in the project's worktree folder, made with `--no-track` from the fetched main when
+the first turn starts; tidy and task cleanup leave names starting `chat-` alone. A turn takes no task
+slot and waits only while Altitude restarts.
+
+The first turn's session is the chat's session, and later turns resume it from the chat's own engine
+folder (`<project>/chats/<id>/l2-engine`). When the answering engine is not the one holding the session,
+because the operator chose another model or a resume fails, the turn starts a new session given the
+conversation so far as quoted evidence, and the conversation shows that line. The thread follows the
+worker (`engines.owned_worker`), records the session's context, and records the turn's end: its
+answer (`engines.worker_answer`), Stop, or why it could not answer, with Retry, which sends the same
+messages again. The worker's job outlives a restart of the service: the service records a restart line
+on each chat with a turn running, and its tick finds every chat with a turn running or messages waiting
+(`chats.due`) and follows or starts it again. A turn whose worker is gone, or whose start a restart
+interrupted, reads cut off.
+
+Archive refuses while a turn runs or a message waits, and while the copy has changes (committed or
+not, since its base) the request has not accepted; it then removes the copy, its branch and its
+scratch folder and keeps the conversation and session. Reopen makes a fresh copy of main at the next
+turn, which continues the same session. Delete removes an archived chat's folder for good, its engine
+session with it.
+
+`GET /api/chats/<project>` lists a project's chats with their state and latest activity;
+`GET /api/chats/<project>/<id>` is one chat with its conversation, each turn's steps (read from the
+worker's events as a repair's are, `altitude/steps.py`), its copy's changed files and context.
+`POST /api/chats/<project>` starts a chat with its first message, and
+`/api/chats/<project>/<id>/{message,remove,retry,rename,model,stop,archive,reopen,delete}` change one.
+Each request carries an identity the record keeps, so a repeat acts once. Every chat route takes a
+paired device's cookie, passes the page's own-origin and [own agents](#altitudes-own-agents) checks and
+refuses the machine key, as repair routes do: no agent reads or steers a chat, so what one chat's agent
+saw reaches no other. The operator's terminal reads chats with `alt chats`. A chat's file changes
+publish the change stream's project key, which refreshes its reads; a running turn is a Monitor
+session row. Chats never appear in Needs you, the project's tasks in flight or L3's records.
 
 ### Web delivery
 

@@ -497,6 +497,20 @@ its output ("Ran NAME: it exited with 0 after 12 s.", "Failed: â€¦", "Stopped: â
 in the same run, it runs nothing and prints the same result, waiting while the command runs. Every other `alt` verb in a run, and `alt act` anywhere else, is
 refused.
 
+## Agent chats
+
+```text
+alt chats list [--archived] [--json]
+alt chats show CHAT [--json]
+```
+
+`alt chats` reads a project's [agent chats](ARCHITECTURE.md#agent-chats) in the operator's own terminal. `list`
+prints each open chat, newest activity first, as its id, name, state and latest time (`--archived` adds the
+archived ones); `show` prints one chat's conversation, `CHAT` being its id or the start of exactly one chat's name.
+Chats are started and steered only from a paired browser. Every Altitude agent is refused `alt chats` ("alt
+chats: only you read agent chats, in your own terminal or browser"), and a chat's own agent has only the read commands a
+task worker has.
+
 ## GitHub issues
 
 ### Coordinator GitHub reads

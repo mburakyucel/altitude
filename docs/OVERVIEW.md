@@ -100,6 +100,7 @@ image still under validation, run on a Linux host or, through a Podman machine, 
   [task usage](ARCHITECTURE.md#task-usage),
   [validation and release](ARCHITECTURE.md#validation-and-release),
   [repairs](ARCHITECTURE.md#repairs),
+  [agent chats](ARCHITECTURE.md#agent-chats),
   [web delivery](ARCHITECTURE.md#web-delivery) (asset and query caching),
   [conversations and navigation](ARCHITECTURE.md#conversations-and-navigation) (pages, First run, live
   changes, outbox, file reader),

@@ -1,4 +1,4 @@
-/* Agent chats (SPEC.md §3.17): Work's section, and the chat page in a task's form. Its header, chips, conversation
+/* Agent chats (SPEC.md §3.18): Work's section, and the chat page in a task's form. Its header, chips, conversation
    rows and composer come from the task page's own styles; its sheets from the repair sheet's. */
 
 /* Work: the heading with New chat at its right; names on one line. */

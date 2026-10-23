@@ -3,7 +3,7 @@ import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
 /**
- * Agent chats (SPEC.md §3.17, docs/ARCHITECTURE.md#agent-chats), walked at both widths: Work's Agent chats section
+ * Agent chats (SPEC.md §3.18, docs/ARCHITECTURE.md#agent-chats), walked at both widths: Work's Agent chats section
  * with none, with chats in every state and archived ones folded; a new chat from its empty page to its first turn,
  * with an image; a chat answering with its steps folded, a message that waits and Remove, Stop; a reply that could not
  * come, one cut off and Retry, a new session and a restart; the menu, Rename, Archive with and without changes, the

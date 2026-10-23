@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Agent chats: talk something through with a project's coding agent without making it a task. **New chat** in
+  Work starts one in its own copy of the code, made from main; you watch its steps as it works, and it resumes where you
+  left off every time, survives Altitude restarting, and takes images, voice and a choice of model. Rename,
+  archive, reopen and delete it from its menu; `alt chats list` and `alt chats show` read chats in your terminal.
 - A terminal open on two devices at once, such as the phone and the desktop, no longer types stray text such as
   `[18;1R` at its prompt: both screens answer a program's questions about the terminal, and only the first answer
   reaches the program. Your own typing on either device always arrives.
