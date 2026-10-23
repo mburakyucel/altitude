@@ -6,7 +6,8 @@ import { ApiError, terminalSend, terminalStatus, terminalStream, type TerminalSt
 // A stand-in xterm, without bracketed paste unless a test turns it on: a paste reaches onData as the raw text, as a
 // keystroke would. Its screen is a focusable box, and the fit gives it `size`. It parses what is written at once, or
 // once a test calls `parse` while `later` holds the writes, answering a background colour query and a cursor position
-// report through onData as it parses them, before the write's callback runs, as xterm does.
+// report through its own onData as it parses them, before the write's callback runs, as xterm does. `data` types at the
+// screen opened last.
 const term: { data?: (data: string) => void; bracketed: boolean; written: string[]; resets: number; size: { cols: number; rows: number }; later: (() => void)[] | null } =
   { bracketed: false, written: [], resets: 0, size: { cols: 80, rows: 24 }, later: null };
 const QUERIES = /\x1b\]11;\?(?:\x07|\x1b\\)|\x1b\[6n/g;
@@ -18,13 +19,14 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     get modes() { return { bracketedPasteMode: term.bracketed }; }
     textarea?: HTMLTextAreaElement;
+    listener?: (data: string) => void;
     loadAddon(addon: { activate(terminal: unknown): void }) { addon.activate(this); }
     open(parent: HTMLElement) { this.textarea = parent.appendChild(document.createElement("textarea")); }
     write(data: string | Uint8Array, callback?: () => void) {
       const text = typeof data === "string" ? data : new TextDecoder().decode(data);
       term.written.push(text);
       const parsed = () => {
-        for (const [query] of text.matchAll(QUERIES)) term.data?.(answer(query));
+        for (const [query] of text.matchAll(QUERIES)) this.listener?.(answer(query));
         callback?.();
       };
       if (term.later) term.later.push(parsed);
@@ -38,7 +40,7 @@ vi.mock("@xterm/xterm", () => ({
     attachCustomKeyEventHandler() {}
     buffer = { active: { viewportY: 0, baseY: 0 } };
     scrollToBottom() {}
-    onData(listener: (data: string) => void) { term.data = listener; return { dispose() {} }; }
+    onData(listener: (data: string) => void) { this.listener = term.data = listener; return { dispose() {} }; }
     paste(text: string) { term.data?.(text); }
   },
 }));
@@ -62,7 +64,7 @@ const font = { family: "monospace", size: 13 };
 type Stream = { offset: number; closed: boolean; listeners: Record<string, (event: MessageEvent<string>) => void>; addEventListener(name: string, listener: (event: MessageEvent<string>) => void): void; close(): void };
 let streams: Stream[];
 let observed: () => void;
-const output = (offset: number, data: string, missed = false, replay = 0) => streams.at(-1)!.listeners.output?.(new MessageEvent("output", { data: JSON.stringify({ offset, data: btoa(data), missed, replay }) }));
+const output = (offset: number, data: string, missed = false, replay = 0, stream = streams.at(-1)!) => stream.listeners.output?.(new MessageEvent("output", { data: JSON.stringify({ offset, data: btoa(data), missed, replay }) }));
 const emit = () => output(1, "$ ");
 
 beforeEach(() => {
@@ -85,6 +87,7 @@ afterEach(() => {
 });
 
 const typed = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "input").map(([, , body]) => body.data);
+const tagged = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "input").map(([, , body]) => body.answer);
 const handed = () => vi.mocked(terminalSend).mock.calls.filter(([, action]) => action === "command").map(([, , body]) => body);
 // Altitude refuses the chat command; input and resizes still succeed.
 const refuseCommand = (error: unknown) => vi.mocked(terminalSend).mockImplementation(async (_project, action) => {
@@ -334,6 +337,44 @@ describe("the terminal screen", () => {
     act(() => parse());
     await act(async () => term.data?.("x"));
     expect(typed()).toEqual(["\x03", answers, "x"]);
+  });
+
+  // Two pages showing one terminal both answered a live query: the program read one answer and the other reached the
+  // shell's prompt as text. Each answer names its page and the output it answers, and Altitude types the first only.
+  it("names this page and the live output each answer is to, and never names the operator's typing as an answer", async () => {
+    open();
+    const phone = { stream: streams[0]!, type: term.data! };
+    open();
+    const desktop = streams[1]!;
+    for (const stream of [phone.stream, desktop]) act(() => output(2, "$ ", false, 0, stream));
+    for (const stream of [phone.stream, desktop]) act(() => output(2 + queries.length, queries, false, 0, stream));
+    expect(typed()).toEqual([answers, answers]);
+    const [first, second] = tagged() as { page: string; from: number; to: number }[];
+    expect([first!.from, first!.to, second!.from, second!.to]).toEqual([2, 2 + queries.length, 2, 2 + queries.length]);
+    expect(first!.page).not.toBe(second!.page);
+    // A page catching up from the middle of its output names only the part it answers.
+    await act(async () => output(400_000, `$ ${queries}`, true, 2, desktop));
+    expect(tagged().at(-1)).toEqual({ page: second!.page, from: 400_000 - queries.length, to: 400_000 });
+    await act(async () => phone.type("x"));
+    expect(typed().at(-1)).toBe("x");
+    expect(tagged().at(-1)).toBeUndefined();
+  });
+
+  it("sends typing and answers in order and never joins the operator's keys to an answer", async () => {
+    let release!: () => void;
+    vi.mocked(terminalSend).mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return { ok: true };
+    });
+    open();
+    await act(async () => term.data?.("a"));
+    await act(async () => term.data?.("b"));
+    act(() => output(queries.length, queries));
+    await act(async () => term.data?.("c"));
+    await act(async () => term.data?.("d"));
+    await act(async () => release());
+    expect(typed()).toEqual(["a", "b", answers, "cd"]);
+    expect(tagged().map(Boolean)).toEqual([false, false, true, false]);
   });
 
   it("takes focus as it opens on desktop", () => {

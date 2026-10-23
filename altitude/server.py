@@ -2430,7 +2430,7 @@ class Handler(BaseHTTPRequestHandler):
             if action == "open":
                 return self._json(terminal.open_terminal(project, slug))
             if action == "input":
-                terminal.write(project, slug, ident, body.get("data"))
+                terminal.write(project, slug, ident, body.get("data"), body.get("answer"))
             elif action == "command":
                 terminal.hand(project, slug, ident, body.get("text"), body.get("bracketed"))
             elif action == "resize":

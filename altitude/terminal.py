@@ -71,6 +71,7 @@ class Terminal:
     buffer: bytearray = field(default_factory=bytearray)
     start: int = 0  # absolute output offset of buffer[0]
     sent: int = 0  # the end of the output some page has been sent: its queries had their chance to be answered
+    answered: tuple[str, int, int] = ("", 0, 0)  # the page and output range of the last answer typed
     exit_code: int | None = None
     reason: str | None = None  # why it ended: exited, closed, task-finished, project-removed, failed
     error: str | None = None  # why a shell that failed could not run, in the launcher's words
@@ -413,13 +414,28 @@ def _notice(term: Terminal, command: dict, what: str, finished: bool = False) ->
     threading.Thread(target=send, name=f"terminal-notice:{term.project}:{term.slug or ''}").start()
 
 
-def write(project: str, slug: str | None, ident, data: str) -> None:
+def write(project: str, slug: str | None, ident, data: str, answer=None) -> None:
     """Type `data`. A program that stops reading its input fills the terminal's queue; the write then gives
-    up after WRITE_SECONDS, or as soon as Close is asked for, rather than holding the terminal."""
+    up after WRITE_SECONDS, or as soon as Close is asked for, rather than holding the terminal.
+
+    `answer` marks `data` as page `page`'s answers to the queries in output `from` to `to`. Every page showing the
+    terminal answers them, and only the first page's answer to any output is typed: a second would reach the program
+    after it stopped reading, and the shell's prompt as text. Later pieces of that answer follow it; an answer to output
+    an earlier answer reached is dropped. Input without `answer`, the operator's own, is always typed."""
     if not isinstance(data, str) or len(data) > INPUT_LIMIT:
         raise TerminalError("Send terminal input as text.", 400)
+    if answer is not None and not (isinstance(answer, dict) and answer.keys() == {"page", "from", "to"}
+                                   and isinstance(answer["page"], str) and answer["page"]
+                                   and type(answer["from"]) is int and type(answer["to"]) is int
+                                   and 0 <= answer["from"] <= answer["to"]):
+        raise TerminalError("Name the output the answer is to.", 400)
     term = _running(project, slug, ident)
     with term.io:
+        if answer is not None:
+            claim = (answer["page"], answer["from"], answer["to"])
+            if claim != term.answered and claim[1] < term.answered[2]:
+                return
+            term.answered = claim
         _send(term, data)
         _typed(term, data)
 
