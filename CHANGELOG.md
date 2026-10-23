@@ -5,6 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The Routines page opens with what routines are for: "Give an agent a job and schedule it or make it
+  event-driven." The README, walkthrough and diagrams say the same.
 - An answer or message to a waiting task wakes its agent at once, even while an open page is reading the
   project's setup; that read no longer leaves the agent waiting for the next half-minute check.
 - Opening an older Weekly improvement review run from its page takes the chat back to that run every time, rather

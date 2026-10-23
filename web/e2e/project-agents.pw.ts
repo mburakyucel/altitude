@@ -99,7 +99,7 @@ test("Work shows agent runs and the Agents row; the Agents page lists, budgets a
   const builtIn = page.getByRole("region", { name: "Built in" });
   const budget = page.getByLabel("Routines may use up to");
   await walk.state("02-agents-page", {
-    visible: [title("Routines"), page.getByText("Each one runs a brief when its trigger fires, and tells you what it found.", { exact: true }),
+    visible: [title("Routines"), page.getByText("Give an agent a job and schedule it or make it event-driven.", { exact: true }),
       ...Object.values(rows),
       page.getByText("Weekdays at 07:00 · Waiting while Flaky test watch runs", { exact: true }),
       page.getByText(/^Weekdays at 07:00 · Couldn't finish \S/),

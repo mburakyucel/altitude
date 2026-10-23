@@ -237,9 +237,9 @@ project is selected. `alt project remove <name>` uses the same checks. See
 
 ## Routines
 
-A [routine](ARCHITECTURE.md#routines) is a brief Altitude runs for a project on a schedule, when your
-own scripts send it an event, or when you press Run now. Each run reads the project in its own fresh copy and the
-public web, and only reports. Open **Routines…** in the project's **More actions** menu:
+A [routine](ARCHITECTURE.md#routines) is a job you give an agent for a project. It runs on a schedule, when your own
+scripts send it an event, or when you press Run now. Each run reads the project in its own fresh copy and the public
+web, and only reports. Open **Routines…** in the project's **More actions** menu:
 
 - **Turn on** a built-in routine (Dependency check, Build health or What landed) to use it as it is; **Edit**
   changes it later.

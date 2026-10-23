@@ -194,8 +194,8 @@ task.
   <img src="images/feature-improve.webp" alt="Improvement suggestions from finished work, each citing the tasks it came from; the first is accepted and the coordinator is opening a task." width="860">
 </picture>
 
-**Routines that keep watch.** Harbor's built-in dependency check found two security fixes; the tasks it
-suggested wait in Needs you, each a tap from becoming one.
+**Routines.** Give an agent a job and schedule it or make it event-driven. Harbor's built-in dependency check
+found two security fixes; the tasks it suggested wait in Needs you, each a tap from becoming one.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-routines-phone.webp">
