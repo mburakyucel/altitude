@@ -60,7 +60,7 @@ One engine is enough, and each integration is
 Under the hood, one daemon on your computer, altd, holds the record of every project and task. The state of
 the work lives there, not in any model's memory, so a session that stops picks up where the record left off.
 
-<img src="docs/images/system.svg" alt="You give answers, approvals and Stop straight to tasks, and direction to the coordinator (L3) and your routines. Everything works through altd, the daemon, which holds the records, dispatches tasks and gates every merge. The coordinator never edits code; routines report, or act where you allow it. Each task agent (L2) works sandboxed, one per task, with L1 helpers, asks for an independent review, preferably by the other engine, and sends pull requests to GitHub." width="1000">
+<img src="docs/images/system.svg" alt="You give answers, approvals and Stop straight to tasks, and direction to the coordinator (L3) and your routines. The coordinator plans with you and answers the agents; routines keep watch and act when you allow it. In the middle, altd, the daemon, keeps the record, launches the agents and gates every merge. Each task agent (L2) owns a task from idea to merge, with L1 helpers for focused work, asks for an independent review and sends pull requests to GitHub." width="1000">
 
 ## Get started
 

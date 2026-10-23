@@ -5,8 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
-- The README's How it works diagram keeps its drawing with far fewer words: box titles, one short line only where
-  the picture needs it and two arrow labels, in larger type. Routines read "report, or act as you allow".
+- The README's How it works diagram keeps its drawing with far fewer words, in larger type: box titles, a short
+  line saying what each part does where the picture needs one, and two arrow labels. Routines keep watch and act
+  when allowed.
 - Starting Altitude removes a leftover file from older installations.
 - The agents Altitude runs can no longer read repair records, which hold each step a repair took with your full
   access and its output. Repairs themselves, the app and `alt repair` read them as before. An agent already
