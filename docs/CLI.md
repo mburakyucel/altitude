@@ -444,13 +444,15 @@ run ended. A post writes nothing to chat.
 alt agent list
 alt agent show AGENT [--run N]
 alt agent new --name NAME --brief - [--schedules 'weekdays 07:00; fri 17:00'|none] [--events|--no-events]
-              [--tell found|every|never] [--limit 10|20|60]
+              [--tell found|every|never] [--limit 10|20|60] [--may worktrees|none]
               [--engine ENGINE --model MODEL --effort EFFORT | --default-model] [--on]
 alt agent set AGENT [the same flags, without --on]
 alt agent on|pause|resume|retire|stop AGENT
 alt agent run AGENT [TEXT|-]
 alt agent send AGENT TEXT|- [--key KEY]
+alt agent undo AGENT --run N CHANGE|all
 alt agent offer [AGENT] [the same flags as new]
+alt act set-aside-worktree|delete-branch NAME
 ```
 
 `alt agent` reads and changes a project's [routines](ARCHITECTURE.md#routines). `AGENT` is a routine's id
@@ -458,7 +460,11 @@ or the name of exactly one routine that is not retired. On the operator's CLI, `
 runs only with Run now until it is turned on (`--on` turns it on at once), `set` saves a new version
 from the flags it names and refuses `--on` (`on` turns a routine on), `run` asks for a run now and `stop`
 ends a waiting or running run. `--events` gives a routine the trigger "When it's sent an event", and
-`--default-model` gives it the model a new task gets, in place of `--engine`, `--model` and `--effort`. A
+`--default-model` gives it the model a new task gets, in place of `--engine`, `--model` and `--effort`.
+`--may worktrees` lets a routine ask Altitude to set aside worktrees and delete branches nothing needs
+([routines that act](ARCHITECTURE.md#routines-that-act)); `--may none` makes it only report, as a new routine
+does. `show AGENT --run N` lists what the run asked Altitude to change, and `undo` puts back one of those changes
+by its number, or `all` that can be, each on its own, printing the numbers put back and those refused with why. A
 refusal prints "alt agent: <reason>" with exit status 1, the reason as the page says it after "Not saved: ",
 such as a Run now that does not fit the week's budget.
 
@@ -472,10 +478,18 @@ terminal and scripts send events or give `run` a text. [Operations](OPERATIONS.m
 has example scripts.
 
 L3 reaches the same grammar through its coordinator socket. `list` and `show` are read-only;
-`on`, `pause`, `resume`, `retire`, `run` and `stop` are admitted only during the chat turn that
-answers the operator's own message, which becomes the change's recorded source. L3 never writes a
-definition: `offer` drafts a new routine, or a change to `AGENT` from the flags it names, as a card
-under its reply, and only the operator's press saves it; it has no `send`. A run has no `alt` verbs.
+`on`, `pause`, `resume`, `retire`, `run`, `stop` and `undo` are admitted only during the chat turn that
+answers the operator's own message, which becomes the change's recorded source. A routine that may change
+things only the operator turns on, resumes or runs; L3 may pause, stop and undo it. L3 never writes a
+definition: `offer` drafts a new routine, or a change to `AGENT` from the flags it names, `--may` included, as a
+card under its reply, and only the operator's press saves it; it has no `send`.
+
+`alt act` is a routine run's one verb, and only a run asks with it, through its own door. It names one worktree
+under the project's worktree folder or one local branch, and prints Altitude's answer: "Set aside worktree NAME.
+The operator can undo it until <day>.", "Deleted branch NAME. Merged into main.", "Kept: <reason>.", "Not
+allowed: <reason>." or "Failed: <reason>.". A run whose routine only reports is told "Not allowed: this routine
+only reports; the operator can let it change worktrees and branches on its form.". Every other `alt` verb in a
+run, and `alt act` anywhere else, is refused.
 
 ## GitHub issues
 
@@ -2330,7 +2344,10 @@ owner to stay inside the approved purpose. No grant is asked or recorded for loo
 engine settings), for other tasks' worktrees or other projects' data, for releasing Altitude's own
 gates (merge holds, review findings, proposal checkpoints keep their own answers), or for entering or
 printing credentials, which stays a step in the operator's [task terminal](#reading-the-task-terminal).
-Owners and L3 keep to this list, and the per-command record makes any departure visible.
+Owners and L3 keep to this list, and the per-command record makes any departure visible. A routine that may
+change worktrees and branches holds no grant and reaches no other task's worktree: its run only names a target,
+and altd applies its own [tidy rule](ARCHITECTURE.md#routines-that-act), which never touches an open task's
+worktree or branch, main or anything on GitHub.
 
 The grant reaches each engine's own guard through the engine seam. A Claude owner's session
 settings carry one allow rule, `Bash(alt task run <slug> *)`, which Claude Code resolves before its

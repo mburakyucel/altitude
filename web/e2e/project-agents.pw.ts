@@ -112,7 +112,7 @@ test("Work shows agent runs and the Agents row; the Agents page lists, budgets a
     hidden: [retiredHeading, oldLint, builtIn.getByText("Dependency check")],
   });
   await expect(budget).toHaveValue("120");
-  await expect(builtIn.getByRole("button", { name: "Turn on", exact: true })).toHaveCount(2);
+  await expect(builtIn.getByRole("button", { name: "Turn on", exact: true })).toHaveCount(3);
   await fits();
   await noRepeats();
 

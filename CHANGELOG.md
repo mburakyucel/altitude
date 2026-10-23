@@ -7,6 +7,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 - The Routines page opens with what routines are for: "Give an agent a job and schedule it or make it
   event-driven." The README, walkthrough and diagrams say the same.
+- Routines can act, not only report: tick **What it may change** on a routine's form and it may clear the
+  project's worktrees and branches that nothing needs. Altitude checks every request itself and keeps anything
+  with work in it, a task's own worktree or a task still open; the run's page lists each change with **Undo**, and a set-aside worktree
+  stays restorable for 14 days. The new built-in **Tidy worktrees and branches** does this every Monday, and turning
+  it on first shows what it may change. A routine without the permission is refused with a plain reason.
+
 - An answer or message to a waiting task wakes its agent at once, even while an open page is reading the
   project's setup; that read no longer leaves the agent waiting for the next half-minute check.
 - Opening an older Weekly improvement review run from its page takes the chat back to that run every time, rather

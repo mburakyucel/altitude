@@ -59,6 +59,7 @@ export function ProjectAgentOfferCard({ project, offer }: { project: string; off
     <small className="text-muted">{isNew ? "New routine" : `Change to ${offer.agent_name ?? offer.definition.name}`}</small>
     <strong className="agent-offer-name">{offer.definition.name}</strong>
     <small className="text-muted">{zoned(offer.line, clock)}{isNew && offer.on ? " · On when created" : ""}</small>
+    {isNew && offer.may ? <span className="agent-offer-may">{offer.may}</span> : null}
     {isNew ? <ClampedBrief text={offer.definition.brief} /> : <>
       <ul className="agent-offer-changes">{offer.changes.map((change) => <li key={change}><InlineProse text={change} /></li>)}</ul>
       {offer.changes.includes("New brief") ? <div className="agent-brief"><Prose text={offer.definition.brief} /></div> : null}

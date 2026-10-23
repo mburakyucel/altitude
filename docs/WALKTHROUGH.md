@@ -195,7 +195,9 @@ task.
 </picture>
 
 **Routines.** Give an agent a job and schedule it or make it event-driven. Harbor's built-in dependency check
-found two security fixes; the tasks it suggested wait in Needs you, each a tap from becoming one.
+found two security fixes; the tasks it suggested wait in Needs you, each a tap from becoming one. A routine you allow
+can also tidy up: the built-in Tidy worktrees and branches clears the ones nothing needs each Monday, and its run's
+page lists each change with Undo.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/feature-routines-phone.webp">

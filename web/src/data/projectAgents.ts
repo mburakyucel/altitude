@@ -56,6 +56,18 @@ export const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"
 export const LIMITS = [{ minutes: 10, label: "10 min" }, { minutes: 20, label: "20 min" }, { minutes: 60, label: "1 hour" }];
 export const TELL = [{ value: "found", label: "When it finds something" }, { value: "every", label: "Every run" }, { value: "never", label: "Never" }] as const;
 
-/** A new routine: weekdays at 07:00, telling you when it finds something, on the default model, stopping after 20 min. */
+/** A new routine: weekdays at 07:00, telling you when it finds something, on the default model, stopping after 20 min,
+ * only reporting. */
 export const NEW_SCHEDULE = { days: [0, 1, 2, 3, 4], time: "07:00" };
-export const NEW_DEFINITION: ProjectAgentDefinition = { name: "", brief: "", schedules: [NEW_SCHEDULE], events: false, tell: "found", model: null, limit: 20 };
+export const NEW_DEFINITION: ProjectAgentDefinition = { name: "", brief: "", schedules: [NEW_SCHEDULE], events: false, tell: "found", model: null, limit: 20, may: [] };
+
+/** What letting a routine change worktrees and branches allows, under its box on the form (Altitude's tidy rule). */
+export const MAY_LINE = "Sets aside worktrees and deletes branches nothing needs: no uncommitted change, nothing changed in seven days, "
+  + "every commit kept on a branch or merged, and nothing open in them. Each has Undo on the run’s page.";
+
+/** A name cut in the middle to `max` characters, so both its start and its end stay readable. */
+export function middle(name: string, max = 40) {
+  if (name.length <= max) return name;
+  const head = Math.ceil((max - 1) / 2);
+  return `${name.slice(0, head)}…${name.slice(name.length - (max - 1 - head))}`;
+}

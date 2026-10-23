@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router";
 import { sendImprovement, sendWeekly, useWeeklyReview } from "../data/api";
 import type { WeeklyAction, WeeklyReview, WeeklyTerms } from "../data/api";
 import { refusal, runTime } from "../data/projectAgents";
-import { AgentFrame, Chevron, PauseMark, RunDot, WeeklyTermsSheet } from "../components/ProjectAgentParts";
+import { AgentFrame, Chevron, PauseMark, RunDot, TermsSheet } from "../components/ProjectAgentParts";
 import { StatusMark } from "../components/StatusMark";
 
 /*
@@ -94,7 +94,7 @@ function StatusCard({ project, review, onRead }: { project: string; review: Week
       {error.action === "run" ? error.message : error.action === "stop" ? "Not stopped." : <>{refusal("Not saved", error.message)}{" "}
         <button type="button" className="link" onClick={() => ask(error.action)}>Retry</button></>}
     </p> : null}
-    {sheet ? <WeeklyTermsSheet terms={sheet.terms} onAgree={() => void press(sheet.action, sheet.terms.version)} onClose={() => setSheet(null)} /> : null}
+    {sheet ? <TermsSheet title={sheet.terms.title} body={sheet.terms.body} onAgree={() => void press(sheet.action, sheet.terms.version)} onClose={() => setSheet(null)} /> : null}
   </div>;
 }
 

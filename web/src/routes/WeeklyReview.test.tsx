@@ -17,7 +17,7 @@ const terms = { version: "0123456789ab", title: "Turn on the Weekly improvement 
   body: "Swift reads counts from this project's tasks and short quotes from its chats.", sent: "Counts and short chat quotes · Swift on your plan · capped per run, plus one L3 check" };
 const builtin = { key: "weekly", name: "Weekly improvement review", line: "Mondays at 08:00 · Suggests fixes for friction that keeps coming back in this project's tasks" };
 const row = (over: Record<string, unknown> = {}) => ({ id: "weekly", name: "Weekly improvement review", state: "on", triggers: "Mondays at 08:00",
-  news: "3 suggestions", news_at: ago(60 * 48), cue: null, retired_line: null, ...over });
+  news: "3 suggestions", news_at: ago(60 * 48), cue: null, retired_line: null, may: null, ...over });
 const list = (weekly: Record<string, unknown>) => ({ clock: { zone: "Istanbul", offset: -new Date().getTimezoneOffset() },
   budget: { minutes: 120, choices: [30, 60, 120, 300, 600], used: 0, spent: false }, agents: [] as Record<string, unknown>[], retired: [], builtins: [], offers: [],
   weekly: { terms, agent: null, builtin: null, ...weekly } });
@@ -113,7 +113,7 @@ describe("Weekly improvement review", () => {
   it("is the first of your routines with its news", async () => {
     const { state } = serve();
     state.agents = { ...list({ agent: row({ news: "Paused: its terms changed", news_at: null, cue: "paused", state: "paused" }) }),
-      agents: [{ id: "dependency-check", name: "Dependency check", state: "on", triggers: "Weekdays at 07:00", news: "Never run", news_at: null, cue: null, retired_line: null }] };
+      agents: [{ id: "dependency-check", name: "Dependency check", state: "on", triggers: "Weekdays at 07:00", news: "Never run", news_at: null, cue: null, retired_line: null, may: null }] };
     renderApp({ route: "/projects/harbor/agents" });
     const rows = await screen.findAllByRole("link", { name: /Weekly improvement review|Dependency check/ });
     expect(rows.map((r) => r.querySelector("strong")?.textContent)).toEqual(["Weekly improvement review", "Dependency check"]);

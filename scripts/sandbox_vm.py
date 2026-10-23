@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Run the sandbox's socket cases (tests/test_session_sockets.py) with real bubblewrap in a throwaway Ubuntu 24.04 KVM VM.
+"""Run the sandbox's socket cases (tests/test_session_sockets.py) and a routine run's own attempts to change what only
+Altitude may (tests/test_routine_acting.py) with real bubblewrap in a throwaway Ubuntu 24.04 KVM VM.
 
     python3 scripts/sandbox_vm.py RESULTS_DIR [--source REF]
 
@@ -8,9 +9,9 @@ Real bubblewrap starts neither inside an Altitude worker, nor in the validation 
 does (scripts/installation_vm.py), from the signature-checked cached image on a copy-on-write overlay. While online it
 installs bubblewrap, Ubuntu's own AppArmor profile that admits bubblewrap to user namespaces as on an Ubuntu desktop,
 the hardware-enablement kernel, which offers Landlock's abstract-socket scope, and Git and the GitHub CLI, which a
-worker reaches GitHub with. It then restarts on that kernel, loses its online card and runs the module from the
+worker reaches GitHub with. It then restarts on that kernel, loses its online card and runs the cases from the
 committed source. RESULTS_DIR/sandbox-vm.json records the guest, its kernel, bubblewrap and Landlock versions, the
-module's output and whether every case ran and passed: a case skipped for any reason but being macOS-only, as
+cases' output and whether every case ran and passed: a case skipped for any reason but being macOS-only, as
 Seatbelt's are, fails the run. The VM is deleted afterwards. Requires what the installation lane requires.
 """
 from __future__ import annotations
@@ -33,7 +34,8 @@ from scripts import installation_vm as vm  # noqa: E402 (the lane's machine)
 PACKAGES = ("bubblewrap", "apparmor-profiles", "linux-generic-hwe-24.04", "git", "gh")
 COMMANDS = ("cp /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/",
             "apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict")
-MODULE = "tests.test_session_sockets"
+#: The sandbox's socket cases and a routine run's own attempts to change what only Altitude may (routines that act).
+MODULE = "tests.test_session_sockets tests.test_routine_acting.TestTheRunsBoxForReal"
 LANDLOCK = ("python3 -c 'import ctypes; libc = ctypes.CDLL(None); libc.syscall.restype = ctypes.c_long; "
             "print(libc.syscall(444, None, ctypes.c_size_t(0), ctypes.c_uint32(1)))'")
 #: How a case the Linux guest skips by design says so (tests/test_session_sockets.py's `macos_only`).
@@ -41,7 +43,7 @@ MACOS_ONLY = "macOS only: "
 
 
 def judge(returncode: int, output: str) -> dict:
-    """The module's verbose unittest output summarized: it passes when every case passed and every skip is macOS-only,
+    """The cases' verbose unittest output summarized: it passes when every case passed and every skip is macOS-only,
     with at least one case run."""
     ran, summary = re.search(r"^Ran (\d+) tests?", output, re.M), re.findall(r"^(?:OK|FAILED)\b.*$", output, re.M)
     ran = int(ran.group(1)) if ran else 0

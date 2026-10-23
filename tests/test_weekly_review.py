@@ -271,7 +271,8 @@ class TestAgentsRow(RunCase):
         self.assertEqual(project_agents.view(self.project)["weekly"]["builtin"]["key"], "weekly")
         self.assertEqual(project_agents.project_summary(self.project)["count"], 0)
         self.agree()
-        self.assertEqual(project_agents.view(self.project)["weekly"]["agent"]["id"], "weekly")
+        row = project_agents.view(self.project)["weekly"]["agent"]
+        self.assertEqual((row["id"], row["may"]), ("weekly", None), "a row like every routine's: it only reports")
         self.assertEqual(project_agents.project_summary(self.project)["count"], 1)
 
 
