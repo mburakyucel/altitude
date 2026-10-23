@@ -150,7 +150,7 @@ def work_rows(repairs=""):
             + trow("Index rollout", "Running · Opus on Claude · started 40 min ago", "dot held", "Your turn · 2 questions")
             + trow("Keep pagination working", "L2 working · Opus on Claude · started 32 min ago")
             + trow("Add the beta stage", "Queued · waits for a free task slot", "dot q")
-            + f'</div>{repairs}<div class="fold">{CHEVR}Done this week · 2</div>')
+            + f'</div><div class="fold">{CHEVR}Done this week · 2</div>{repairs}')
 
 
 board("PhoneWork", 390, 844,
@@ -397,7 +397,7 @@ NEEDS = ('<div class="nyh">Altitude</div><div class="dq"><div class="muted" styl
 NOTANSWERING = '<p class="cnotice">Altitude is not answering · the repair continues and this page catches up when it is back</p>'
 states = [
     ("1 · Work, no repair to show", "the section is absent, also while loading and when its read fails; nothing else in Work changes; saved rows stay through a failed refresh", work_box('<div class="wh"><h2>Work</h2><span>3 current · 2 done this week</span></div>' + work_rows())),
-    ("2 · Work, repair rows", "between Current and Done this week, in every project's Work; newest first; a finished one leaves 3 days after it ended",
+    ("2 · Work, repair rows", "last in Work, after Done this week and Routines, in every project's Work; newest first; a finished one leaves 3 days after it ended",
      work_box(repairs_section("working", "waiting", "checking", "terminal") + repairs_section("repaired", "confirm", "terminal_bad", "stopped"))),
     ("3 · Failed update, other cause", "Repair leads; Try again repeats the update; × dismisses", notice(phone=False)),
     ("4 · Failed update, passing cause", "Try again leads; Repair beside it", notice("passing", phone=False)),

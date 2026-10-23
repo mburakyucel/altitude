@@ -840,9 +840,9 @@ body, recommendation or answer control.
 Data: `GET /api/project/<name>` for the tasks, `GET /api/overview` `queue` filtered to the project,
 `GET /api/repairs` for **Altitude repairs**.
 
-**Altitude repairs** sits between **Current** (or Work's empty line) and **Done this week**: the
-repair running and every repair that ended less than 72 hours ago, newest first, uncapped, since one
-repair runs at a time. A repair belongs to Altitude, so every project's Work shows the same rows and
+**Altitude repairs** is last in Work, after **Current** (or Work's empty line), **Done this week** and
+**Routines**: the repair running and every repair that ended less than 72 hours ago, newest first,
+uncapped, since one repair runs at a time. A repair belongs to Altitude, so every project's Work shows the same rows and
 Work's counts stay the project's. The heading is "Altitude repairs (N)"; rows use the task row's
 anatomy and open the repair's page (§3.15). The title is "Failed update to 0.9.0", the first line of
 what the operator wrote, or "Repair", on one line with an ellipsis. Meta: "Repair working · started
@@ -888,8 +888,8 @@ releasing the task. There is no release button in Work or the task conversation.
 "Work" and its counts: a bordered group named "Show work as" of toggle buttons with icons, the pressed
 one in the accent tint. List is the default; the choice is remembered by this browser (`altitude.workView`,
 a display preference and nothing else) and lasts for the page when storage is unavailable. Phone Work
-has no switch and always shows the list. Graph replaces only Current: Altitude repairs, Done this week
-and Routines stay below, and the counts are unchanged.
+has no switch and always shows the list. Graph replaces only Current: Done this week, Routines and
+Altitude repairs stay below, and the counts are unchanged.
 
 The graph ([design record](agent-graph/PROPOSAL.md), boards beside it) puts every current task and
 routine run on a ring around L3: the operator's turns first at the top, then the list's order, clockwise.

@@ -201,7 +201,6 @@ export function WorkPanel({
           {inCurrent === 0 ? (
             <p className="text-muted">No current tasks. Ask L3 to start something.</p>
           ) : null}
-          <WorkRepairs project={name} />
           {doneThisWeek.length > 0 ? (
             <details className="wp-fold">
               <summary className="wp-fold-summary">Done this week ({doneThisWeek.length})</summary>
@@ -216,6 +215,7 @@ export function WorkPanel({
               </svg>
             </Link>
           ) : null}
+          <WorkRepairs project={name} />
         </>
       ) : null}
     </section>

@@ -458,7 +458,7 @@ manifest, at its next tick or its next start, and sets the outcome:
 - **The repair ended without a report** when the session ended, failed or its terminal closed before
   it reported; it never reads Repaired.
 
-Work shows an **Altitude repairs** section under its current tasks while there is a repair to show:
+Work shows an **Altitude repairs** section at its bottom while there is a repair to show:
 the one running and those that ended in the last three days, the same in every project's Work. Each
 row opens the repair's page, with its report, Altitude's check and its brief. Settings → About's
 **All repairs** lists every repair, including those that left Work or ran before any project
