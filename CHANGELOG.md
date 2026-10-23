@@ -13,6 +13,13 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   picked can be checked there before sending. Chat thumbnails show the picture's own shape, four make a 2 × 2 grid
   on a phone, and every failed thumbnail offers Retry. The viewer reads one picture ahead each way and keeps only
   those three, in memory, while it is open.
+- Starting Altitude removes a leftover file from older installations.
+- The agents Altitude runs can no longer read repair records, which hold each step a repair took with your full
+  access and its output. Repairs themselves, the app and `alt repair` read them as before. An agent already
+  running when Altitude updates keeps its earlier view until it ends.
+- A terminal open on two devices at once, such as the phone and the desktop, no longer types stray text such as
+  `[18;1R` at its prompt: both screens answer a program's questions about the terminal, and only the first answer
+  reaches the program. Your own typing on either device always arrives.
 - Opening or reconnecting a terminal no longer types stray text such as `11;rgb:1111/1818/2727;1R` at its
   prompt: answers to questions a program asked earlier (`gh` asks the background colour) are no longer sent again
   each time the screen redraws its output. A program waiting for an answer still gets it.
