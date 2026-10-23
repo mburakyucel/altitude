@@ -60,6 +60,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   walkthrough shows a routine's suggested tasks.
 - Voice input you are recording on a task keeps going when its model switch completes: the page no longer
   briefly drops the message box, and the recording with it, at the moment the task is queued for its new engine.
+- For contributors: the web app builds with Vite 8 and its React plugin 6, tests with Vitest 5 and typechecks with
+  TypeScript 7's native compiler, which checks the app in under a second instead of about five. The route smoke
+  walkthrough reads the route list with Vite's own parser, since TypeScript 7 has no JavaScript API.
 
 ## v0.12.0 — 2026-10-22
 
