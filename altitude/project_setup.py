@@ -47,7 +47,8 @@ def operation_lock(project: str, *, wait: bool = False, probe: bool = False):
     The runner and launch preflight hold the lock alone. The runner waits, so a read holding the lock
     delays an accepted repair instead of losing its wake (setup walkthrough interrupted-retry, 2026-09-23).
     Probes share it and never wait. Launch preflight waits up to READ_WAIT_SECONDS for reads alone and
-    gives way at once to an exclusive holder. Reads therefore never count as a running setup, which once
+    gives way at once to an exclusive holder. It waits under the machine's launch lock, so other launches
+    wait for the rest of a read, which is a moment. Reads therefore never count as a running setup, which once
     skipped an operator answer's resume wake (question feedback walkthrough, 2026-10-22).
     """
     with storage.runtime_lock(config.project_dir(project) / ".setup.lock") as handle:

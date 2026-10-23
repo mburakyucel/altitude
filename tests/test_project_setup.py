@@ -163,18 +163,23 @@ class ProjectSetup(AltitudeCase):
                 release.wait(10)
 
         def spawn(_key, fn, *args):
-            # The read ends while the resume's launch preflight waits for it.
-            threading.Timer(0.2, release.set).start()
             fn(*args)
             return True
+        real_sleep = setup.time.sleep
+
+        def waiting(seconds):
+            release.set()  # the read ends while the resume's launch preflight waits for it
+            real_sleep(seconds)
         reader = threading.Thread(target=read)
         reader.start()
         self.assertTrue(reading.wait(10))
         with mock.patch.object(server, "spawn", side_effect=spawn), mock.patch.object(
+                setup.time, "sleep", side_effect=waiting) as wait, mock.patch.object(
                 engines, "resume_l2", return_value={"returncode": 0, "agent": {
                     "id": "replacement", "sessionId": "saved-session", "input_delivered": True}}) as launch:
             self.assertTrue(server.request_task_resume(self.project, slug))
         reader.join(10)
+        wait.assert_called()
         launch.assert_called_once()
         self.assertEqual(S.load_task(self.project, slug)["state"], "running")
         self.assertEqual(T.pending(self.project, slug), [])
