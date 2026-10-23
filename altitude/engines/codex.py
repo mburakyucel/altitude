@@ -786,7 +786,7 @@ def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, t
 
 
 def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images,
-                   restricted=False):
+                   restricted=False, commits=False):
     """A Codex worker in Altitude's sandbox, as a Claude worker, with Codex's own sandbox off and approvals never: its
     own Codex folder (`l2-engine/codex`) beside the same roots, and the operator's Codex folder hidden from it except
     the installed program, the entries its folder links to (none when `restricted`) and a conversation it resumes for
@@ -795,7 +795,7 @@ def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, sett
            "-c", 'approval_policy="never"']
     if effort is not None:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
-    git_writable, read_only = git_policy.worker_git_access(cwd, shared=not restricted)
+    git_writable, read_only = git_policy.worker_git_access(cwd, shared=commits or not restricted)
     home, operator = Path(job_root) / "codex", operator_home()
     copies = _first_resume(home, operator, resume)
     reopened = (*_program(operator), *(operator / name for name in (() if restricted else (*LINKED, SKILLS))

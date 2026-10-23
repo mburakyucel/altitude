@@ -488,7 +488,8 @@ def _committed(project: str, task: str | None = None) -> set[str]:
     else:
         directories = [directory for group in (root / "tasks", root / "archive") if group.is_dir()
                        for directory in group.iterdir() if directory.is_dir() and not directory.is_symlink()]
-        files = [root / "chat.jsonl", root / "l3-queue.jsonl"]
+        files = [root / "chat.jsonl", root / "l3-queue.jsonl",
+                 *(path for path in sorted((root / "chats").glob("*/chat.json")) if not path.parent.is_symlink())]
     files += [directory / name for directory in directories for name in ("status.json", "conversation.jsonl")]
     found: set[str] = set()
     for path in files:

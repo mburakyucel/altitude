@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_agents, project_setup, push, qr, repair, reviews, route, schedule, speech, state as S, storage, suggestions, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, chats, config, digest, dispatch, door, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_agents, project_setup, push, qr, repair, reviews, route, schedule, speech, state as S, storage, suggestions, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -236,8 +236,9 @@ def save_voice(body: dict) -> dict:
     return voice_view()
 
 
-def image_capability(project: str, slug: str | None = None) -> dict:
-    """Image input follows this conversation's current engine and the optional local converter."""
+def image_capability(project: str, slug: str | None = None, engine: str | None = None) -> dict:
+    """Image input follows this conversation's current engine (a task's, an agent chat's `engine`, else L3's) and the
+    optional local converter."""
     config.project(project)
     state = images.capability()
     if slug:
@@ -247,6 +248,8 @@ def image_capability(project: str, slug: str | None = None) -> dict:
             raise images.ImageError("Image access denied.", 403)
         engine = task.get("l2_engine") or task.get("engine")
         choice = {"engine": engine} if engine else route.pick_engine("l2", project=config.project(project))
+    elif engine in config.ENGINES:
+        choice = {"engine": engine}
     else:
         choice = l3._select(project)
     if state["available"]:
@@ -257,8 +260,8 @@ def image_capability(project: str, slug: str | None = None) -> dict:
             "max_dimension": images.MAX_SIDE}
 
 
-def require_image_capability(project: str, slug: str | None = None) -> None:
-    capability = image_capability(project, slug)
+def require_image_capability(project: str, slug: str | None = None, *, engine: str | None = None) -> None:
+    capability = image_capability(project, slug, engine)
     if not capability["available"]:
         raise images.ImageError(capability.get("reason") or "Image input unavailable.")
 
@@ -1352,6 +1355,8 @@ def tick_project(project: str) -> None:
         dispatch_waiting(project)
         if project_agents.tick(project):
             spawn(f"project-agents:{project}", project_agents.start_next, project)
+        for chat_id in chats.due(project):
+            spawn(f"chat:{project}:{chat_id}", chats.run, project, chat_id)
         for t in S.list_tasks(project, include_archive=True):
             if t["state"] not in S.OPEN_STATES and not t.get("cleaned"):
                 notes = dispatch.cleanup_task(project, t)
@@ -1792,7 +1797,7 @@ class Handler(BaseHTTPRequestHandler):
             with S.project_lock(project):
                 if not config.is_managed(project):
                     raise images.ImageError("Image access denied.", 403)
-                capability = image_capability(project, query.get("task", [None])[0])
+                capability = image_capability(project, query.get("task", [None])[0], query.get("engine", [None])[0])
             return self._json(capability)
         if len(parts) != 4:
             raise images.ImageError("Image unavailable.", 404)
@@ -2120,12 +2125,13 @@ class Handler(BaseHTTPRequestHandler):
             return f"{subject} requests from Altitude's own agents are refused."
         return None
 
-    def _repair_denied(self, *, json_body: bool) -> bool:
+    def _repair_denied(self, *, json_body: bool, subject: str = "Repair") -> bool:
         """Whether this request is not from a paired browser's own page. A request with the machine key, which the CLI,
         L3 and anything that read it hold, is refused like one from Altitude's agents: a repair's page carries what an
-        agent with the operator's full access ran and read, and only that page steers it."""
+        agent with the operator's full access ran and read, and only that page steers it; an agent chat's is the
+        operator's own conversation with its agent, which no other agent reads."""
         if self.headers.get(access.KEY_HEADER) is not None or not self._device or self._page_denied(
-                json_body=json_body, subject="Repair"):
+                json_body=json_body, subject=subject):
             self.close_connection = True
             return True
         return False
@@ -2154,6 +2160,67 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc), **({"running": exc.running} if exc.running else {})}, 409)
         except KeyError:
             return self._json({"error": "That repair is not on this computer."}, 404)
+
+    def _chat_get(self, parts: list[str]) -> None:
+        """A project's agent chats, or one chat's page, for a paired browser only (`_repair_denied`)."""
+        if self._repair_denied(json_body=False, subject="Agent chat"):
+            return self._json({"error": chats.PAGE_FROM_BROWSER}, 403)
+        project = unquote(parts[2])
+        if not config.is_managed(project):
+            return self._json({"error": "There is no such project."}, 404)
+        try:
+            return self._json(chats.listing(project) if len(parts) == 3 else chats.view(project, parts[3]))
+        except chats.Missing as exc:
+            return self._json({"error": str(exc)}, 404)
+
+    def _chat_post(self, parts: list[str], o: dict) -> None:
+        """New, message, remove, retry, rename, model, stop, archive, reopen and delete, from a paired browser only
+        (`_repair_denied`); each request names itself, so a repeated tap or a replayed request acts once. A message
+        starts the chat's next turn when none is running (`chats.run`)."""
+        if self._repair_denied(json_body=True, subject="Agent chat"):
+            return self._json({"error": chats.FROM_BROWSER}, 403)
+        project = unquote(parts[2]) if len(parts) > 2 else ""
+        if not config.is_managed(project):
+            return self._json({"error": "There is no such project."}, 404)
+        uploads, image_ids, request = o.get("images"), o.get("image_ids"), o.get("request")
+        try:
+            if len(parts) == 3:
+                if uploads or image_ids:
+                    require_image_capability(project, engine=(o.get("choice") or {}).get("engine"))
+                result = chats.new(project, o.get("text"), request, uploads=uploads, image_ids=image_ids,
+                                   choice=o.get("choice"))
+                spawn(f"chat:{project}:{result['id']}", chats.run, project, result["id"])
+                return self._json(result)
+            chat_id, action = parts[3], parts[4] if len(parts) == 5 else ""
+            if action == "message":
+                if uploads or image_ids:
+                    require_image_capability(project, engine=chats.load(project, chat_id)["engine"])
+                result = chats.message(project, chat_id, o.get("text"), request, uploads=uploads, image_ids=image_ids)
+            elif action == "remove":
+                result = chats.remove(project, chat_id, o.get("message"), request)
+            elif action == "retry":
+                result = chats.retry(project, chat_id, request)
+            elif action == "rename":
+                result = chats.rename(project, chat_id, o.get("name"), request)
+            elif action == "model":
+                result = chats.set_choice(project, chat_id, o.get("choice"), request)
+            elif action == "stop":
+                result = chats.stop(project, chat_id, request)
+            elif action == "archive":
+                result = chats.archive(project, chat_id, request, discard=o.get("discard") is True)
+            elif action == "reopen":
+                result = chats.reopen(project, chat_id, request)
+            elif action == "delete":
+                return self._json(chats.delete(project, chat_id))
+            else:
+                return self._json({"error": "not found"}, 404)
+            if action in ("message", "retry", "stop"):
+                spawn(f"chat:{project}:{chat_id}", chats.run, project, chat_id)
+            return self._json(result)
+        except chats.Refused as exc:
+            return self._json({"error": str(exc)}, 409)
+        except chats.Missing as exc:
+            return self._json({"error": str(exc)}, 404)
 
     def _from_agent(self) -> bool:
         """Whether this connection comes from one of Altitude's own agents. One connection keeps one client socket, so
@@ -2562,6 +2629,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"items": installation.prerequisites()})
             if api == "repairs" and len(parts) == 2:
                 return self._json(repair.listing())
+            if api == "chats" and len(parts) in (3, 4):
+                return self._chat_get(parts)
             if api == "repairs" and len(parts) == 3:
                 if self._repair_denied(json_body=False):
                     return self._json({"error": repair.PAGE_FROM_BROWSER}, 403)
@@ -2697,7 +2766,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": UNPAIRED, "pair": True}, 401)
         if not self._machine and not owned and self._from_agent():
             self.close_connection = True
-            return self._json({"error": repair.FROM_BROWSER if parts[:2] == ["api", "repairs"] else AGENT_REFUSED}, 403)
+            return self._json({"error": repair.FROM_BROWSER if parts[:2] == ["api", "repairs"]
+                               else chats.FROM_BROWSER if parts[:2] == ["api", "chats"] else AGENT_REFUSED}, 403)
         image_submission = False
         try:
             api = parts[1] if len(parts) > 1 and parts[0] == "api" else ""
@@ -2707,10 +2777,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._service_voice()
             if api == "voice" and len(parts) > 2:
                 return self._host_voice(parts, parse_qs(u.query))
-            o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
+            o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "chats", "l2") else None)
             if owned and not self._task_owner(o, running=parts != ["api", "task", "door"]):
                 return self._json({"error": TASK_DOOR_REFUSED}, 403)
-            image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
+            image_submission = api in ("chat", "chats", "l2") and bool(o.get("images") or o.get("image_ids"))
             if api in ("terminal", "terminal-access"):
                 return self._terminal_post(parts, o)
             if parts == ["api", "pair"]:
@@ -2727,6 +2797,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._update_post(parts, o)
             if api == "repairs":
                 return self._repair_post(parts, o)
+            if api == "chats" and 3 <= len(parts) <= 5:
+                return self._chat_post(parts, o)
             if parts == ["api", "validation-access"]:
                 return self._validation_post(o)
             if parts == ["api", "task", "door"]:
@@ -3317,8 +3389,8 @@ def repair_marks(mark) -> tuple:
 
 def change_marks() -> dict[str, tuple]:
     """What `/api/changes` compares each second: identity, size and modification time of the registry ("") and,
-    per registered project, its hold, project log, archive folder and every open task's status (which
-    holds its questions) and event log. Writers are the daemon and `alt` processes alike, so the files
+    per registered project, its hold, project log, archive folder, every open task's status (which
+    holds its questions) and event log, and every agent chat's record. Writers are the daemon and `alt` processes alike, so the files
     are the signal."""
     def mark(path: Path):
         try:
@@ -3332,6 +3404,7 @@ def change_marks() -> dict[str, tuple]:
         d = config.project_dir(project)
         rows = [mark(d / "hold.json"), mark(d / "events.log"), mark(S.archive_dir(project))]
         rows += [(td.name, mark(td / "status.json"), mark(td / "events.log")) for td in sorted(S.tasks_dir(project).glob("*"))]
+        rows += [("chat", path.parent.name, mark(path)) for path in sorted(chats.home(project).glob("*/chat.json"))]
         marks[project] = tuple(rows)
     return marks
 
@@ -4181,6 +4254,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
         restart_notice()
         settle_interrupted_machine_commands()
         repair.service_started()
+        chats.service_started()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()
         threading.Thread(target=validation.reconcile, name="validation-reconcile", daemon=True).start()
     else:
