@@ -1506,7 +1506,7 @@ read until the viewer closes, as it keeps a thumbnail on screen, and the next op
 **Actions** use the held bytes, so they need no second request; Altitude uploads nothing.
 
 - **Share image** (phone) opens the system share sheet with the picture as a file built at the press.
-- **Download image** saves the bytes under the picture's name.
+- **Download image** saves the bytes under the picture's name; a capture's title gains its `.gif` extension.
 - **Copy image** (desktop) writes a PNG, converting a JPEG or WebP on the way.
 - **Open in new tab** (desktop) opens the picture's own address, where the browser's viewer and Save work.
 - A picked picture, not sent yet, has none: it is the operator's own file.

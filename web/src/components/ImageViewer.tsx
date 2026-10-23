@@ -551,13 +551,14 @@ export function ImageViewer({ images, start, onClose }: { images: GalleryImage[]
   </dialog>, document.body);
 }
 
-/** Saves the held bytes under the picture's name. */
+/** Saves the held bytes under the picture's name, with the extension its type gives when the name has none (a capture's title). */
 function DownloadButton({ read, name, host }: { read: Read; name: string; host: RefObject<HTMLDialogElement | null> }) {
   return <button type="button" className="image-viewer-action" aria-label="Download image" title="Download image" disabled={read.state !== "ready"} onClick={() => {
     if (read.state !== "ready") return;
     const link = document.createElement("a");
     link.href = read.url;
-    link.download = name;
+    const type = read.blob.type.split("/")[1]?.replace("jpeg", "jpg");
+    link.download = /\.\w+$/.test(name) || !type ? name : `${name}.${type}`;
     host.current?.append(link);
     link.click();
     link.remove();

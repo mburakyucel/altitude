@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { renderApp } from "../test/render";
 
@@ -50,12 +50,20 @@ describe("TaskCaptures", () => {
     fireEvent.load(image);
     expect(image).not.toHaveAttribute("data-loading");
     expect(within(screen.getByRole("figure", { name: "Desktop send" })).getByText("1 KiB · 2 s · 1 frame")).toBeVisible();
+    vi.stubGlobal("URL", class extends URL { static override createObjectURL() { return "blob:capture"; } static override revokeObjectURL() {} });
     await user.click(within(phone).getByRole("button", { name: "Open capture Phone send" }));
     const dialog = screen.getByRole("dialog", { name: "Image Phone send" });
     expect(dialog).toHaveTextContent("Validation run 7");
     expect(dialog).toHaveTextContent("1 / 2");
     // A GIF copied would keep only its first frame, so captures offer no Copy.
     expect(within(dialog).queryByRole("button", { name: "Copy image" })).toBeNull();
+    // A capture's title has no extension; its download takes the GIF's.
+    const saved: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.download); });
+    const download = within(dialog).getByRole("button", { name: "Download image" });
+    await waitFor(() => expect(download).toBeEnabled());
+    await user.click(download);
+    expect(saved).toEqual(["Phone send.gif"]);
   });
 
   it("shows an unavailable capture beside the others and retries it with a fresh request", async () => {
