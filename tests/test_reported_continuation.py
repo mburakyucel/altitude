@@ -176,7 +176,7 @@ class TestReportedContinuation(ChatCase):
 
     def test_missing_identity_and_terminal_tasks_are_not_resurrected(self):
         for change in ({"agent_id": None}, {"session_id": None}, {"worktree": None},
-                       {"prs": [99]}, {"state": "done"}, {"state": "rejected"}):
+                       {"prs": [99]}, {"state": "rejected"}):
             with self.subTest(change=change):
                 task = {**self.original, **change}
                 S.save_task(self.project, task)

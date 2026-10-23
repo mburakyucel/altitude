@@ -1771,7 +1771,11 @@ queued ("Waits for dispatch" or "Waits for resume" replaces the live panel); run
 operator (the question at the end of the chat); blocked on L3 ("Waiting for coordinator"
 and the short prerequisite, with the full reason in details); blocked by a fault (a red explanation
 from the same projection as task rows, never a raw-log excerpt); held for resume (Queued chip, the queue's recorded wait in place of
-the session); done or rejected (read-only conversation, composer gone, PR chip in the header).
+the session); done (PR chip in the header; the composer stays without the model pill, with the hint
+"Sending reopens the task with your message." on phone and desktop, also the field's accessible
+description; the operator's message reopens the task in place, and its earlier completion becomes one muted
+row "Done · <digest first line>" with Show/Hide, or "Done" alone without a digest, where it finished); rejected
+(read-only conversation, composer gone).
 Empty conversations read "No messages yet." on an active task and "No messages on this task." on
 a finished one. The live session is connecting (skeleton and "Connecting to the session…";
 recorded lifecycle boundaries stay visible), streaming, paused, ended, or unavailable ("No session
