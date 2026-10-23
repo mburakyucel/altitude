@@ -1118,6 +1118,69 @@ def _restore_task_branch(project: str, slug: str, worktree: Path, actual: str, e
     S.append_event(project, slug, "task-branch-restored", left=actual, branch=expected)
 
 
+def _restore_reopened_worktree(project: str, slug: str) -> dict:
+    """Record what a reopened task's checkout is, restoring it if retention removed it after completion: on its kept
+    branch, or on a fresh task branch from origin/main once its merged branch is gone. Runs once per reopening."""
+    import subprocess
+
+    repo, worktree = config.project_path(project), config.task_worktree(project, slug)
+    branch = f"worktree-{slug}"
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120,
+                              env=git_policy.git_env(repo))
+
+    def mark(**fields) -> dict:
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            task["reopened"] = {**task["reopened"], **fields}
+            S.save_task(project, task)
+        return task
+
+    # A retry after a rebuild that stopped part way still reports the rebuild it started.
+    restoring = S.load_task(project, slug)["reopened"].get("restoring")
+    if worktree.is_dir() and not restoring:
+        outcome = {"worktree": "kept"}
+    else:
+        if not worktree.is_dir():
+            origin_sha = git_policy.fetch_origin(repo, "main")
+            git("worktree", "prune")
+            worktree.parent.mkdir(parents=True, exist_ok=True)
+            if not restoring:
+                restoring = ("branch" if git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0
+                             else "main")
+                mark(restoring=restoring)
+            fresh = restoring == "main" and git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode
+            made = (git("worktree", "add", "--no-track", "-b", branch, str(worktree), origin_sha) if fresh
+                    else git("worktree", "add", str(worktree), branch))
+            if made.returncode != 0:
+                raise T.TransitionError(f"git worktree add failed: {(made.stderr or made.stdout).strip()[:300]}")
+        outcome = {"worktree": restoring}
+        head = git("rev-parse", "--verify", f"refs/heads/{branch}").stdout.strip()
+        ahead = git("rev-list", "--count", head, "--not", "refs/remotes/origin/main").stdout.strip()
+        outcome.update(head=head, ahead=int(ahead or 0))
+    task = mark(**outcome)
+    S.append_event(project, slug, "worktree-restored" if outcome["worktree"] != "kept" else "worktree-kept",
+                   **outcome, branch=branch)
+    return task
+
+
+def reopened_notice(reopened: dict) -> str:
+    """What the owner of a reopened task has, ahead of the operator's message."""
+    done = f" on {reopened['done_at']}" if reopened.get("done_at") else ""
+    worktree = {
+        "kept": "Its worktree was still in place.",
+        "branch": (f"Retention had removed its worktree; it is restored on its kept branch at {str(reopened.get('head'))[:12]}, "
+                   f"with {reopened.get('ahead')} commit(s) not on origin/main."),
+        "main": (f"Retention had removed its worktree and merged branch; the task branch starts again from origin/main at "
+                 f"{str(reopened.get('head'))[:12]}, which holds the earlier merged work."),
+    }.get(reopened.get("worktree"), "")
+    return (f"The operator's message reopens this task, which was done{done}. Its saved session, task folder, "
+            f"earlier deliveries and merge hold continue. {worktree} The earlier report and digest are superseded: "
+            "recheck the earlier delivery on origin/main, say in your first reply what context you have and what was "
+            "rebuilt, then answer or do the follow-up and finish again through the ordinary report or completion.")
+
+
 def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
     task = S.load_task(project, slug)
     d = S.task_dir(project, slug)
@@ -1421,6 +1484,11 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None,
         raise T.TransitionError(f"{slug}: could not claim blocked task for resume")
     task = S.load_task(project, slug)
     cwd = config.task_worktree(project, slug)
+    if task.get("reopened") and task.get("worktree") and not task["reopened"].get("worktree"):
+        try:
+            task = _restore_reopened_worktree(project, slug)
+        except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
+            raise record_resume_failure(project, slug, claim["id"], exc, kind="task-git-provenance") from exc
     if not task.get("worktree") or not cwd.is_dir():
         error = T.TransitionError(f"worktree missing for {slug} ({cwd}); dispatch again")
         raise record_resume_failure(project, slug, claim["id"], error) from error
@@ -1455,6 +1523,8 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None,
         raise record_resume_failure(project, slug, claim["id"], exc) from exc
     rows = claim["messages"]
     prompt = T.render_inbox(rows) or "Continue from your progress file."
+    if task.get("reopened"):
+        prompt = f"{reopened_notice(task['reopened'])}\n\n{prompt}"
     worker = {}
     try:
         with S.project_lock(project):
@@ -2097,14 +2167,20 @@ def cleanup_task(project: str, task: dict) -> list[str]:
         tip = git("rev-parse", "--verify", "-q", f"refs/heads/{branch}").stdout.strip()
         merged = bool(tip) and (git("merge-base", "--is-ancestor", tip, "refs/remotes/origin/main").returncode == 0
                                 or _pr_merged_at(repo, task, tip))
-        if task.get("agent_id"):
-            note = engines.remove_l2_worker(l2_engine(task), task["agent_id"], job_root=l2_job_root(project, slug))
-            notes.append(f"{l2_engine(task)} worker {task['agent_id']}: {(note or 'completed')[:120]}")
-        removed = git("worktree", "remove", wt)
+        # The operator's message can reopen the task meanwhile; reopening and removal exclude each other.
+        with S.project_lock(project):
+            reopened = S.load_task(project, slug)["state"] in S.OPEN_STATES
+            if not reopened:
+                if task.get("agent_id"):
+                    note = engines.remove_l2_worker(l2_engine(task), task["agent_id"], job_root=l2_job_root(project, slug))
+                    notes.append(f"{l2_engine(task)} worker {task['agent_id']}: {(note or 'completed')[:120]}")
+                removed = git("worktree", "remove", wt)
+                if removed.returncode == 0 and merged:
+                    git("branch", "-D", branch)
+        if reopened:
+            return notes + ["reopened before cleanup"]
         if removed.returncode != 0:
             return keep(f"git worktree remove failed: {(removed.stderr or removed.stdout).strip()[:120]}")
-        if merged:
-            git("branch", "-D", branch)
     except subprocess.TimeoutExpired as e:
         return keep(f"git timed out: {e}", retry=True)
     except (subprocess.SubprocessError, OSError, RuntimeError) as e:
