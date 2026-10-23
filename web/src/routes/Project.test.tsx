@@ -410,13 +410,13 @@ describe("Project page", () => {
     expect(panel).toHaveTextContent("1 current · 1 done this week");
   });
 
-  it("counts an agent that paused itself in the header, never as a task in Work", async () => {
+  it("counts a routine that paused itself in the header, never as a task in Work", async () => {
     const paused = { project: "altitude", slug: null, kind: "agent", id: "agent:flaky-tests", agent: "flaky-tests", title: "Flaky tests", run: 7,
       question: "3 runs in a row couldn't finish.", asked_by: "altitude", asked: ago(2), since: ago(2) };
     mockFetch({ overview: { ...overview, queue: [decision, paused] }, project: { ...project, tasks: [], archive: [] } });
     setViewport(1440);
     renderApp({ route: "/projects/altitude" });
-    await screen.findByText(/1 question · 1 paused agent need you$/);
+    await screen.findByText(/1 question · 1 paused routine need you$/);
     const current = within(await screen.findByRole("region", { name: "Work" })).getByRole("region", { name: "Current" });
     expect(within(current).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(["/projects/altitude/tasks/add-badge?question=q-badge&revision=1"]);
   });
@@ -469,10 +469,10 @@ describe("Project page", () => {
     await user.click(more);
     const menu = screen.getByRole("menu");
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(
-      ["Project settings…", "Agents…", expect.stringMatching(/^Setup…/), "Reset L3 conversation…", "All settings…"]);
+      ["Project settings…", "Routines…", expect.stringMatching(/^Setup…/), "Reset L3 conversation…", "All settings…"]);
     await waitFor(() => expect(screen.getByRole("menuitem", { name: "Project settings…" })).toHaveFocus());
     await user.keyboard("{ArrowDown}");
-    expect(screen.getByRole("menuitem", { name: "Agents…" })).toHaveFocus();
+    expect(screen.getByRole("menuitem", { name: "Routines…" })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: /^Setup:/ })).toHaveFocus();
     await user.keyboard("{ArrowDown}");

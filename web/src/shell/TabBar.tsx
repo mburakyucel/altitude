@@ -23,7 +23,7 @@ export function activeTab(pathname: string, state: unknown, search: string): Tab
   if (/^\/projects\/[^/]+\/tasks\//.test(pathname)) {
     return from === "needs" || from === "chat" ? from : "work";
   }
-  // A project's agents are reached from Work, and their pages keep it lit unless chat opened them.
+  // A project's routines are reached from Work, and their pages keep it lit unless chat opened them.
   if (/^\/projects\/[^/]+\/agents(\/|$)/.test(pathname)) return from === "chat" ? "chat" : "work";
   if (/^\/projects\/[^/]+\/decisions\//.test(pathname)) {
     return from === "work" || from === "chat" ? from : "needs";

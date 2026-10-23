@@ -222,9 +222,11 @@ frozen web dependencies and builds the UI, then emits the application archive, i
 `install.py`, `install.sh` and `SHA256SUMS`. `install.sh` is `scripts/install.sh` with the version,
 repository and the SHA-256 of the archive and `install.py` filled in; the unfilled template refuses
 to run. The manifest records source identity and every packaged file hash. The archive contains the
-CLI, Python daemon, built UI, personas, hooks, templates, schemas, the license and third-party
-notices; users need no source build. Existing archive names are immutable. Building the files by
-hand creates no tag, GitHub release or public publication.
+CLI, Python daemon, built UI, personas, hooks, templates, schemas, the container files, the
+documentation, the license and third-party notices; users need no source build. The installer
+refuses a package without the documentation overview, which every coordinator reads. Existing
+archive names are immutable. Building the files by hand creates no tag, GitHub release or public
+publication.
 
 Record archive checksum and install/update/recovery evidence alongside candidate checks. The
 runtime targets are Linux with a systemd user manager and macOS 15 or newer; release evidence is

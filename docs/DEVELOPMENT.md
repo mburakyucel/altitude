@@ -291,6 +291,8 @@ The task-read regressions archive a real task between the live status lookup and
 crossing poll and task action response return the archived record, a missing task returns ordinary
 404, and corrupt state still logs a failure.
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
+The overview regression archives a task between the overview's task listing and its event read, and
+the overview still answers without a logged failure.
 The held-PR pictures regression archives the task after the merge card's first view resolves the live
 folder and before it saves the pictures: no live folder reappears and the archived record reads whole.
 Question-response, failed-setup and first-conversation retry checkpoints join their owned workflows before observing the

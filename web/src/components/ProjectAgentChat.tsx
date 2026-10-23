@@ -13,12 +13,12 @@ import { Stamp } from "./Stamp";
 const fromChat = { from: "project", tab: "chat" };
 
 /*
- * Agents in the project chat (design/wireframes/project-agents/PROPOSAL.md, "In chat"): a run's result is a quiet
- * system line led by the agent's name with Open, and L3's offer to create or change an agent is a card under its reply
+ * Routines in the project chat (design/wireframes/project-agents/PROPOSAL.md, "In chat"): a run's result is a quiet
+ * system line led by the routine's name with Open, and L3's offer to create or change a routine is a card under its reply
  * that only the operator's press saves.
  */
 
-/** A result line: its dot by outcome, the text Altitude wrote from the run record, and Open to the run or agent. */
+/** A result line: its dot by outcome, the text Altitude wrote from the run record, and Open to the run or routine. */
 export function ProjectAgentLine({ project, row }: { project: string; row: ChatMessage }) {
   const ref = row.project_agent;
   const to = ref ? `/projects/${project}/agents/${ref.agent}${ref.n != null ? `/runs/${ref.n}` : ""}` : null;
@@ -32,7 +32,7 @@ export function ProjectAgentLine({ project, row }: { project: string; row: ChatM
   </div>;
 }
 
-/** The offer card: Create agent or Save change spins until the project reads the offer as saved, then says so in place. */
+/** The offer card: Create routine or Save change spins until the project reads the offer as saved, then says so in place. */
 export function ProjectAgentOfferCard({ project, offer }: { project: string; offer: ProjectAgentOffer }) {
   const client = useQueryClient();
   const clock = useProjectAgents(project).data?.clock;
@@ -56,7 +56,7 @@ export function ProjectAgentOfferCard({ project, offer }: { project: string; off
   const edit = isNew ? `/projects/${project}/agents/new?offer=${offer.id}` : `/projects/${project}/agents/${offer.agent}/edit?offer=${offer.id}`;
   const result = offer.result_agent ?? offer.agent;
   return <div className="agent-offer" data-offer={offer.id}>
-    <small className="text-muted">{isNew ? "New agent" : `Change to ${offer.agent_name ?? offer.definition.name}`}</small>
+    <small className="text-muted">{isNew ? "New routine" : `Change to ${offer.agent_name ?? offer.definition.name}`}</small>
     <strong className="agent-offer-name">{offer.definition.name}</strong>
     <small className="text-muted">{zoned(offer.line, clock)}{isNew && offer.on ? " · On when created" : ""}</small>
     {isNew ? <ClampedBrief text={offer.definition.brief} /> : <>
@@ -65,7 +65,7 @@ export function ProjectAgentOfferCard({ project, offer }: { project: string; off
     </>}
     {offer.state === "open" ? <div className="agent-offer-actions">
       <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void press()}>
-        <BusyLabel busy={busy} label={isNew ? "Create agent" : "Save change"} working={isNew ? "Creating the agent…" : "Saving the change…"} />
+        <BusyLabel busy={busy} label={isNew ? "Create routine" : "Save change"} working={isNew ? "Creating the routine…" : "Saving the change…"} />
       </button>
       <Link className="btn" to={edit} state={fromChat} aria-disabled={busy || undefined} onClick={(event) => { if (busy) event.preventDefault(); }}>Edit first</Link>
     </div> : null}

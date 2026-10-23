@@ -672,7 +672,7 @@ def _tasks(count: int) -> str:
 WEEKLY_DAYS, WEEKLY_TIME = (0,), "08:00"
 #: The review as a built-in agent of Altitude's own project (design/wireframes/project-agents/PROPOSAL.md).
 NAME = "Weekly improvement review"
-AGREE_FIRST = f"Agree to the {NAME}'s terms on the Agents page first."
+AGREE_FIRST = f"Agree to the {NAME}'s terms on the Routines page first."
 
 
 def terms(project: str) -> dict:

@@ -412,7 +412,7 @@ project, through its coordinator socket; the operator's CLI reads `alt improve s
 `stop` and `resolve` are admitted only during the chat turn that answers the operator's own message,
 which becomes their recorded authority; L3 never starts or stops a review, or records a decision,
 on its own judgment. A refused `run` returns its reason for L3's reply: no agreement to the current
-terms of the Weekly improvement review, given on its Agents page, another review running, fewer than
+terms of the Weekly improvement review, given on its Routines page, another review running, fewer than
 five tasks finished since the last review, Claude's plan close to its limit or its use unknown, or a
 pending restart. After `stop`, Altitude posts the run's stopped line. Turning the Weekly improvement
 review on, pausing it and the agreement are the operator's alone, on its page
@@ -432,13 +432,13 @@ operator message than the one it was recorded from. When the operator presses Ma
 records the acceptance and queues a turn (trigger `improvement-task`) naming the suggestion; L3 creates
 its task with `alt task new --improvement`, and the press is the task's authority.
 
-`post`, `resolve` and `alt task new --improvement` also serve a project agent run's [suggested
+`post`, `resolve` and `alt task new --improvement` also serve a routine run's [suggested
 tasks](ARCHITECTURE.md#suggested-tasks), in any project: there RUN is `agent:<agent>/<run>`, and REF is
-`RUN/N` for either kind. `status` reads reviews only; L3 reads an agent run's suggestions with `alt agent
+`RUN/N` for either kind. `status` reads reviews only; L3 reads a routine run's suggestions with `alt agent
 show AGENT --run N` (`candidates`) and posts its check before the check's deadline, two hours after the
 run ended. A post writes nothing to chat.
 
-## Project agents
+## Routines
 
 ```text
 alt agent list
@@ -453,28 +453,28 @@ alt agent send AGENT TEXT|- [--key KEY]
 alt agent offer [AGENT] [the same flags as new]
 ```
 
-These read and change a project's [agents](ARCHITECTURE.md#project-agents). `AGENT` is an agent's id
-or the name of exactly one agent that is not retired. On the operator's CLI, `new` saves an agent that
+`alt agent` reads and changes a project's [routines](ARCHITECTURE.md#routines). `AGENT` is a routine's id
+or the name of exactly one routine that is not retired. On the operator's CLI, `new` saves a routine that
 runs only with Run now until it is turned on (`--on` turns it on at once), `set` saves a new version
-from the flags it names and refuses `--on` (`on` turns an agent on), `run` asks for a run now and `stop`
-ends a waiting or running run. `--events` gives an agent the trigger "When it's sent an event", and
+from the flags it names and refuses `--on` (`on` turns a routine on), `run` asks for a run now and `stop`
+ends a waiting or running run. `--events` gives a routine the trigger "When it's sent an event", and
 `--default-model` gives it the model a new task gets, in place of `--engine`, `--model` and `--effort`. A
 refusal prints "alt agent: <reason>" with exit status 1, the reason as the page says it after "Not saved: ",
 such as a Run now that does not fit the week's budget.
 
-`send` sends an agent with the event trigger an event: a text of at most 4,000 characters, from the argument
-or with `-` from standard input. With `--key`, of 1 to 200 characters, a repeat of a key the agent already
+`send` sends a routine with the event trigger an event: a text of at most 4,000 characters, from the argument
+or with `-` from standard input. With `--key`, of 1 to 200 characters, a repeat of a key the routine already
 took is ignored, so a script can send everything it sees each time. It prints "Sent to NAME." or "Already
 received." with exit status 0, or "Not sent: <reason>" with exit status 1, keeping nothing, not even the key.
-On an agent with the event trigger, `run` without a text replays its latest event; `run AGENT TEXT` gives
-that run a text of its own as its one event, even before the agent is on. Only the operator's own
-terminal and scripts send events or give `run` a text. [Operations](OPERATIONS.md#sending-agents-events)
+On a routine with the event trigger, `run` without a text replays its latest event; `run AGENT TEXT` gives
+that run a text of its own as its one event, even before the routine is on. Only the operator's own
+terminal and scripts send events or give `run` a text. [Operations](OPERATIONS.md#sending-events-to-routines)
 has example scripts.
 
 L3 reaches the same grammar through its coordinator socket. `list` and `show` are read-only;
 `on`, `pause`, `resume`, `retire`, `run` and `stop` are admitted only during the chat turn that
 answers the operator's own message, which becomes the change's recorded source. L3 never writes a
-definition: `offer` drafts a new agent, or a change to `AGENT` from the flags it names, as a card
+definition: `offer` drafts a new routine, or a change to `AGENT` from the flags it names, as a card
 under its reply, and only the operator's press saves it; it has no `send`. A run has no `alt` verbs.
 
 ## GitHub issues

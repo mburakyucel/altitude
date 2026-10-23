@@ -73,9 +73,9 @@ test("Work shows agent runs and the Agents row; the Agents page lists, budgets a
   const phone = info.project.name === "phone";
   const { press, fits, noRepeats, title } = setup(page, phone);
   const work = page.getByRole("region", { name: "Work", exact: true });
-  const running = work.getByRole("link", { name: /^Flaky test watch · Agent run · \d+ of 20 min$/ });
-  const waiting = work.getByRole("link", { name: "Dependency check · Agent run · waiting while Flaky test watch runs", exact: true });
-  const agentsRow = work.getByRole("link", { name: "Agents · 4", exact: true });
+  const running = work.getByRole("link", { name: /^Flaky test watch · Routine run · \d+ of 20 min$/ });
+  const waiting = work.getByRole("link", { name: "Dependency check · Routine run · waiting while Flaky test watch runs", exact: true });
+  const agentsRow = work.getByRole("link", { name: "Routines · 4", exact: true });
 
   await walk.open(phone ? `${project}?tab=work` : project);
   await walk.state("01-work-agent-runs", {
@@ -94,18 +94,18 @@ test("Work shows agent runs and the Agents row; the Agents page lists, budgets a
     flaky: page.getByRole("link", { name: /^Flaky test watch/ }),
   };
   const retiredLink = page.getByRole("button", { name: "1 retired", exact: true });
-  const retiredHeading = page.getByRole("heading", { name: "Retired agents" });
+  const retiredHeading = page.getByRole("heading", { name: "Retired routines" });
   const oldLint = page.getByRole("link", { name: /^Old lint sweep/ });
   const builtIn = page.getByRole("region", { name: "Built in" });
-  const budget = page.getByLabel("Agents may use up to");
+  const budget = page.getByLabel("Routines may use up to");
   await walk.state("02-agents-page", {
-    visible: [title("Agents"), page.getByText("Each one runs a brief when its trigger fires, and tells you what it found.", { exact: true }),
+    visible: [title("Routines"), page.getByText("Each one runs a brief when its trigger fires, and tells you what it found.", { exact: true }),
       ...Object.values(rows),
       page.getByText("Weekdays at 07:00 · Waiting while Flaky test watch runs", { exact: true }),
       page.getByText(/^Weekdays at 07:00 · Couldn't finish \S/),
       page.getByText("Weekdays at 07:00 · Paused", { exact: true }),
       page.getByText(/^Only when you run it · Running, \d+ of 20 min$/),
-      budget, page.getByText("20 min used this week", { exact: true }), page.getByRole("link", { name: "New agent", exact: true }),
+      budget, page.getByText("20 min used this week", { exact: true }), page.getByRole("link", { name: "New routine", exact: true }),
       retiredLink, builtIn.getByText("Build health", { exact: true }),
       builtIn.getByText("Mondays at 08:00 · Runs the project's checks on a clean copy and says what broke", { exact: true }),
       builtIn.getByText("What landed", { exact: true })],
@@ -150,10 +150,10 @@ test("Work shows agent runs and the Agents row; the Agents page lists, budgets a
   // The project menu opens the same page.
   await walk.open(project);
   await press(page.getByRole("button", { name: "More actions" }));
-  const menuItem = page.getByRole("menu", { name: "Project actions" }).getByRole("menuitem", { name: "Agents…", exact: true });
+  const menuItem = page.getByRole("menu", { name: "Project actions" }).getByRole("menuitem", { name: "Routines…", exact: true });
   await walk.state("09-menu-agents", { visible: [menuItem], hidden: [] });
   await press(menuItem);
-  await walk.state("10-agents-from-menu", { visible: [title("Agents"), rows.dependency], hidden: [page.getByRole("menu")] });
+  await walk.state("10-agents-from-menu", { visible: [title("Routines"), rows.dependency], hidden: [page.getByRole("menu")] });
   await expect(page).toHaveURL(/\/projects\/harbor\/agents$/);
 });
 
@@ -281,7 +281,7 @@ test("a run's page shows its report, the brief it ran and its session, or why it
 
   // A running run: its elapsed minutes and Stop, with its live session.
   await walk.open(phone ? `${project}?tab=work` : project);
-  await press(page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Flaky test watch · Agent run/ }));
+  await press(page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Flaky test watch · Routine run/ }));
   await walk.state("27-run-running", {
     visible: [page.getByText(/^Running · [1-9]\d* of 20 min$/), page.getByRole("button", { name: "Stop", exact: true }),
       page.getByText("Requested by you · Claude Opus 5.5", { exact: true })],
@@ -291,7 +291,7 @@ test("a run's page shows its report, the brief it ran and its session, or why it
 
   // A waiting run: why it waits and Stop; no model or session before its worker starts.
   await walk.open(phone ? `${project}?tab=work` : project);
-  await press(page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Dependency check · Agent run/ }));
+  await press(page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Dependency check · Routine run/ }));
   await walk.state("28-run-waiting", {
     visible: [page.getByText("Waiting while Flaky test watch runs", { exact: true }), page.getByRole("button", { name: "Stop", exact: true }),
       page.locator(".agent-run-meta").getByText("Requested by you", { exact: true })],
@@ -308,16 +308,16 @@ test("the form: defaults, what is missing, create, edit and discard", async ({ p
   const name = page.getByLabel("Name", { exact: true });
   const brief = page.getByLabel("What it does", { exact: true });
   const day = (label: string) => page.getByRole("button", { name: label, exact: true });
-  const create = page.getByRole("button", { name: "Create agent", exact: true });
+  const create = page.getByRole("button", { name: "Create routine", exact: true });
   const noName = page.getByText("Give it a name.", { exact: true });
   const noBrief = page.getByText("Say what it does.", { exact: true });
   const startsOff = page.getByText("It starts off: try it with Run now, then turn it on.", { exact: true });
   const noDay = page.getByText("Pick at least one day.", { exact: true });
 
   await walk.open(`${project}/agents`);
-  await press(page.getByRole("link", { name: "New agent", exact: true }));
+  await press(page.getByRole("link", { name: "New routine", exact: true }));
   await walk.state("29-new-agent-defaults", {
-    visible: [title("New agent"), name, brief, page.getByText("On a schedule", { exact: true }), page.getByLabel("Time"),
+    visible: [title("New routine"), name, brief, page.getByText("On a schedule", { exact: true }), page.getByLabel("Time"),
       page.getByRole("radio", { name: "When it finds something" }), page.getByLabel("Each run stops after"), create,
       page.getByRole("button", { name: "Cancel", exact: true }), page.getByRole("button", { name: "+ Add a trigger", exact: true }), startsOff],
     hidden: [noName, noBrief, noDay, page.getByText("Only when you run it")],
@@ -414,7 +414,7 @@ test("Retire asks first; a retired agent's page is read only", async ({ page }, 
     visible: [title("Release notes check"), page.getByText(/^Retired \w{3} \d+$/), page.getByRole("link", { name: /^Found something/ }),
       page.getByText(/^Weekdays at 07:00 · Tells you every run · /)],
     hidden: [dialog, page.locator(".agent-status"), page.getByRole("link", { name: "Edit", exact: true }), retire,
-      page.getByRole("heading", { name: "Retire agent" })],
+      page.getByRole("heading", { name: "Retire routine" })],
   });
   await clearOfHeader(page.locator(".agent-retired-line"));
   await noRepeats();
@@ -437,15 +437,15 @@ test("chat: a run's result line opens its run, and L3's offer card creates the a
   const chat = page.getByRole("region", { name: "Conversation", exact: true });
   const found = chat.locator(".agent-line").filter({ hasText: "Release notes check found something: The changelog misses two merged fixes." });
   const offer = chat.locator(".agent-offer");
-  const createAgent = offer.getByRole("button", { name: "Create agent", exact: true });
+  const createAgent = offer.getByRole("button", { name: "Create routine", exact: true });
 
   await walk.open(project);
   await walk.state("43-chat-lines-and-offer", {
     visible: [found, found.getByRole("link", { name: "Open", exact: true }),
       chat.locator(".agent-line").filter({ hasText: "Release notes check found nothing." }),
       chat.locator(".agent-line").filter({ hasText: "Release notes check couldn't finish: The checkout has no CHANGELOG.md." }),
-      chat.getByText("An agent can do that. Here it is; create it if it reads right."),
-      offer.getByText("New agent", { exact: true }), offer.getByText("Docs link check", { exact: true }),
+      chat.getByText("A routine can do that. Here it is; create it if it reads right."),
+      offer.getByText("New routine", { exact: true }), offer.getByText("Docs link check", { exact: true }),
       offer.getByText("Fridays at 16:00 · Tells you when it finds something", { exact: true }),
       offer.getByText("Open every link in docs/ and list the ones that fail."),
       createAgent, offer.getByRole("link", { name: "Edit first", exact: true })],
@@ -477,7 +477,7 @@ test("Monitor lists the running agent among Sessions and every listed agent unde
   const { press } = setup(page, phone);
   const sessionRow = page.locator(".monitor-session").filter({ hasText: "harbor / Flaky test watch" });
   const meta = sessionRow.getByText(/^\S.* · context 6% · \d+ of 20 min$/);
-  const agents = page.getByRole("heading", { name: "Agents (3)", exact: true });
+  const agents = page.getByRole("heading", { name: "Routines (3)", exact: true });
   const section = page.locator("section").filter({ has: agents });
   const row = (name: string) => section.getByRole("link", { name: new RegExp(`^harbor / ${name}`) });
   const fits = async () => {
@@ -489,7 +489,7 @@ test("Monitor lists the running agent among Sessions and every listed agent unde
   await walk.open("/monitor");
   await walk.state("01-monitor-agents", {
     action: toSessions,
-    visible: [sessionRow.getByText("Agent", { exact: true }), meta, sessionRow.locator(".monitor-meter"), agents,
+    visible: [sessionRow.getByText("Routine", { exact: true }), meta, sessionRow.locator(".monitor-meter"), agents,
       row("Dependency check").getByText("Waiting", { exact: true }),
       row("Release notes check").getByText(/^Next (today|tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday) at 07:00$/),
       row("Release notes check").getByText(/^Last: Couldn't finish · (yesterday|\d+ d ago) · 3 min · \S+ tokens$/),
@@ -499,7 +499,7 @@ test("Monitor lists the running agent among Sessions and every listed agent unde
   });
   await expect(row("Flaky test watch").locator(".dot[data-pulse]")).toHaveCount(1);
   // Agents come last on the page.
-  await expect(page.getByRole("heading", { level: 2 }).last()).toHaveText("Agents (3)");
+  await expect(page.getByRole("heading", { level: 2 }).last()).toHaveText("Routines (3)");
   // Desktop keeps what comes next on the title's line; the phone stacks it under the title, every row alike.
   for (const name of ["Dependency check", "Release notes check", "Flaky test watch"]) {
     const [title, next] = await Promise.all([row(name).locator("strong").boundingBox(), row(name).locator(".monitor-agent-next").boundingBox()]);
@@ -542,6 +542,6 @@ test("Monitor lists the running agent among Sessions and every listed agent unde
   await walk.open("/monitor");
   await walk.state("05-no-agents-overlay", {
     action: toSessions,
-    visible: [page.getByRole("heading", { name: /^Sessions \(\d+\)$/ })], hidden: [page.getByRole("heading", { name: /^Agents/ }), sessionRow],
+    visible: [page.getByRole("heading", { name: /^Sessions \(\d+\)$/ })], hidden: [page.getByRole("heading", { name: /^Routines/ }), sessionRow],
   });
 });

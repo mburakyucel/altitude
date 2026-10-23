@@ -28,7 +28,7 @@ pipeline (Review and Merge columns would sit empty, since both happen inside a r
   work as" of two toggle buttons with icons, the pressed one filled with the accent tint. Phone Work
   has no switch and always shows the list.
 - **The graph replaces only the Current section.** Altitude repairs, **Done this week** and
-  **Agents · N** stay below it, unchanged. The head's counts are unchanged.
+  **Routines · N** stay below it, unchanged. The head's counts are unchanged.
 - **Width.** With Graph chosen the work panel is 480px, the task page's live-panel width (§2.2 gains
   this): inline at ≥ 1280, the existing overlay from 1024 to 1279 (`DesktopOverlay.html`). With List it
   stays 340px. The conversation keeps at least 540px at 1280, as on the task page, and reflows at once
@@ -55,7 +55,7 @@ thirteen tasks). A hairline spoke joins the coordinator to each task.
   the node as a link at rest.
 - State line: 11.5px, wrapping, in the list's exact words. A row with attention text shows it whole
   (**Your turn · 1 question**, amber semibold); otherwise the row's meta up to its first " · " ("L2
-  working", "Planned", "Queued", "Agent run"), or a fault's whole first sentence in red ("The task
+  working", "Planned", "Queued", "Routine run"), or a fault's whole first sentence in red ("The task
   session ended before completion"). A task with active helpers adds " · 2 helpers active".
 - Labels have a background in the panel colour, so a spoke never runs through text.
 
@@ -65,7 +65,7 @@ nothing needs hover to be understood.
 **State colours** are the list's dots, from the same `taskCardFacts` and `turnLabel`: running accent,
 your turn amber (with a count badge of open questions at the node's top right; a step shows the amber
 node without a number), fault or operator's Stop red, queued/planned/paused muted with a dashed ring.
-An agent run is the same node with rounded-square corners and opens its run page; it has no halo or
+A routine run is the same node with rounded-square corners and opens its run page; it has no halo or
 helpers, since nothing records its requests.
 
 **Live activity.** A running task whose worker made a model request in the last 60 seconds (the rule
@@ -88,7 +88,7 @@ and the accessible name carries the reason. Releasing the task removes the arrow
 Needs you remains the place to answer.
 
 **Clicks.** A task node opens exactly what its row opens (the owning question's anchor when it is your
-turn, else the task conversation), with the same Back behaviour (§3.9). An agent run opens its run
+turn, else the task conversation), with the same Back behaviour (§3.9). A routine run opens its run
 page.
 
 ## States (`States.html`)
@@ -125,7 +125,7 @@ project query the list already uses.
   (fresh, aged, unknown, other session), reduced-motion classes.
 - Browser (`web/e2e/agent-graph.pw.ts`, phone and desktop): List is the default; the switch shows the
   graph and is remembered across reload; phone shows no switch; a fixture of several tasks (running
-  with helpers, your turn, planned after another, fault, queued, an agent run) renders each node with
+  with helpers, your turn, planned after another, fault, queued, a routine run) renders each node with
   the right state, link and accessible name; Tab order and Enter; reduced motion leaves nothing
   animating; saved after a failed refresh; named captures of the graph.
 - Docs: SPEC §2.2 and §3.7 gain the graph and its width; `docs/ARCHITECTURE.md` work and attention

@@ -36,7 +36,7 @@ export interface GraphNode {
   to: string;
   linkState: unknown;
   questions: number;
-  /** An agent run: the same node with rounded-square corners. */
+  /** A routine run: the same node with rounded-square corners. */
   run: boolean;
   /** The key of the current node this one is planned after. */
   after: string | null;

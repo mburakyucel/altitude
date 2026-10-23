@@ -350,7 +350,7 @@ const alertName = (decision: Decision | Step) => isStep(decision) ? "A command t
 /** Needs you shows every decision; a task or decision page shows its own. */
 export function showsDecision(pathname: string, decision: Attention): boolean {
   if (pathname === "/") return true;
-  // Project chat shows only a count, so a step or a paused agent shows only in Needs you.
+  // Project chat shows only a count, so a step or a paused routine shows only in Needs you.
   if (!isTaskDecision(decision)) return false;
   const owner = `/projects/${decision.project}/tasks/${decision.slug}`;
   return pathname === owner || pathname.startsWith(`${owner}/`)

@@ -4,7 +4,7 @@ import { renderApp, setViewport } from "../test/render";
 import { runTime } from "../data/projectAgents";
 import { clockText } from "../data/observed";
 
-/* The project agents pages against a fictional server (design/wireframes/project-agents/PROPOSAL.md, "States"). */
+/* The routine pages against a fictional server (design/wireframes/project-agents/PROPOSAL.md, "States"). */
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -91,8 +91,8 @@ const without = ({ request_id: _, ...rest }: Record<string, unknown>) => rest;
 
 afterEach(() => setViewport(1024));
 
-describe.each([390, 1440])("project agents at %ipx", (width) => {
-  it("lists agents with their triggers and news, the budget, New agent, the retired count and built-ins", async () => {
+describe.each([390, 1440])("routines at %ipx", (width) => {
+  it("lists routines with their triggers and news, the budget, New routine, the retired count and built-ins", async () => {
     setViewport(width);
     serve();
     renderApp({ route: "/projects/harbor/agents" });
@@ -103,50 +103,50 @@ describe.each([390, 1440])("project agents at %ipx", (width) => {
     expect(screen.getByRole("link", { name: /^Release notes/ })).toHaveTextContent("Fridays at 17:00 · Paused");
     expect(back()).toHaveTextContent("harbor");
     expect(back()).toHaveAttribute("href", "/projects/harbor?tab=work");
-    expect(screen.getByRole("heading", { name: "Agents" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Routines" })).toBeInTheDocument();
     expect(screen.getByText("Each one runs a brief when its trigger fires, and tells you what it found.")).toBeInTheDocument();
-    const budget = screen.getByRole("combobox", { name: /Agents may use up to/ });
+    const budget = screen.getByRole("combobox", { name: /Routines may use up to/ });
     expect(within(budget).getAllByRole("option").map((o) => o.textContent)).toEqual(["30 min a week", "1 h a week", "2 h a week", "5 h a week", "10 h a week"]);
     expect(budget).toHaveDisplayValue("2 h a week");
     expect(screen.getByText("1 h 10 min used this week")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "New agent" })).toHaveAttribute("href", "/projects/harbor/agents/new");
+    expect(screen.getByRole("link", { name: "New routine" })).toHaveAttribute("href", "/projects/harbor/agents/new");
     expect(screen.getByText("Mondays at 08:00 · Runs the project's checks on a clean copy and says what broke")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^Old audit/ })).toBeNull();
   });
 });
 
-describe("Agents page", () => {
-  it("shows Loading agents… then, when the read fails, Could not load agents. with Retry", async () => {
+describe("Routines page", () => {
+  it("shows Loading routines… then, when the read fails, Could not load routines. with Retry", async () => {
     let fail = true;
     const hold = deferred();
     let first = true;
     serve({ agents: () => { if (first) { first = false; return hold.promise; } return fail ? json({ error: "down" }, 500) : json(list()); } });
     const { user } = renderApp({ route: "/projects/harbor/agents" });
-    expect(await screen.findByRole("status", { name: "Loading agents…" })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "Loading routines…" })).toBeInTheDocument();
     hold.resolve(json({ error: "down" }, 500));
-    expect(await screen.findByText("Could not load agents.")).toBeInTheDocument();
+    expect(await screen.findByText("Could not load routines.")).toBeInTheDocument();
     fail = false;
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("link", { name: /^Dependency check/ })).toBeInTheDocument();
   });
 
-  it("with no agents of its own holds only the budget and New agent, then every built-in", async () => {
+  it("with no routines of its own holds only the budget and New routine, then every built-in", async () => {
     const { state } = serve();
     state.agents = list({ agents: [], retired: [] });
     renderApp({ route: "/projects/harbor/agents" });
-    expect(await screen.findByRole("link", { name: "New agent" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "New routine" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Dependency check/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /retired/ })).toBeNull();
     expect(screen.getByRole("heading", { name: "Built in" })).toBeInTheDocument();
   });
 
-  it("opens the retired agents behind their count", async () => {
+  it("opens the retired routines behind their count", async () => {
     serve();
     const { user } = renderApp({ route: "/projects/harbor/agents" });
     const toggle = await screen.findByRole("button", { name: "1 retired" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await user.click(toggle);
-    expect(screen.getByRole("heading", { name: "Retired agents" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Retired routines" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Old audit/ })).toHaveTextContent("Retired Oct 19 · 23 runs");
   });
 
@@ -154,7 +154,7 @@ describe("Agents page", () => {
     const hold = deferred();
     const { presses } = serve({ press: () => hold.promise });
     const { user } = renderApp({ route: "/projects/harbor/agents" });
-    const budget = await screen.findByRole("combobox", { name: /Agents may use up to/ });
+    const budget = await screen.findByRole("combobox", { name: /Routines may use up to/ });
     await user.selectOptions(budget, "300");
     expect(budget).toHaveDisplayValue("5 h a week");
     expect(budget).toBeDisabled();
@@ -174,16 +174,16 @@ describe("Agents page", () => {
     expect(screen.getByText("2 h used this week")).toHaveClass("agents-spent");
   });
 
-  it("Turn on spins until the agent reads as on and its row leaves Built in; a refusal returns the button with why", async () => {
+  it("Turn on spins until the routine reads as on and its row leaves Built in; a refusal returns the button with why", async () => {
     let refuse = true;
     const { state, presses } = serve({ press: async () => {
-      if (refuse) return json({ error: "Not turned on: the agents changed in another window." }, 409);
+      if (refuse) return json({ error: "Not turned on: the routines changed in another window." }, 409);
       state.agents = list({ builtins: [], agents: [...list().agents, summary({ id: "clean-checks", name: "Clean checks", triggers: "Mondays at 08:00", news: "Never run", news_at: null })] });
       return json({ ok: true, agent: "clean-checks" });
     } });
     const { user } = renderApp({ route: "/projects/harbor/agents" });
     await user.click(await screen.findByRole("button", { name: "Turn on" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Not turned on: the agents changed in another window.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not turned on: the routines changed in another window.");
     expect(screen.getByRole("button", { name: "Turn on" })).toBeEnabled();
     refuse = false;
     await user.click(screen.getByRole("button", { name: "Turn on" }));
@@ -201,7 +201,7 @@ describe("Agents page", () => {
   });
 });
 
-describe.each([390, 1440])("one agent at %ipx", (width) => {
+describe.each([390, 1440])("one routine at %ipx", (width) => {
   it("shows its status, recent runs, what it does with Edit, and Retire", async () => {
     setViewport(width);
     serve();
@@ -225,16 +225,16 @@ describe.each([390, 1440])("one agent at %ipx", (width) => {
   });
 });
 
-describe("One agent", () => {
-  it("shows Loading this agent… then Could not load this agent. with Retry", async () => {
+describe("One routine", () => {
+  it("shows Loading this routine… then Could not load this routine. with Retry", async () => {
     let fail = true;
     const hold = deferred();
     let first = true;
     serve({ agent: () => { if (first) { first = false; return hold.promise; } return fail ? json({ error: "down" }, 500) : json(detail()); } });
     const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check" });
-    expect(await screen.findByRole("status", { name: "Loading this agent…" })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "Loading this routine…" })).toBeInTheDocument();
     hold.resolve(json({ error: "down" }, 500));
-    expect(await screen.findByText("Could not load this agent.")).toBeInTheDocument();
+    expect(await screen.findByText("Could not load this routine.")).toBeInTheDocument();
     fail = false;
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Next: tomorrow at 07:00")).toBeInTheDocument();
@@ -418,7 +418,7 @@ describe("One agent", () => {
     expect(within(send).getByText("From a script or your terminal on this computer:")).toBeInTheDocument();
     expect(within(send).getByText(command)).toBeInTheDocument();
     expect(send).toHaveTextContent("The examples use its id, dependency-check, so they keep working after a rename.");
-    expect(send).toHaveTextContent("To try it first, use agent run in place of agent send: it starts a run now, even before the agent is on.");
+    expect(send).toHaveTextContent("To try it first, use agent run in place of agent send: it starts a run now, even before the routine is on.");
     expect(within(send).getByText("Send numbers and your own words, not text anyone else can write: a run has your code and the network.")).toBeInTheDocument();
     const examples = within(send).getByText("Examples").closest("details")!;
     expect(examples).not.toHaveAttribute("open");
@@ -439,7 +439,7 @@ describe("One agent", () => {
 });
 
 describe.each([390, 1440])("one run at %ipx", (width) => {
-  it("ended: the outcome and report, then Brief it ran and Session folded, the session read from under its agent", async () => {
+  it("ended: the outcome and report, then Brief it ran and Session folded, the session read from under its routine", async () => {
     setViewport(width);
     const { reads } = serve();
     const { user } = renderApp({ route: "/projects/harbor/agents/dependency-check/runs/2" });
@@ -581,11 +581,11 @@ describe("One run", () => {
 });
 
 describe.each([390, 1440])("the form at %ipx", (width) => {
-  it("a new agent starts on weekdays at 07:00, telling when it finds something, Default model, 20 min", async () => {
+  it("a new routine starts on weekdays at 07:00, telling when it finds something, Default model, 20 min", async () => {
     setViewport(width);
     serve();
     renderApp({ route: "/projects/harbor/agents/new" });
-    expect(await screen.findByRole("heading", { level: 1, name: "New agent" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "New routine" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("");
     expect(screen.getByText("Write it as you would brief a task. It can use anything in the repository.")).toBeInTheDocument();
     const schedule = screen.getByRole("group", { name: "Schedule 1" });
@@ -596,25 +596,25 @@ describe.each([390, 1440])("the form at %ipx", (width) => {
     expect(screen.getByRole("radio", { name: "When it finds something" })).toBeChecked();
     expect(screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual(["When it finds something", "Every run", "Never"]);
     expect(screen.getByText("Suggested tasks wait in Needs you whatever you choose.")).toBeVisible();
-    expect(screen.getByRole("button", { name: /^Model and effort for this agent: Default/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Model and effort for this routine: Default/ })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Each run stops after" })).toHaveDisplayValue("20 min");
-    expect(screen.getByRole("button", { name: "Create agent" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Create routine" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
   });
 });
 
 describe("The form", () => {
-  it("incomplete: Create agent marks each empty field under it and focuses the first", async () => {
+  it("incomplete: Create routine marks each empty field under it and focuses the first", async () => {
     const { presses } = serve();
     const { user } = renderApp({ route: "/projects/harbor/agents/new" });
     expect(await screen.findByText("It starts off: try it with Run now, then turn it on.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    await user.click(screen.getByRole("button", { name: "Create routine" }));
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus();
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveAccessibleDescription("Give it a name.");
     expect(screen.getByText("Say what it does.")).toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "Name" }), "Build time");
     expect(screen.queryByText("Give it a name.")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    await user.click(screen.getByRole("button", { name: "Create routine" }));
     expect(screen.getByRole("textbox", { name: "What it does" })).toHaveFocus();
     expect(screen.getByText("Say what it does.")).toBeInTheDocument();
     expect(presses).toEqual([]);
@@ -628,7 +628,7 @@ describe("The form", () => {
     const schedule = screen.getByRole("group", { name: "Schedule 1" });
     for (const day of ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]) await user.click(within(schedule).getByRole("button", { name: day }));
     expect(within(schedule).getByText("Pick at least one day.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    await user.click(screen.getByRole("button", { name: "Create routine" }));
     expect(within(schedule).getByRole("button", { name: "Monday" })).toHaveFocus();
     expect(presses).toEqual([]);
     await user.click(within(schedule).getByRole("button", { name: "Remove this trigger" }));
@@ -665,11 +665,11 @@ describe("The form", () => {
     await user.click(add);
     expect(screen.queryByRole("menu")).toBeNull();
     expect(screen.getByRole("group", { name: "Schedule 1" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    await user.click(screen.getByRole("button", { name: "Create routine" }));
     expect(without(presses[0]!)).toMatchObject({ action: "create", definition: { events: true, schedules: [{ days: [0, 1, 2, 3, 4], time: "07:00" }] } });
   });
 
-  it("creates the agent with the fields set and opens its page", async () => {
+  it("creates the routine with the fields set and opens its page", async () => {
     const hold = deferred();
     const { presses } = serve({ press: () => hold.promise });
     const { user, router } = renderApp({ route: "/projects/harbor/agents/new" });
@@ -680,9 +680,9 @@ describe("The form", () => {
     fireEvent.change(within(schedule).getByLabelText("Time"), { target: { value: "06:30" } });
     await user.click(screen.getByRole("radio", { name: "Every run" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "Each run stops after" }), "60");
-    await user.click(screen.getByRole("button", { name: /^Model and effort for this agent/ }));
+    await user.click(screen.getByRole("button", { name: /^Model and effort for this routine/ }));
     await user.click(screen.getByRole("menuitemradio", { name: "Swift" }));
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    await user.click(screen.getByRole("button", { name: "Create routine" }));
     expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(without(presses[0]!)).toEqual({ project: "harbor", action: "create", definition: { name: "Build time",
@@ -716,7 +716,7 @@ describe("The form", () => {
     expect(presses[1]!.request_id).toBe(presses[0]!.request_id);
   });
 
-  it("edit: once the agent changed in another window, the refusal offers no Retry", async () => {
+  it("edit: once the routine changed in another window, the refusal offers no Retry", async () => {
     const { state, presses } = serve({ press: () => {
       state.agent = detail({ version: 4 });
       return json({ error: "Dependency check changed in another window." }, 409);
@@ -766,7 +766,7 @@ describe("The form", () => {
     expect(within(schedule).getByLabelText("Time")).toHaveValue("06:00");
     expect(within(schedule).getByText("Istanbul")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Every run" })).toBeChecked();
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    await user.click(screen.getByRole("button", { name: "Create routine" }));
     await waitFor(() => expect(presses).toHaveLength(1));
     expect(without(presses[0]!)).toEqual({ project: "harbor", action: "create", definition: offer.definition, offer: "offer-1" });
   });

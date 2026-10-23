@@ -184,6 +184,27 @@ class TestL2Steering(AltitudeCase):
                 self.assertEqual(settled["state"], "rejected")
                 self.assertEqual(settled["files"]["request"].strip(), "Keep this request readable.")
 
+    def test_overview_crossing_archive_is_not_a_failed_request(self):
+        task = T.new(self.project, "Archive during the overview", "Keep the overview answering.")
+        live_events = S.tasks_dir(self.project) / task["slug"] / "events.log"
+        read_text = Path.read_text
+        archived = []
+
+        def read(path, *args, **kwargs):
+            if path == live_events and not archived:
+                archived.append(True)
+                T.reject(self.project, task["slug"], "The operator ended this task.")
+            return read_text(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", new=read), mock.patch.object(server, "log") as log:
+            overview = self.request("/api/overview")
+            self.assertFalse(any("Traceback" in str(call) for call in log.call_args_list))
+        self.assertEqual(archived, [True])
+        self.assertIn("projects", overview)
+        self.assertFalse(live_events.exists())
+        self.assertTrue(any(event.get("reason") == "The operator ended this task."
+                            for event in S.read_events(self.project, task["slug"])))
+
     def test_missing_question_field_is_a_logged_failure_not_a_missing_task(self):
         task = T.new(self.project, "Malformed question", "Keep state errors visible.")
         task = T.block(self.project, task["slug"], "Which retry policy?", actor="l2")

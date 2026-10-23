@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
-/* Project agents in the project's chat and Work (design/wireframes/project-agents/PROPOSAL.md, "Work" and "In chat"). */
+/* Routines in the project's chat and Work (design/wireframes/project-agents/PROPOSAL.md, "Work" and "In chat"). */
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -13,8 +13,8 @@ const definition = { name: "Dependency check", brief: "Check whether any depende
   events: false, tell: "found", model: null, limit: 20 };
 const offer = (over: Record<string, unknown> = {}) => ({ id: "o1", turn_id: "t1", kind: "new", agent: null, agent_name: null, definition,
   line: "Weekdays at 07:00 · Tells you when it finds something", changes: [], on: true, state: "open", reason: null, result_agent: null, ...over });
-const runs = [{ agent: "dependency-check", name: "Dependency check", n: 3, state: "running" as const, line: "Agent run · 2 of 20 min" },
-  { agent: "merge-review", name: "Review each merge", n: 7, state: "waiting" as const, line: "Agent run · waiting to start" }];
+const runs = [{ agent: "dependency-check", name: "Dependency check", n: 3, state: "running" as const, line: "Routine run · 2 of 20 min" },
+  { agent: "merge-review", name: "Review each merge", n: 7, state: "waiting" as const, line: "Routine run · waiting to start" }];
 const project = (agents: Record<string, unknown> | null = { runs, count: 4, offers: [] }) => ({ name: "harbor", l3: {}, busy: false,
   tasks: [{ slug: "fix-timer", state: "running", title: "Fix the timer", updated: ago(2) }], archive: [], decisions: [], incidents: [],
   ...(agents ? { project_agents: agents } : {}) });
@@ -50,7 +50,7 @@ function serve(options: { project?: () => unknown; history?: unknown[]; press?: 
 
 afterEach(() => setViewport(1024));
 
-describe.each([390, 1440])("agents in the project at %ipx", (width) => {
+describe.each([390, 1440])("routines in the project at %ipx", (width) => {
   it("shows each run's result as a system line with its dot and Open, not as L3's answer", async () => {
     setViewport(width);
     serve();
@@ -71,19 +71,19 @@ describe.each([390, 1440])("agents in the project at %ipx", (width) => {
     if (width === 390) expect(within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", { name: "Chat" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("Work lists waiting and running runs in Current, and Agents · N after Done this week", async () => {
+  it("Work lists waiting and running runs in Current, and Routines · N after Done this week", async () => {
     setViewport(width);
     serve();
     const { user, router } = renderApp({ route: width === 390 ? "/projects/harbor?tab=work" : "/projects/harbor" });
     const panel = await screen.findByRole("region", { name: "Work" });
     const current = await within(panel).findByRole("region", { name: "Current" });
-    const running = within(current).getByRole("link", { name: "Dependency check · Agent run · 2 of 20 min" });
+    const running = within(current).getByRole("link", { name: "Dependency check · Routine run · 2 of 20 min" });
     expect(running).toHaveAttribute("href", "/projects/harbor/agents/dependency-check/runs/3");
     expect(running.querySelector(".dot")).toHaveAttribute("data-state", "running");
-    const waiting = within(current).getByRole("link", { name: "Review each merge · Agent run · waiting to start" });
+    const waiting = within(current).getByRole("link", { name: "Review each merge · Routine run · waiting to start" });
     expect(waiting.querySelector(".dot")).toHaveAttribute("data-state", "idle");
     expect(within(panel).getByRole("heading", { name: "Current (3)" })).toBeInTheDocument();
-    const agents = within(panel).getByRole("link", { name: "Agents · 4" });
+    const agents = within(panel).getByRole("link", { name: "Routines · 4" });
     expect(agents).toHaveAttribute("href", "/projects/harbor/agents");
     await user.click(running);
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/harbor/agents/dependency-check/runs/3"));
@@ -91,17 +91,17 @@ describe.each([390, 1440])("agents in the project at %ipx", (width) => {
   });
 });
 
-describe("Agents in the project", () => {
-  it("with no agents and no runs, Work has no Agents row while the menu keeps Agents…", async () => {
+describe("Routines in the project", () => {
+  it("with no routines and no runs, Work has no Routines row while the menu keeps Routines…", async () => {
     serve({ project: () => project({ runs: [], count: 0, offers: [] }) });
     setViewport(1440);
     const { user, router } = renderApp({ route: "/projects/harbor" });
     const panel = await screen.findByRole("region", { name: "Work" });
     await within(panel).findByRole("link", { name: /^Fix the timer/ });
-    expect(within(panel).queryByRole("link", { name: /^Agents/ })).toBeNull();
+    expect(within(panel).queryByRole("link", { name: /^Routines/ })).toBeNull();
     expect(within(panel).getByRole("heading", { name: "Current (1)" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Agents…" }));
+    await user.click(screen.getByRole("menuitem", { name: "Routines…" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/harbor/agents"));
   });
 
@@ -121,9 +121,9 @@ describe("Agents in the project", () => {
     const card = (id: string) => document.querySelector<HTMLElement>(`[data-offer="${id}"]`)!;
     await waitFor(() => expect(card("o1")).not.toBeNull());
     expect(card("o1").closest(".turn")).toHaveTextContent("Reply t1");
-    expect(card("o1")).toHaveTextContent("New agentDependency checkWeekdays at 07:00 · Tells you when it finds something · On when created");
+    expect(card("o1")).toHaveTextContent("New routineDependency checkWeekdays at 07:00 · Tells you when it finds something · On when created");
     expect(within(card("o1")).getByText("Check whether any dependency has a security fix.")).toBeInTheDocument();
-    expect(within(card("o1")).getAllByRole("button").map((b) => b.textContent)).toEqual(["Create agent"]);
+    expect(within(card("o1")).getAllByRole("button").map((b) => b.textContent)).toEqual(["Create routine"]);
     expect(within(card("o1")).getByRole("link", { name: "Edit first" })).toHaveAttribute("href", "/projects/harbor/agents/new?offer=o1");
     expect(card("o2")).toHaveTextContent("Change to Dependency check");
     expect(card("o2")).not.toHaveTextContent("On when created");
@@ -141,20 +141,20 @@ describe("Agents in the project", () => {
     expect(within(card("o5")).queryByRole("button")).toBeNull();
   });
 
-  it("Create agent spins until the project reads the offer as created; a failed press says Not saved:", async () => {
+  it("Create routine spins until the project reads the offer as created; a failed press says Not saved:", async () => {
     let state = "open";
     let answer: () => Response = () => json({ error: "The name is taken." }, 409);
     const { presses } = serve({ project: () => project({ runs: [], count: 0, offers: [offer({ state, result_agent: state === "created" ? "dependency-check" : null })] }),
       history: ask("t1", 10), press: () => answer() });
     const { user } = renderApp({ route: "/projects/harbor" });
-    const create = await screen.findByRole("button", { name: "Create agent" });
+    const create = await screen.findByRole("button", { name: "Create routine" });
     await user.click(create);
     expect(await screen.findByRole("alert")).toHaveTextContent("Not saved: The name is taken.");
     answer = () => { state = "created"; return json({ ok: true, agent: "dependency-check" }); };
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    await user.click(screen.getByRole("button", { name: "Create routine" }));
     await waitFor(() => expect(document.querySelector("[data-offer]")).toHaveTextContent(/Created · Open$/));
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Create agent/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Create routine/ })).toBeNull();
     expect(presses).toEqual([{ project: "harbor", action: "offer", offer: "o1" }, { project: "harbor", action: "offer", offer: "o1" }]);
   });
 
@@ -163,10 +163,10 @@ describe("Agents in the project", () => {
     serve({ project: () => project({ runs: [], count: 0, offers: [offer()] }), history: ask("t1", 10),
       press: () => new Promise<Response>((done) => { finish = done; }) });
     const { user } = renderApp({ route: "/projects/harbor" });
-    await user.click(await screen.findByRole("button", { name: "Create agent" }));
-    expect(screen.getByRole("button", { name: "Creating the agent…" })).toBeDisabled();
+    await user.click(await screen.findByRole("button", { name: "Create routine" }));
+    expect(screen.getByRole("button", { name: "Creating the routine…" })).toBeDisabled();
     expect(screen.getByRole("link", { name: "Edit first" })).toHaveAttribute("aria-disabled", "true");
     finish(json({ ok: true, agent: "dependency-check" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Create agent" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create routine" })).toBeEnabled());
   });
 });
