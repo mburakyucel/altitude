@@ -5,6 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Altitude repairs sit at the bottom of Work, below the project's finished work and Routines: they are
+  Altitude's own upkeep rather than the project's work.
 - Routines can act, not only report: tick **What it may change** on a routine's form and it may clear the
   project's worktrees and branches that nothing needs. Altitude checks every request itself and keeps anything
   with work in it, a task's own worktree or a task still open; the run's page lists each change with **Undo**, and a set-aside worktree

@@ -221,10 +221,9 @@ test("Work's Altitude repairs: hidden with none, running, waiting and finished r
     hidden: [row(/^Repair · /), section.getByText("Your turn · the repair asks")],
   });
   expect(await section.locator(".task-card-dot").evaluateAll((dots) => dots.map((dot) => dot.getAttribute("data-state")))).toEqual(["running", "idle", "idle"]);
-  // The section sits under Current and above Done this week.
-  const order = await work.locator(".wp-section, .wp-fold, p.text-muted").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label") ?? node.className));
-  expect(order.indexOf("Altitude repairs"), "repairs follow Current").toBeGreaterThan(Math.max(order.indexOf("Current"), order.indexOf("text-muted")));
-  if (order.includes("wp-fold")) expect(order.indexOf("Altitude repairs")).toBeLessThan(order.indexOf("wp-fold"));
+  // The section is last in Work: after Current (or the empty line), Done this week and Routines.
+  const order = await work.locator(".wp-section, .wp-fold, p.text-muted, .wp-agents").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label") ?? node.className));
+  expect(order.at(-1), "repairs come last").toBe("Altitude repairs");
 
   // A failed refresh keeps the rows it has: the running repair's listing is read again while it runs.
   fail = true;
