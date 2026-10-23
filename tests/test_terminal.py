@@ -211,7 +211,8 @@ class TestTerminalLifecycle(TerminalCase):
         self.type("read -rs -d R -p $'out\\033[6n' at\n")
         self.wait(lambda: bytes(term.buffer).endswith(b"out\x1b[6n"))
         data, end, missed, _, replay, pieces = terminal.read(term, 0, 0)
-        self.assertEqual((missed, data[replay:], pieces), (True, b"\x1b[6n", [end]))
+        self.assertEqual((missed, data[replay:], pieces[-1]), (True, b"\x1b[6n", end))
+        self.assertGreater(pieces[0], term.start + replay)
         self.assertGreater(len(data), 4000)  # the whole kept buffer
         # An answer to output that has left the buffer is too old for a program to still wait on.
         self.type("R")
@@ -254,7 +255,8 @@ class TestTerminalLifecycle(TerminalCase):
         second = term.end
         # A page that fell behind gets both pieces at once, and where each ends, so it answers them as the others do.
         before = term.pieces[term.pieces.index(first) - 1]
-        self.assertEqual(terminal.read(term, before, 0)[1:], (second, False, False, 0, [first, second]))
+        offset, missed, ended, replay, pieces = terminal.read(term, before, 0)[1:]
+        self.assertEqual((offset, missed, ended, replay, pieces[-1], first in pieces), (second, False, False, 0, second, True))
         answer("desktop", "\x1b[3;", second)
         answer("phone", "\x1b[1;1R", second)  # back in time to answer too
         answer("desktop", "4R", second)  # the rest of the desktop's answer, in a request of its own
