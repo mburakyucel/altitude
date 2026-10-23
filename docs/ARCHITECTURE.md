@@ -1898,7 +1898,9 @@ reconnecting page resumes from its own offset, and so does a page shown again af
 back-forward cache, whose connection may have dropped without an error; when older output was dropped meanwhile it
 starts its screen over from what was kept. The output a page catches up on as its stream opens, or starts over
 from, is replayed, apart from the escape sequences after its last text that no page has been sent: a query there
-(a shell asking at its start, a command that asked while no page was open) may still be waiting. Programs query the terminal (`gh` asks
+(a shell asking at its start, a command that asked while no page was open) may still be waiting. A query sent to a
+page whose connection had died without closing goes unanswered after the reconnect, so its program waits for its own
+timeout or a key rather than receiving a second answer that could reach the prompt. Programs query the terminal (`gh` asks
 its background colour, others the cursor's place), and xterm answers through the same channel as keys; the page
 sends the answers to live output and drops those to replayed output, whose programs have moved on, so opening a
 terminal never types at its prompt. Each write's callback runs right after its output is parsed, in the same

@@ -271,9 +271,12 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
   await walk.state("12b-reopened-types-nothing", { visible: [output.getByText("clean-5")], hidden: [output.getByText(/11;rgb|command not found/)] });
   // A program answered live that then works quietly, as `gh` waits on the network, is not answered again by a page
   // opening meanwhile.
-  await run(page, "read -rs -d R -p $'\\e[6n' at; sleep 3; echo quiet-${#at}");
+  await run(page, "read -rs -d R -p $'\\e[6n' at; sleep 5; echo quiet-${#at}");
   await page.waitForTimeout(500);
   await page.reload();
+  // The page is back while the program still works: its query is the last thing it printed.
+  await expect(output).toContainText("sleep 5; echo quiet");
+  expect(await output.textContent()).not.toMatch(/quiet-\d/);
   await expect(output).toContainText(/quiet-\d/, { timeout: 10_000 });
   await run(page, "echo still-clean-$((3+4))");
   await expect(output).toContainText("still-clean-7");
