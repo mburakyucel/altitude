@@ -75,6 +75,34 @@ def _key() -> Path:
     return path
 
 
+def remove_legacy_key(log) -> None:
+    """Delete the signing key releases before the access folder kept in `push/` in Altitude's home, which every
+    sandbox can read, with a key a crash left half made beside it. Nothing reads them: a device subscribed with that
+    key is subscribed again with the current one the next time Altitude opens there. The folder is held open and never
+    followed through a link, so only those files go, never the access folder's key, and the folder goes once empty."""
+    removed = False
+    try:
+        home = os.open(config.ROOT, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return
+    try:
+        folder = os.open("push", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=home)
+        try:
+            for name in os.listdir(folder):
+                if name == "vapid.key" or re.fullmatch(r"\.[0-9a-f]{32}\.key", name):
+                    os.unlink(name, dir_fd=folder)
+                    removed = True
+        finally:
+            os.close(folder)
+        os.rmdir("push", dir_fd=home)  # fails while anything else shares it
+    except OSError:
+        pass
+    finally:
+        os.close(home)
+    if removed:
+        log("push: removed the signing key an earlier release left in Altitude's home")
+
+
 def public_key() -> str:
     """The application server key the browser subscribes with: the uncompressed P-256 point."""
     der = _openssl("ec", "-in", _key(), "-pubout", "-outform", "DER")

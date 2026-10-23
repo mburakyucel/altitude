@@ -5,6 +5,7 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Starting Altitude removes a leftover file from older installations.
 - A terminal open on two devices at once, such as the phone and the desktop, no longer types stray text such as
   `[18;1R` at its prompt: both screens answer a program's questions about the terminal, and only the first answer
   reaches the program. Your own typing on either device always arrives.

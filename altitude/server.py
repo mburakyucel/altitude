@@ -4129,6 +4129,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
     dispatch.forget_speech_service()
     reinstall_voice = speech.remove_home_runtime()
+    push.remove_legacy_key(log)
     if os.environ.get("ALTITUDE_SERVICE"):  # only the service instance clears the restart-pending flag
         try:
             git_policy.activate_source()
