@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The README's How it works diagram keeps its drawing with far fewer words, in larger type: box titles, a short
+  line saying what each part does where the picture needs one, and two arrow labels. Routines keep watch and act
+  when allowed.
 - The README's How it works diagram keeps its drawing with far fewer words: box titles, one short line only where
   the picture needs it and two arrow labels, in larger type. Routines read "report, or act as you allow".
 - Opening Altitude on a phone from a notification, the app switcher or the lock screen shows the whole screen
