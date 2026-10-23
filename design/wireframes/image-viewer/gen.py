@@ -81,11 +81,11 @@ def chart(cls="pic", style=""):
 # ---- the viewer ----
 
 def phone_viewer(label, picture, *, name="terminal.png", context="You · 3 min ago", count="1 / 3", bars=True,
-                 prev=False, nxt=True, action=SHARE, action_label="Share image", extra="", stage_style="", note=""):
+                 prev=False, nxt=True, action=SHARE, action_label="Share image", extra="", stage_style="", note="", disabled=False):
     top = f'''<div class="vbar top">
   <span class="vbtn" title="Close image">{CLOSE}</span>
   <span class="vtitle"><b>{name}</b><small>{context}</small></span>
-  {f'<span class="vbtn" title="{action_label}">{action}</span>' if action else '<span class="vgap"></span>'}
+  {f'<span class="vbtn{" off" if disabled else ""}" title="{action_label}">{action}</span>' if action else '<span class="vgap"></span>'}
 </div>''' if bars else ""
     arrows = (f'<span class="vnav prev">{BACK}</span>' if prev and bars else "") + (f'<span class="vnav next">{NEXT}</span>' if nxt and bars else "")
     pill = f'<span class="vcount">{count}</span>' if bars and count else ""
@@ -111,30 +111,32 @@ def desktop_viewer(label, picture, *, name="dashboard.png", context="L2 · 12:04
 
 
 def phone_boards():
-    fit = terminal()
+    fit = terminal("pic pfit")
     frames = [
-        phone_viewer("01 · Open from a chat thumbnail", fit, note="Picture fitted to the whole screen; bars float over it on a soft gradient. Share opens the system sheet."),
-        phone_viewer("02 · One tap hides the bars", fit, bars=False, note="Another tap, or focusing a control, brings them back."),
-        phone_viewer("03 · Pinched or double-tapped", terminal("pic zoom", "width:1100px;height:2380px;left:-40px;top:-520px"), bars=False,
+        phone_viewer("01 · Open from a chat thumbnail", fit,
+                     note="The picture fits between the bars, so the viewer never covers the screenshot's own header. Share opens the system sheet."),
+        phone_viewer("02 · Pinched or double-tapped", terminal("pic zoom", "width:1100px;height:2380px;left:-40px;top:-520px"),
                      extra=HAND.format(x=80, y=330) + HAND.format(x=230, y=470),
-                     note="Zooms around the fingers, up to actual pixels on a double-tap; one finger pans and edges hold."),
-        phone_viewer("04 · Swiping to the next", terminal("pic", "left:-150px") + dashboard("pic", "left:256px"), bars=True, count="1 / 3",
+                     note="Zooms around the fingers, up to actual pixels on a double-tap; one finger pans under the bars and edges hold."),
+        phone_viewer("03 · Swiping to the next", terminal("pic pfit", "left:-150px") + dashboard("pic pfit", "left:256px"), count="1 / 3",
                      extra=HAND.format(x=180, y=520), nxt=False,
                      note="The picture follows the finger and the next slides in 16 px behind it; past a third, it carries on."),
+        phone_viewer("04 · Swipe down to close", terminal("pic pfit", "transform:translate(10px,120px) scale(.86)"), bars=False,
+                     extra='<div class="under"></div>' + HAND.format(x=200, y=560),
+                     note="The dark and the bars fade with the distance; past 120 px it shrinks back into its thumbnail."),
     ]
     board("Phone", 4 * 430 + 40, 1010, '<h1 class="bt">Image viewer · phone</h1><div class="frames">' + "".join(frames) + "</div>")
     states = [
-        phone_viewer("05 · Swipe down to close", terminal("pic", "transform:translate(10px,120px) scale(.86)"), bars=False,
-                     stage_style="background:rgb(11 13 18 / .55)", extra='<div class="under"></div>' + HAND.format(x=200, y=560),
-                     note="The dark fades with the distance; past 120 px it shrinks back into its thumbnail."),
-        phone_viewer("06 · Loading", '<span class="vspin"></span>', name="IMG_2041.png", context="You · 3 min ago", action=None,
-                     note="Close, arrows and count work; Share waits for the picture."),
-        phone_viewer("07 · Failed", f'<div class="vfail">{IMAGE_OFF}<b>Image unavailable</b><span class="vretry">Retry</span></div>',
+        phone_viewer("05 · Loading", '<span class="vspin"></span>', name="IMG_2041.png", context="You · 3 min ago", disabled=True,
+                     note="Close, arrows and count work; Share is dimmed until the picture is in hand."),
+        phone_viewer("06 · Failed", f'<div class="vfail">{IMAGE_OFF}<b>Image unavailable</b><span class="vretry">Retry</span></div>',
                      name="IMG_2041.png", context="You · 3 min ago", action=None, count="2 / 3", prev=True,
-                     note="Arrows and Close still work; Share and zoom are hidden."),
-        phone_viewer("08 · A document's picture", chart(), name="phone.png", context="README.md", count="2 / 5", prev=True,
+                     note="Arrows and Close still work; Share is hidden."),
+        phone_viewer("07 · A document's picture", chart("pic pfit"), name="phone.png", context="README.md", count="2 / 5", prev=True,
                      action=DOWNLOAD, action_label="Download image",
                      note="Context names the document. Where the browser cannot share files, Download takes Share's place."),
+        phone_viewer("08 · A picked image, before sending", terminal("pic pfit"), name="IMG_2045.png", context="Not sent yet", action=None, count="",
+                     nxt=False, note="Tapping a picked thumbnail checks it full size; no actions, since it is your own file."),
     ]
     board("PhoneStates", 4 * 430 + 40, 1010, '<h1 class="bt">Image viewer · phone states</h1><div class="frames">' + "".join(states) + "</div>")
 
@@ -150,7 +152,7 @@ def desktop_boards():
     failed = desktop_viewer("03 · Failed", f'<div class="vfail">{IMAGE_OFF}<b>Image unavailable</b><span class="vretry">Retry</span></div>',
                             name="overview.png", context="Before · Pictures in this PR", count="1 / 3", actions=False, scale=0.5,
                             note="Only Close and the arrows remain.")
-    copied = desktop_viewer("04 · Copied", chart("pic dfit"), name="timeline.png", context="You · yesterday", pill="Image copied", scale=0.5,
+    copied = desktop_viewer("04 · Copied", chart("pic dfit"), name="timeline.png", context="You · yesterday", pill='<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg> Image copied', scale=0.5,
                             note="The message takes the count's place for two seconds.")
     capture = desktop_viewer("05 · A validation capture", terminal("pic dfit"), name="Phone send", context="Validation run 4", count="2 / 2",
                              copy=False, scale=0.5, note="A GIF plays as it does on the page; Copy is not offered for it.")
@@ -176,7 +178,7 @@ def thumbnails():
 <div class="ph-head"><span class="back">{BACK}</span><b>Image task</b></div>
 <div class="convo-col">
 <div class="me">The timer covers the result count.
-  <span class="tiles one">{tile(terminal("pic cover"), "IMG_2041.png", 111, 240)}</span></div>
+  <span class="tiles one">{tile(terminal("pic cover"), "IMG_2041.png", 135, 240)}</span></div>
 <div class="me">Before and after the fix
   <span class="tiles">{tile(chart("pic cover"), "before.png", 128, 96)}{tile(chart("pic cover"), "after.png", 128, 96)}</span></div>
 <div class="me">Two more
@@ -197,7 +199,7 @@ def thumbnails():
 </div>'''
     body = f'''<h1 class="bt">Thumbnails that open the viewer</h1>
 <div class="frames"><figure class="frame"><figcaption>Phone · chat images: one tall, a pair, loading and failed</figcaption>{phone}
-<p class="note">One picture at its own aspect (9:16 to 16:9, inside 200 × 240); several as 96 px tiles; names beneath; a grey block while loading; the reason and Retry on failure.</p></figure>
+<p class="note">One picture at its own aspect (9:16 to 16:9, inside 200 × 240, cropped from the top); several as 96 px tiles; names beneath; a grey block while loading; the reason and Retry on failure.</p></figure>
 <figure class="frame"><figcaption>Desktop · shown images, a document picture, captures</figcaption>{desk_shown}</figure></div>'''
     board("Thumbnails", 1260, 1560, body)
 

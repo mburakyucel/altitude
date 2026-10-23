@@ -14,7 +14,7 @@ svg.pic{position:absolute;left:0;top:0;width:100%;height:100%;z-index:2}
 svg.pic.dfit{left:88px;top:56px;width:calc(100% - 176px);height:calc(100% - 112px)}
 .under{position:absolute;inset:0;z-index:0;background:var(--surface) repeating-linear-gradient(180deg,transparent 0 120px,var(--bubble) 120px 170px,transparent 170px 200px)}
 .vbar{position:absolute;left:0;right:0;z-index:3;display:flex;align-items:center;gap:4px}
-.vbar.top{top:0;padding:47px 4px 18px;background:linear-gradient(rgb(11 13 18 / .92),rgb(11 13 18 / .8) 72%,transparent)}
+.vbar.top{top:0;height:103px;padding:47px 4px 0;background:rgb(11 13 18 / .9)}
 .vbar.desk-bar{height:56px;padding:0 12px 0 24px;gap:12px;background:rgb(11 13 18 / .9)}
 .vbtn{display:grid;width:44px;height:44px;flex:none;place-items:center;border-radius:10px;color:#fff}
 .vbtn svg.i{width:22px;height:22px}
@@ -68,3 +68,6 @@ svg.pic.dfit{left:88px;top:56px;width:calc(100% - 176px);height:calc(100% - 112p
 .capfail{display:flex;width:420px;min-height:170px;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:1px solid var(--border);border-radius:8px;color:var(--text-muted)}
 .capfail b{color:var(--text-secondary);font-size:15px;font-weight:500}
 .under::after{content:"";position:absolute;inset:0;background:rgb(11 13 18 / .55)}
+svg.pic.pfit{top:103px;height:651px}
+.vbtn.off{opacity:.38}
+.vcount.vstatus{display:inline-flex;align-items:center;gap:5px}
