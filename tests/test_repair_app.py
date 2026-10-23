@@ -24,7 +24,7 @@ from unittest import mock
 from tests.support import ALT
 from tests.test_repair import RepairCase
 
-from altitude import access, engines, installation, platform, repair, repair_job, route, server, terminal
+from altitude import access, config, engines, installation, platform, repair, repair_job, route, server, terminal
 
 # One turn per run: the plan's entry for this turn says what the agent reports, which `alt` commands it runs, whether
 # it leaves a child in its process group, how long it works and how it exits.
@@ -654,6 +654,16 @@ class Confinement(AppRepairCase):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and "bypassPermissions" in node.value:
                     with self.subTest(function=function.name):
                         self.assertEqual(function.name, "repair_session")
+
+    def test_no_agent_sandbox_shows_the_repairs(self):
+        """Repairs' records are the operator's alone: Altitude's home keeps their folder from the start, every job in
+        Altitude's sandbox hides it and a Codex coordinator's profile denies it (tests/test_claude_folders.py).
+        tests/test_session_sockets.py runs a confined job against it."""
+        shutil.rmtree(repair.home(), ignore_errors=True)
+        config.ensure_root()
+        folder = os.path.realpath(repair.home())
+        self.assertTrue(os.path.isdir(folder))
+        self.assertIn(folder, platform._operator_places())
 
     def test_the_failed_update_notice_learns_whether_its_cause_passes(self):
         import http.client as client

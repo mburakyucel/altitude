@@ -1603,10 +1603,10 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
     Every job has a temporary folder of its own (`_job_temporary`), its TMPDIR, removed when the job ends.
     `writable` confines the job with Altitude's own sandbox, Seatbelt on macOS and bubblewrap on Linux: it may signal
     only its own processes and write only under these roots and its temporary folder, except under `read_only`,
-    never reads Altitude's credentials, the operator's stored credentials (`credential_places`) or the engines' places
-    of the operator's own (`engines.operator_places`), except a `read_only` path inside one, and reaches no Unix
-    socket of the desktop session; `sockets` are the ones outside its roots it may reach. Without it, file confinement
-    is left to the engine.
+    never reads Altitude's credentials, the operator's stored credentials (`credential_places`), the engines' places
+    of the operator's own (`engines.operator_places`) or the repairs' records (`repair.home`), except a `read_only`
+    path inside one, and reaches no Unix socket of the desktop session; `sockets` are the ones outside its roots it may
+    reach. Without it, file confinement is left to the engine.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
     creates the child. This lets nested bwrap initialize without weakening altd's ``NoNewPrivileges=yes`` boundary.
@@ -1635,12 +1635,14 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
 
 def _operator_places(places=None) -> list[str]:
     """The folders and files of the operator's own that no job in Altitude's sandbox sees (`places`, by default their
-    stored credentials and every engine's places), resolved, present or not; a place ending in * stands for every name
-    in its folder that starts with it, and is followed by where each such name present now that is a link leads. On
-    macOS each is also spelled through the data volume's other name, as `secret_places` spells them."""
+    stored credentials, every engine's places and the repairs' records), resolved, present or not; a place ending in *
+    stands for every name in its folder that starts with it, and is followed by where each such name present now that
+    is a link leads. On macOS each is also spelled through the data volume's other name, as `secret_places` spells
+    them."""
+    from . import repair
     from .engines import common
     found = []
-    for place in (*credential_places(), *common.operator_places()) if places is None else places:
+    for place in (*credential_places(), *common.operator_places(), str(repair.home())) if places is None else places:
         if not place.endswith("*"):
             found.append(os.path.realpath(place))
             continue
