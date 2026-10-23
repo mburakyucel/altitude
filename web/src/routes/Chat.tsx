@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -313,6 +313,22 @@ function StopButton({ project, chat, escape, voiceOwnsEscape }: { project: strin
   </>;
 }
 
+/** The conversation opens at its newest line and follows new lines while you are at the bottom; scrolled up to read,
+ * it stays where you are. */
+function useFollowBottom(content: unknown) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (node && following.current) node.scrollTop = node.scrollHeight;
+  }, [content]);
+  const onScroll = () => {
+    const node = scroller.current;
+    if (node) following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+  };
+  return { scroller, onScroll };
+}
+
 const BACK_ICON = <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
   <path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
 </svg>;
@@ -327,6 +343,7 @@ export default function ChatRoute() {
   const overview = useOverview(false);
   const query = useAgentChat(project, id);
   const chat = query.data;
+  const follow = useFollowBottom(chat);
   const [draft, setDraft] = useState("");
   const [newChoice, setNewChoice] = useState<Choice>(null);
   const [renaming, setRenaming] = useState(false);
@@ -386,7 +403,7 @@ export default function ChatRoute() {
   </div>;
   const conversation = <section className="convo" aria-label="Chat conversation">
     {query.isError && chat ? <p className="conversation-notice" role="status">Altitude is not answering · the reply continues and this page catches up when it is back</p> : null}
-    <div className="convo-scroll"><ProseScope project={project}><div className="convo-col">{body}</div></ProseScope></div>
+    <div className="convo-scroll" ref={follow.scroller} onScroll={follow.onScroll}><ProseScope project={project}><div className="convo-col">{body}</div></ProseScope></div>
     {foot}
   </section>;
   const dot = chat ? <span className="dot" data-state={chatDot(chat.state)} aria-hidden /> : null;
@@ -397,7 +414,7 @@ export default function ChatRoute() {
   if (phone) {
     return <>
       <header className="phone-header" data-task>
-        <button type="button" className="icon-btn" aria-label="Back" onClick={back}>{BACK_ICON}</button>
+        {rename ? null : <button type="button" className="icon-btn" aria-label="Back" onClick={back}>{BACK_ICON}</button>}
         {rename ?? <h1 className="phone-title" aria-label={title} tabIndex={-1}>
           <span className="phone-heading">
             <span className="truncate">{title}</span>
