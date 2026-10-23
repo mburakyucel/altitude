@@ -159,7 +159,7 @@ test("Monitor draws each window's mark at the router's reserve, danger past it",
   }));
   const card = page.locator(".monitor-seat").first();
   const fill = (name: string) => card.locator(".monitor-window", { hasText: name }).locator(".meter-fill");
-  const label = page.getByText(`Past the mark at ${reserve}%, or without a current reading, Altitude skips optional work such as agent runs and the Weekly review.`, { exact: true });
+  const label = page.getByText(`Past the mark at ${reserve}%, or without a current reading, Altitude skips optional work such as routine runs.`, { exact: true });
 
   await walk.open("/monitor");
   await walk.state("01-below-and-past-reserve", { visible: [label, fill("5-hour"), fill("7-day")], hidden: [page.getByText(/reserve line/)] });

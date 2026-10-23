@@ -136,7 +136,7 @@ def main():
 
     # L3 answers the operator's question with an offer of a new agent under its reply.
     l3.chat_log(PROJECT, "user", "Could something check the docs links every Friday?", trigger="chat", turn_id="human-1")
-    l3.chat_log(PROJECT, "assistant", "An agent can do that. Here it is; create it if it reads right.", trigger="chat",
+    l3.chat_log(PROJECT, "assistant", "A routine can do that. Here it is; create it if it reads right.", trigger="chat",
                 turn_id="human-1", engine=config.ENGINES[0])
     A.offer(PROJECT, "human-1", {"name": "Docs link check", "brief": "Open every link in docs/ and list the ones that fail.",
                                   "schedules": [{"days": [4], "time": "16:00"}], "tell": "found", "model": None,

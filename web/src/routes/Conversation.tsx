@@ -74,7 +74,7 @@ export function turnsOf(history: ChatMessage[]): Turn[] {
       return;
     }
     if (row.trigger === "improvement" || row.trigger === "project-agent") {
-      // An improvement review's or agent run's row stands alone: it never answers the message waiting for L3.
+      // An improvement review's or routine run's row stands alone: it never answers the message waiting for L3.
       fresh(id || `row-${index}`, row).assistant = row;
       return;
     }

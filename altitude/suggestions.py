@@ -38,7 +38,7 @@ def run_ref(text: str):
         return _owner("review"), text
     if match := AGENT_RUN.fullmatch(text):
         return _owner("agent"), (match.group(1), int(match.group(2)))
-    raise ValueError("a run is named by its review id, or agent:<agent>/<run> for an agent run")
+    raise ValueError("a run is named by its review id, or agent:<agent>/<run> for a routine run")
 
 
 def parse(ref: str):

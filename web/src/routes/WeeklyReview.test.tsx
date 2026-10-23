@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
-/* The Weekly improvement review as a built-in agent against a fictional server (design/wireframes/project-agents/
+/* The Weekly improvement review as a built-in routine against a fictional server (design/wireframes/project-agents/
  * PROPOSAL.md, "The Weekly improvement review"). */
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
@@ -63,7 +63,7 @@ const actions = () => screen.getAllByRole("button").filter((b) => b.closest(".ag
 afterEach(() => setViewport(1024));
 
 describe.each([390, 1440])("the Weekly improvement review at %ipx", (width) => {
-  it("Built in: Turn on shows its terms; Cancel changes nothing; Turn on agrees and the row becomes the first agent", async () => {
+  it("Built in: Turn on shows its terms; Cancel changes nothing; Turn on agrees and the row becomes the first routine", async () => {
     setViewport(width);
     const { state, presses } = serve({ press: async () => {
       state.agents = list({ agent: row({ news: "Never run", news_at: null }) });
@@ -110,7 +110,7 @@ describe.each([390, 1440])("the Weekly improvement review at %ipx", (width) => {
 });
 
 describe("Weekly improvement review", () => {
-  it("is the first of your agents with its news", async () => {
+  it("is the first of your routines with its news", async () => {
     const { state } = serve();
     state.agents = { ...list({ agent: row({ news: "Paused: its terms changed", news_at: null, cue: "paused", state: "paused" }) }),
       agents: [{ id: "dependency-check", name: "Dependency check", state: "on", triggers: "Weekdays at 07:00", news: "Never run", news_at: null, cue: null, retired_line: null }] };

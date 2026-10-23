@@ -368,7 +368,7 @@ export const StepSchema = z.object({
 });
 
 /**
- * An agent that paused itself (altitude/project_agents.py `needs`): it belongs to no task, carries the agent's id
+ * A routine that paused itself (altitude/project_agents.py `needs`): it belongs to no task, carries the agent's id
  * and name and its last failed run, and has no `alert_key`, so it never alerts a device.
  */
 export const AgentRowSchema = z.object({
@@ -536,7 +536,7 @@ export const ImprovementRunSchema = z.object({
   details: z.array(z.tuple([z.string(), z.string()])),
 });
 export type ImprovementRun = z.infer<typeof ImprovementRunSchema>;
-/** An agent run's suggested tasks (project_agents.suggested): what L3 is checking, kept and set aside. */
+/** A routine run's suggested tasks (project_agents.suggested): what L3 is checking, kept and set aside. */
 export const AgentSuggestionsSchema = z.object({
   kind: z.literal("agent"),
   /** The run's ref, agent:<agent>/<n>; its suggestions' refs extend it. */
@@ -553,11 +553,11 @@ export const AgentSuggestionsSchema = z.object({
   unfinished: z.boolean(),
 });
 export type AgentSuggestions = z.infer<typeof AgentSuggestionsSchema>;
-/** A card of suggested tasks: a Weekly review's or an agent run's. */
+/** A card of suggested tasks: a Weekly review's or a routine run's. */
 export type SuggestionCard = ImprovementRun | AgentSuggestions;
 
 /**
- * A project agent's definition (design/wireframes/project-agents/PROPOSAL.md): its brief, schedules in the machine's
+ * A routine's definition (design/wireframes/project-agents/PROPOSAL.md): its brief, schedules in the machine's
  * clock (days 0 Monday to 6 Sunday, "HH:MM"), Tell me in chat, model choice (null is the default model) and per-run
  * limit in minutes. Every sentence about it (schedules, "Next: …", outcomes) is written by the server.
  */
@@ -573,7 +573,7 @@ export const ProjectAgentDefinitionSchema = z.object({
 });
 export type ProjectAgentDefinition = z.infer<typeof ProjectAgentDefinitionSchema>;
 const ToneSchema = z.enum(["accent", "danger", "muted"]);
-/** L3's offer to create or change an agent, drawn from the definition it stored; only the operator's press saves it. */
+/** L3's offer to create or change a routine, drawn from the definition it stored; only the operator's press saves it. */
 export const ProjectAgentOfferSchema = z.object({
   id: z.string(), turn_id: z.string(), kind: z.enum(["new", "change"]),
   agent: z.string().nullable(), agent_name: z.string().nullable(),
@@ -627,7 +627,7 @@ export const TaskRowSchema = z
     live: z.unknown().nullish(),
     progress_tail: z.unknown().nullish(),
     has: z.record(z.string(), z.boolean()).nullish(),
-    /** Who suggested the task: an agent's name or the Weekly improvement review. */
+    /** Who suggested the task: a routine's name or the Weekly improvement review. */
     origin: z.string().nullish(),
   })
   .passthrough();
@@ -649,7 +649,7 @@ export const ProjectViewSchema = z
     design_viewer: z.string().nullish(),
     repository: z.string().nullish(),
     improvements: z.array(ImprovementRunSchema).default([]),
-    /** Agent runs waiting or running (Work's Current rows), agents not retired, and L3's offers for chat. */
+    /** Routine runs waiting or running (Work's Current rows), routines not retired, and L3's offers for chat. */
     project_agents: z.object({
       runs: z.array(z.object({ agent: z.string(), name: z.string(), n: z.number(), state: z.enum(["waiting", "running"]), line: z.string() })),
       count: z.number(),
@@ -716,7 +716,7 @@ export const withSuggestions = <Card extends SuggestionCard>(run: Card, project:
 /** Needs you lists a card while a suggestion waits for a decision, or for its task a week after the press (suggestions.item). */
 const waitsInNeedsYou = (run: SuggestionCard) => run.suggestions.some((suggestion) => suggestion.state === "undecided" || suggestion.state === "accepted" && suggestion.waits);
 
-/** The card a suggestion belongs to, from the read that shows it: a review's in its project, an agent run's on its page. */
+/** The card a suggestion belongs to, from the read that shows it: a review's in its project, a routine run's on its page. */
 function cardOf(client: QueryClient, project: string, ref: string): SuggestionCard | undefined {
   const id = ref.slice(0, ref.lastIndexOf("/"));
   const agent = /^agent:([^/]+)\/(\d+)$/.exec(id);
@@ -793,7 +793,7 @@ export const ProjectAgentsSchema = z.object({
   agents: z.array(ProjectAgentSummarySchema),
   retired: z.array(ProjectAgentSummarySchema),
   builtins: z.array(BuiltInSchema),
-  /** Altitude's own project: the Weekly improvement review, the operator's agent or a Built in row (improve.agent). */
+  /** Altitude's own project: the Weekly improvement review, the operator's routine or a Built in row (improve.agent). */
   weekly: z.object({ terms: WeeklyTermsSchema, agent: ProjectAgentSummarySchema.nullable(), builtin: BuiltInSchema.nullable() }).nullish(),
   offers: z.array(ProjectAgentOfferSchema),
 });
@@ -822,7 +822,7 @@ export const ProjectAgentDetailSchema = z.object({
   runs: z.array(ProjectAgentRunSchema),
   more: z.boolean(),
   /** With the event trigger: the command that sends it an event, the id the examples use when the command names the
-   * agent by its name (else null), and examples to copy (project_agents.recipes). */
+   * routine by its name (else null), and examples to copy (project_agents.recipes). */
   send: z.object({ command: z.string(), id: z.string().nullable(), recipes: z.array(z.object({ what: z.string(), text: z.string() })) }).nullable(),
 });
 export type ProjectAgentDetail = z.infer<typeof ProjectAgentDetailSchema>;
@@ -859,7 +859,7 @@ export type WeeklyReview = z.infer<typeof WeeklyReviewSchema>;
 const agentsKey = (project: string) => ["project", project, "agents"];
 type BudgetChange = { minutes: number };
 
-/** A project's agents, budget and built-ins; a budget on its way shows at once. Under the project's key, so its
+/** A project's routines, budget and built-ins; a budget on its way shows at once. Under the project's key, so its
  * change events and press refetches refresh it. */
 export function useProjectAgents(project: string, enabled = true) {
   const saving = useSaving<BudgetChange>(agentsKey(project));
@@ -873,7 +873,7 @@ export function useProjectAgents(project: string, enabled = true) {
   });
 }
 
-/** One agent with its latest `runs` runs, read every two seconds while a run waits or runs. */
+/** One routine with its latest `runs` runs, read every two seconds while a run waits or runs. */
 export function useProjectAgent(project: string, id: string, runs = 10) {
   return useQuery({
     queryKey: [...agentsKey(project), id, runs],
@@ -908,7 +908,7 @@ export function useWeeklyReview(project: string) {
 
 export const pressId = () => crypto.randomUUID().replaceAll("-", "");
 
-/** One press on agents. A retry of the same press passes its `requestId` again, so a press whose answer was lost
+/** One press on routines. A retry of the same press passes its `requestId` again, so a press whose answer was lost
  * returns its first receipt instead of saving twice. */
 export async function sendProjectAgent<T = Record<string, unknown>>(project: string, action: string, fields: Record<string, unknown> = {},
   requestId = pressId()) {
@@ -918,7 +918,7 @@ export async function sendProjectAgent<T = Record<string, unknown>>(project: str
   });
 }
 
-/** The weekly budget; the save ends once the agents' read shows it. */
+/** The weekly budget; the save ends once the routines' read shows it. */
 export function useSaveAgentBudget(project: string) {
   return useSave<BudgetChange, unknown>(agentsKey(project), ({ minutes }) => sendProjectAgent(project, "budget", { minutes }),
     (client) => client.refetchQueries({ queryKey: agentsKey(project), exact: true }));
@@ -1134,7 +1134,7 @@ export const SessionSchema = z
   })
   .passthrough();
 
-/** One row of Monitor's Agents (SPEC.md §3.14): what comes next, its cue, and the latest run that ran. */
+/** One row of Monitor's Routines (SPEC.md §3.14): what comes next, its cue, and the latest run that ran. */
 export const MonitorAgentSchema = z.object({
   project: z.string(), id: z.string(), name: z.string(), next: z.string(), cue: z.enum(["running", "waiting", "paused"]).nullable(),
   last: z.object({ outcome: z.string(), at: z.string().nullable(), minutes: z.number().nullable(), tokens: z.number().nullable() }).nullable(),
@@ -1200,7 +1200,7 @@ export const ChatMessageSchema = z
     queue_ids: z.array(z.string()).nullish(),
     /** On an improvement review's row (trigger "improvement"): the review it shows, read from the project view. */
     improvement: z.string().nullish(),
-    /** On a project agent's result row (trigger "project-agent"): the agent, its run when one is meant, and the dot. */
+    /** On a routine's result row (trigger "project-agent"): the routine, its run when one is meant, and the dot. */
     project_agent: z.object({ agent: z.string(), n: z.number().nullable(), tone: ToneSchema }).nullish(),
   })
   .passthrough();
@@ -1797,7 +1797,7 @@ function mergeTranscript(rows: TranscriptEvent[], page: Transcript): TranscriptE
   return [...merged.values()].sort((a, b) => a.order < b.order ? -1 : a.order > b.order ? 1 : 0);
 }
 
-/** Whose transcript: a task's by slug, or a project agent's run, read from under its agent. */
+/** Whose transcript: a task's by slug, or a routine's run, read from under its routine. */
 export type TranscriptSource = string | { agent: string; run: number };
 const transcriptPath = (project: string, source: TranscriptSource) => typeof source === "string"
   ? `/api/transcript/${project}/${source}` : `/api/agents/${project}/${source.agent}/runs/${source.run}/transcript`;

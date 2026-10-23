@@ -1,9 +1,10 @@
 """The README's feature illustrations on the Atlas example of readme-service.py: a task the coordinator offers under
 its reply and creates on the operator's press, an owner's design proposal with its independent review, an owner's
 open question beside its live session, a pull request waiting for the operator's review after an independent review,
-a command an owner hands to the operator's terminal, a task the coordinator repairs and resumes, and improvement
-suggestions in the Altitude project. Real handlers, storage and terminal; the coordinator's engine and the shell are
-fixtures, and every message is authored example text."""
+a command an owner hands to the operator's terminal, a task the coordinator repairs and resumes, improvement
+suggestions in the Altitude project, and Harbor's routines with the tasks its dependency check suggested. Real
+handlers, storage and terminal; the coordinator's engine, the routine's worker and the shell are fixtures, and every
+message is authored example text."""
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import os
@@ -11,7 +12,8 @@ import pathlib
 
 from service_support import serve
 from tests.support import git, local_terminal_launch, local_terminal_stop, make_repo
-from altitude import config, dispatch, engines, improve, improve_eval, l3, project_setup, route, server, terminal
+from altitude import config, dispatch, engines, improve, improve_eval, l3, project_agents, project_setup, route, server
+from altitude import suggestions as suggested, terminal
 from altitude import state as S, tasks as T, verify
 
 _spec = importlib.util.spec_from_file_location("readme_service", pathlib.Path(__file__).with_name("readme-service.py"))
@@ -208,7 +210,7 @@ def main():
     project_setup.run("altitude")
     l3.save_info("altitude", {"session_id": "readme-altitude-l3", "engine_last": config.ENGINES[0], "turns": 1})
     # The review's lifecycle is real; the Altitude-project gate and Claude's reserve are unit-tested and fixed here.
-    improve._altitude = lambda _project: True
+    improve._altitude = lambda project: project == "altitude"
     route.improvement_reserve = lambda: None
     drain = server.request_l3_drain
     server.request_l3_drain = lambda project: project == PROJECT and drain(project)  # the Altitude project's L3 stays idle
@@ -238,6 +240,57 @@ def main():
     run = improve.start("altitude", "readme-improve", now=asked)["run"]
     improve.execute("altitude", run)
     improve.post("altitude", run, [1, 2, 3], [], now=asked + timedelta(minutes=8))
+    # Harbor's routines: the built-in dependency check found two security fixes two hours ago and suggested a task for
+    # each, which the coordinator checked and kept; a routine of the operator's own reads each merge.
+    answers: dict[str, str] = {}
+    def start(_engine, _name, _prompt, *, extra_env, **_options):
+        worker = "readme-" + extra_env["ALTITUDE_AGENT_RUN"].replace("/", "-")
+        return {"returncode": 0, "agent": {"id": worker, "sessionId": f"session-{worker}"}}
+    engines.start_project_agent_run = start
+    engines.owned_worker = lambda worker, *, job_root: worker in answers and {
+        "id": worker, "state": "done", "detail": "", "detail_at": 0, "usage": {"input_tokens": 300_000, "output_tokens": 4_000}}
+    engines.worker_answer = lambda worker, *, job_root: answers[worker]
+    engines.observe_token_usage = lambda _engine, _session, _cursor, *, job_root: {"cursor": {}, "status": "observed",
+                                                                                   "sessions": []}
+    # While seeding: the engines' allowance is unread, Atlas's tasks in flight hold every task slot, and the runs'
+    # Git commands skip the guards' hooks, as the seed's own do.
+    reserve, route.reserve = route.reserve, lambda _engine: None
+    slot, project_agents._slot = project_agents._slot, lambda: None
+    unhooked = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": os.devnull}
+    os.environ.update(unhooked)
+
+    def ran(agent, at, answer):
+        project_agents.change("harbor", "run", {"agent": agent}, by="operator", source="fixture", now=at)
+        project_agents.start_next("harbor", now=at)
+        run = project_agents._load("harbor")["runs"][-1]
+        answers[run["worker"]] = answer
+        project_agents.reconcile("harbor", now=at + timedelta(minutes=6))
+        return run["n"]
+
+    day = NOW - timedelta(hours=2)
+    project_agents.change("harbor", "builtin", {"key": "dependency-check"}, by="operator", source="fixture",
+                          now=day - timedelta(days=6))
+    merges = project_agents.change("harbor", "create", {"definition": {
+        "name": "Review each merge", "brief": "Read the newest merged pull request and say which change lacks a test.",
+        "schedules": [], "events": True, "tell": "found", "model": None, "limit": 20}},
+        by="operator", source="fixture", now=day - timedelta(days=6))["agent"]
+    project_agents.change("harbor", "turn_on", {"agent": merges}, by="operator", source="fixture",
+                          now=day - timedelta(days=6))
+    deps = next(a["id"] for a in project_agents._load("harbor")["agents"] if a.get("builtin") == "dependency-check")
+    ran(merges, day - timedelta(days=1), "Nothing: #212 changes only the docs.")
+    n = ran(deps, day, """Found: two packages Harbor uses have security fixes.
+
+The lock file pins yaml 2.3.1 and sharp 0.32.5; both have releases that close published advisories.
+
+Suggest: Update yaml for its security fix
+Version 2.3.4 closes an advisory about deeply nested input. The upload tests pass with it.
+
+Suggest: Update sharp for its security fix
+Version 0.32.6 closes an advisory in its bundled image decoder. The thumbnail tests pass with it.""")
+    suggested.post("harbor", f"agent:{deps}/{n}", [1, 2], [], now=day + timedelta(minutes=20))
+    route.reserve, project_agents._slot = reserve, slot
+    for key in unhooked:
+        del os.environ[key]
     S.regen_state_md(PROJECT)
 
     class Handler(server.Handler):

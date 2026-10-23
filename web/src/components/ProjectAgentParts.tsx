@@ -9,12 +9,12 @@ import "../routes/settings.css";
 import "../routes/agents.css";
 
 /*
- * Pieces every agent surface shares (design/wireframes/project-agents/PROPOSAL.md): the page frame with its back
+ * Pieces every routine surface shares (design/wireframes/project-agents/PROPOSAL.md): the page frame with its back
  * link, the row chevron, the pause mark, a run's dot, a brief clamped to three lines with Show all, and the Weekly
  * improvement review's terms sheet.
  */
 
-/** The agents pages' frame: the back link and title in the phone header, or above the page on desktop. */
+/** The routine pages' frame: the back link and title in the phone header, or above the page on desktop. */
 export function AgentFrame({ back, title, children }: { back: { to: string; label: string }; title: ReactNode; children: ReactNode }) {
   const { phone } = useViewport();
   const { state } = useLocation();

@@ -207,7 +207,7 @@ for an opt-in, weekly or on-request review in which a cheaper tool-free model re
 task counts and short chat quotes and proposes at most three fixes, for the project or for how agents
 work, which L3 checks and the operator accepts or dismisses. Its reviewer, fictional-project eval, runs
 on request, the card in chat and under Suggestions in Needs you, and the Weekly improvement review as a
-built-in agent with its own page, Run now, the operator's agreement and its totals exist for the Altitude
+built-in routine with its own page, Run now, the operator's agreement and its totals exist for the Altitude
 project. The design's before/after counts and Seen again marks wait until accepted suggestions
 accumulate; they, other projects, working-log excerpts and the later directions are the operator's choice.
 

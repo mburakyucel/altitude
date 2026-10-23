@@ -97,7 +97,7 @@ const monitor = {
   clock: { zone: "Istanbul", offset: -new Date().getTimezoneOffset() },
 };
 
-// A running project agent's session row and Monitor's Agents rows, as the server sends them (fictional projects).
+// A running routine's session row and Monitor's Routines rows, as the server sends them (fictional projects).
 const agentSession = {
   kind: "agent", project: "harbor", agent_id: "a1b2c3d4e5f6", name: "Dependency check", run: 3,
   session_id: "run-session", state: "running", engine: "claude", model: "fixture-model",
@@ -145,7 +145,7 @@ describe("Monitor", () => {
     // SPEC.md §3.14: the router's reserve line is drawn on every seat window, and only there.
     expect(document.querySelectorAll(".meter-reserve")).toHaveLength(3);
     expect(document.querySelectorAll(".meter-reserve")[0]).toHaveStyle({ left: "90%" });
-    expect(screen.getByText("Past the mark at 90%, or without a current reading, Altitude skips optional work such as agent runs and the Weekly review.")).toBeInTheDocument();
+    expect(screen.getByText("Past the mark at 90%, or without a current reading, Altitude skips optional work such as routine runs.")).toBeInTheDocument();
     expect(screen.queryByText("Stale")).not.toBeInTheDocument();
     // Deletion first: the raw worker list (ids, paths, a provider name spelled in the web) is gone.
     expect(screen.queryByText(/workers/i)).not.toBeInTheDocument();
@@ -162,7 +162,7 @@ describe("Monitor", () => {
     // Claude 5-hour 12% and Codex 71% sit below 72%; Claude 7-day 74% is past it.
     expect(fills("Claude").map((fill) => fill?.getAttribute("data-danger"))).toEqual(["false", "true"]);
     expect(fills("Codex")[0]).toHaveAttribute("data-danger", "false");
-    expect(screen.getByText("Past the mark at 72%, or without a current reading, Altitude skips optional work such as agent runs and the Weekly review.")).toBeInTheDocument();
+    expect(screen.getByText("Past the mark at 72%, or without a current reading, Altitude skips optional work such as routine runs.")).toBeInTheDocument();
   });
 
   it("keeps the reserve line off model and context meters; context turns danger at its own warning", async () => {
@@ -315,14 +315,14 @@ describe("Monitor", () => {
     expect(screen.getByText("altitude")).toBeInTheDocument();
   });
 
-  it("lists a running agent among the sessions with its context and minutes, as a reading, not a link", async () => {
+  it("lists a running routine among the sessions with its context and minutes, as a reading, not a link", async () => {
     mockFetch({ ...monitor, sessions: [...monitor.sessions, agentSession,
       { ...agentSession, agent_id: "b2c3d4e5f6a1", name: "Upload timing", context_percent: null, at: null },
       { ...agentSession, agent_id: "c3d4e5f6a1b2", name: "What landed", context_percent: 30, at: ago(12) }] });
     renderApp({ route: "/monitor" });
 
     expect(await screen.findByRole("heading", { name: "Sessions (5)" })).toBeInTheDocument();
-    expect(screen.getAllByText("Agent")).toHaveLength(3);
+    expect(screen.getAllByText("Routine")).toHaveLength(3);
     const row = screen.getByText("harbor / Dependency check").closest("li")!;
     expect(within(row).getByText("Claude · fixture-model · context 6% · 4 of 20 min")).toBeInTheDocument();
     expect(within(row).getByText("1 min ago")).toBeInTheDocument();
@@ -336,14 +336,14 @@ describe("Monitor", () => {
     const stale = screen.getByText("harbor / What landed").closest("li")!;
     expect(within(stale).getByText("Stale")).toBeInTheDocument();
     expect(stale.querySelector(".monitor-meter[data-stale]")).not.toBeNull();
-    expect(screen.queryByRole("heading", { name: /^Agents/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /^Routines/ })).not.toBeInTheDocument();
   });
 
-  it("lists agents last, each a link with what comes next and its last run", async () => {
+  it("lists routines last, each a link with what comes next and its last run", async () => {
     mockFetch({ ...monitor, agents: agentRows });
     renderApp({ route: "/monitor" });
 
-    const heading = await screen.findByRole("heading", { name: "Agents (4)" });
+    const heading = await screen.findByRole("heading", { name: "Routines (4)" });
     const section = within(heading.closest("section")!);
     const links = section.getAllByRole("link");
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
@@ -356,9 +356,9 @@ describe("Monitor", () => {
     expect(links[2]).not.toHaveTextContent("tokens");
     expect(links[3]).toHaveTextContent("harbor / What landedPaused itselfNo runs yet.");
     expect(links[3]!.querySelector(".agents-pause")).not.toBeNull();
-    // Agents follow Sessions on the page.
+    // Routines follow Sessions on the page.
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings.slice(-2)).toEqual(["Sessions (2)", "Agents (4)"]);
+    expect(headings.slice(-2)).toEqual(["Sessions (2)", "Routines (4)"]);
   });
 
   it("names the computer's zone after a schedule's time when this browser is in another", async () => {
