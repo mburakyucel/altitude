@@ -497,6 +497,10 @@ running in one of Altitude's jobs ("Only you can start a repair, from your own t
 agents, coordinator and reviewers, a command under an operator grant or a standing policy, and
 Altitude's terminal on the page, where a `run` block an agent wrote would run on your Enter.
 
+A repair's record, brief and steps, with each command it ran and its output, stay in its folder under
+Altitude's home, which no agent Altitude runs can read: its task workers, coordinators, reviewers, routines and
+other sandboxed runs all see that folder empty or refused.
+
 ## Configuration
 
 An installed release saves these settings from the shell that installed it in

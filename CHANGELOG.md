@@ -5,6 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The agents Altitude runs can no longer read repair records, which hold each step a repair took with your full
+  access and its output. Repairs themselves, the app and `alt repair` read them as before.
 - A terminal open on two devices at once, such as the phone and the desktop, no longer types stray text such as
   `[18;1R` at its prompt: both screens answer a program's questions about the terminal, and only the first answer
   reaches the program. Your own typing on either device always arrives.

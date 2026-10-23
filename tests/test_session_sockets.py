@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 from tests.support import NATIVE_PLATFORM, AltitudeCase
-from altitude import config, engines, platform
+from altitude import config, engines, platform, repair
 
 #: Run inside the job: connect to each named socket and report what happened, then make a socket of its own in its
 #: temporary folder (the second argument) and an abstract one, and reach both.
@@ -209,18 +209,19 @@ class HomeSandboxCase(AltitudeCase):
         if why:
             self.skipTest(f"the platform's sandbox does not start here: {why}")
 
-    def sandbox(self, read_only=(), hidden=()) -> list[str]:
+    def sandbox(self, read_only=(), hidden=(), writable=()) -> list[str]:
+        roots = [str(self.work), *map(str, writable)]
         if NATIVE_PLATFORM == "darwin":
-            return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile([str(self.work)], list(read_only),
+            return [platform.SANDBOX_EXEC, "-p", platform.seatbelt_profile(roots, list(read_only),
                                                                             temporary=self.temporary, hidden=hidden)]
-        return platform.bubblewrap_profile([str(self.work)], list(read_only), temporary=self.temporary, hidden=hidden)
+        return platform.bubblewrap_profile(roots, list(read_only), temporary=self.temporary, hidden=hidden)
 
-    def job(self, files: dict, write: Path, listing: Path, read_only=(), hidden=(), before=None) -> dict:
+    def job(self, files: dict, write: Path, listing: Path, read_only=(), hidden=(), before=None, writable=()) -> dict:
         """What a job sees of `files`, the write and the listing; `before` runs once the job has started, before it
         looks."""
         go = self.work / "go"
         wait = f"import os, time\nwhile not os.path.exists({str(go)!r}): time.sleep(0.05)\n"
-        job = subprocess.Popen([*self.sandbox(read_only, hidden), sys.executable, "-I", "-c", wait + FILES,
+        job = subprocess.Popen([*self.sandbox(read_only, hidden, writable), sys.executable, "-I", "-c", wait + FILES,
                                 json.dumps({name: str(path) for name, path in files.items()}), str(write), str(listing)],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.work)
         if before:
@@ -385,6 +386,38 @@ class TestOperatorsCredentials(HomeSandboxCase):
         self.assertEqual(seen["url"], [0, "https://github.com/fixture/demo.git"])
         self.assertEqual(seen["credential"], [0, "protocol=https\nhost=github.com\nusername=x-access-token\n"
                                                  "password=fictional-token"])
+
+
+class TestRepairRecords(HomeSandboxCase):
+    """Repairs' records (`repair.home`), which only the operator reads: a job sees none of them, even one whose roots
+    hold Altitude's whole home, as a coordinator's turn's do, while it reads and writes the rest of that home."""
+
+    def test_a_job_writing_altitudes_home_sees_no_repair(self):
+        self.patch(config, "ROOT", Path(os.path.realpath(self.tmp)) / "altitude home")
+        config.ensure_root()
+        task = config.ROOT / "atlas/tasks/fixture"
+        task.mkdir(parents=True)
+        (task / "task.json").write_text("fictional task")
+        earlier = repair.home() / ("a" * 32)
+        earlier.mkdir()
+        for name in ("repair.json", "steps.jsonl"):
+            (earlier / name).write_text("fictional repair")
+        later = repair.home() / ("b" * 32) / "repair.json"
+
+        def started_later():
+            later.parent.mkdir()
+            later.write_text("fictional repair")
+
+        files = {"task": task / "task.json", "record": earlier / "repair.json", "steps": earlier / "steps.jsonl",
+                 "later record": later}
+        seen = self.job(files, task / "written", repair.home(), hidden=platform._operator_places(),
+                        writable=[config.ROOT], before=started_later)
+        # Linux shows the hidden folder empty; Seatbelt refuses it.
+        refused = errno.EPERM if NATIVE_PLATFORM == "darwin" else errno.ENOENT
+        self.assertEqual(seen, {"task": "fictional task", "record": refused, "steps": refused, "later record": refused,
+                                "write": "written", "listing": errno.EPERM if NATIVE_PLATFORM == "darwin" else []})
+        self.assertTrue((task / "written").exists(), "the home is the host's")
+        self.assertEqual(sorted(path.name for path in repair.home().iterdir()), ["a" * 32, "b" * 32])
 
 
 class TestJobTemporaryFolder(AltitudeCase):

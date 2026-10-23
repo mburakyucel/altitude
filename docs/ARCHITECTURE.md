@@ -1575,11 +1575,11 @@ may signal only processes in its own sandbox, never its supervisor,
 and write only under its own roots (a task worker's worktree, the worktree's Git directories except their
 [read-only parts](#isolation-and-landing) and its scratch folder; a coordinator turn's runtime folder and Altitude's
 home), the job's own engine folder and its own temporary folder, and never reads
-Altitude's credentials, the common browsers' profiles, the operator's stored credentials (below) or the
+Altitude's credentials, the common browsers' profiles, the operator's stored credentials (below), the
 operator's own Codex folder, Claude folder and Claude state file (`engines.operator_places`), apart from the entries
-its launch reopens read-only. On macOS it neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places)
-or the launcher's job folders, which hold each job's piped input and relay its output;
-launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
+its launch reopens read-only, or the [repairs'](#repairs) records (`repairs/` in Altitude's home). On macOS it
+neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places) or the launcher's job folders,
+which hold each job's piped input and relay its output; launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
 whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
 Events, which script running apps with only macOS's Automation consent in the way, and the keychain services, which
@@ -1708,7 +1708,7 @@ hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex she
 too. A launcher without a sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. A Codex coordinator turn keeps
 Codex's own sandbox inside the same job boundary (on macOS the two Seatbelt profiles cannot nest); its profile denies
 the per-user runtime folder, the shared temporary folders apart from its own, Altitude's credentials, the operator's
-stored credentials present when its turn starts and, on macOS, the private places and the job folders. Both engines use the same door; private worker records and output identify both engines' sessions
+stored credentials and the repairs' records present when its turn starts and, on macOS, the private places and the job folders. Both engines use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
 recorded coalition has members. Unknown states, bus failures and query timeouts
@@ -2806,7 +2806,10 @@ update, version, start, end, report, check and outcome. `repairs/lock` allows on
 across both routes, and `running.json` names the repair holding it: `alt repair` holds it exclusively
 and passes the descriptor to the session; a repair from the app's recorder holds it for as long as it
 runs. The kernel releases the lock when its holders end, however they end, so a crash, a killed
-recorder or a reboot leaves none behind.
+recorder or a reboot leaves none behind. A repair's steps and output are the operator's alone, so every job in
+Altitude's sandbox and a Codex coordinator's profile hide `repairs/` ([isolation](#isolation-and-landing)); Altitude
+makes the folder when it starts, so on Linux, where the sandbox hides a folder by covering it at launch, a repair
+begun while a job runs stays hidden from that job too.
 
 A terminal repair's session is `engines.interactive(engine, prompt)`, the engine's own CLI in its
 normal mode with the operator's sign-in and settings, run with `ALTITUDE_REPAIR=<id>` in the repair's
