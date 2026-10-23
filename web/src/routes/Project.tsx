@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { Link, useLocation, useMatch, useNavigate, useParams, useSearchParams } from "react-router";
-import type { UseQueryResult } from "@tanstack/react-query";
+import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { BusyLabel } from "../components/StatusMark";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useWaitsForTool } from "../data/api";
 import type { Attention, ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
@@ -496,9 +496,12 @@ export default function ProjectPage() {
   const reach = named && project.data?.improvements?.some((run) => run.id === named) ? named : undefined;
   const chat = useChat(name, 60, managed, reach);
   const refetchChat = chat.refetch;
+  const queryClient = useQueryClient();
+  // The read that reaches back replaces one already on its way: a refetch joins a first read in flight, which would
+  // land without the run (both start together when the page opens from the run's link).
   useEffect(() => {
-    if (reach) void refetchChat();
-  }, [reach, refetchChat]);
+    if (reach) void queryClient.cancelQueries({ queryKey: ["chat", name], exact: true }).then(() => refetchChat());
+  }, [name, queryClient, reach, refetchChat]);
   const { phone, panelInline } = useViewport();
   const [search] = useSearchParams();
   const tab = search.get("tab") === "work" ? "work" : "chat";
