@@ -215,7 +215,7 @@ class TestStarting(AgentCase):
         self.assertIn("WIP limit", dispatch.wip_hold(self.project), "a running run holds a task slot")
         summary = A.project_summary(self.project, now=NOW + timedelta(minutes=2))
         self.assertEqual(summary["runs"], [{"agent": agent, "name": "Dependency check", "n": 1, "state": "running",
-                                            "line": "Agent run · 2 of 10 min"}])
+                                            "line": "Routine run · 2 of 10 min"}])
 
     def test_one_run_at_a_time_per_project_the_oldest_first(self):
         self.launching()
@@ -548,7 +548,7 @@ class TestAuthority(AgentCase):
                          [("Paused Dependency check", {"agent": agent, "n": None, "tone": "muted"}),
                           ("Resumed Dependency check", {"agent": agent, "n": None, "tone": "muted"})],
                          "a switch L3 made says so once; a repeated one and the operator's own press say nothing")
-        with self.assertRaisesRegex(ValueError, "the operator's; L3 offers agents"):
+        with self.assertRaisesRegex(ValueError, "the operator's; L3 offers routines"):
             self.l3("new", "--name", "Mine", "--brief", "-", stdin="Do it.")
 
     def test_an_offer_is_saved_only_by_the_operators_press_and_lapses(self):
@@ -633,7 +633,7 @@ class TestPages(AgentCase):
         self.assertEqual(detail["runs"][0]["trigger_line"], "Requested by you")
         self.assertEqual(call("GET", f"/api/agents/{self.project}/{agent}/runs/1")["state"], "waiting")
         self.assertEqual(call("GET", f"/api/agents/{self.project}/{agent}/runs/7", status=404)["error"], "There is no such run.")
-        self.assertEqual(call("GET", f"/api/agents/{self.project}/000000000000", status=404)["error"], "There is no such agent.")
+        self.assertEqual(call("GET", f"/api/agents/{self.project}/000000000000", status=404)["error"], "There is no such routine.")
         self.assertEqual(call("GET", f"/api/project/{self.project}")["project_agents"]["count"], 1)
 
     def test_a_runs_session_reads_through_the_transcript_reader(self):
@@ -815,7 +815,7 @@ class TestEvents(AgentCase):
         self.assertEqual((view["status"]["line"], view["status"]["note"]),
                          ("Running · 2 of 20 min", "3 events wait for the next run."))
         self.assertEqual(A.project_summary(self.project, now=NOW + timedelta(minutes=2))["runs"][0]["line"],
-                         "Agent run · “PR #809 merged” · 2 of 20 min")
+                         "Routine run · “PR #809 merged” · 2 of 20 min")
         self.ended("Found: #809 moved the upload limit without its test.\n\nDetails.")
         A.reconcile(self.project, NOW + timedelta(minutes=5))
         self.assertEqual(self.lines()[0]["text"],

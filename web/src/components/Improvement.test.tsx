@@ -293,7 +293,7 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
   });
 });
 
-/** An agent run's card (project-agents/PROPOSAL.md, "Suggestions"): its suggestions have no target, Seen in or count. */
+/** A routine run's card (project-agents/PROPOSAL.md, "Suggestions"): its suggestions have no target, Seen in or count. */
 function agentCard(suggestions: ImprovementSuggestion[]): AgentSuggestions {
   return { kind: "agent", id: "agent:0a1b2c3d4e5f/7", agent: "0a1b2c3d4e5f", n: 7, name: "Review each merge",
     line: "For “PR #810 merged” and 2 more", at: ago(30), posted: ago(10), checking: 0, suggestions, set_aside: [], unfinished: false };
@@ -302,8 +302,8 @@ const agentSuggestion = (n: number, fields: Partial<ImprovementSuggestion> = {})
   ref: `agent:0a1b2c3d4e5f/7/${n}`, target: undefined, seen: [], count: null,
   title: "Add a test for the uploader's retry limit", explanation: "A case beside the other retry tests that checks the limit of 5.", ...fields });
 
-describe.each([390, 1440])("an agent run's suggested tasks at %ipx", (width) => {
-  it("Needs you shows the agent's card uncounted: its name, what fired it, the suggestion and Open the run", async () => {
+describe.each([390, 1440])("a routine run's suggested tasks at %ipx", (width) => {
+  it("Needs you shows the routine's card uncounted: its name, what fired it, the suggestion and Open the run", async () => {
     setViewport(width);
     const { fetchMock } = serve([]);
     const base = fetchMock.getMockImplementation()!;

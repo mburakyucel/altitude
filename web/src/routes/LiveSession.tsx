@@ -395,7 +395,7 @@ export interface LiveSessionProps {
   active?: boolean;
   /** Replaces the panel title beside the activity pulse, as the desktop Live session | Terminal switch does. */
   heading?: ReactNode;
-  /** A project agent's run: its session is read from under its agent, and `task` carries only its session. */
+  /** A routine's run: its session is read from under its routine, and `task` carries only its session. */
   run?: { agent: string; run: number };
 }
 

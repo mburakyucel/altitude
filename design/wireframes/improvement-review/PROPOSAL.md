@@ -6,9 +6,9 @@ rollout below builds the rest in held steps. In the interface the feature is cal
 suggestions**, so it is never confused with the code and proposal reviews that Needs you already
 shows; this document calls one run "a review".
 
-Its settings section is replaced: the review is now the built-in agent **Weekly improvement review** of
+Its settings section is replaced: the review is now the built-in routine **Weekly improvement review** of
 Altitude's own project, with the same terms, runs and cards
-([project agents, step 2](../project-agents/PROPOSAL.md#the-weekly-improvement-review)), which outranks this
+([routines, step 2](../project-agents/PROPOSAL.md#the-weekly-improvement-review)), which outranks this
 document's "Turning it on" for where the switch, Run now and its totals appear.
 
 ## What it is for

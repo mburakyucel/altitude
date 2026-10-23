@@ -32,12 +32,13 @@ FEATURES = {
     "feature-review": [("review-findings-phone", "top"), ("review-phone", "top")],
     "feature-heal": [("heal-1-fault-phone", "top"), ("heal-2-repaired-phone", "bottom")],
     "feature-improve": [("improve-phone", "top"), ("improve-accepted-phone", "top")],
+    "feature-routines": [("routines-phone", "top"), ("routines-suggestion-phone", "top")],
 }
 # The capture each feature shows at phone width; the live session's is docs/images/session-phone.png.
 PROOF = {"feature-create": "create-2-created-phone", "feature-proposal": "proposal-review-phone",
          "feature-task": "task-view-phone", "feature-review": "review-findings-phone",
          "feature-heal": "heal-2-repaired-phone", "feature-improve": "improve-accepted-phone",
-         "feature-terminal": "terminal-2-typed-phone"}
+         "feature-terminal": "terminal-2-typed-phone", "feature-routines": "routines-suggestion-phone"}
 
 
 def browser() -> pathlib.Path:

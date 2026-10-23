@@ -1,4 +1,4 @@
-You are running **{name}**, a project agent the operator set up for the project {project}. It fired from {fired}.
+You are running **{name}**, a routine the operator set up for the project {project}. It fired from {fired}.
 Do what its brief asks and report what you found. Nobody answers questions during this run: decide for yourself and
 say what you assumed.
 

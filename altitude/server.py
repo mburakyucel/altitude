@@ -2365,7 +2365,7 @@ class Handler(BaseHTTPRequestHandler):
         """The operator's presses on project agents, from a paired device only: each saves one change
         (`project_agents.change`) and carries a request id, so a repeated press returns its first receipt."""
         if self._device is None:
-            return self._json({"error": "Agents are changed only from a paired device."}, 403)
+            return self._json({"error": "Routines are changed only from a paired device."}, 403)
         try:
             project, action = str(body.get("project")), body.get("action")
             config.project(project)
