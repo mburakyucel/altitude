@@ -583,6 +583,34 @@ class TestShownFiles(AltitudeCase):
         task["delivery"]["head"] = head
         self.assertIsNone(T.review_row(self.project, task)["pr_images"])
 
+    def test_a_first_view_crossing_an_archive_does_not_recreate_the_live_task(self):
+        row = self.reply("README.md")
+        head = self.deliver(lambda site: (site / "hero.png").write_bytes(png(9, 8, 6)))
+        live = S.tasks_dir(self.project) / self.slug
+        capture, task_dir, archived = T._capture_pr_images, S.task_dir, []
+
+        def captured(*args):
+            archived.append(False)
+            return capture(*args)
+
+        def resolved(project, slug):
+            path = task_dir(project, slug)
+            if archived == [False]:  # the save resolved the live folder; the archive moves it before the write
+                archived[0] = True
+                T.reject(self.project, self.slug, "The operator ended this task.")
+            return path
+
+        with mock.patch.object(T, "_capture_pr_images", new=captured), mock.patch.object(S, "task_dir", new=resolved):
+            card = T.review_row(self.project, S.load_task(self.project, self.slug))
+        self.assertEqual(archived, [True])
+        self.assertFalse(live.exists(), "a read never recreates the live task folder")
+        self.assertIsNone(card["pr_images"], "a capture that finds no live folder saves nothing")
+        self.assertEqual(S.load_task(self.project, self.slug)["state"], "rejected")
+        self.assertEqual(S.task_dir(self.project, self.slug), S.archive_dir(self.project) / self.slug)
+        self.assertEqual(self.views()[row["id"]]["text"], "The README draft is ready to read.")
+        self.assertTrue(self.views()[row["id"]]["shown"]["available"], "the archived reply still opens its files")
+        self.assertFalse(self.saved(f"pr-7-{head}.json").exists())
+
     def test_moving_files_to_another_member_revises_the_earlier_one_without_them(self):
         first = self.publish(recommendation="Build as shown", recommendation_label="Build")
         T.resume(self.project, self.slug)

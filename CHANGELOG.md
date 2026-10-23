@@ -5,6 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A task archived just as you first open its pull request's merge card keeps its whole history: the card's
+  pictures are never saved into an empty copy of the task that would hide its documents and conversation.
 - Work can show your agents as a graph: on a computer, the List | Graph switch beside Work puts every current
   task around L3, the ones waiting on you at the top, with arrows for tasks planned after another, a soft halo
   on work that is active right now and a dot for each helper it is running. Each node opens what its row opens.
