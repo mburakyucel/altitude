@@ -7,7 +7,9 @@ import { walkthrough } from "./walkthrough";
 
 // Read route declarations without importing React/browser modules into the test runner.
 // Issue #195: a new route cannot silently escape rendered-state coverage.
-const { program } = parseSync("routes.tsx", readFileSync(new URL("../src/routes.tsx", import.meta.url), "utf8"));
+const { program, errors } = parseSync("routes.tsx", readFileSync(new URL("../src/routes.tsx", import.meta.url), "utf8"));
+// The parser reports syntax errors instead of throwing; a partial tree would quietly drop routes.
+if (errors.length) throw new Error(`routes.tsx does not parse: ${errors.map((error) => error.message).join("; ")}`);
 function paths(node: unknown, parent = ""): string[] {
   if (Array.isArray(node)) return node.flatMap((child) => paths(child, parent));
   if (!node || typeof node !== "object") return [];
