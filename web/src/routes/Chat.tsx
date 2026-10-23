@@ -4,7 +4,7 @@ import { useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Bubble, DayDivider, Reply } from "../components/Bubbles";
 import Composer from "../components/Composer";
-import { MessageImages } from "../components/MessageImages";
+import { MessageImages, sentBy } from "../components/MessageImages";
 import { ChoiceButton } from "../components/ModelMenu";
 import { Prose, ProseScope } from "../components/Prose";
 import { BusyLabel } from "../components/StatusMark";
@@ -114,7 +114,7 @@ function Timeline({ project, chat, overview, onRemove, removing, onRetry, retryi
       const engine = chatEngine({ engine: item.engine ?? null, model: item.model ?? null }, overview);
       rows.push(<SysLine key={`event-${i}`} at={item.at}>{EVENTS[item.event]!(engine)}</SysLine>);
     } else if (item.kind === "you") {
-      const images = item.images.length ? <MessageImages project={project} images={item.images} /> : null;
+      const images = item.images.length ? <MessageImages project={project} images={item.images} context={sentBy("You", item.at)} /> : null;
       rows.push(item.waiting ? <Bubble key={item.id} text={item.text} state="queued" images={images}>
         Waits for the reply ·{" "}
         <button type="button" className="link" disabled={removing === item.id} onClick={() => onRemove(item.id)}>
