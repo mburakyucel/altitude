@@ -108,9 +108,9 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
     // xterm answers a query in the output it parses (a colour, the cursor's place, what terminal it is) through onData,
     // as it does keys. Each write's callback runs right after its output is parsed, in the same task, so what xterm
     // emits while output waits to be parsed is held: the callback takes the answers to that output and sends them only
-    // when it is live, never for output only replayed, whose programs have moved on. altd sends live output in the
-    // pieces the shell wrote; every page showing the terminal answers each piece, naming its end and this page, and
-    // altd types the first page's answers to it only.
+    // when it is live, never for output only replayed, whose programs have moved on. Live output is drawn in the pieces
+    // the shell wrote it in, as altd lists them; every page showing the terminal answers each piece, naming its end and
+    // this page, and altd types the first page's answers to it only.
     // The operator's keys, pastes, mouse and focus arrive in tasks of their own, so what is held outside a parse goes
     // on as that task ends, as typing.
     const page = crypto.randomUUID();
@@ -155,7 +155,7 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
       source?.close();
       const stream = terminalStream(project, task, id, offset);
       stream.addEventListener("output", (event) => {
-        const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string; missed?: boolean; replay?: number };
+        const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string; missed?: boolean; replay?: number; pieces?: number[] };
         // Output from before the replay buffer's start is gone: the screen starts over, as a fresh attach draws it.
         if (chunk.missed) {
           term.reset();
@@ -165,7 +165,12 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
         const data = bytes(chunk.data);
         const replay = chunk.replay ?? 0;
         if (replay) draw(data.subarray(0, replay));
-        if (replay < data.length) draw(data.subarray(replay), chunk.offset);
+        const begin = chunk.offset - data.length;
+        let at = replay;
+        for (const end of chunk.pieces ?? []) {
+          draw(data.subarray(at, end - begin), end);
+          at = end - begin;
+        }
         offset = chunk.offset;
         output.current.seen = true;
         output.current.at = Date.now();

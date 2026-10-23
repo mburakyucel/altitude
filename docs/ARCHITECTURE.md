@@ -1890,7 +1890,8 @@ stopping it.
 
 Output goes into a 256 KB replay buffer addressed by absolute offsets. `GET
 /api/terminal/<project>/stream?task=&id=&offset=` is server-sent events: `output` events carry base64
-bytes, the next offset, whether older output was dropped and `replay`, how many leading bytes are replayed, and
+bytes, the next offset, whether older output was dropped, `replay`, how many leading bytes are replayed, and
+`pieces` (below), and
 `end` carries the final status
 (`exited`, exit code and end reason: `exited`, `closed`, `task-finished`, `project-removed` or `failed` with
 its `error`). A
@@ -1906,11 +1907,11 @@ sends the answers to live output and drops those to replayed output, whose progr
 terminal never types at its prompt. Each write's callback runs right after its output is parsed, in the same
 browser task, and takes what xterm emitted meanwhile; keys, pastes, the mouse and focus arrive in tasks of their
 own and always reach the shell. Every page showing a terminal (a phone and a desktop) answers its live queries, and
-a second answer would reach the program after it stopped reading, then the prompt as text. So altd sends live output
-one piece at a time, as it read it from the shell, and every page draws the same pieces; an `input` request that
-carries answers names them, `answer: {page, end}`: the page's random id for its screen and the end offset of the
-piece it answered. altd types the first page's answers to each piece, in as many requests as they take, and drops
-another page's; input without `answer` is always typed. No page holds a role, so a page left alone answers the next
+a second answer would reach the program after it stopped reading, then the prompt as text. So each `output` event
+also lists in `pieces` where the live output after its replay ends, piece by piece as altd read it from the shell,
+and every page draws each piece as its own write; an `input` request that carries answers names them,
+`answer: {page, end}`: the page's random id for its screen and the end offset of the piece it answered. altd
+types the first page's answers to each piece, in as many requests as they take, and drops another page's; input without `answer` is always typed. No page holds a role, so a page left alone answers the next
 piece at once. The page sends `resize` once a size change has settled and changed
 the columns or rows, and again after each reconnect, since another page may have resized the shell. An ended terminal leaves the status at once (`none`), accepts no
 more input, resize or close, and stays readable only by a stream naming its id, so a page attaching after a

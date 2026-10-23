@@ -84,7 +84,7 @@ class TerminalCase(AltitudeCase):
         term = terminal._terminals[(self.project, slug)]
         while until.encode() not in seen:
             self.assertLess(time.monotonic(), deadline, seen)
-            data, offset, _, ended, _ = terminal.read(term, offset, .2)
+            data, offset, _, ended, _, _ = terminal.read(term, offset, .2)
             seen += data
             if ended and until.encode() not in seen:
                 self.fail(seen)
@@ -198,11 +198,26 @@ class TestTerminalLifecycle(TerminalCase):
         self.type("head -c 20000 /dev/zero | tr '\\0' x; echo; echo done-$((1+1))\n")
         self.output(until="done-2")
         term = terminal._terminals[(self.project, None)]
-        data, offset, missed, ended, _ = terminal.read(term, 0, 0)
+        data, offset, missed, ended, _, _ = terminal.read(term, 0, 0)
         self.assertTrue(missed)
         self.assertFalse(ended)
         self.assertEqual(len(data), 4096)
         self.assertEqual(terminal.read(term, offset, 0)[:3], (b"", offset, False))
+        # The pieces kept are those the buffer still holds, ending at its end; an offset past the end reads from there.
+        self.assertEqual((term.pieces[-1], min(term.pieces) > term.start), (term.end, True))
+        self.assertEqual(terminal.read(term, offset + 100, 0)[1], offset)
+        self.assertEqual(term.sent, offset)
+        # A page starting over from the middle of a piece is told where the live pieces after its replay end.
+        self.type("read -rs -d R -p $'out\\033[6n' at\n")
+        self.wait(lambda: bytes(term.buffer).endswith(b"out\x1b[6n"))
+        data, end, missed, _, replay, pieces = terminal.read(term, 0, 0)
+        self.assertEqual((missed, data[replay:], pieces), (True, b"\x1b[6n", [end]))
+        self.assertGreater(len(data), 4000)  # the whole kept buffer
+        # An answer to output that has left the buffer is too old for a program to still wait on.
+        self.type("R")
+        terminal.write(self.project, None, term.id, "echo drop-$((1+1))\n", {"page": "phone", "end": term.start})
+        self.type("echo kept-$((2+5))\n")
+        self.assertNotIn("drop-2", self.output(until="kept-7", offset=end))
 
     def test_replay_is_all_caught_up_output_but_queries_after_its_text_that_no_page_was_sent(self):
         # A program's queries replayed to a page that opened later were answered as typed input at the shell's prompt.
@@ -237,9 +252,9 @@ class TestTerminalLifecycle(TerminalCase):
         # The phone goes quiet after the first query; the desktop, which read both pieces, answers the second.
         self.wait(lambda: term.end > first and bytes(term.buffer).endswith(b"\x1b[6n"))
         second = term.end
+        # A page that fell behind gets both pieces at once, and where each ends, so it answers them as the others do.
         before = term.pieces[term.pieces.index(first) - 1]
-        data, offset, *_ = terminal.read(term, before, 0)
-        self.assertEqual((offset, data[-4:]), (first, b"\x1b[6n"))  # one piece at a time, as every page draws them
+        self.assertEqual(terminal.read(term, before, 0)[1:], (second, False, False, 0, [first, second]))
         answer("desktop", "\x1b[3;", second)
         answer("phone", "\x1b[1;1R", second)  # back in time to answer too
         answer("desktop", "4R", second)  # the rest of the desktop's answer, in a request of its own

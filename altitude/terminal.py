@@ -564,25 +564,24 @@ def stream(project: str, slug: str | None, ident) -> Terminal:
     return _named(project, slug, ident)
 
 
-def read(term: Terminal, offset: int, wait: float, catching_up: bool = False) -> tuple[bytes, int, bool, bool, int]:
+def read(term: Terminal, offset: int, wait: float, catching_up: bool = False
+         ) -> tuple[bytes, int, bool, bool, int, list[int]]:
     """Output a page is sent after `offset`, waiting up to `wait` seconds for some: (data, next offset, missed, ended,
-    replay). `missed` says output before the replay buffer's start is gone. The first `replay` bytes are output the page
-    catches up on (`catching_up`) or starts over from, whose queries it leaves unanswered (`replayed`). The live output
-    after them goes one piece at a time, as the shell wrote it, so every page answers the same pieces and `write` types
-    one page's answers to each. The output is recorded as sent in the same step, so two pages never both take one query
-    as unsent."""
+    replay, pieces). `missed` says output before the replay buffer's start is gone. The first `replay` bytes are output
+    the page catches up on (`catching_up`) or starts over from, whose queries it leaves unanswered (`replayed`). `pieces`
+    are the ends of the live output after them as the shell wrote it, which every page draws and answers one at a time,
+    so `write` types one page's answers to each. The output is recorded as sent in the same step, so two pages never
+    both take one query as unsent."""
     with term.cond:
         if offset >= term.end and not term.ended:
             term.cond.wait(wait)
         missed = offset < term.start
-        begin = max(offset, term.start)
+        begin = min(max(offset, term.start), term.end)
         data = bytes(term.buffer[begin - term.start:])
-        replay = replayed(data, begin, term.sent) if catching_up or missed else 0
-        if replay < len(data):
-            data = data[:term.pieces[bisect.bisect_right(term.pieces, begin + replay)] - begin]
-        stop = begin + len(data)
-        term.sent = max(term.sent, stop)
-        return data, stop, missed, term.ended and stop >= term.end, replay
+        sent, term.sent = term.sent, max(term.sent, term.end)
+        replay = replayed(data, begin, sent) if catching_up or missed else 0
+        pieces = term.pieces[bisect.bisect_right(term.pieces, begin + replay):] if replay < len(data) else []
+        return data, term.end, missed, term.ended and begin + len(data) >= term.end, replay, pieces
 
 
 def replayed(data: bytes, begin: int, sent: int) -> int:

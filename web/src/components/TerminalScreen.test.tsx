@@ -64,7 +64,9 @@ const font = { family: "monospace", size: 13 };
 type Stream = { offset: number; closed: boolean; listeners: Record<string, (event: MessageEvent<string>) => void>; addEventListener(name: string, listener: (event: MessageEvent<string>) => void): void; close(): void };
 let streams: Stream[];
 let observed: () => void;
-const output = (offset: number, data: string, missed = false, replay = 0, stream = streams.at(-1)!) => stream.listeners.output?.(new MessageEvent("output", { data: JSON.stringify({ offset, data: btoa(data), missed, replay }) }));
+// Live output arrives as one piece unless the test lists where the shell's pieces end.
+const output = (offset: number, data: string, missed = false, replay = 0, stream = streams.at(-1)!, pieces = replay < data.length ? [offset] : []) =>
+  stream.listeners.output?.(new MessageEvent("output", { data: JSON.stringify({ offset, data: btoa(data), missed, replay, pieces }) }));
 const emit = () => output(1, "$ ");
 
 beforeEach(() => {
@@ -355,6 +357,11 @@ describe("the terminal screen", () => {
     // A page catching up answers the live piece its replay ends with.
     await act(async () => output(400_000, `$ ${queries}`, true, 2, desktop));
     expect(tagged().at(-1)).toEqual({ page: second!.page, end: 400_000 });
+    // Output the shell wrote in several pieces is drawn, and answered, one piece at a time.
+    const pieces = `${queries}$ ${queries}`;
+    await act(async () => output(400_000 + pieces.length, pieces, false, 0, desktop, [400_000 + queries.length + 2, 400_000 + pieces.length]));
+    expect(term.written.slice(-2)).toEqual([`${queries}$ `, queries]);
+    expect(tagged().slice(-2)).toEqual([{ page: second!.page, end: 400_000 + queries.length + 2 }, { page: second!.page, end: 400_000 + pieces.length }]);
     await act(async () => phone.type("x"));
     expect(typed().at(-1)).toBe("x");
     expect(tagged().at(-1)).toBeUndefined();
