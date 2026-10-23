@@ -2408,17 +2408,19 @@ describes both.
 ### Routines
 
 The approved [routines design](../design/wireframes/project-agents/PROPOSAL.md) lets the operator give a
-project briefs that Altitude runs on a schedule, on events the operator sends or when asked, reporting only
-(`altitude/project_agents.py`). A routine is a definition (name, brief of at most 8,000 characters, up to four
-schedules of weekdays and a time, whether it runs when it's sent an event, Tell me, an optional model choice and a
-limit of 10, 20 or 60 minutes per run) with its state: new, on, paused or retired.
+project briefs that Altitude runs on a schedule, on events the operator sends or when asked
+(`altitude/project_agents.py`). A run reports, and one whose routine may change things asks Altitude to make each
+change ([routines that act](#routines-that-act)). A routine is a definition (name, brief of at most 8,000 characters, up to four
+schedules of weekdays and a time, whether it runs when it's sent an event, Tell me, an optional model choice, a
+limit of 10, 20 or 60 minutes per run and `may`, what it may change: empty, or `worktrees` for worktrees and
+branches) with its state: new, on, paused or retired.
 `<project>/project-agents.json` holds the project's routines, every saved definition as a numbered version, every state
 change with who made it and its source, the runs, L3's offers, the presses' receipts and the weekly budget. A run's
 prompt, report and worker job live in `<project>/project-agents/<agent>/<n>/`. A run is never a task: nothing that
 lists, counts or reports tasks sees it.
 
 **Definitions.** Altitude ships built-in routines as `templates/project-agents/<key>.md`: a header of name, days,
-time, Tell me and a one-line summary, then the brief. Turning one on copies it as a routine that is on, marked with
+time, Tell me, a one-line summary and, for one that may change things, `may`, then the brief. Turning one on copies it as a routine that is on, marked with
 its key, and the Routines page lists only the built-ins without one. A routine the operator creates is saved new, not
 on: it runs only with Run now until they turn it on. Every saved change is a new version; a save names the version
 it edited and one made from an older version is refused, and each run records the version it ran.
@@ -2433,7 +2435,7 @@ waits or runs: a routine has at most one. While Altitude waits to activate a cha
 
 **Events.** A routine with the event trigger runs on short texts the operator sends from this computer:
 `alt agent send AGENT TEXT|- [--key KEY]`, a change of the operator's CLI only, refused on L3's socket, in task
-workers and from paired devices, and routine runs have no `alt` verbs. Altitude reads no source of its own; the routine
+workers and from paired devices; a routine run's one verb is `alt act`. Altitude reads no source of its own; the routine
 page and [operations](OPERATIONS.md#sending-events-to-routines) show example scripts (`project_agents.recipes`) that send
 pull request and issue numbers and the operator's own words. A send is one locked write: a key the routine already
 took answers "Already received." before anything else; otherwise it is refused (routine not on, paused or retired, no
@@ -2469,7 +2471,7 @@ worker it links nothing of the operator's engine folder (their settings, instruc
 runs in the engine's restricted mode where it has one (only Altitude's own settings apply, and its file tools stay
 in its working directories), writes only its own checkout's Git state (no objects or branches of the shared
 repository, `git_policy.worker_git_access(shared=False)`), receives no GitHub sign-in and no Send now, and its environment names actor `project-agent-run`, for which `alt`
-refuses every verb. Its job ends at its limit (`platform.job_command` `runtime_max`), and the tick stops a run that
+admits only `alt act` and refuses every other verb. Its job ends at its limit (`platform.job_command` `runtime_max`), and the tick stops a run that
 reaches its limit while Altitude is watching. Stop ends a waiting run at once and stops a running one's job; a run stopped while it
 is starting ends at once, and its start stops the worker it made. A run still without a recorded worker ten minutes
 after it started was interrupted by Altitude stopping, and the tick ends it as couldn't finish. While a run is
@@ -2497,7 +2499,8 @@ beyond a routine's newest ten are removed.
 **Authority.** The operator changes routines with presses on `POST /api/agents` from a paired device only, each
 carrying a request id whose repeat returns the first receipt, and with `alt agent new|set|on|pause|resume|retire|run|stop`
 on their CLI, which alone sends events (`alt agent send`). L3 reads them with `alt agent list|show`, and on the operator's own chat message can pause, resume,
-turn on, retire, run or stop one. It never writes a definition: `alt agent offer` drafts a new routine or a change as
+turn on, retire, run or stop one; a routine that may change things only the operator turns on, resumes or runs, and
+L3 may still pause, stop and undo it. It never writes a definition: `alt agent offer` drafts a new routine or a change as
 a card under its reply, which only the operator's press saves (Create routine, Save change, or Edit first through the
 form). An offer lapses after seven days, and a change offer is refused once the routine changed since it was drafted.
 
@@ -2506,10 +2509,55 @@ offers, and in Altitude's own project the [Weekly improvement review](#improveme
 a routine's status with its note, actions, definition, recent runs and, with the event trigger, `send`: the command, naming the routine by its
 shell-quoted name when `alt agent` resolves that name to it and it does not start with `-`, else by its id; the id
 the example scripts use when the command names the name; and those scripts; `/weekly` the review's own page; `/<agent>/runs/<n>` a run's outcome, the events it took, the
-version it ran and its report; `/<agent>/runs/<n>/transcript` its session through the transcript
+version it ran, its report and what it changed; `/<agent>/runs/<n>/transcript` its session through the transcript
 reader, read only. The project view carries `project_agents`: the runs waiting or running, shown in Work under
 Current; the number of routines not retired, with the Weekly improvement review once it is the operator's; and the
 offers.
+
+### Routines that act
+
+A routine whose definition has `may: ["worktrees"]` may ask Altitude to tidy its project's worktrees and branches
+([proposal](../design/wireframes/project-agents/ACTING.md)). The run asks; Altitude acts: the run's box is
+unchanged (its own copy, `worker_git_access(shared=False)`, no GitHub sign-in), so it cannot set aside a worktree
+or delete a branch itself, and every change is Altitude's own, checked and carried out in altd.
+
+**Asking.** The run's prompt says what it may change and lists the project's worktrees and branches with what
+Altitude's records say of each (`tidy.inventory`: its task and state, last change, uncommitted work, commits found
+nowhere else, merged or not). `alt act set-aside-worktree NAME` and `alt act delete-branch NAME` go through the
+run's door, which admits only the run's own worker job (`project_agents.act`). Under the project lock, altd refuses
+the request ("Not allowed: …") unless both the version the run ran with and the routine now allow it, so a
+permission taken away during a run applies at once and one added applies from the next run; a run has 20 requests,
+and the 21st is recorded refused once. Otherwise the tidy rule decides, and the run is answered "Set aside worktree
+NAME. The operator can undo it until <day>.", "Deleted branch NAME. Merged into main.", "Kept: <reason>." or
+"Failed: <Git's message>". A repeated request id returns its first answer.
+
+**The tidy rule** (`altitude/tidy.py`) matches the name exactly against what Git lists and passes only its own
+values to Git. A worktree directly under the project's worktree root, not a routine run's copy, is set aside only
+when it is not locked, it is no task's own worktree (end-of-task cleanup removes those, and reopening a task checks
+its branch out there again), it was not made while a task that is still open was, nothing in its record or folder changed for seven days, no program has it as its working folder
+(`platform.folder_in_use`: the processes' working folders on Linux, `lsof` on the Mac; a check that cannot tell
+keeps it), it has no uncommitted change and its commits are on a branch. A local branch is deleted only when it is
+not main or the default branch, not checked out, not an open task's, has not moved for seven days, and its tip is
+on `origin/main` or is exactly the head of a merged pull request into main from this repository. Anything the
+operator put back from this routine is kept ("You put it back <day>."). Dispatch's own end-of-task cleanup shares
+the uncommitted-work check (`tidy.unsaved`).
+
+**Records and Undo.** Each request is a numbered change on its run (`changes`: kind, target, outcome done, kept,
+refused or failed, reason, time) and a `routine-action` project event; an Undo is a `routine-undo` event naming who
+undid it and from where. A set-aside worktree moves on the same disk into the worktree root's
+`.set-aside/<agent>-<run>-<change>/` folder for 14 days, so Undo moves it back exactly, ignored files included;
+the tick then removes it for good, after which Undo adds it again from its branch or commit without ignored files.
+A deleted branch's commit is kept under `refs/altitude/undo/<agent>/<run>/<change>`, and Undo recreates the branch
+only at the commit Altitude recorded, refusing when that ref no longer matches or the name is taken. Undo is
+`POST /api/agents` action `undo` (`{agent, n, change}`, a number or `all`) or `alt agent undo`; each change
+succeeds or is refused on its own, and a refused one keeps its Undo with the reason. Pruning a run removes its undo
+refs.
+
+**What the operator sees.** The run page lists What it changed, one row per request with Undo while it can be
+undone; Altitude's own sentence of the done changes ("Set aside 2 worktrees and deleted 1 branch.") follows the
+run's summary in chat, where a run that changed something speaks unless Tell me is never, in Recent runs and in the
+next run's prompt. The built-in Tidy worktrees and branches (`templates/project-agents/tidy.md`) runs Mondays at
+09:00 and is turned on through a sheet that states what it may change.
 
 ### Suggested tasks
 

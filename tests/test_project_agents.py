@@ -25,7 +25,7 @@ BRIEF = "Check the fictional dock project's dependencies for security fixes."
 
 def definition(**fields) -> dict:
     return {"name": "Dependency check", "brief": BRIEF, "schedules": [{"days": [0, 1, 2, 3, 4], "time": "07:00"}],
-            "events": False, "tell": "found", "model": None, "limit": 20, **fields}
+            "events": False, "tell": "found", "model": None, "limit": 20, "may": [], **fields}
 
 
 class AgentCase(AltitudeCase):
@@ -113,7 +113,7 @@ class TestDefinitions(AgentCase):
 
     def test_built_in_agents_turn_on_once_and_leave_the_list_while_on(self):
         shipped = {b["key"]: b for b in A.builtins()}
-        self.assertEqual(set(shipped), {"build-health", "dependency-check", "what-landed"})
+        self.assertEqual(set(shipped), {"build-health", "dependency-check", "tidy", "what-landed"})
         self.assertEqual(shipped["build-health"]["schedules"], [{"days": [0], "time": "08:00"}])
         receipt = self.change("builtin", key="build-health")
         agent = A.agent_view(self.project, receipt["agent"], now=NOW)
@@ -486,12 +486,12 @@ class TestLaunch(AgentCase):
         self.assertNotIn("L1 helper", seen["prompt"], "a run has no helpers to brief")
         self.assertTrue(seen["prompt"].endswith("the run's prompt"))
 
-    def test_a_run_has_no_alt_verbs(self):
+    def test_a_runs_one_alt_verb_is_act(self):
         env = {**os.environ, "ALTITUDE_ACTOR": "project-agent-run", "ALTITUDE_PROJECT": self.project}
         result = subprocess.run([sys.executable, str(REPO / "bin" / "alt"), "task", "list"], env=env,
                                 capture_output=True, text=True, timeout=60)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("has no alt verbs", result.stderr)
+        self.assertIn("its one verb is alt act", result.stderr)
 
     def test_a_runs_door_answers_only_its_sign_in(self):
         self.launching()

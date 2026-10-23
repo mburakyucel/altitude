@@ -45,7 +45,7 @@ else
 	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))
 	python3 scripts/installation_vm.py "$(RESULTS)" --source "$(or $(SOURCE),HEAD)" $(if $(BASELINE),--baseline-release "$(BASELINE)") $(if $(RECOVERY),--recovery) $(if $(PUBLIC),--public) $(if $(TRUST),--trust) $(if $(CAPTURE),--capture)
 endif
-sandbox-vm: ## the sandbox's socket cases with real bubblewrap in a throwaway KVM VM (RESULTS=dir [SOURCE=ref]); inside a task, through the validation runner
+sandbox-vm: ## the sandbox's socket cases and a routine run's own Git attempts with real bubblewrap in a throwaway KVM VM (RESULTS=dir [SOURCE=ref]); inside a task, through the validation runner
 ifdef ALTITUDE_TASK
 	alt task validate --kvm -- make sandbox-vm RESULTS=/results SOURCE="$(or $(SOURCE),HEAD)"
 else

@@ -570,6 +570,8 @@ export const ProjectAgentDefinitionSchema = z.object({
   tell: z.enum(["found", "every", "never"]),
   model: ChoiceSchema,
   limit: z.number(),
+  /** What Altitude may change when a run asks (`alt act`): ["worktrees"] for worktrees and branches; empty, it only reports. */
+  may: z.array(z.literal("worktrees")),
 });
 export type ProjectAgentDefinition = z.infer<typeof ProjectAgentDefinitionSchema>;
 const ToneSchema = z.enum(["accent", "danger", "muted"]);
@@ -578,6 +580,8 @@ export const ProjectAgentOfferSchema = z.object({
   id: z.string(), turn_id: z.string(), kind: z.enum(["new", "change"]),
   agent: z.string().nullable(), agent_name: z.string().nullable(),
   definition: ProjectAgentDefinitionSchema, line: z.string(), changes: z.array(z.string()), on: z.boolean(),
+  /** A new routine's "May change worktrees and branches"; null when it only reports or the offer is a change. */
+  may: z.string().nullable(),
   state: z.enum(["open", "created", "saved", "refused", "lapsed"]), reason: z.string().nullable(), result_agent: z.string().nullable(),
 });
 export type ProjectAgentOffer = z.infer<typeof ProjectAgentOfferSchema>;
@@ -778,10 +782,13 @@ const AgentStateSchema = z.enum(["new", "on", "paused", "retired"]);
 export const ProjectAgentSummarySchema = z.object({
   id: z.string(), name: z.string(), state: AgentStateSchema,
   triggers: z.string(), news: z.string(), news_at: z.string().nullable(),
+  /** "Changes worktrees and branches" after the triggers; null for a routine that only reports. */
+  may: z.string().nullable(),
   cue: z.enum(["running", "paused"]).nullable(), retired_line: z.string().nullable(),
 });
 export type ProjectAgentSummary = z.infer<typeof ProjectAgentSummarySchema>;
-const BuiltInSchema = z.object({ key: z.string(), name: z.string(), line: z.string() });
+/** A built-in routine; one that may change things carries the terms its Turn on sheet asks about. */
+const BuiltInSchema = z.object({ key: z.string(), name: z.string(), line: z.string(), terms: z.string().nullish() });
 /** What the Weekly improvement review's sheet shows; Turn on sends its version back. */
 const WeeklyTermsSchema = z.object({ version: z.string(), title: z.string(), body: z.string(), sent: z.string() });
 export type WeeklyTerms = z.infer<typeof WeeklyTermsSchema>;
@@ -819,6 +826,8 @@ export const ProjectAgentDetailSchema = z.object({
   status: z.object({ line: z.string(), note: z.string().nullable(), actions: z.array(AgentActionSchema), run: z.number().nullable(), spinning: z.boolean() }),
   definition: ProjectAgentDefinitionSchema,
   definition_line: z.string(),
+  /** "May change worktrees and branches, with Undo"; null for a routine that only reports. */
+  may_line: z.string().nullable(),
   runs: z.array(ProjectAgentRunSchema),
   more: z.boolean(),
   /** With the event trigger: the command that sends it an event, the id the examples use when the command names the
@@ -826,6 +835,13 @@ export const ProjectAgentDetailSchema = z.object({
   send: z.object({ command: z.string(), id: z.string().nullable(), recipes: z.array(z.object({ what: z.string(), text: z.string() })) }).nullable(),
 });
 export type ProjectAgentDetail = z.infer<typeof ProjectAgentDetailSchema>;
+/** One request a run made: its opening words and target ("Set aside worktree" agent-7c41e2d0), a muted line,
+ * Undo while it can be undone, and why the last Undo was refused. */
+const AgentChangeSchema = z.object({
+  n: z.number(), kind: z.enum(["worktree", "branch"]), outcome: z.enum(["done", "kept", "refused", "failed"]),
+  head: z.string(), name: z.string(), note: z.string().nullable(), undone: z.boolean(), undo: z.boolean(),
+  refused: z.string().nullable(),
+});
 export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
   agent: z.object({ id: z.string(), name: z.string() }),
   /** None until the run starts and its engine is chosen. */
@@ -836,8 +852,12 @@ export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
   session: z.object({ engine: z.string(), session_id: z.string(), attempt: z.number() }).nullable(),
   /** The run's suggested tasks, when it made any. */
   suggested: AgentSuggestionsSchema.nullable(),
+  /** What the run asked Altitude to change, in order (project_agents._change_row), and whether Undo all shows. */
+  changes: z.array(AgentChangeSchema),
+  undo_all: z.boolean(),
 });
 export type ProjectAgentRunDetail = z.infer<typeof ProjectAgentRunDetailSchema>;
+export type AgentChange = z.infer<typeof AgentChangeSchema>;
 const WeeklyActionSchema = z.enum(["run", "pause", "resume", "turn_on", "stop"]);
 export type WeeklyAction = z.infer<typeof WeeklyActionSchema>;
 /** The Weekly improvement review's page (improve.page): its status, recent runs and skipped weeks, and what it does. */

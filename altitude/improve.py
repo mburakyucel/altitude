@@ -818,7 +818,7 @@ def agent(project: str) -> dict | None:
         else (paused, None, "paused") if (paused := _paused(record))
         else (_outcome(ended), ended["ended"], None) if ended else ("Never run", None, None))
     out["agent"] = {"id": "weekly", "name": NAME, "state": "paused" if cue == "paused" else "on", "triggers": when,
-                    "news": news, "news_at": at, "cue": cue, "retired_line": None}
+                    "may": None, "news": news, "news_at": at, "cue": cue, "retired_line": None}
     return out
 
 

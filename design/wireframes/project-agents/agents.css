@@ -152,3 +152,19 @@ a.agentsrow{display:flex;align-items:center;justify-content:space-between;color:
 .m .scard .acts .btn{height:44px;padding:0 16px;font-size:15px}
 .nsec{margin:22px 0 10px;color:var(--text-muted);font-size:13px;font-weight:600;letter-spacing:.02em}
 .fold .i.open{transform:rotate(90deg)}
+/* acting (ACTING.md): the fence and a run's changes */
+.may .tr{cursor:pointer;align-items:flex-start}.may .tr b{font-weight:600}
+.cb{width:20px;height:20px;border:1.5px solid var(--border);border-radius:5px;display:inline-flex;align-items:center;justify-content:center;flex:none;margin-top:1px;background:var(--card)}
+.cb.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}.cb .i{color:var(--on-accent)!important}
+.m .may .tr,.phonesheet .may .tr{min-height:44px}
+.card.chgs{padding:0}
+.chg{display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid var(--hairline)}
+.chg:first-child{border-top:0}
+.chg .tx{flex:1;min-width:0}.chg b{display:block;font-weight:500;font-size:14px;overflow-wrap:anywhere}
+.chg small{display:block;color:var(--text-muted);font-size:13px;margin-top:2px;line-height:1.45}
+.chg .btn.sm{height:30px;font-size:13px;padding:0 12px;flex:none}
+.m .chg .btn.sm,.phonesheet .chg .btn.sm{height:44px;min-width:64px}
+.m .chg,.phonesheet .chg{padding:11px 14px}
+.chghead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px 0 10px}.chghead h2{margin:0}.chghead .btn.sm{height:30px;font-size:13px;padding:0 12px}
+.m .chghead .btn.sm,.phonesheet .chghead .btn.sm{height:44px}
+.report code{overflow-wrap:anywhere}

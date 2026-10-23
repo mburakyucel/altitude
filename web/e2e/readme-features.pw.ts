@@ -141,7 +141,7 @@ test("a created task, a proposal review, the task view, review before merge, a r
   await page.goto("/projects/harbor/agents");
   await expect(page.getByRole("heading", { level: 1, name: "Routines", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: /^Dependency check/ })).toContainText("Found something");
-  await expect(page.getByRole("button", { name: "Turn on" })).toHaveCount(2);  // Build health and What landed
+  await expect(page.getByRole("button", { name: "Turn on" })).toHaveCount(3);  // Build health, What landed and Tidy worktrees and branches
   await capture("routines");
   await nav.getByRole("link", { name: /Needs you/ }).click();
   const routine = page.getByRole("article", { name: "Suggested tasks from Dependency check", exact: true });

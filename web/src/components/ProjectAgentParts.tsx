@@ -1,7 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router";
-import type { WeeklyTerms } from "../data/api";
 import { Overlay } from "../shell/Overlay";
 import { useViewport } from "../shell/breakpoints";
 import { Prose } from "./Prose";
@@ -10,8 +9,8 @@ import "../routes/agents.css";
 
 /*
  * Pieces every routine surface shares (design/wireframes/project-agents/PROPOSAL.md): the page frame with its back
- * link, the row chevron, the pause mark, a run's dot, a brief clamped to three lines with Show all, and the Weekly
- * improvement review's terms sheet.
+ * link, the row chevron, the pause mark, a run's dot, a brief clamped to three lines with Show all, and the sheet a
+ * built-in's Turn on opens with its terms.
  */
 
 /** The routine pages' frame: the back link and title in the phone header, or above the page on desktop. */
@@ -63,14 +62,14 @@ export function ClampedBrief({ text }: { text: string }) {
   </div>;
 }
 
-/** The Weekly improvement review's terms: a bottom sheet on a phone, centered otherwise, Cancel focused. Cancel,
- * Escape and the scrim change nothing; Turn on agrees to the terms it shows. */
-export function WeeklyTermsSheet({ terms, onAgree, onClose }: { terms: WeeklyTerms; onAgree: () => void; onClose: () => void }) {
+/** A built-in's terms (the Weekly improvement review's, or what a routine may change): a bottom sheet on a phone,
+ * centered otherwise, Cancel focused. Cancel, Escape and the scrim change nothing; Turn on agrees to the terms it shows. */
+export function TermsSheet({ title, body, onAgree, onClose }: { title: string; body: string; onAgree: () => void; onClose: () => void }) {
   const { phone } = useViewport();
-  return <Overlay label={terms.title} side={phone ? "bottom" : "center"} onClose={onClose}>
+  return <Overlay label={title} side={phone ? "bottom" : "center"} onClose={onClose}>
     <div className="remove-dialog improve-sheet">
-      <h2>{terms.title}</h2>
-      <p>{terms.body}</p>
+      <h2>{title}</h2>
+      <p>{body}</p>
       <div className="remove-actions">
         <button type="button" className="btn" data-autofocus onClick={onClose}>Cancel</button>
         <button type="button" className="btn btn-primary" onClick={onAgree}>Turn on</button>
