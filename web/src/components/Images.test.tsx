@@ -675,6 +675,49 @@ describe("image viewer", () => {
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
   });
 
+  it("holds nothing from a read still on its way when the viewer closes or the page scope changes", async () => {
+    browser();
+    const live = objectUrls();
+    const waiting: (() => void)[] = [];
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      if (++calls > 2) await new Promise<void>((resolve) => waiting.push(resolve));  // the thumbnails' two reads answer at once
+      return new Response("fictional raster", { headers: { "Content-Type": "image/png" } });
+    }));
+    modal(); still();
+    const user = userEvent.setup();
+    const images = pictures("a", "b");
+    const view = render(<ImageViewerHost scope="/projects/alpha"><MessageImages project="alpha" images={images} /></ImageViewerHost>, { wrapper: MemoryRouter });
+    await user.click(await screen.findByRole("button", { name: "Open image a.png" }));
+    await waitFor(() => expect(waiting).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: "Close image" }));
+    await act(async () => { waiting.splice(0).forEach((answer) => answer()); });
+    await pause(10);
+    expect(live.size).toBe(2);
+    await user.click(screen.getByRole("button", { name: "Open image b.png" }));
+    await waitFor(() => expect(waiting).toHaveLength(1));
+    view.rerender(<ImageViewerHost scope="/projects/alpha/tasks/other"><MessageImages project="alpha" images={images} /></ImageViewerHost>);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await act(async () => { waiting.splice(0).forEach((answer) => answer()); });
+    await pause(10);
+    expect(live.size).toBe(2);
+  });
+
+  it("keeps the browser's own zoom and scrolling off over the bars and arrows", async () => {
+    browser();
+    vi.stubGlobal("fetch", raster());
+    modal(); still();
+    const user = userEvent.setup();
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={pictures("a", "b")} /></ImageViewerHost>, { wrapper: MemoryRouter });
+    await user.click(await screen.findByRole("button", { name: "Open image a.png" }));
+    await waitFor(() => expect(current()).not.toHaveAttribute("data-placeholder"));
+    for (const place of [document.querySelector(".image-viewer-bar")!, screen.getByRole("button", { name: "Next image" })]) {
+      expect(fireEvent.wheel(place, { ctrlKey: true, deltaY: -40 })).toBe(false);
+      expect(fireEvent.wheel(place, { deltaY: 120 })).toBe(false);
+    }
+    expect(stage()).not.toHaveAttribute("data-zoomed");
+  });
+
   it("offers Zoom, Copy, Download and Open on desktop, disabled while loading and gone when the picture fails", async () => {
     browser();
     modal(); still();

@@ -166,7 +166,8 @@ export function ImageViewer({ images, start, onClose }: { images: GalleryImage[]
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef<Gesture | null>(null);
   const lastTap = useRef<{ x: number; y: number; t: number } | null>(null);
-  const placeholder = useRef(openerPicture(images[start]!.key)?.currentSrc ?? "");
+  // Until its own read arrives, the opened picture shows the thumbnail's, for display only; the thumbnail may release it.
+  const [placeholder, setPlaceholder] = useState(() => openerPicture(images[start]!.key)?.currentSrc ?? "");
   const opener = images[start]!.key;
 
   const fitOf = (key: string): View | null => {
@@ -299,9 +300,10 @@ export function ImageViewer({ images, start, onClose }: { images: GalleryImage[]
 
   // Wheel and keys read the current render through one ref, so their listeners are registered once.
   const latest = useRef({ wheel: (() => {}) as (event: WheelEvent) => void, key: (() => {}) as (event: KeyboardEvent) => void });
+  // Nothing in the viewer scrolls, so no wheel reaches the page: a trackpad pinch over a bar would zoom it.
   latest.current.wheel = (event) => {
     event.preventDefault();
-    if (!fit || !ready || closing.current) return;
+    if (!fit || !ready || closing.current || !stage.current?.contains(event.target as Node)) return;
     const from = viewNow.current ?? fit;
     const point = { x: event.clientX, y: event.clientY };
     const apply = (s: number) => {
@@ -334,7 +336,7 @@ export function ImageViewer({ images, start, onClose }: { images: GalleryImage[]
   useEffect(() => {
     const onWheel = (event: WheelEvent) => latest.current.wheel(event);
     const onKey = (event: KeyboardEvent) => latest.current.key(event);
-    const node = stage.current;
+    const node = dialog.current;
     node?.addEventListener("wheel", onWheel, { passive: false });
     document.addEventListener("keydown", onKey);
     return () => { node?.removeEventListener("wheel", onWheel); document.removeEventListener("keydown", onKey); };
@@ -526,7 +528,7 @@ export function ImageViewer({ images, start, onClose }: { images: GalleryImage[]
         const itemRead = at === index ? read : reads.read(item.key);
         const itemSize = sizes[item.key];
         const itemView = at === index ? shown : fitOf(item.key);
-        const src = itemRead.state === "ready" ? itemRead.url : item.key === opener && placeholder.current ? placeholder.current : "";
+        const src = itemRead.state === "ready" ? itemRead.url : item.key === opener ? placeholder : "";
         const { top, bottom } = frame.current;
         return <div key={item.key} className="image-viewer-slide" style={{ transform: `translateX(${(at - index) * span + slide}px)` }} aria-hidden={at !== index || undefined}>
           {itemRead.state === "failed" ? <div className="image-viewer-failed" style={{ top, bottom }} role={at === index ? "alert" : undefined}>
@@ -537,6 +539,7 @@ export function ImageViewer({ images, start, onClose }: { images: GalleryImage[]
             {itemRead.state !== "ready" ? <span className="image-viewer-loading" style={{ top, bottom }}><StatusMark label="Loading image…" /></span> : null}
             {src ? <img src={src} alt={item.name} draggable={false} data-placeholder={itemRead.state !== "ready" || undefined}
               style={itemSize && itemView ? { width: itemSize.w * itemView.s, height: itemSize.h * itemView.s, transform: `translate(${itemView.x}px, ${itemView.y}px)` } : { visibility: "hidden" }}
+              onError={() => { if (itemRead.state !== "ready") setPlaceholder(""); }}
               onLoad={(event) => {
                 const { naturalWidth: w, naturalHeight: h } = event.currentTarget;
                 if (w && h && (sizes[item.key]?.w !== w || sizes[item.key]?.h !== h)) setSizes((old) => ({ ...old, [item.key]: { w, h } }));

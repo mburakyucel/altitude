@@ -1493,10 +1493,11 @@ reduced motion, opening, closing, changing picture and released gestures land at
 follows the fingers while touched.
 
 **Reading ahead.** The viewer reads each picture itself with one private request to the project's image
-API and holds it in memory as encoded bytes; it never borrows a thumbnail's copy, whose row can be replaced
-while the viewer is open. Once the current picture is in, it reads the previous and next ones, so a swipe
-shows the neighbour under the finger; it holds at most three, and decodes a neighbour only while a swipe
-shows it. Moving on releases a picture more than one step away; a hidden page releases the neighbours and
+API and holds it in memory as encoded bytes; it never depends on a thumbnail's copy, whose row can be replaced
+while the viewer is open. Until its own read arrives, the opened picture shows the thumbnail's for display only,
+with every action waiting, and falls back to the spinner if the thumbnail releases it. Once the current
+picture is in, it reads the previous and next ones, so a swipe shows the neighbour under the finger; it holds
+at most three, and decodes a neighbour only while a swipe shows it. Moving on releases a picture more than one step away; a hidden page releases the neighbours and
 reads them again when it shows; closing, Back, leaving the page and a new scope release everything. Nothing
 is written to storage, and the image API stays `no-store`. Every picture is immutable at its address, so a
 held picture is the picture at that address; a device whose access is withdrawn keeps a picture it already
