@@ -85,8 +85,9 @@ task names are illustrative, not a capture. `python3 design/readme/balance.py` w
 - Change the quota animation in `design/readme/balance.py` and write it again; never edit `balance.svg` by hand.
 - Edit `docs/images/altitude.svg` and `docs/images/system.svg` directly. These standalone vectors use system
   fonts and contain no scripts or raster art; each is the same drawing at every width, so keep its type large
-  enough to read in a desktop README column. Keep `system.svg`'s labels in step with the
-  [architecture](../../docs/ARCHITECTURE.md) and its alt text in README and the overview in step with it.
+  enough to read in a desktop README column. `system.svg` gives each box its title and at most one short line
+  the picture does not already say, and labels only the arrows whose flow a reader could not guess. Keep its labels
+  in step with the [architecture](../../docs/ARCHITECTURE.md) and its alt text in README and the overview in step with it.
 - Keep image alt text in README and walkthrough. Keep desktop and phone app views visible together
   in README. Check GitHub's sanitized Markdown, image
   paths and anchors, then inspect both widths. Open the original images to review details that are
