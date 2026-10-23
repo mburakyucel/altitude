@@ -157,7 +157,7 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
           term.reset();
           introduce();
         }
-        // Output already there as the stream opened is replayed, apart from its trailing sequences (altd's `replayed`).
+        // Output already there as the stream opened is replayed, apart from queries a program may still wait on (altd's `replay`).
         const data = bytes(chunk.data);
         const replay = chunk.replay ?? 0;
         if (replay) draw(data.subarray(0, replay), false);

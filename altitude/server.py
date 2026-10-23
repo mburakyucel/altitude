@@ -2198,8 +2198,7 @@ class Handler(BaseHTTPRequestHandler):
             data, offset, missed, ended = terminal.read(term, offset, 0 if first else TERMINAL_WAIT_SECONDS)
             caught_up, first = first, False
             if data or missed:
-                # The page answers no query in the first `replay` bytes of output it catches up on or starts over from.
-                replay = terminal.replayed(data) if caught_up or missed else 0
+                replay = terminal.replay(term, data, offset, caught_up or missed)
                 payload = json.dumps({"offset": offset, "data": base64.b64encode(data).decode(), "missed": missed,
                                       "replay": replay})
                 self.wfile.write(f"event: output\ndata: {payload}\n\n".encode())

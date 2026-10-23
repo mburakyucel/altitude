@@ -204,14 +204,21 @@ class TestTerminalLifecycle(TerminalCase):
         self.assertEqual(len(data), 4096)
         self.assertEqual(terminal.read(term, offset, 0)[:3], (b"", offset, False))
 
-    def test_replay_is_all_but_the_sequences_after_the_last_text(self):
+    def test_replay_is_all_caught_up_output_but_queries_after_its_text_that_no_page_was_sent(self):
         # A program's queries replayed to a page that opened later were answered as typed input at the shell's prompt.
         queries = b"\x1b]11;?\x1b\\\x1b[6n"
+        fresh = lambda: mock.Mock(cond=threading.Condition(), sent=0)
         for data, replay in [(b"$ gh repo edit\r\n" + queries + b"Edited\r\n$ ", None),
                              (b"\x1b]0;a title\x07$ ", None), (b"$ read\r\n" + queries, len(b"$ read\r\n")),
                              (b"\x1b[?2004h" + queries, 0), (b"", 0), (b"$ \x1b", None)]:
             with self.subTest(data=data):
-                self.assertEqual(terminal.replayed(data), len(data) if replay is None else replay)
+                self.assertEqual(terminal.replay(fresh(), data, 100 + len(data), True), len(data) if replay is None else replay)
+        # gh asks, a page answers live, and gh then waits on the network: a page opening meanwhile answers nothing.
+        term, history = fresh(), b"$ gh repo edit\r\n" + queries
+        self.assertEqual(terminal.replay(term, history, len(history), False), 0)
+        self.assertEqual(terminal.replay(term, history, len(history), True), len(history))
+        # What asked after the last page was sent output is still answered.
+        self.assertEqual(terminal.replay(term, history + queries, len(history) + len(queries), True), len(history))
 
     def test_input_and_size_are_validated(self):
         self.turn(True)

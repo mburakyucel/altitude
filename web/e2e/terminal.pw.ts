@@ -269,6 +269,15 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
   await run(page, "echo clean-$((2+3))");
   await expect(output).toContainText("clean-5");
   await walk.state("12b-reopened-types-nothing", { visible: [output.getByText("clean-5")], hidden: [output.getByText(/11;rgb|command not found/)] });
+  // A program answered live that then works quietly, as `gh` waits on the network, is not answered again by a page
+  // opening meanwhile.
+  await run(page, "read -rs -d R -p $'\\e[6n' at; sleep 3; echo quiet-${#at}");
+  await page.waitForTimeout(500);
+  await page.reload();
+  await expect(output).toContainText(/quiet-\d/, { timeout: 10_000 });
+  await run(page, "echo still-clean-$((3+4))");
+  await expect(output).toContainText("still-clean-7");
+  await expect(output.getByText(/command not found|syntax error/)).toHaveCount(0);
 
   // Another tab or device closes it: this page leaves and says so.
   const opened = await (await request.get("/api/terminal/atlas")).json();

@@ -1897,8 +1897,8 @@ its `error`). A
 reconnecting page resumes from its own offset, and so does a page shown again after the background or the
 back-forward cache, whose connection may have dropped without an error; when older output was dropped meanwhile it
 starts its screen over from what was kept. The output a page catches up on as its stream opens, or starts over
-from, is replayed, apart from the escape sequences after its last text: a query there (a shell asking at its
-start, a command that asked while the page was away) may still be waiting. Programs query the terminal (`gh` asks
+from, is replayed, apart from the escape sequences after its last text that no page has been sent: a query there
+(a shell asking at its start, a command that asked while no page was open) may still be waiting. Programs query the terminal (`gh` asks
 its background colour, others the cursor's place), and xterm answers through the same channel as keys; the page
 sends the answers to live output and drops those to replayed output, whose programs have moved on, so opening a
 terminal never types at its prompt. Each write's callback runs right after its output is parsed, in the same

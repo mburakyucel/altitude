@@ -70,6 +70,7 @@ class Terminal:
     id: str  # every request names it: a replaced terminal refuses
     buffer: bytearray = field(default_factory=bytearray)
     start: int = 0  # absolute output offset of buffer[0]
+    sent: int = 0  # the end of the output some page has been sent: its queries had their chance to be answered
     exit_code: int | None = None
     reason: str | None = None  # why it ended: exited, closed, task-finished, project-removed, failed
     error: str | None = None  # why a shell that failed could not run, in the launcher's words
@@ -552,16 +553,22 @@ def read(term: Terminal, offset: int, wait: float) -> tuple[bytes, int, bool, bo
         return data, term.end, missed, term.ended and begin + len(data) >= term.end
 
 
-def replayed(data: bytes) -> int:
-    """How much of `data`, output a page draws only as it catches up, is replay: all of it but the escape sequences
-    printed after its last text. Queries in the replay go unanswered, since their programs have printed more since or
-    ended; a query among those last sequences may still be waiting, as a shell asking at its start does."""
-    end = done = 0
+def replay(term: Terminal, data: bytes, end: int, catching_up: bool) -> int:
+    """How much of `data`, the output up to offset `end` that a page is being sent, is replay, whose queries the page
+    leaves unanswered. Live output is not. Output a page catches up on is, apart from the escape sequences after its
+    last text that no page was sent before: a query there may still be waiting, as a shell asking at its start or a
+    command that asked while no page was open. A query some page was sent has had its answer, and one followed by
+    text belongs to a program that has printed more since or ended."""
+    with term.cond:
+        sent, term.sent = term.sent, max(term.sent, end)
+    if not catching_up:
+        return 0
+    text = done = 0
     for match in _ESCAPES.finditer(data):
         if match.start() > done:
-            end = match.start()
+            text = match.start()
         done = match.end()
-    return len(data) if done < len(data) else end
+    return max(len(data) if done < len(data) else text, min(len(data), sent - (end - len(data))))
 
 
 # --- The reader's read-only view ----------------------------------------------------------------------------------
