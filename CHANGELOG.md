@@ -5,6 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- An answer or message to a waiting task wakes its agent at once, even while an open page is reading the
+  project's setup; that read no longer leaves the agent waiting for the next half-minute check.
 - Opening an older Weekly improvement review run from its page takes the chat back to that run every time, rather
   than sometimes showing the latest conversation until the next refresh.
 - The overview no longer fails to load when a task is archived while it is being read: the task's history is

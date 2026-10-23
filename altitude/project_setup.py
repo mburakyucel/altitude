@@ -6,6 +6,7 @@ import fcntl
 import os
 import subprocess
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -40,22 +41,49 @@ def save(project: str, **updates) -> dict:
 
 
 @contextmanager
-def operation_lock(project: str, *, wait: bool = False):
+def operation_lock(project: str, *, wait: bool = False, probe: bool = False):
     """A dead runner releases its lock; saved progress alone never proves it is running.
 
-    Probes never wait. The runner waits, so a read holding the lock delays an accepted repair
-    instead of losing its wake (setup walkthrough interrupted-retry, 2026-09-23).
+    The runner and launch preflight hold the lock alone. The runner waits, so a read holding the lock
+    delays an accepted repair instead of losing its wake (setup walkthrough interrupted-retry, 2026-09-23).
+    Probes share it and never wait. Launch preflight waits up to READ_WAIT_SECONDS for reads alone and
+    gives way at once to an exclusive holder. It waits under the machine's launch lock, so other launches
+    wait for the rest of a read, which is a moment. Reads therefore never count as a running setup, which once
+    skipped an operator answer's resume wake (question feedback walkthrough, 2026-10-22).
     """
     with storage.runtime_lock(config.project_dir(project) / ".setup.lock") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-        except BlockingIOError:
+        if not _take(handle, wait=wait, probe=probe):
             yield False
             return
         try:
             yield True
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+READ_WAIT_SECONDS = 2
+
+
+def _take(handle, *, wait: bool, probe: bool) -> bool:
+    if probe:
+        mode = fcntl.LOCK_SH | fcntl.LOCK_NB
+    else:
+        mode = fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB)
+    deadline = time.monotonic() + READ_WAIT_SECONDS
+    while True:
+        try:
+            fcntl.flock(handle, mode)
+            return True
+        except BlockingIOError:
+            pass
+        if probe or time.monotonic() >= deadline:
+            return False
+        try:
+            fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False  # a setup run or another preflight holds it alone
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        time.sleep(0.01)
 
 
 def registered(project: str, *, start: bool = False) -> None:
@@ -94,7 +122,7 @@ def request(project: str, action: str, *, actor: str, expected: str | None = Non
         record = read(project)
         operation = record.get("operation") or {}
         if operation.get("state") == "running":
-            with operation_lock(project) as free:
+            with operation_lock(project, probe=True) as free:
                 if free:
                     operation["state"] = "interrupted"
         if operation.get("state") in ("pending", "running"):
@@ -204,7 +232,7 @@ def observe(project: str) -> dict:
     config.project(project)
     record = read(project)
     view = _observe(project, record)
-    with operation_lock(project) as free:
+    with operation_lock(project, probe=True) as free:
         current = read(project)
         # Repair may finish during inspection; refresh its receipts and Git evidence together.
         if current != record or free and (current.get("operation") or {}).get("state") == "running":
