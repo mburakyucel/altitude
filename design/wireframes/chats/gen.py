@@ -48,7 +48,7 @@ def tabbar(on="work", needs=2):
     return '<nav class="tabbar">' + "".join(tab(key) for key in TABS) + '</nav>'
 
 
-def composer(placeholder="Message the chat", model="Opus · High", text=""):
+def composer(placeholder="Message the agent", model="Opus · High", text=""):
     field = f'<div class="draft">{text}</div>' if text else f'<div class="ph2">{placeholder}</div>'
     send = "icb send" if text else "icb send disabled"
     return (f'<div class="composer">{field}<div class="crow"><span class="icb">{IMG}</span><span class="l3pill">{model}{CHEVD}</span>'
@@ -70,7 +70,7 @@ def trow(title, meta, dot="dot", muted=False):
 CHAT_ROWS = {
     "answering": trow(NAME, "Answering · Opus on Claude"),
     "replied": trow("Try the new index on a copy of prod data", "Replied 12 min ago", "dot idle"),
-    "access": trow("Clean up my local Docker images", "Full access · replied 2 h ago", "dot idle"),
+    "access": trow("Tidy my downloads and caches", "<span class=\"amber\">Computer access</span> · replied 2 h ago", "dot idle"),
     "failed": trow("Sketch the beta stage’s config", "Couldn’t answer · 1 h ago", "dot bad"),
     "idle": trow("Flaky pagination test", "You wrote yesterday", "dot idle"),
     "starting": trow("New chat", "Starting · Opus on Claude"),
@@ -78,7 +78,7 @@ CHAT_ROWS = {
 
 
 def chats_section(*rows, archived=0, empty=False):
-    head = f'<div class="sh">Chats{f" <span>{len(rows)}</span>" if rows else ""}<a href="#" class="newchat">{PLUS}New chat</a></div>'
+    head = f'<div class="sh">Agent chats{f" <span>{len(rows)}</span>" if rows else ""}<a href="#" class="newchat">{PLUS}New chat</a></div>'
     if empty:
         return f'<div class="chats">{head}</div>'
     fold = f'<div class="fold">{CHEVR}Archived · {archived}</div>' if archived else ""
@@ -190,7 +190,7 @@ QUEUED = ('<div class="me queued">Also check the PDF export<div class="qline">Wa
 
 # ---- menu, sheets ----
 def menu(access=False):
-    acc = ("Full access is on · <b>Turn off</b>" if access else "Full access…")
+    acc = ("Computer access is on · <b>Turn off</b>" if access else "Computer access…")
     return ('<div class="scrimx"></div><div class="bsheet menu"><div class="grab"></div>'
             '<div class="mi">Rename</div>'
             '<div class="mi">Make a task…</div>'
@@ -200,27 +200,29 @@ def menu(access=False):
 
 
 def access_sheet(state="ask"):
-    btns = {"ask": '<span class="btn primary wide">Turn on full access</span><span class="btn ghost wide">Cancel</span>',
+    btns = {"ask": '<span class="btn primary wide">Turn on computer access</span><span class="btn ghost wide">Cancel</span>',
             "saving": '<span class="btn primary wide" aria-disabled="true"><span class="spin"></span>Turning on…</span><span class="btn ghost wide" aria-disabled="true">Cancel</span>',
-            "refused": '<span class="btn primary wide">Turn on full access</span><span class="btn ghost wide">Cancel</span><p class="rerr">Full access is turned on only from your own browser.</p>'}[state]
-    return ('<h2>Give this chat full access?</h2>'
-            '<p>From your next message, its agent works <b>as you, outside the sandbox</b>: it can read any of your files, '
-            'change anything you could, and use your services and GitHub sign-in. What it reads goes to Claude.</p>'
-            '<p>It still works in its own copy of the code and is told never to merge, approve or answer for you in Altitude, '
-            'or to touch sign-ins and keys. At full access those are rules it follows, not limits Altitude can enforce.</p>'
+            "refused": '<span class="btn primary wide">Turn on computer access</span><span class="btn ghost wide">Cancel</span><p class="rerr">Computer access isn’t available in the container installation.</p>'}[state]
+    return ('<h2>Let this chat work on your computer?</h2>'
+            '<p>From your next message until you turn it off, its agent can <b>read and change the files in your home folder</b> '
+            'and run your programs, as well as its own copy of the code. What it reads goes to Claude, and a web page or file it reads '
+            'could try to steer it.</p>'
+            '<p>Your sign-ins and keys, Altitude’s records, your other projects and other tasks’ copies stay hidden from it, '
+            'and your services stay out of reach.</p>'
             f'<div class="sbtns">{btns}</div>')
 
 
 def task_sheet(state="ask"):
     field = ('<div class="field ta">Make the CSV and PDF exports load comments in one query, with a test for the big workspace.</div>'
              if state != "empty" else '<div class="field ta ph">For example: ship the faster export with a test</div>')
-    btn = {"ask": '<span class="btn primary wide">Ask L3 for the task</span>',
-           "empty": '<span class="btn primary wide" aria-disabled="true" style="opacity:.45">Ask L3 for the task</span>',
-           "saving": '<span class="btn primary wide" aria-disabled="true"><span class="spin"></span>Sending…</span>'}[state]
+    btn = {"ask": '<span class="btn primary wide">Make task</span>',
+           "empty": '<span class="btn primary wide" aria-disabled="true" style="opacity:.45">Make task</span>',
+           "saving": '<span class="btn primary wide" aria-disabled="true"><span class="spin"></span>Making…</span>'}[state]
     return ('<h2>Make a task from this chat</h2>'
-            '<label class="flab">What should the task deliver?</label>' + field +
-            '<p class="muted">L3 writes the brief from this chat and starts the task from this chat’s changes (1 file). '
-            'The chat stays as it is.</p>'
+            '<label class="flab">Title</label><div class="field">Load export comments in one query</div>'
+            '<label class="flab" style="margin-top:12px">What should it deliver?</label>' + field +
+            '<p class="muted">Its changes (1 file) move to the task, with this conversation as its context. '
+            'The chat goes on in a fresh copy of main.</p>'
             f'<div class="sbtns">{btn}<span class="btn ghost wide">Cancel</span></div>')
 
 
@@ -242,13 +244,13 @@ board("PhoneAccess", 390, 844, phone_chat(DONE_INNER, overlay=sheet(access_sheet
 board("PhoneTask", 390, 844, phone_chat(DONE_INNER, overlay=sheet(task_sheet())))
 board("PhoneArchive", 390, 844, phone_chat(DONE_INNER, overlay=sheet(archive_sheet())))
 
-TASK_CARD = ('<div class="tcard"><span class="dot"></span><div style="flex:1;min-width:0"><div class="tt">Load export comments in one query</div>'
-             '<div class="tm">Queued · started from this chat</div></div>' + CHEVR + '</div>')
-ASKED_TASK = sysline("You asked L3 for a task · “Make the CSV and PDF exports load comments…”", "10:31")
-ACCESS_ON = sysline("Full access on · by you", "10:40")
-ASK3 = '<div class="me">Now clear the export cache on this machine and restart the worker service.</div>'
-REPLY3 = ('<div class="l3"><p>Cleared <code>~/.cache/atlas/exports</code> (2.1 GB) and restarted <code>atlas-worker.service</code>; '
-          'it is running and answers on its health check.</p></div>')
+TASK_CARD = ('<div class="tcard"><span class="dot q"></span><div style="flex:1;min-width:0"><div class="tt">Load export comments in one query</div>'
+             '<div class="tm">Queued · waits for a free task slot</div></div>' + CHEVR + '</div>')
+ASKED_TASK = sysline("Task made by you · its changes moved to the task; a fresh copy of main", "10:31")
+ACCESS_ON = sysline("Computer access on · by you", "10:40")
+ASK3 = '<div class="me">Now clear atlas’s export cache and the test exports in my Downloads.</div>'
+REPLY3 = ('<div class="l3"><p>Cleared <code>~/.cache/atlas/exports</code> (2.1 GB) and removed 38 <code>atlas-export-*.csv</code> '
+          'files from <code>~/Downloads</code> (410 MB). Nothing else in Downloads was touched.</p></div>')
 
 # ---- desktop ----
 def desk_header(name=NAME, chips='<span class="chip">Opus on Claude</span>', dot="dot idle", act="more"):
@@ -258,7 +260,7 @@ def desk_header(name=NAME, chips='<span class="chip">Opus on Claude</span>', dot
             f'<div class="chips">{chips}</div></header>')
 
 
-ACCESS_CHIP = '<span class="chip held">Full access</span>'
+ACCESS_CHIP = '<span class="chip held">Computer access</span>'
 
 
 def desktop(header, inner, foot=None):
@@ -293,17 +295,19 @@ FAILED = ('<p class="cstatus bad"><span class="dot bad"></span><span>Couldn’t 
 CUT = f'<p class="cstatus bad"><span class="dot bad"></span><span>The reply was cut off: Altitude stopped while it ran. <a href="#" {U}>Retry</a></span></p>'
 NEWSESSION = sysline("New session on Codex · it was given this conversation so far", "11:05")
 STOPPED = sysline("Stopped by you · the command it was running was cut off", "10:20")
-ARCHIVED_DOCK = '<div class="adock"><span class="muted">Archived · Oct 22</span><span class="btn">Reopen</span></div>'
+ARCHIVED_DOCK = '<div class="adock"><span class="muted">Archived · Oct 22</span><span class="btn">Reopen</span><span class="btn ghost">Delete…</span></div>'
+DELETE = ('<div class="dlg"><h2>Delete this chat?</h2><p>Its conversation and session are removed for good.</p>'
+          '<div class="sbtns"><span class="btn danger">Delete chat</span><span class="btn ghost">Cancel</span></div></div>')
 RENAME = ('<header class="thead"><div class="trow1"><span class="crumb">' + CHEVL.replace('class="i"', 'class="i sm"') + 'Work</span>'
           '<div class="field rename">Why is the export slow?</div><span class="btn primary">Save</span><span class="btn ghost">Cancel</span></div></header>')
 MONITOR = ('<div class="mrow"><span class="dot"></span><div style="flex:1"><div class="tt">Chat · Why is the export slow?</div>'
            '<div class="tm">atlas · Opus on Claude · answering for 2 min</div></div><div class="ctx"><div class="meter"><i style="width:34%"></i></div><small>34% context · 8 s ago</small></div></div>')
 states = [
-    ("1 · Work, no chats", "Chats after Done this week, before Routines; just New chat", work_box(chats_section(empty=True))),
+    ("1 · Work, no chats", "Agent chats after Done this week, before Routines; just New chat", work_box(chats_section(empty=True))),
     ("2 · Work, chats", "newest activity first; the running dot while it answers; Archived folds the rest",
      work_box(chats_section("starting", "answering", "replied", "access", "failed", "idle", archived=4))),
     ("3 · Archived opened", "muted rows, each opens its chat read-only",
-     work_box('<div class="chats"><div class="sh">Chats <span>1</span><a href="#" class="newchat">' + PLUS + 'New chat</a></div>' + CHAT_ROWS["replied"]
+     work_box('<div class="chats"><div class="sh">Agent chats <span>1</span><a href="#" class="newchat">' + PLUS + 'New chat</a></div>' + CHAT_ROWS["replied"]
               + f'<div class="fold">{CHEVD}Archived · 2</div>' + trow("Bisect the slow build", "Archived Oct 22", "dot idle", True)
               + trow("Read the auth flow with me", "Archived Oct 14", "dot idle", True) + '</div>')),
     ("4 · New chat", "New chat opens an empty chat; the first message makes its copy and names it; nothing is kept until you send",
@@ -318,18 +322,18 @@ states = [
     ("11 · A new session", "when the old session can't resume, or you pick another engine", NEWSESSION),
     ("12 · Altitude restarts", "the turn runs in its own job, so the reply arrives once Altitude is back",
      sysline("Altitude restarted · the reply continued", "10:14")),
-    ("13 · Menu", "Rename, Make a task…, Full access…, Archive; on desktop the ⋯ button opens the same list", '<div class="dlg menu-d">' + menu().split('<div class="grab"></div>')[1]),
+    ("13 · Menu", "Rename, Make a task…, Computer access…, Archive; on desktop the ⋯ button opens the same list; on the phone Stop takes ⋯'s place while it answers", '<div class="dlg menu-d">' + menu().split('<div class="grab"></div>')[1]),
     ("14 · Rename", "in place; Enter saves, Escape cancels; 1–80 characters", RENAME),
-    ("15 · Full access", "asks first; on, the chip and a line; off applies to the next message", dlg(access_sheet()) + dlg(access_sheet("saving")) + dlg(access_sheet("refused"))
-     + desk_header(chips='<span class="chip">Opus on Claude</span>' + ACCESS_CHIP) + ACCESS_ON + sysline("Full access off · by you", "11:30")),
-    ("16 · Make a task", "L3 writes the brief and makes the task; its card joins the chat", dlg(task_sheet()) + dlg(task_sheet("empty")) + ASKED_TASK + TASK_CARD),
+    ("15 · Computer access", "asks first; on, the chip and a line until you turn it off; off applies to the next message", dlg(access_sheet()) + dlg(access_sheet("saving")) + dlg(access_sheet("refused"))
+     + desk_header(chips='<span class="chip">Opus on Claude</span>' + ACCESS_CHIP) + ACCESS_ON + sysline("Computer access off · by you", "11:30")),
+    ("16 · Make a task", "Altitude makes the task from your words and the chat's pinned changes; its card joins the chat", dlg(task_sheet()) + dlg(task_sheet("empty")) + ASKED_TASK + TASK_CARD),
     ("17 · Archive", "asks only when the copy has changes no task has; otherwise archives at once", dlg(archive_sheet())),
-    ("18 · Archived chat", "read-only; Reopen makes a fresh copy and continues the same session", REPLY2 + sysline("Archived by you", "Oct 22") + ARCHIVED_DOCK),
+    ("18 · Archived chat", "read-only; Reopen makes a fresh copy and continues the same session; Delete removes it for good", REPLY2 + sysline("Archived by you", "Oct 22") + ARCHIVED_DOCK + DELETE),
     ("19 · Monitor", "a chat's running turn is a session row, like a routine run", MONITOR),
     ("20 · Loading, failed read", "a skeleton in the conversation's shape; one sentence and Retry",
      '<div class="skel"></div><div class="skel short"></div>' + f'<p class="muted">Couldn’t load this chat. <a href="#" {U}>Retry</a></p>'),
 ]
 board("States", 1200, 4800,
-      '<div style="padding:28px 40px 6px"><h1 style="font-size:20px;margin:0">Chats: every state</h1>'
+      '<div style="padding:28px 40px 6px"><h1 style="font-size:20px;margin:0">Agent chats: every state</h1>'
       '<p class="muted" style="max-width:900px">Phone uses the same content full width with 44px controls; sheets are bottom sheets there and centered dialogs on desktop.</p></div>'
       '<div class="sheetgrid">' + "".join(st(*s) for s in states) + '</div>')

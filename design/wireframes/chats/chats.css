@@ -29,3 +29,4 @@
 .skel.short{width:60%}
 .rpage .mbody{justify-content:flex-end;overflow:hidden}.rpage .mcol{margin-top:0}
 .grab+.mi{border-top:0}
+.amber{color:var(--chip-claimed-text)}
