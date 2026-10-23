@@ -146,8 +146,10 @@ under Agent chats in Work and write to one of your coding agents directly, with 
 in its own copy of the project's code, made from main when you send, and its steps fold under one line as it
 answers. A message you send while it answers waits and goes as its next turn; Stop ends the reply. A chat picks
 up the same session every time you come back, and keeps its copy until you archive it from its ⋯ menu, which
-asks first when the copy has changes. Chats use your plan like a short task turn, never appear in Needs you
-and publish nothing.
+asks first when the copy has changes. When an idea is worth shipping, **Make a task…** in the same menu asks for
+a title and what the task should deliver: the task starts from the chat's changes with the conversation as its
+context, its card joins the chat, and the chat goes on in a fresh copy of main. Chats use your plan like a short
+task turn, never appear in Needs you and publish nothing themselves.
 
 ## See the features
 

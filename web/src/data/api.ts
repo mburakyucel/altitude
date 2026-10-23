@@ -1538,8 +1538,10 @@ const AgentChatsSchema = z.object({ chats: z.array(AgentChatRowSchema) });
 /** One line of a chat, in order: a system line, your message (waiting while a turn runs), or a turn with its steps and
  * reply, or why it could not answer. */
 export const AgentChatItemSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("event"), at: z.string(), event: z.enum(["started", "new_session", "restarted", "archived", "reopened"]),
-    engine: z.string().nullish(), model: z.string().nullish() }),
+  z.object({ kind: z.literal("event"), at: z.string(), event: z.enum(["started", "new_session", "restarted", "task", "archived", "reopened"]),
+    engine: z.string().nullish(), model: z.string().nullish(),
+    /** A task made from the chat, and how many changed files moved to it. */
+    slug: z.string().nullish(), moved: z.number().nullish() }),
   z.object({ kind: z.literal("you"), id: z.string(), at: z.string(), text: z.string(), images: z.array(MessageImageSchema),
     waiting: z.boolean() }),
   z.object({ kind: z.literal("turn"), n: z.number(), state: z.enum(["starting", "answering", "done", "stopped", "failed", "cut"]),
@@ -1584,7 +1586,7 @@ export async function deleteAgentChat(project: string, id: string, request: stri
   await post(`/api/chats/${project}/${id}/delete`, { request });
 }
 
-/** Start, steer, rename, archive or reopen a chat; its page and Work's list follow the result. */
+/** Start, steer, rename, make a task from, archive or reopen a chat; its page and Work's list follow the result. */
 export function useAgentChatAction<T>(project: string, request: (input: T) => Promise<AgentChat>) {
   const client = useQueryClient();
   return useMutation<AgentChat, Error, T>({

@@ -415,6 +415,141 @@ class TestCopyAndLife(ChatCase):
         self.assertIn("chat-export-polish", tidy._candidates(self.project))
 
 
+class TestMakeTask(ChatCase):
+    def commit(self, copy: Path, name: str) -> str:
+        (copy / name).write_text(f"{name}\n")
+        git("add", name, cwd=copy)
+        git("-c", "commit.gpgsign=false", "commit", "-q", "-m", name, cwd=copy)
+        return git("rev-parse", "HEAD", cwd=copy).strip()
+
+    def make(self, chat_id: str, request: str | None = None) -> dict:
+        chats.make_task(self.project, chat_id, "Faster export", "Ship the faster export with a test.",
+                        request or self.request())
+        made = [e for e in self.chat(chat_id)["events"] if e["kind"] == "task"]
+        return S.load_task(self.project, made[-1]["slug"])
+
+    def test_the_copys_changes_move_to_the_task_and_the_chat_goes_on_in_a_fresh_copy_of_main(self):
+        from altitude import dispatch
+        chat_id = self.new()
+        self.answered_all(chat_id)
+        copy = chats.worktree(self.project, chat_id)
+        agents = self.commit(copy, "a.txt")
+        (copy / "b.txt").write_text("b\n")  # not committed
+        hook = self.repo / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\ntouch \"$GIT_DIR/../hook-ran\"\n")
+        hook.chmod(0o755)
+        request = self.request()
+        task = self.make(chat_id, request)
+        self.assertFalse((self.repo / "hook-ran").exists())  # the agent's content runs no hook outside its sandbox
+        # The brief is the operator's words; the conversation follows, quoted; the branch starts from the changes.
+        brief = (S.task_dir(self.project, task["slug"]) / "request.md").read_text()
+        self.assertTrue(brief.startswith("Ship the faster export with a test.\n\n## The agent chat it came from"))
+        self.assertIn("> Why is the export slow?", brief)
+        self.assertIn("The agent answered:\n> Answer 1", brief)
+        self.assertIn("Its 2 changed files are already on this task's branch", brief)
+        self.assertEqual((task["title"], task["state"]), ("Faster export", "queued"))
+        branch = f"worktree-{task['slug']}"
+        self.assertEqual(git("rev-parse", branch, cwd=self.repo).strip(), task["start"])
+        self.assertEqual(git("rev-parse", f"{task['start']}^", cwd=self.repo).strip(), agents)
+        self.assertEqual(git("ls-tree", "--name-only", task["start"], cwd=self.repo).split(),
+                         [".gitignore", "README.md", "a.txt", "b.txt"])
+        # The chat goes on, its copy and branch gone until the next turn makes them again from main.
+        self.assertFalse(copy.exists())
+        self.assertNotIn(f"chat-{chat_id}", git("branch", "--list", cwd=self.repo))
+        self.assertIsNone(self.chat(chat_id)["base"])
+        event = next(i for i in chats.view(self.project, chat_id)["items"] if i["kind"] == "event" and i["event"] == "task")
+        self.assertEqual((event["slug"], event["moved"]), (task["slug"], 2))
+        # A repeated press makes nothing more.
+        chats.make_task(self.project, chat_id, "Faster export", "Ship the faster export with a test.", request)
+        self.assertEqual(len([t for t in S.list_tasks(self.project) if t["title"] == "Faster export"]), 1)
+        chats.message(self.project, chat_id, "Now the import.", self.request())
+        self.answered_all(chat_id)
+        self.assertFalse((copy / "a.txt").exists())
+        self.assertEqual(self.launches[-1]["prompt"], chats.FRESH + "Now the import.")
+        # Its dispatch checks the task out on that branch, at the chat's changes.
+        main = git("rev-parse", "origin/main", cwd=self.repo).strip()
+        checkout = dispatch._task_worktree(self.repo, self.project, task["slug"], main)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=checkout).strip(), task["start"])
+        self.assertEqual((checkout / "b.txt").read_text(), "b\n")
+
+    def test_a_start_branch_that_moved_is_refused_and_one_deleted_is_made_again_at_its_start(self):
+        from altitude import dispatch, tasks
+        chat_id = self.new()
+        self.answered_all(chat_id)
+        self.commit(chats.worktree(self.project, chat_id), "a.txt")
+        task = self.make(chat_id)
+        main = git("rev-parse", "origin/main", cwd=self.repo).strip()
+        git("branch", "-f", f"worktree-{task['slug']}", main, cwd=self.repo)
+        with self.assertRaisesRegex(tasks.TransitionError, "exists without its registered worktree"):
+            dispatch._task_worktree(self.repo, self.project, task["slug"], main)
+        # Deleted, by a worker that writes the shared Git store or by hand: never main instead of the chat's changes.
+        git("branch", "-D", f"worktree-{task['slug']}", cwd=self.repo)
+        checkout = dispatch._task_worktree(self.repo, self.project, task["slug"], main)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=checkout).strip(), task["start"])
+        self.assertTrue((checkout / "a.txt").exists())
+
+    def test_a_task_that_could_not_be_saved_leaves_no_branch(self):
+        chat_id = self.new()
+        self.answered_all(chat_id)
+        self.commit(chats.worktree(self.project, chat_id), "a.txt")
+        with mock.patch.object(S, "save_task", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            self.make(chat_id)
+        self.assertNotIn("worktree-faster-export", git("branch", "--list", cwd=self.repo))
+        self.assertTrue(chats.worktree(self.project, chat_id).is_dir())  # the changes stay in the chat
+        self.assertFalse([e for e in self.chat(chat_id)["events"] if e["kind"] == "task"])
+
+    def test_a_long_chat_quotes_its_latest_turns_and_says_how_many_are_left_out(self):
+        self.patch(chats, "BRIEF", 30)
+        chat_id = self.new("First question")
+        self.answered_all(chat_id)
+        chats.message(self.project, chat_id, "Second question", self.request())
+        self.answered_all(chat_id)
+        task = self.make(chat_id)
+        brief = (S.task_dir(self.project, task["slug"]) / "request.md").read_text()
+        self.assertIn("> (1 earlier turn of the chat is left out here.)", brief)
+        self.assertIn("> Second question", brief)
+        self.assertNotIn("> First question", brief)
+
+    def test_a_chat_that_changed_nothing_makes_a_task_from_main_and_keeps_its_copy(self):
+        chat_id = self.new()
+        self.answered_all(chat_id)
+        task = self.make(chat_id)
+        self.assertNotIn("start", task)
+        self.assertNotIn(f"worktree-{task['slug']}", git("branch", "--list", cwd=self.repo))
+        self.assertNotIn("already on this task's branch", (S.task_dir(self.project, task["slug"]) / "request.md").read_text())
+        self.assertTrue(chats.worktree(self.project, chat_id).is_dir())
+        self.assertEqual(self.chat(chat_id)["events"][-1]["moved"], 0)
+
+    def test_it_waits_for_the_reply_and_needs_a_title_and_what_to_deliver(self):
+        chat_id = self.new()
+        chats._start(self.project, chat_id)
+        with self.assertRaisesRegex(chats.Refused, "when the reply has ended"):
+            self.make(chat_id)
+        self.answered_all(chat_id)
+        with self.assertRaisesRegex(chats.Refused, "A title is 1 to 120"):
+            chats.make_task(self.project, chat_id, " ", "Ship it.", self.request())
+        with self.assertRaisesRegex(chats.Refused, "Say what the task should deliver"):
+            chats.make_task(self.project, chat_id, "Export", " ", self.request())
+        chats.archive(self.project, chat_id, self.request())
+        with self.assertRaisesRegex(chats.Refused, "archived"):
+            self.make(chat_id)
+        self.assertEqual(S.list_tasks(self.project), [])
+
+    def test_no_turn_starts_and_archive_waits_while_a_task_is_made(self):
+        chat_id = self.new()
+        self.answered_all(chat_id)
+        chats._making.add((self.project, chat_id))
+        self.addCleanup(chats._making.discard, (self.project, chat_id))
+        chats.message(self.project, chat_id, "And then?", self.request())
+        self.assertIsNone(chats._start(self.project, chat_id))
+        chats.run(self.project, chat_id)
+        self.assertEqual(len(self.launches), 1)
+        with self.assertRaisesRegex(chats.Refused, "when the reply has ended"):
+            chats.archive(self.project, chat_id, self.request())
+        with self.assertRaisesRegex(chats.Refused, "already being made"):
+            self.make(chat_id)
+
+
 class TestLaunch(ChatCase):
     def test_a_turn_runs_the_chat_role_restricted_but_committing_on_its_own_branch(self):
         calls = []
@@ -513,8 +648,8 @@ class TestWhoReads(ChatCase):
         chat_id = self.call("POST", base, {"text": "Hello", "request": "request-0001"}, status=200)["id"]
         routes = [(base, {"text": "x", "request": "request-0101"})] + [
             (f"{base}/{chat_id}/{action}", {"request": f"request-01{n:02d}", "text": "x", "name": "x"})
-            for n, action in enumerate(("message", "remove", "retry", "rename", "model", "stop", "archive", "reopen",
-                                        "delete"), 2)]
+            for n, action in enumerate(("message", "remove", "retry", "rename", "model", "stop", "task", "archive",
+                                        "reopen", "delete"), 2)]
         refusals = (({"Cookie": ""}, chats.FROM_BROWSER), ({access.KEY_HEADER: "anything"}, chats.FROM_BROWSER),
                     ({"Content-Type": "text/plain"}, chats.FROM_BROWSER),
                     ({"Origin": "https://elsewhere.example"}, "Requests must come from Altitude's own page."))
