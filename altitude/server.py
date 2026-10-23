@@ -2195,11 +2195,12 @@ class Handler(BaseHTTPRequestHandler):
             if select.select([self.connection], [], [], 0)[0] and not self.connection.recv(1) or not self._still_admitted():
                 return
             # The first read takes, without waiting, what the page has not drawn: the output it catches up on.
-            data, offset, missed, ended, replay = terminal.read(term, offset, 0 if first else TERMINAL_WAIT_SECONDS, first)
+            data, offset, missed, ended, replay, pieces = terminal.read(
+                term, offset, 0 if first else TERMINAL_WAIT_SECONDS, first)
             first = False
             if data or missed:
                 payload = json.dumps({"offset": offset, "data": base64.b64encode(data).decode(), "missed": missed,
-                                      "replay": replay})
+                                      "replay": replay, "pieces": pieces})
                 self.wfile.write(f"event: output\ndata: {payload}\n\n".encode())
                 quiet = 0.0
             elif not ended:
@@ -2430,7 +2431,7 @@ class Handler(BaseHTTPRequestHandler):
             if action == "open":
                 return self._json(terminal.open_terminal(project, slug))
             if action == "input":
-                terminal.write(project, slug, ident, body.get("data"))
+                terminal.write(project, slug, ident, body.get("data"), body.get("answer"))
             elif action == "command":
                 terminal.hand(project, slug, ident, body.get("text"), body.get("bracketed"))
             elif action == "resize":

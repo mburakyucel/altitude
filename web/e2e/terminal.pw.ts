@@ -7,7 +7,7 @@ import { walkthrough } from "./walkthrough";
  * walked at both widths: off, the Settings switch, running, keys and tab completion, copy and paste, the
  * phone's Enter key at a prompt and a hidden password prompt, a
  * running command's close confirmation, reconnecting with a query asked meanwhile answered, live queries answered and
- * nothing typed as reopening replays them, typing stopped after failed input, a non-zero and a
+ * nothing typed as reopening replays them, two pages answering a query once, typing stopped after failed input, a non-zero and a
  * clean exit, task finished, restart pending, refused, closed elsewhere, Altitude restarted and Close; then the
  * soft keyboard opening and closing, a hidden page shown again, a back-forward cache restore, a reload and a
  * rotation. Only the agent check, the restart notice, the keyboard, the page's visibility and a connection that
@@ -281,6 +281,21 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
   await run(page, "echo still-clean-$((3+4))");
   await expect(output).toContainText("still-clean-7");
   await expect(output.getByText(/command not found|syntax error/)).toHaveCount(0);
+
+  // A second page shows the terminal, as a phone and a desktop do. Both answer a live query: the program reads one answer,
+  // and no second one waits behind it for the prompt. Whichever page typed, the same holds.
+  const other = await page.context().newPage();
+  await other.goto("/projects/atlas/terminal");
+  const otherOutput = other.locator(".terminal-screen .xterm-rows");
+  await expect(otherOutput).toContainText("still-clean-7");
+  const asks = (name: string) => `read -rs -d R -p $'\\e[6n' at; read -rs -t 2 -n 1 extra; echo ${name}-\${#at}-\${#extra}`;
+  await run(page, asks("one"));
+  await expect(output).toContainText(/one-\d+-0/);
+  await run(other, asks("two"));
+  await expect(otherOutput).toContainText(/two-\d+-0/);
+  await expect(output).toContainText(/two-\d+-0/);
+  await walk.state("12c-two-pages-one-answer", { visible: [output.getByText(/two-\d+-0/)], hidden: [output.getByText(/-\d+-1|command not found/)] });
+  await other.close();
 
   // Another tab or device closes it: this page leaves and says so.
   const opened = await (await request.get("/api/terminal/atlas")).json();

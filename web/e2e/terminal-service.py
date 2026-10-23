@@ -46,7 +46,7 @@ def main():
     def quiet_read(term, offset, wait, catching_up=False):
         if getattr(stream_of, "handler", None) in stalled:
             time.sleep(wait)
-            return b"", offset, False, False, 0
+            return b"", offset, False, False, 0, []
         return read(term, offset, wait, catching_up)
 
     terminal.read = quiet_read

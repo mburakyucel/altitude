@@ -4,7 +4,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { StatusMark } from "./StatusMark";
 import { ApiError, terminalSend, terminalStatus, terminalStream } from "../data/api";
-import type { TerminalStatus } from "../data/api";
+import type { TerminalAnswer, TerminalStatus } from "../data/api";
 import { useToast } from "../data/Toast";
 import { CopyButton } from "./CodeBlock";
 
@@ -108,17 +108,21 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
     // xterm answers a query in the output it parses (a colour, the cursor's place, what terminal it is) through onData,
     // as it does keys. Each write's callback runs right after its output is parsed, in the same task, so what xterm
     // emits while output waits to be parsed is held: the callback takes the answers to that output and sends them only
-    // when it is live, never for output only replayed, whose programs have moved on. The operator's keys, pastes,
-    // mouse and focus arrive in tasks of their own, so what is held outside a parse goes on as that task ends.
+    // when it is live, never for output only replayed, whose programs have moved on. Live output is drawn in the pieces
+    // the shell wrote it in, as altd lists them; every page showing the terminal answers each piece, naming its end and
+    // this page, and altd types the first page's answers to it only.
+    // The operator's keys, pastes, mouse and focus arrive in tasks of their own, so what is held outside a parse goes
+    // on as that task ends, as typing.
+    const page = crypto.randomUUID();
     let parsing = 0;
     let held = "";
-    const draw = (data: string | Uint8Array, live = true) => {
+    const draw = (data: string | Uint8Array, end?: number) => {
       parsing += 1;
       term.write(data, () => {
         parsing -= 1;
         const answers = held;
         held = "";
-        if (live && answers) deliver(answers);
+        if (end !== undefined && answers) deliver(answers, { page, end });
       });
     };
     const release = () => {
@@ -151,7 +155,7 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
       source?.close();
       const stream = terminalStream(project, task, id, offset);
       stream.addEventListener("output", (event) => {
-        const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string; missed?: boolean; replay?: number };
+        const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string; missed?: boolean; replay?: number; pieces?: number[] };
         // Output from before the replay buffer's start is gone: the screen starts over, as a fresh attach draws it.
         if (chunk.missed) {
           term.reset();
@@ -160,8 +164,13 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
         // Output already there as the stream opened is replayed, apart from queries a program may still wait on (altd's `replay`).
         const data = bytes(chunk.data);
         const replay = chunk.replay ?? 0;
-        if (replay) draw(data.subarray(0, replay), false);
-        if (replay < data.length) draw(data.subarray(replay));
+        if (replay) draw(data.subarray(0, replay));
+        const begin = chunk.offset - data.length;
+        let at = replay;
+        for (const end of chunk.pieces ?? []) {
+          draw(data.subarray(at, end - begin), end);
+          at = end - begin;
+        }
         offset = chunk.offset;
         output.current.seen = true;
         output.current.at = Date.now();
@@ -209,18 +218,21 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
     document.addEventListener("visibilitychange", resume);
     window.addEventListener("pageshow", resume);
 
-    let pending = "";
+    // Typing and answers wait in order; consecutive typing goes as one.
+    const pending: { data: string; answer?: TerminalAnswer }[] = [];
     let sending = false;
     const flush = async () => {
-      if (done || sending || !pending) return;
+      if (done || sending || !pending.length) return;
       sending = true;
-      const data = inputPiece(pending);
-      pending = pending.slice(data.length);
+      const next = pending[0]!;
+      const data = inputPiece(next.data);
+      next.data = next.data.slice(data.length);
+      if (!next.data) pending.shift();
       try {
-        await terminalSend(project, "input", { task, id, data });
+        await terminalSend(project, "input", { task, id, data, answer: next.answer });
       } catch (error) {
         // An ended (404) or replaced (410) terminal reports its end on the stream; the rest has no shell to reach.
-        pending = "";
+        pending.length = 0;
         if (!done && !(error instanceof ApiError && (error.status === 404 || error.status === 410))) {
           stopped.current = true;
           setInputError(error instanceof ApiError ? error.message : "Altitude could not be reached.");
@@ -229,9 +241,11 @@ export default function TerminalScreen({ project, task, id, keys, font, intro, r
       sending = false;
       void flush();
     };
-    function deliver(data: string) {
+    function deliver(data: string, answer?: TerminalAnswer) {
       if (stopped.current) return;
-      pending += data;
+      const last = pending.at(-1);
+      if (last && !last.answer && !answer) last.data += data;
+      else pending.push({ data, answer });
       void flush();
     }
     send.current = (data: string) => {

@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A terminal open on two devices at once, such as the phone and the desktop, no longer types stray text such as
+  `[18;1R` at its prompt: both screens answer a program's questions about the terminal, and only the first answer
+  reaches the program. Your own typing on either device always arrives.
 - Opening or reconnecting a terminal no longer types stray text such as `11;rgb:1111/1818/2727;1R` at its
   prompt: answers to questions a program asked earlier (`gh` asks the background colour) are no longer sent again
   each time the screen redraws its output. A program waiting for an answer still gets it.

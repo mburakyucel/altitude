@@ -84,7 +84,7 @@ class TerminalCase(AltitudeCase):
         term = terminal._terminals[(self.project, slug)]
         while until.encode() not in seen:
             self.assertLess(time.monotonic(), deadline, seen)
-            data, offset, _, ended, _ = terminal.read(term, offset, .2)
+            data, offset, _, ended, _, _ = terminal.read(term, offset, .2)
             seen += data
             if ended and until.encode() not in seen:
                 self.fail(seen)
@@ -198,11 +198,27 @@ class TestTerminalLifecycle(TerminalCase):
         self.type("head -c 20000 /dev/zero | tr '\\0' x; echo; echo done-$((1+1))\n")
         self.output(until="done-2")
         term = terminal._terminals[(self.project, None)]
-        data, offset, missed, ended, _ = terminal.read(term, 0, 0)
+        data, offset, missed, ended, _, _ = terminal.read(term, 0, 0)
         self.assertTrue(missed)
         self.assertFalse(ended)
         self.assertEqual(len(data), 4096)
         self.assertEqual(terminal.read(term, offset, 0)[:3], (b"", offset, False))
+        # The pieces kept are those the buffer still holds, ending at its end; an offset past the end reads from there.
+        self.assertEqual((term.pieces[-1], min(term.pieces) > term.start), (term.end, True))
+        self.assertEqual(terminal.read(term, offset + 100, 0)[1], offset)
+        self.assertEqual(term.sent, offset)
+        # A page starting over from the middle of a piece is told where the live pieces after its replay end.
+        self.type("read -rs -d R -p $'out\\033[6n' at\n")
+        self.wait(lambda: bytes(term.buffer).endswith(b"out\x1b[6n"))
+        data, end, missed, _, replay, pieces = terminal.read(term, 0, 0)
+        self.assertEqual((missed, data[replay:], pieces[-1]), (True, b"\x1b[6n", end))
+        self.assertGreater(pieces[0], term.start + replay)
+        self.assertGreater(len(data), 4000)  # the whole kept buffer
+        # An answer to output that has left the buffer is too old for a program to still wait on.
+        self.type("R")
+        terminal.write(self.project, None, term.id, "echo drop-$((1+1))\n", {"page": "phone", "end": term.start})
+        self.type("echo kept-$((2+5))\n")
+        self.assertNotIn("drop-2", self.output(until="kept-7", offset=end))
 
     def test_replay_is_all_caught_up_output_but_queries_after_its_text_that_no_page_was_sent(self):
         # A program's queries replayed to a page that opened later were answered as typed input at the shell's prompt.
@@ -217,6 +233,43 @@ class TestTerminalLifecycle(TerminalCase):
         history = b"$ gh repo edit\r\n" + queries
         self.assertEqual(terminal.replayed(history, 100, 100 + len(history)), len(history))
         self.assertEqual(terminal.replayed(history + queries, 100, 100 + len(history)), len(history))
+
+    def test_only_the_first_pages_answer_to_each_piece_of_output_is_typed(self):
+        # Two pages showing one terminal both answered a live query: the program read one answer and the other reached
+        # the shell's prompt as text.
+        self.turn(True)
+        ident = self.open()
+        self.output(until="$ ")
+        term = self.current()
+
+        def answer(page, data, end):
+            terminal.write(self.project, None, ident, data, {"page": page, "end": end})
+
+        self.type("read -rs -d R -p $'\\033[6n' a; read -rs -d R -p $'\\033[6n' b; echo got-${a#*[}-${b#*[}\n")
+        self.wait(lambda: bytes(term.buffer).endswith(b"\x1b[6n"))
+        first = term.end
+        answer("phone", "\x1b[5;9R", first)
+        answer("desktop", "\x1b[7;7R", first)
+        # The phone goes quiet after the first query; the desktop, which read both pieces, answers the second.
+        self.wait(lambda: term.end > first and bytes(term.buffer).endswith(b"\x1b[6n"))
+        second = term.end
+        # A page that fell behind gets both pieces at once, and where each ends, so it answers them as the others do.
+        before = term.pieces[term.pieces.index(first) - 1]
+        offset, missed, ended, replay, pieces = terminal.read(term, before, 0)[1:]
+        self.assertEqual((offset, missed, ended, replay, pieces[-1], first in pieces), (second, False, False, 0, second, True))
+        answer("desktop", "\x1b[3;", second)
+        answer("phone", "\x1b[1;1R", second)  # back in time to answer too
+        answer("desktop", "4R", second)  # the rest of the desktop's answer, in a request of its own
+        # The phone's keys still reach the shell.
+        self.type("echo next-$((1+1))\n")
+        seen = self.output(until="next-2", offset=first)
+        self.assertIn("got-5;9-3;4", seen)
+        self.assertNotIn("7;7", seen)
+        self.assertNotIn("1;1", seen)
+        for wrong in ({"page": "phone"}, {"page": "", "end": 1}, {"page": "a", "end": True}, {"page": "a", "end": 10**9},
+                      {"page": "a", "end": 1, "from": 0}, [0, 1]):
+            with self.subTest(answer=wrong), self.assertRaises(terminal.TerminalError):
+                terminal.write(self.project, None, ident, "\x1b[1;1R", wrong)
 
     def test_input_and_size_are_validated(self):
         self.turn(True)
