@@ -1535,7 +1535,7 @@ def deliver_queued(project: str) -> dict | None:
 def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) -> str:
     directory = config.project_dir(project)
     lines = [f"[altitude] project={project} trigger={trigger} state_file={directory / 'STATE.md'} "
-             f"tasks_dir={directory / 'tasks'} repo={config.project_path(project)}"]
+             f"tasks_dir={directory / 'tasks'} repo={config.project_path(project)} docs={config.DOCS}"]
     lines.append(engines.repository_rule_prompt(config.project_path(project)).rstrip())
     lines.append("[altitude] In replies, briefs and summaries, preserve upstream references as full URLs "
                  "or owner/repo#number. Bare #number refers to the current project; never guess the "
@@ -1905,7 +1905,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
                 home=_engine_home(project, engine), sockets=(verb_socket_path(project),),
                 persona=config.PERSONAS / "l3.md", allowed_tools=engines.L3_ALLOWED_TOOLS, tools=L3_TOOLS,
                 permission_mode="dontAsk", permission_prompts="none", restricted=True,
-                add_dirs=(config.project_path(project), config.ROOT),
+                add_dirs=(config.project_path(project), config.ROOT, config.DOCS),
                 model=choice.get("model"), effort=choice.get("effort"), on_text=on_text, on_start=on_start,
                 **_send_options(project, active_turn, choice["engine"], on_split),
                 **({"images": images} if images else {}),
@@ -1976,7 +1976,8 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, a
                 inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None,
                 slug: str | None = None, images=(), on_result=None) -> dict:
     """One Codex L3 turn from a disposable runtime directory: the same persona and daemon `alt` door as Claude,
-    inside Codex's own sandbox (writes only in that one runtime; the checkout and Altitude home are readable)."""
+    inside Codex's own sandbox (writes only in that one runtime; the checkout, Altitude home and Altitude's docs
+    are readable)."""
     sid = None if fresh else session.get("session_id")
     body = _header(project, trigger, fresh, slug) + handoff + prompt
     if fresh:

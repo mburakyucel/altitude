@@ -625,7 +625,8 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     from ..l3 import verb_socket_path
     broker = verb_socket_path(project).resolve()
     rules = {":root": "read", str(Path(cwd).resolve()): "write",
-             str(config.project_path(project).resolve()): "read", **dict.fromkeys(denied(), "deny")}
+             str(config.project_path(project).resolve()): "read", str(config.DOCS.resolve()): "read",
+             **dict.fromkeys(denied(), "deny")}
     filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
                                    for path, access in rules.items()) + "}"
     # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's
