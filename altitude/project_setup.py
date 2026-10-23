@@ -6,6 +6,7 @@ import fcntl
 import os
 import subprocess
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -45,19 +46,43 @@ def operation_lock(project: str, *, wait: bool = False, probe: bool = False):
 
     The runner and launch preflight hold the lock alone. The runner waits, so a read holding the lock
     delays an accepted repair instead of losing its wake (setup walkthrough interrupted-retry, 2026-09-23).
-    Probes share it and never wait, so concurrent reads never take each other for a running setup and skip
-    an answer's resume wake (question feedback walkthrough, 2026-10-22).
+    Probes share it and never wait. Launch preflight waits up to READ_WAIT_SECONDS for reads alone and
+    gives way at once to an exclusive holder. Reads therefore never count as a running setup, which once
+    skipped an operator answer's resume wake (question feedback walkthrough, 2026-10-22).
     """
     with storage.runtime_lock(config.project_dir(project) / ".setup.lock") as handle:
-        try:
-            fcntl.flock(handle, (fcntl.LOCK_SH | fcntl.LOCK_NB) if probe else fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-        except BlockingIOError:
+        if not _take(handle, wait=wait, probe=probe):
             yield False
             return
         try:
             yield True
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+READ_WAIT_SECONDS = 2
+
+
+def _take(handle, *, wait: bool, probe: bool) -> bool:
+    if probe:
+        mode = fcntl.LOCK_SH | fcntl.LOCK_NB
+    else:
+        mode = fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB)
+    deadline = time.monotonic() + READ_WAIT_SECONDS
+    while True:
+        try:
+            fcntl.flock(handle, mode)
+            return True
+        except BlockingIOError:
+            pass
+        if probe or time.monotonic() >= deadline:
+            return False
+        try:
+            fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False  # a setup run or another preflight holds it alone
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        time.sleep(0.01)
 
 
 def registered(project: str, *, start: bool = False) -> None:

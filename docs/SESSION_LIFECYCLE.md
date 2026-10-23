@@ -316,7 +316,8 @@ capacity. Eligible ready resumes across projects receive available capacity befo
 operator waits, faults without verified recovery, future due times and unavailable engines reserve
 no slot and do not prevent eligible work. A setup operation or launch preflight holding its project's
 setup lock also makes its resume ineligible until it releases the lock, independent of project tick
-order; setup reads and readiness checks share the lock and never make each other's resume wait.
+order. Setup reads and readiness checks share the lock, and launch preflight waits up to two seconds
+for them to finish, so a read never holds a resume for the next check.
 A resumed worker already launched and recorded in its recovery claim still consumes capacity while task binding is recovered. Admission holds apply only before
 a worker launches; task status does not inherit another queued task's project hold. Operator,
 fault and merge holds keep their own recorded state. Shared planned files do not

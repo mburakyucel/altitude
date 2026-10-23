@@ -153,14 +153,38 @@ class ProjectSetup(AltitudeCase):
         task, _ = self.blocked_owner()
         slug = task["slug"]
         T.message(self.project, slug, "burak", "Continue saved session", by="burak")
-        with mock.patch.object(server, "spawn", return_value=True) as spawn:
-            with setup.operation_lock(self.project, probe=True) as reading:
-                self.assertTrue(reading)
+        reading, release = threading.Event(), threading.Event()
+
+        def read():
+            with setup.operation_lock(self.project, probe=True) as free:
+                self.assertTrue(free)
                 self.assertEqual(setup.observe(self.project)["project"], self.project)
-                self.assertTrue(server.request_task_resume(self.project, slug))
-                with setup.operation_lock(self.project) as running:
-                    self.assertFalse(running)
-            spawn.assert_called_once_with(f"resume:{self.project}:{slug}", dispatch.resume, self.project, slug)
+                reading.set()
+                release.wait(10)
+
+        def spawn(_key, fn, *args):
+            # The read ends while the resume's launch preflight waits for it.
+            threading.Timer(0.2, release.set).start()
+            fn(*args)
+            return True
+        reader = threading.Thread(target=read)
+        reader.start()
+        self.assertTrue(reading.wait(10))
+        with mock.patch.object(server, "spawn", side_effect=spawn), mock.patch.object(
+                engines, "resume_l2", return_value={"returncode": 0, "agent": {
+                    "id": "replacement", "sessionId": "saved-session", "input_delivered": True}}) as launch:
+            self.assertTrue(server.request_task_resume(self.project, slug))
+        reader.join(10)
+        launch.assert_called_once()
+        self.assertEqual(S.load_task(self.project, slug)["state"], "running")
+        self.assertEqual(T.pending(self.project, slug), [])
+
+    def test_launch_preflight_gives_way_at_once_to_a_running_setup(self):
+        with setup.operation_lock(self.project) as running:
+            self.assertTrue(running)
+            with mock.patch.object(setup.time, "sleep", side_effect=AssertionError("waited for a setup run")):
+                with self.assertRaises(setup.SetupBusy):
+                    setup.ensure_guards(self.project)
 
     def test_new_question_during_contention_supersedes_resume_without_fault(self):
         task, _ = self.blocked_owner()
