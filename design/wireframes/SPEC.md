@@ -169,6 +169,8 @@ small group; a question link names its durable ID and revision and focuses the o
   shell follows visual viewport height and offset. Editable focus plus substantial viewport
   contraction identifies keyboard use; focus alone, browser toolbar motion and pinch zoom do not.
   Hardware keyboards retain navigation. When viewport evidence is unavailable, navigation remains.
+  Each return to the app measures afresh, and a deep contraction without keyboard use, such as the stale
+  height a phone can report on return from the background, leaves the shell filling the screen.
   Hidden navigation leaves focus and screen-reader traversal; a nonzero Needs you count remains
   reachable from the header. Draft, selection and reading position survive keyboard dismissal.
   Inline text controls (Show, fold summaries, back links) keep their line and

@@ -3052,8 +3052,10 @@ narrower is the phone: one 54px identity/activity header and an 84px tab bar (Ch
 Monitor). The shell follows visual viewport height and offset, hiding bottom navigation during
 detected software keyboard use and restoring it on dismissal, including when focus remains in the
 field. Editable focus alone, toolbar motion and pinch zoom do not hide navigation; without sufficient
-viewport evidence it remains reachable. Browser-managed safe areas remain intact, with any bottom
-inset owned once by the visible dock. The project header opens the switcher sheet, and a task conversation
+viewport evidence it remains reachable. Each return to the app (shown, restored or focused) measures afresh
+without the keyboard detected before, and a deep contraction without keyboard use, such as a stale height
+reported on return from the background, leaves the shell filling the screen. Browser-managed safe areas
+remain intact, with any bottom inset owned once by the visible dock. The project header opens the switcher sheet, and a task conversation
 pushes over its tab with a back control. Those widths are named once, in `web/src/shell/breakpoints.ts`. The
 selected project is browser state under `localStorage`, set by the rail, the switcher, a project
 route, or a Needs you card; the theme (light by default, dark on request) persists the same way. The

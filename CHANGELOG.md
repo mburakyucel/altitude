@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Opening Altitude on a phone from a notification, the app switcher or the lock screen shows the whole screen
+  again: the chat, composer and tab bar no longer sit squeezed into the top part with empty space below until
+  you tap the message box.
 - Agent chats: talk something through with a project's coding agent without making it a task. **New chat** in
   Work starts one in its own copy of the code, made from main; you watch its steps as it works, and it resumes where you
   left off every time, survives Altitude restarting, and takes images, voice and a choice of model. Rename,
