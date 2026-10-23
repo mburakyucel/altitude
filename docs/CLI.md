@@ -1304,16 +1304,38 @@ The prior report and verification remain in `report-superseded` task events. The
 recheck delivery and write a fresh report before completion, including a replay/no-change turn.
 Preserve all previous deliveries, exact remaining scope and holds; chat acknowledgement is not
 completion. Old verifier or archive callbacks cannot finish its
-continuation. Done, archived and rejected tasks cannot be resumed or messaged through this path.
-Archived restoration remains a separate product decision because execution context may be removed.
-The maintenance tick removes a done or rejected task's worktree and merged branch under the
+continuation. Rejected tasks cannot be resumed or messaged; a done task reopens only through the
+operator's message ([reopen a done task](#reopen-a-done-task)). The maintenance tick removes a done or
+rejected task's worktree and merged branch under the
 [retention rule](OPERATIONS.md#worktree-and-source-export-retention).
+
 
 An L2 block that publishes or revises questions queues one coordinator notification with the open group,
 including operator-directed blocks. The operator flag places those decisions in Needs you without waiting for L3; it does not
 hide their context from L3. The notification names open members, revisions and required authority so
 L3 can settle record-backed or scope portions while operator approvals remain open. Re-parking
 unchanged members queues nothing new. Faults keep their existing separate incident/notification path.
+
+### Reopen a done task
+
+The operator's message reopens a done task in place: `alt task message <slug> 'What did the notes leave out?'`
+or the task page's message box. The task folder leaves the archive and the task returns to its owner
+through the same resume path, with its attempt, provider session, conversation, brief, earlier PRs and
+merge hold. Its earlier report is superseded (`report-superseded`), and one conversation row where the
+task finished keeps that completion's digest, which the task page shows as **Done · <digest>** with Show;
+`digest.md` keeps the latest completion's until the task finishes again. A refused send leaves the task
+archived and done.
+
+At the first resume Altitude restores a worktree that retention removed: on the kept branch, or on a
+fresh `worktree-<slug>` from current `origin/main` once the merged branch is gone. The owner's prompt
+starts with what it has and what was rebuilt, and its first reply says so. A provider session the engine
+cannot resume is an ordinary resume fault. The owner answers or does the follow-up and finishes again
+through the verified report or `alt task done`, which writes the new digest. An answer without new work
+finishes with a fresh report of the earlier PRs; a new PR is an ordinary continuation delivery, and
+issues the earlier delivery closed stay closed. Stop pauses a reopened task as it does any task.
+Rejecting it ends it rejected: its earlier completions and PRs stay in its history, and tasks planned
+after it stay waiting. Cleanup and reopening exclude each other under the project lock. L3's messages to
+a done task are refused, and `alt task resume` does not reopen one.
 
 ### Planned tasks
 
@@ -1334,7 +1356,8 @@ backlog; planned tasks hold work already decided by the operator.
 
 A named dependency releases the task automatically only when archived done; an already
 archived-done dependency is satisfied immediately. A merged PR alone, rejection, failure or a
-missing dependency does not satisfy it. L3 or the operator can explicitly release either kind
+missing dependency does not satisfy it. A dependency the operator reopens is not done until it
+finishes again; tasks it already released stay released. L3 or the operator can explicitly release either kind
 with `alt task release <slug> --reason '…'`; the recorded reason also explains an early override
 of a named dependency. Release restores ordinary dispatch eligibility, subject to the existing
 capacity, engine and other launch gates, without releasing merge holds.

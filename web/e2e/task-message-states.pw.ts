@@ -299,7 +299,7 @@ test("rows that arrive while the task is open enter with a short fade; rows alre
   await expect(convo.locator("[data-enter]")).toHaveCount(0);
 });
 
-test("a finished task keeps a failed message's line without Retry, Edit or Copy to draft", async ({ page, request }, info) => {
+test("a refused message keeps its line and Retry after the task finishes, where sending reopens it", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const { slug, convo, field, send, row, control } = await setup(page, request);
   await walk.open(`/projects/atlas/tasks/${slug}`);
@@ -310,8 +310,9 @@ test("a finished task keeps a failed message's line without Retry, Edit or Copy 
   await expect(refused.getByRole("button", { name: "Retry" })).toBeVisible();
   await control("finished");
   await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
-  await walk.state("23-finished-keeps-failure-without-actions", {
-    visible: [refused.getByText("Not sent: the task is busy. Try again in a moment."), convo.getByText("Pagination and steering are verified.")],
-    hidden: [field, refused.getByRole("button", { name: "Retry" }), refused.getByRole("button", { name: "Edit" }), refused.getByRole("button", { name: "Copy to draft" })],
+  await walk.state("23-finished-keeps-failure-and-retry", {
+    visible: [refused.getByText("Not sent: the task is busy. Try again in a moment."), convo.getByText("Pagination and steering are verified."), field,
+      page.getByText("Sending reopens the task with your message.", { exact: true }), refused.getByRole("button", { name: "Retry" })],
+    hidden: [refused.getByRole("button", { name: "Copy to draft" })],
   });
 });
