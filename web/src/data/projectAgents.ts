@@ -59,11 +59,19 @@ export const TELL = [{ value: "found", label: "When it finds something" }, { val
 /** A new routine: weekdays at 07:00, telling you when it finds something, on the default model, stopping after 20 min,
  * only reporting. */
 export const NEW_SCHEDULE = { days: [0, 1, 2, 3, 4], time: "07:00" };
-export const NEW_DEFINITION: ProjectAgentDefinition = { name: "", brief: "", schedules: [NEW_SCHEDULE], events: false, tell: "found", model: null, limit: 20, may: [] };
+export const NEW_DEFINITION: ProjectAgentDefinition = { name: "", brief: "", schedules: [NEW_SCHEDULE], events: false, tell: "found", model: null, limit: 20, may: [], commands: [] };
 
 /** What letting a routine change worktrees and branches allows, under its box on the form (Altitude's tidy rule). */
 export const MAY_LINE = "Sets aside worktrees and deletes branches nothing needs: no uncommitted change, nothing changed in seven days, "
   + "every commit kept on a branch or merged, and nothing open in them. Each has Undo on the run’s page.";
+
+/** A routine's commands: at most ten, each a name the run asks for and at most 2,000 characters of words. */
+export const COMMANDS = 10;
+export const COMMAND_WORDS = 2000;
+export const COMMAND_NAME = /^[a-z0-9-]{1,40}$/;
+
+/** "a", "a and b", "a, b and c". */
+export const joined = (names: string[]) => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
 /** A name cut in the middle to `max` characters, so both its start and its end stay readable. */
 export function middle(name: string, max = 40) {

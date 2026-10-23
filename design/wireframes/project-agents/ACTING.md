@@ -46,7 +46,7 @@ none ticked only reports, as every routine does today.
 | Permission | What the run can ask for | What Altitude checks | If it goes wrong |
 | --- | --- | --- | --- |
 | **Worktrees and branches** | Set aside a worktree under `.claude/worktrees`; delete a local branch | The [tidy rule](#the-tidy-rule) below: nothing is lost, nothing is in use, nothing changed in seven days | **Undo** puts it back exactly, ignored files included, for 14 days |
-| **Commands you list** | Run one of the commands you wrote on its form, word for word, optionally with a short text on its input | It is on the list. The run cannot write or change a command, only choose to run one | It runs as you, with your access, recorded with its output; no undo, so list only commands safe to run whenever the run decides |
+| **Commands you list** | Run one of the commands you wrote on its form, word for word, at most once a run | It is on the list. The run cannot write or change a command or pass it anything, only choose which runs and when | It runs as you, with your access, recorded with its output; no undo, so list only commands safe to run whenever the run decides |
 | **Pull requests** | Propose the change it made in its copy, with a title and why | At most three of its proposals open at a time | Each becomes a task held for your merge: a task owner checks it, it goes through review and the required checks, and nothing merges without you |
 | **Your devices** | One alert to your devices, in plain words, led by the routine's name | At most one a run | You read a notification you did not need |
 
@@ -57,7 +57,7 @@ What each means for you day to day:
   You read "Set aside 6 worktrees and deleted 2 branches" in chat and can put any one back with one press,
   or the whole run's with Undo all. A worktree's disk space comes back when its 14 days end.
 - **Commands you list.** This is how you bring your own: a script that frees memory or clears caches, one
-  that posts a report to your team's channel or sends you a mail, one that prunes container images. You
+  that prunes container images. You
   write the command once; the routine decides when it is needed (memory is high, a cache is large) and
   says why in its report. Because it runs as you, its cost is that you trust the command, not the run.
 - **Pull requests.** A dependency routine finds an upgrade, makes the change in its copy and runs the
@@ -66,8 +66,8 @@ What each means for you day to day:
   check". Each costs a task's time on your plan, not only the run's.
 - **Your devices.** A routine can reach your phone when something is urgent, not only quietly in chat.
 
-Sending a report somewhere else (mail, a chat service) is a command you list, because only you know where
-and with which sign-in; Altitude ships example scripts as it does for events.
+Sending a report somewhere else (mail, a chat service) joins alerts to your devices: Altitude delivers what
+the run wrote itself, never through a command that runs as you ([COMMANDS.md](COMMANDS.md)).
 
 ### What never becomes a permission
 
@@ -79,7 +79,10 @@ and with which sign-in; Altitude ships example scripts as it does for events.
   paragraph says so in increment 1.
 - Merging anything, answering questions, approving, starting or steering tasks, messaging L3, changing
   routines or sending events. A routine never acts in your place in Altitude itself.
-- Main, the project's own checkout, remote branches on GitHub, anything outside the routine's project.
+- These bind the commands you list as they bind a grant's purpose: a command runs as you, Altitude records
+  it without checking what it does, and you list none that does these ([COMMANDS.md](COMMANDS.md)).
+- Main, the project's own checkout, remote branches on GitHub, anything outside the routine's project, as
+  targets of the run's requests. A command you list starts in the project's folder and reads it as it is.
 - Commands the run writes. Only commands you wrote run outside its box.
 
 ## How the fence holds
@@ -99,8 +102,9 @@ and with which sign-in; Altitude ships example scripts as it does for events.
   so a task reopened or a worktree touched meanwhile is kept. Every limit that protects your work is in
   that check, none only in the brief.
 - **Commands run as `alt task run` runs them**: a transient unit outside every sandbox, at most 10 minutes,
-  one at a time, within the machine's command places, recorded with output and exit status. `alt` inside
-  one acts as the run, which has no verbs, so a command cannot reach Altitude or fire a routine.
+  one at a time, within the machine's command places, recorded with output and exit status. A command is
+  you in every way; the run chooses only which one and when, and passes it no text
+  ([COMMANDS.md](COMMANDS.md)).
 - **No loops.** No action sends an event or starts a routine; a pull request reaches your own merge
   scripts only after you merge it.
 

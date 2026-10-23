@@ -174,7 +174,8 @@ export default function ProjectAgentPage() {
             <div className="settings-card agent-what">
               <ClampedBrief text={data.definition.brief} />
               <p className="text-meta text-muted">{zoned(data.definition_line, clock)}</p>
-              {data.may_line ? <p className="text-meta">{data.may_line}</p> : <p className="text-meta text-muted">Only reports</p>}
+              {data.may_lines.length ? data.may_lines.map((line) => <p key={line} className="text-meta">{line}</p>)
+                : <p className="text-meta text-muted">Only reports</p>}
               {data.send ? <SendSection send={data.send} /> : null}
               {retired ? null : <Link className="btn agent-edit" to={`/projects/${name}/agents/${id}/edit`}>Edit</Link>}
             </div>

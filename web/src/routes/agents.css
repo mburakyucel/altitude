@@ -78,6 +78,11 @@
 .agent-change-words > small { font-size: var(--text-meta); line-height: 1.45; }
 .agent-change .btn, .agent-changes-head .btn { flex: none; min-height: 30px; padding-inline: 12px; font-size: var(--text-meta); }
 .shell[data-phone] .agent-change .btn, .shell[data-phone] .agent-changes-head .btn { min-height: 44px; min-width: 64px; }
+/* A command's kept output, folded under its row in monospace. */
+.agent-output > summary { min-height: 30px; font-size: var(--text-meta); }
+.shell[data-phone] .agent-output > summary { min-height: 44px; }
+.agent-output-text { margin: 4px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; border-radius: 6px; background: var(--bubble);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-run-session .live-panel { width: auto; height: min(70vh, 640px); border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; }
 
 /* The form. */
@@ -101,6 +106,21 @@
 .agent-may { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; cursor: pointer; }
 .agent-may > input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
 .shell[data-phone] .agent-may { min-height: 44px; }
+/* Commands: a sub-label inside What it may change; each row's words in monospace, wrapping only at spaces, with Edit and
+   Remove; one draft at a time. Buttons are 44px tall on the phone. */
+.agent-sublabel { display: block; margin-top: 8px; font-size: var(--text-meta); font-weight: 500; color: var(--text-secondary); }
+.agent-command { flex-direction: row; align-items: flex-start; gap: 12px; }
+.agent-command .agent-trigger-words { flex: 1; gap: 2px; }
+.agent-command-words { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-muted); white-space: normal; }
+.agent-word { display: inline-block; max-width: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }
+.agent-command-actions { display: flex; gap: 6px; flex: none; }
+.agent-command-actions .btn { min-height: 30px; padding-inline: 12px; font-size: var(--text-meta); }
+.shell[data-phone] .agent-command { flex-wrap: wrap; }
+.shell[data-phone] .agent-command .agent-trigger-words { flex-basis: 100%; }
+.shell[data-phone] .agent-command-actions .btn { min-height: 44px; min-width: 64px; }
+.agent-command-draft { gap: 6px; }
+.agent-command-draft > .agent-label { margin-top: 4px; }
+.agent-command-field { font-family: var(--font-mono); font-size: 13px; line-height: 1.45; resize: vertical; }
 /* + Add a trigger's menu opens under the button, its items 44px tall on the phone. */
 .menu.agent-trigger-menu { top: calc(100% - 6px); left: 12px; right: auto; }
 .shell[data-phone] .agent-trigger-menu .menu-item { min-height: 44px; }
@@ -123,7 +143,8 @@
 .agent-form-pair { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 24px; }
 .agent-form-pair .agent-label { margin-bottom: 6px; }
 .agent-limit { min-width: 8rem; }
-.agent-form-actions { display: flex; gap: 8px; margin-top: 18px; }
+.agent-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
+.agent-form-why { margin: 0; }
 .agent-form-actions .btn-primary[aria-disabled="true"] { opacity: 0.45; }
 
 /* In chat: the result line's dot sits inline before the agent's name; the offer card sits under L3's reply. */

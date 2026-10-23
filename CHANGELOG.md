@@ -12,6 +12,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   with work in it, a task's own worktree or a task still open; the run's page lists each change with **Undo**, and a set-aside worktree
   stays restorable for 14 days. The new built-in **Tidy worktrees and branches** does this every Monday, and turning
   it on first shows what it may change. A routine without the permission is refused with a plain reason.
+- A routine can run commands you list on its form, each by a name: freeing disk space, pruning images, clearing a
+  cache. The routine decides when; Altitude runs your exact words as you, once a run at most, and the run's page
+  shows each one with its output and **Stop** while it runs. The form says plainly that these run outside the
+  sandbox and that Altitude does not check what they do.
 
 - An answer or message to a waiting task wakes its agent at once, even while an open page is reading the
   project's setup; that read no longer leaves the agent waiting for the next half-minute check.

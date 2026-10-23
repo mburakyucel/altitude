@@ -2412,8 +2412,9 @@ project briefs that Altitude runs on a schedule, on events the operator sends or
 (`altitude/project_agents.py`). A run reports, and one whose routine may change things asks Altitude to make each
 change ([routines that act](#routines-that-act)). A routine is a definition (name, brief of at most 8,000 characters, up to four
 schedules of weekdays and a time, whether it runs when it's sent an event, Tell me, an optional model choice, a
-limit of 10, 20 or 60 minutes per run and `may`, what it may change: empty, or `worktrees` for worktrees and
-branches) with its state: new, on, paused or retired.
+limit of 10, 20 or 60 minutes per run, `may`, what it may change: empty, or `worktrees` for worktrees and
+branches, and `commands`, up to ten commands of the operator's it may ask Altitude to run) with its state: new, on,
+paused or retired.
 `<project>/project-agents.json` holds the project's routines, every saved definition as a numbered version, every state
 change with who made it and its source, the runs, L3's offers, the presses' receipts and the weekly budget. A run's
 prompt, report and worker job live in `<project>/project-agents/<agent>/<n>/`. A run is never a task: nothing that
@@ -2558,6 +2559,35 @@ undone; Altitude's own sentence of the done changes ("Set aside 2 worktrees and 
 run's summary in chat, where a run that changed something speaks unless Tell me is never, in Recent runs and in the
 next run's prompt. The built-in Tidy worktrees and branches (`templates/project-agents/tidy.md`) runs Mondays at
 09:00 and is turned on through a sheet that states what it may change.
+
+**Commands you list** ([proposal](../design/wireframes/project-agents/COMMANDS.md)). A routine's `commands` are up
+to ten `{name, words}`: a name of lowercase letters, digits and dashes of at most 40 characters, and words of at most
+2,000 characters. `alt act run NAME` asks for one by name through the run's door; a target that is not a command
+name is refused without recording its text. Under the project lock altd records the request as a change of kind
+`command` and refuses it ("Not allowed: …") unless the routine is not retired, has a command of that name with the
+same words both now and in the version the run ran with, no other of the run's commands is running and the run has
+requests left (the same 20). Otherwise it claims the job, saves the
+row as running and, outside the lock, runs the words through `engines.machine_command`, the runner of `alt task
+run`: the operator's login shell (`bash -lc`) in the project's folder as its own service-manager job, with
+Altitude's clean environment, no run identity and empty input, ending after `config.MACHINE_COMMAND_TIMEOUT`. A
+command runs as the operator, outside every sandbox, so the list is the fence: no text from the run reaches it, and
+Altitude does not judge what it does; the form says so beside the list, and that the run's model reads each
+command's words and output. The answer names how it ended (done, failed, timed_out, stopped, or not_started when the
+job never opened its log, the one outcome after which the run may ask for it again) with the last 4,000 characters
+of its output; the run page shows the kept log (`machine_output`). Exit 0 is done even when a stop arrived as it
+ended. A repeated request id, or another request for a command that already started in this run, runs nothing and
+answers with that command's result, waiting while it runs, so a run whose own tool call timed out asks again for
+it. A run's box cannot write its run folder, where the job's log and exit file live.
+
+A watcher stops the job (`machine_stop`) and records who in `stopping`, then `by`: `you` when the operator presses
+Stop on its row (`POST /api/agents` action `stop_command`, `{agent, n, change}`, refused to L3), `run` when the run
+ends or is stopping, and `changed` when the routine is retired or saved without that command or with other words.
+After a restart the tick follows each running row whose job it does not already follow and
+settles it from the job's exit file. Each request is a `routine-action` event with `what` `command`; command rows
+have no Undo. Altitude's chat sentence names the commands that started ("Ran prune-images; clear-cache failed.").
+Only the operator's form and CLI set commands: L3's offer for a routine keeps the commands it has and a new offer
+has none, and L3 cannot turn on, resume or run a routine that may change things or has commands. A command's run
+counts as the run's own time and takes no machine command slot, since the run already holds one.
 
 ### Suggested tasks
 

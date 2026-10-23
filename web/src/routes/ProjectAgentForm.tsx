@@ -4,7 +4,7 @@ import { useBlocker, useNavigate, useParams, useSearchParams } from "react-route
 import { useQueryClient } from "@tanstack/react-query";
 import { pressId, sendProjectAgent, useProjectAgent, useProjectAgents } from "../data/api";
 import type { AgentClock, ProjectAgentDefinition } from "../data/api";
-import { DAY_NAMES, LIMITS, MAY_LINE, NEW_DEFINITION, NEW_SCHEDULE, TELL, refusal } from "../data/projectAgents";
+import { COMMANDS, COMMAND_NAME, COMMAND_WORDS, DAY_NAMES, LIMITS, MAY_LINE, NEW_DEFINITION, NEW_SCHEDULE, TELL, joined, refusal } from "../data/projectAgents";
 import { AgentFrame } from "../components/ProjectAgentParts";
 import { ChoiceButton } from "../components/ModelMenu";
 import { BusyLabel, StatusMark } from "../components/StatusMark";
@@ -98,6 +98,100 @@ function AddTrigger({ events, onSchedule, onEvent }: { events: boolean; onSchedu
   </div>;
 }
 
+type Command = ProjectAgentDefinition["commands"][number];
+/** A command being added (`at` null) or edited in place, and its errors once Done was pressed. */
+type CommandDraft = { at: number | null; name: string; words: string; checked: boolean };
+
+/** A command's words wrap only at spaces; a word longer than the line breaks anywhere. */
+function Words({ text }: { text: string }) {
+  return <code className="agent-command-words">{text.split(" ").map((word, i) => <span key={i}>{i ? " " : null}<span className="agent-word">{word}</span></span>)}</code>;
+}
+
+function commandErrors(draft: CommandDraft, commands: Command[]) {
+  const name = draft.name.trim();
+  return {
+    name: !name ? "Give it a name." : !COMMAND_NAME.test(name) ? "Use lowercase letters, digits and dashes."
+      : commands.some((c, i) => c.name === name && i !== draft.at) ? "Another command has that name." : null,
+    words: !draft.words.trim() ? "Write the command." : draft.words.length > COMMAND_WORDS ? "Keep it under 2,000 characters." : null,
+  };
+}
+
+/** One command's draft: its name and words, checked on Done, which keeps it in the list until Save. */
+function CommandEditor({ project, draft, commands, onChange, onDone, onCancel }: {
+  project: string; draft: CommandDraft; commands: Command[]; onChange: (draft: CommandDraft) => void; onDone: () => void; onCancel: () => void;
+}) {
+  const errors = draft.checked ? commandErrors(draft, commands) : { name: null, words: null };
+  const onEnter = (event: ReactKeyboardEvent) => { if (event.key === "Enter") { event.preventDefault(); onDone(); } };
+  return <div className="agent-trigger agent-command-draft" role="group" aria-label={draft.at === null ? "New command" : `Edit ${commands[draft.at]!.name}`}>
+    <label className="agent-label" htmlFor="agent-command-name">Name</label>
+    <input id="agent-command-name" className="field" value={draft.name} maxLength={40} autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus
+      placeholder="For example: prune-images" aria-invalid={errors.name ? true : undefined} aria-describedby="agent-command-name-note" onKeyDown={onEnter}
+      onChange={(event) => onChange({ ...draft, name: event.target.value })} />
+    <p id="agent-command-name-note" className={`text-meta ${errors.name ? "text-danger" : "text-muted"}`}>
+      {errors.name ?? "Lowercase letters, digits and dashes; the routine asks for it by this name."}</p>
+    <label className="agent-label" htmlFor="agent-command-words">Command</label>
+    <textarea id="agent-command-words" className="field agent-command-field" rows={3} value={draft.words} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+      placeholder="For example: podman image prune --all --force" aria-invalid={errors.words ? true : undefined} aria-describedby="agent-command-words-note"
+      onChange={(event) => onChange({ ...draft, words: event.target.value })} />
+    <p id="agent-command-words-note" className={`text-meta ${errors.words ? "text-danger" : "text-muted"}`}>
+      {errors.words ?? `Starts in ${project}’s folder, with its files as they are then. Up to 10 minutes, once a run at most.`}</p>
+    <div className="agent-command-actions">
+      <button type="button" className="btn" onClick={onDone}>Done</button>
+      <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+    </div>
+  </div>;
+}
+
+/**
+ * Commands, inside What it may change (COMMANDS.md): each row with Edit and Remove, one draft at a time with Done and
+ * Cancel, and the note that they run as the operator whenever the routine decides. Nothing is saved until Save.
+ */
+function Commands({ project, commands, draft, onDraft, onChange }: {
+  project: string; commands: Command[]; draft: CommandDraft | null; onDraft: (draft: CommandDraft | null) => void; onChange: (commands: Command[]) => void;
+}) {
+  const list = useRef<HTMLDivElement>(null);
+  // Closing a draft returns focus to the row it saved or edited, and Remove or cancelling a new one to Add a command.
+  const returnTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (draft || !returnTo.current) return;
+    const target = [...list.current?.querySelectorAll<HTMLElement>("[data-return]") ?? []].find((el) => el.dataset.return === returnTo.current);
+    (target ?? list.current?.querySelector<HTMLElement>("[data-add]"))?.focus();
+    returnTo.current = null;
+  }, [draft, commands]);
+  const close = (name: string | null) => { returnTo.current = name ?? "add"; onDraft(null); };
+  const done = () => {
+    if (!draft) return;
+    const errors = commandErrors(draft, commands);
+    if (errors.name || errors.words) return onDraft({ ...draft, checked: true });
+    const command = { name: draft.name.trim(), words: draft.words.trim() };
+    onChange(draft.at === null ? [...commands, command] : commands.map((c, i) => i === draft.at ? command : c));
+    close(command.name);
+  };
+  const editor = draft ? <CommandEditor project={project} draft={draft} commands={commands} onChange={onDraft} onDone={done}
+    onCancel={() => close(draft.at === null ? null : commands[draft.at]!.name)} /> : null;
+  return <>
+    <span className="agent-sublabel" id="agent-commands">Commands</span>
+    <div className="agent-triggers agent-commands" role="group" aria-labelledby="agent-commands" ref={list}>
+      {commands.map((command, i) => draft?.at === i ? <div key={i}>{editor}</div> : <div key={i} className="agent-trigger agent-command">
+        <span className="agent-trigger-words"><strong>{command.name}</strong><Words text={command.words} /></span>
+        {draft ? null : <span className="agent-command-actions">
+          <button type="button" className="btn" aria-label={`Edit ${command.name}`} data-return={command.name}
+            onClick={() => onDraft({ at: i, name: command.name, words: command.words, checked: false })}>Edit</button>
+          <button type="button" className="btn" aria-label={`Remove ${command.name}`}
+            onClick={() => { returnTo.current = "add"; onChange(commands.filter((_, at) => at !== i)); }}>Remove</button>
+        </span>}
+      </div>)}
+      {draft?.at === null ? editor : null}
+      {draft || commands.length >= COMMANDS ? null : <div className="agent-trigger agent-trigger-add">
+        <button type="button" className="btn" data-add onClick={() => onDraft({ at: null, name: "", words: "", checked: false })}>Add a command</button>
+      </div>}
+    </div>
+    {!draft && commands.length >= COMMANDS ? <p className="text-meta text-muted">Ten commands at most.</p> : null}
+    {commands.length ? <p className="text-meta text-muted">These run as you, outside Altitude’s sandbox, whenever the routine decides.
+      Altitude doesn’t check what they do, and its model reads them and what they print.</p> : null}
+  </>;
+}
+
 /** The discard question: Keep editing is first and focused. */
 function DiscardDialog({ detail, onKeep, onDiscard }: { detail: string; onKeep: () => void; onDiscard: () => void }) {
   return <Overlay label="Discard your changes?" side="center" onClose={onKeep}>
@@ -112,9 +206,9 @@ function DiscardDialog({ detail, onKeep, onDiscard }: { detail: string; onKeep: 
   </Overlay>;
 }
 
-function Form({ project, id, read, latest, start, offer, clock }: {
+function Form({ project, id, read, latest, start, offer, clock, running }: {
   project: string; id?: string; read: { version?: number; definition: ProjectAgentDefinition }; latest?: number; start: ProjectAgentDefinition;
-  offer: string | null; clock?: AgentClock;
+  offer: string | null; clock?: AgentClock; running: string[];
 }) {
   // The version and definition the form opened on: a save names that version, so a change from another window is refused.
   const [{ version, definition: initial }] = useState(read);
@@ -122,6 +216,8 @@ function Form({ project, id, read, latest, start, offer, clock }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [incomplete, setIncomplete] = useState(false);
+  const [command, setCommand] = useState<CommandDraft | null>(null);
+  const [unfinished, setUnfinished] = useState(false);
   const form = useRef<HTMLFormElement>(null);
   // Adding the event trigger moves focus to its row's Remove.
   const eventRemove = useRef<HTMLButtonElement>(null);
@@ -142,7 +238,14 @@ function Form({ project, id, read, latest, start, offer, clock }: {
   const set = (change: Partial<ProjectAgentDefinition>) => { setDraft({ ...draft, ...change }); press.current = null; };
   const missing = !draft.name.trim() || !draft.brief.trim();
   const noDay = draft.schedules.findIndex((schedule) => !schedule.days.length);
+  // Saving without a running command, or with other words for it, stops it.
+  const stops = running.filter((name) => draft.commands.find((c) => c.name === name)?.words !== initial.commands.find((c) => c.name === name)?.words);
   const save = async () => {
+    if (command) {
+      setUnfinished(true);
+      form.current?.querySelector<HTMLElement>("#agent-command-name")?.focus();
+      return;
+    }
     if (missing) {
       setIncomplete(true);
       form.current?.querySelector<HTMLElement>(draft.name.trim() ? "#agent-brief" : "#agent-name")?.focus();
@@ -189,7 +292,9 @@ function Form({ project, id, read, latest, start, offer, clock }: {
         <span className="agent-trigger-words"><strong id="agent-may-name">Worktrees and branches</strong>
           <small id="agent-may-line" className="text-muted">{MAY_LINE}</small></span>
       </label>
-      {draft.may.length ? null : <p className="text-meta text-muted">Unticked, it only reports.</p>}
+      <Commands project={project} commands={draft.commands} draft={command} onDraft={(next) => { setCommand(next); if (!next) setUnfinished(false); }}
+        onChange={(commands) => set({ commands })} />
+      {draft.may.length || draft.commands.length || command ? null : <p className="text-meta text-muted">Nothing ticked or listed: it only reports.</p>}
     </fieldset>
     <fieldset className="agent-fieldset">
       <legend className="agent-label">Runs when</legend>
@@ -226,6 +331,8 @@ function Form({ project, id, read, latest, start, offer, clock }: {
         <BusyLabel busy={saving} label={primary} working="Saving…" />
       </button>
       <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => navigate(back)}>Cancel</button>
+      {command && unfinished ? <p className="text-meta text-danger agent-form-why">Finish or cancel the command first.</p>
+        : stops.length ? <p className="text-meta text-muted agent-form-why">Saving stops {joined(stops)}, which {stops.length === 1 ? "is" : "are"} running.</p> : null}
     </div>
     {id ? null : <p className="text-meta text-muted">It starts off: try it with Run now, then turn it on.</p>}
     {error ? <p role="alert" className="text-meta text-danger">{refusal("Not saved", error)}
@@ -253,6 +360,6 @@ export default function ProjectAgentForm() {
       <button type="button" className="btn agents-retry" onClick={() => void failed.refetch()}>Retry</button></div>
       : !ready || !initial ? <div className="settings-card"><StatusMark label="Loading this routine…" /></div>
         : <Form key={`${id ?? "new"}:${offerId ?? ""}`} project={name} id={id} read={{ version: agent.data?.version, definition: initial }} latest={agent.data?.version}
-          start={offer?.definition ?? initial} offer={offer ? offer.id : null} clock={agents.data?.clock} />}
+          start={offer?.definition ?? initial} offer={offer ? offer.id : null} clock={agents.data?.clock} running={agent.data?.running_commands ?? []} />}
   </AgentFrame>;
 }
