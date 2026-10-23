@@ -249,7 +249,8 @@ header chips, and the Monitor API expose the observation; old records remain rea
 `GET /api/task/<project>/<slug>` returns `engine_model` and `engine_reasoning_effort`;
 a missing task returns HTTP 404 without a failure traceback. Archival only renames the live task
 folder into the archive, so a status read that misses the live record reads the archived one; polls
-and action responses crossing the move return the archived task and state.
+and action responses crossing the move return the archived task and state; an event read reads
+the archived log the same way, so the overview walking every task survives an archive mid-walk.
 Task status, documents and events share the archive lock while their snapshot is read.
 `GET /api/monitor` and `alt monitor` list only sessions Altitude runs: each project's L3 and its
 running, blocked or reported L2 tasks. Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
