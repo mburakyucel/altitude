@@ -281,6 +281,8 @@ only one project runs is tagged `@phone-only` or `@desktop-only`, which the othe
 The README service seeds its example records without flushing each to disk, so two services
 starting together on a loaded runner stay inside that start limit.
 The Weekly improvement review walkthrough releases a held press only after it reaches the route.
+The transfer listening walkthrough holds a model switch's receipt after its requeue, so the page reads that
+moment before the receipt every run, then releases it.
 The image stream/admission walkthrough holds a real admission receipt until a history poll shows
 its image, then holds later reads while verifying that receipt cannot recreate a queued copy.
 The image selection/viewer/reload journey holds completion after the active turn clears and before

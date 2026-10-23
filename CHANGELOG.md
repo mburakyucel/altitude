@@ -41,6 +41,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   still read and changed with `alt agent`.
 - The README's feature list describes routines and the terminal steps that wait for your Enter, and the
   walkthrough shows a routine's suggested tasks.
+- Voice input you are recording on a task keeps going when its model switch completes: the page no longer
+  briefly drops the message box, and the recording with it, at the moment the task is queued for its new engine.
 
 ## v0.12.0 — 2026-10-22
 

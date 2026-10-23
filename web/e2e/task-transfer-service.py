@@ -21,6 +21,12 @@ def main():
         return fake.stop_l2_worker(engine, worker_id, job_root=job_root)
 
     engines.stop_l2_worker = stop_worker
+    # The daemon saves the requeued task before its switch request's receipt; `hold_receipt` keeps a page's read
+    # in that moment until the next control call, which records the receipt as the daemon's next tick does.
+    held_receipts = set()
+    finish = dispatch._finish_task_operation
+    dispatch._finish_task_operation = lambda project, slug, *args: (
+        {"held": True} if slug in held_receipts else finish(project, slug, *args))
     engines.installation = lambda engine: {"available": engine not in unavailable,
                                            "why": "fictional engine unavailable" if engine in unavailable else "fictional installed engine"}
     engines.worker_termination = lambda task, **options: None if task["slug"] in unknown_termination else fake.worker_termination(task, **options)
@@ -78,6 +84,7 @@ def main():
                 if slug is None:
                     return self._json({"error": "Unknown fixture task"}, 400)
                 task = S.load_task(project, slug)
+                (held_receipts.add if body.get("hold_receipt") else held_receipts.discard)(slug)
                 if "unknown_termination" in body:
                     if body["unknown_termination"]:
                         unknown_termination.add(slug)
