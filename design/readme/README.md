@@ -22,14 +22,16 @@ on the desktop run only, answers the same decision on a phone page while a deskt
 resume. Page errors and horizontal overflow fail the journey.
 
 The feature pictures come from `web/e2e/readme-features.pw.ts` against `web/e2e/readme-features-service.py`, which
-seeds the same Atlas example and adds eight states: the coordinator's latest reply offering a task, which the
+seeds the same Atlas example and adds nine states: the coordinator's latest reply offering a task, which the
 journey's press creates through the coordinator's real verbs with a scripted engine; the synonyms editor owner's
 design question with its document and a proposal review by the other engine (two fixed findings and one
 alternative); the typo tolerance owner's open question beside its live session; the per-tenant limits pull request
 held for the operator after an independent review with two fixed findings; a deploy command the billing owner hands
 to the task's terminal after its signing work (a real shell with no profile and a fixed prompt); the sign-on task
 paused by a machine problem until the coordinator repairs and resumes it; improvement suggestions in an
-Altitude project; and Harbor's routines, whose built-in dependency check suggested two tasks the coordinator kept. The journey also runs at both widths in every `make check`.
+Altitude project; Harbor's routines, whose built-in dependency check suggested two tasks the coordinator kept; and
+the synonyms owner's screens of its editor, which the journey draws and the owner shows, open in the image viewer.
+The journey also runs at both widths in every `make check`.
 
 ## Reproduce
 
@@ -42,7 +44,7 @@ alt task validate -- sh -c 'ALTITUDE_README_IMAGES="$VALIDATION_RESULTS/images" 
 The run's `images/` folder in the task's validation evidence receives `project`, `task` and `decision`
 captures for each viewport, plus phone `work` and `session` captures, at 1440×900 and 390×844 with 2× pixel
 density, the opening loop's `opening-*` frames, the feature states (`create`, `proposal`, `task-view`, `review`,
-`terminal`, `heal`, `improve` and `routines` captures), and `phone-walkthrough.webm`, a silent recording of the phone journey
+`terminal`, `heal`, `improve`, `routines` and `viewer` captures), and `phone-walkthrough.webm`, a silent recording of the phone journey
 that pauses briefly at each capture. No speech recognition or coding agent runs.
 
 ## Opening loop

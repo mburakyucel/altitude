@@ -39,11 +39,12 @@ test("an L2 reply's captures open in their own tab, an unavailable capture retri
   const back = viewer.getByRole("link", { name: "← Back to conversation", exact: true });
   const send = viewer.getByRole("figure", { name: "Desktop send", exact: true });
   const reconnect = viewer.getByRole("figure", { name: "Desktop reconnect", exact: true });
-  const retry = reconnect.getByRole("button", { name: "Retry capture", exact: true });
+  const failed = reconnect.getByRole("group", { name: "Desktop reconnect unavailable", exact: true });
+  const retry = failed.getByRole("button", { name: "Retry", exact: true });
   await view.state("02-ready-and-unavailable-captures", {
     visible: [heading, back, send.getByRole("img", { name: "Desktop send", exact: true }), send.getByText(/^\d+ KiB · 1\.8 s · 3 frames$/),
-      reconnect.getByRole("alert").filter({ hasText: "Capture unavailable." }), retry],
-    hidden: [viewer.getByText("Loading captures…", { exact: true }), send.getByText("Loading capture…", { exact: true }), reconnect.getByRole("img")],
+      failed.getByText("Capture unavailable", { exact: true }), retry],
+    hidden: [viewer.getByText("Loading captures…", { exact: true }), send.locator("img[data-loading]"), reconnect.getByRole("img")],
   });
   // The GIF decodes and plays at its recorded size rather than being stretched to the page.
   expect(await send.getByRole("img").evaluate((image: HTMLImageElement) => [image.naturalWidth, image.naturalHeight, image.clientWidth])).toEqual([120, 80, 120]);
@@ -55,13 +56,22 @@ test("an L2 reply's captures open in their own tab, an unavailable capture retri
   await retry.click();
   try {
     await view.state("03-retrying-capture", {
-      visible: [reconnect.getByText("Loading capture…", { exact: true })], hidden: [retry, reconnect.getByRole("alert")],
+      visible: [reconnect.locator("img[data-loading]")], hidden: [failed],
     });
   } finally { release(); }
   await view.state("04-capture-recovered", {
     visible: [reconnect.getByRole("img", { name: "Desktop reconnect", exact: true }), reconnect.getByText(/^\d+ KiB · 1\.2 s · 2 frames$/)],
-    hidden: [retry, reconnect.getByText("Loading capture…", { exact: true })],
+    hidden: [failed, reconnect.locator("img[data-loading]")],
   });
+  // A capture opens in the image viewer with the run's other captures; Escape returns to it.
+  const opener = reconnect.getByRole("button", { name: "Open capture Desktop reconnect", exact: true });
+  const dialog = viewer.getByRole("dialog", { name: "Image Desktop reconnect", exact: true });
+  await view.state("04b-capture-in-viewer", { action: () => opener.click(),
+    visible: [dialog.getByText("Validation run 4", { exact: true }), dialog.getByText("1 / 2", { exact: true }), dialog.getByRole("img", { name: "Desktop reconnect" })],
+    hidden: [dialog.getByRole("button", { name: "Copy image" })] });
+  await viewer.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(opener).toBeFocused();
 
   await back.click();
   await expect(viewer).toHaveURL(new RegExp(`${taskPath}([?#]|$)`));

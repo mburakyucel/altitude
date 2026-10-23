@@ -2,17 +2,18 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
+import { viewer } from "./viewer";
 
 // The README's feature illustrations (design/readme/README.md#feature-pictures): a task created from the
 // coordinator's offer, a design proposal with its review, a task page with its question and live session, a pull
 // request waiting for the operator's review, a command typed into the task's terminal, a fault the coordinator
-// repairs, improvement suggestions, and a project's routines with the tasks one suggested. With ALTITUDE_README_IMAGES naming a folder, each state is written there as
-// `<feature>-<viewport>.png` at 2×.
+// repairs, improvement suggestions, a project's routines with the tasks one suggested, and a shown picture in the image
+// viewer. With ALTITUDE_README_IMAGES naming a folder, each state is written there as `<feature>-<viewport>.png` at 2×.
 const images = process.env.ALTITUDE_README_IMAGES ? resolve(process.env.ALTITUDE_README_IMAGES) : undefined;
 test.use({ serviceScript: "readme-features-service.py", deviceScaleFactor: 2, locale: "en-US", timezoneId: "UTC", colorScheme: "light" });
 test.setTimeout(90_000);
 
-test("a created task, a proposal review, the task view, review before merge, a repaired fault, improvement suggestions and routines", async ({ page, request }, info) => {
+test("a created task, a proposal review, the task view, review before merge, a repaired fault, improvement suggestions, routines and a shown picture", async ({ page, request }, info) => {
   const phone = info.project.name === "phone";
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -148,5 +149,50 @@ test("a created task, a proposal review, the task view, review before merge, a r
   await expect(routine.getByRole("button", { name: "Make a task" })).toHaveCount(2);
   await routine.evaluate((card) => card.scrollIntoView({ block: "start" }));
   await capture("routines-suggestion");
+
+  // The synonyms owner shows the editor's screens; the one for this width opens in the viewer, the other a swipe away.
+  const drawing = await page.context().newPage();
+  const pictures: Record<string, string> = {};
+  for (const [name, width, height] of [["synonyms-editor-phone.png", 390, 780], ["synonyms-editor-desktop.png", 1280, 660]] as const) {
+    await drawing.setViewportSize({ width, height });
+    await drawing.setContent(editor(width < 600));
+    pictures[name] = (await drawing.screenshot()).toString("base64");
+  }
+  await drawing.close();
+  expect((await request.put("/fixture/pictures", { data: pictures })).ok()).toBe(true);
+  await page.goto(phone ? "/projects/atlas?tab=work" : "/projects/atlas");
+  await page.getByRole("region", { name: "Work", exact: true })
+    .getByRole("link", { name: /Add a synonyms editor for search admins/ }).first().click();
+  const shown = conversation.getByLabel("Shown images", { exact: true });
+  await shown.getByRole("button", { name: `Open image synonyms-editor-${phone ? "phone" : "desktop"}.png`, exact: true }).click();
+  const picture = viewer(page).picture;
+  await expect(picture).toHaveJSProperty("complete", true);
+  await expect(viewer(page).count(phone ? "1 / 2" : "2 / 2")).toBeVisible();
+  await capture("viewer");
   expect(errors).toEqual([]);
 });
+
+/** The synonyms editor's draft, drawn for the owner's screenshots: one tenant's synonym rows and Publish. */
+function editor(phone: boolean) {
+  const rows = [["sofa", "couch, settee"], ["tv", "television"], ["laptop", "notebook"], ["fridge", "refrigerator"], ["sneakers", "trainers"],
+    ["hoodie", "sweatshirt"], ["jumper", "sweater, pullover"], ["duvet", "comforter"], ["tap", "faucet"], ["torch", "flashlight"]]
+    .map(([term, same]) => `<tr><td>${term}</td><td>${same}</td></tr>`).join("");
+  return `<!doctype html><meta name="viewport" content="width=device-width"><style>
+    body { margin: 0; font: 15px/1.4 system-ui, sans-serif; color: #1d2433; background: #f5f6f8; }
+    header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; background: #fff; border-bottom: 1px solid #dfe2e8; }
+    h1 { margin: 0; font-size: 18px; flex: 1; }
+    .draft { padding: 2px 10px; border-radius: 99px; background: #fff3d6; color: #8a5a00; font-size: 13px; }
+    main { display: grid; gap: 16px; padding: 20px; grid-template-columns: ${phone ? "1fr" : "1.4fr 1fr"}; }
+    section { background: #fff; border: 1px solid #dfe2e8; border-radius: 12px; padding: 16px; }
+    h2 { margin: 0 0 10px; font-size: 15px; }
+    table { width: 100%; border-collapse: collapse; }
+    td, th { text-align: left; padding: 9px 4px; border-top: 1px solid #eceef2; }
+    th { color: #687083; font-weight: 500; font-size: 13px; border: 0; }
+    input { width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid #c9ced8; border-radius: 8px; font: inherit; }
+    li { padding: 6px 0; } ol { margin: 10px 0 0; padding-left: 20px; }
+    button { margin-top: 14px; width: 100%; padding: 11px; border: 0; border-radius: 8px; background: #2f5bea; color: #fff; font: inherit; font-weight: 600; }
+  </style><header><h1>Synonyms · Acme Outdoor</h1><span class="draft">Draft</span></header><main>
+    <section><h2>Synonym sets</h2><table><tr><th>Term</th><th>Also matches</th></tr>${rows}</table></section>
+    <section><h2>Preview against the draft</h2><input value="couch"><ol><li>Linen three-seat sofa</li><li>Corner couch, grey</li>
+      <li>Settee with oak legs</li></ol><button>Publish draft</button></section></main>`;
+}

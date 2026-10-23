@@ -2,9 +2,10 @@
 its reply and creates on the operator's press, an owner's design proposal with its independent review, an owner's
 open question beside its live session, a pull request waiting for the operator's review after an independent review,
 a command an owner hands to the operator's terminal, a task the coordinator repairs and resumes, improvement
-suggestions in the Altitude project, and Harbor's routines with the tasks its dependency check suggested. Real
-handlers, storage and terminal; the coordinator's engine, the routine's worker and the shell are fixtures, and every
-message is authored example text."""
+suggestions in the Altitude project, Harbor's routines with the tasks its dependency check suggested, and the synonyms
+editor's screens in the image viewer. Real handlers, storage and terminal; the coordinator's engine, the routine's
+worker and the shell are fixtures, and every message is authored example text."""
+import base64
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import os
@@ -308,6 +309,17 @@ Version 0.32.6 closes an advisory in its bundled image decoder. The thumbnail te
                                                 "continue where you stopped.", actor="l3")
                 dispatch.run_task_operation(PROJECT, sso)
                 return self._json(S.load_task(PROJECT, sso))
+            if self.path == "/fixture/pictures":
+                # The synonyms owner shows the editor's screens, which the journey drew, beside the conversation.
+                worktree = pathlib.Path(S.load_task(PROJECT, synonyms)["worktree"])
+                pictures = {f"design/{name}": base64.b64decode(data) for name, data in self._body(max_bytes=8 << 20).items()}
+                for path, data in pictures.items():
+                    (worktree / path).write_bytes(data)
+                with readme.minutes_ago(0.1):
+                    T.message(PROJECT, synonyms, "l2", "The editor's draft on a phone and a computer, from the capture run.",
+                              by="l2", expected_attempt=1,
+                              show=T.shown_files(PROJECT, S.load_task(PROJECT, synonyms), list(pictures)))
+                return self._json({"ok": True})
             return self._json({"error": "unknown fixture"}, 404)
 
     serve(Handler, release=terminal.close_all)

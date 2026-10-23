@@ -746,7 +746,8 @@ back. `web/e2e/project-isolation.pw.ts`, `task-lifecycle.pw.ts`, `conversation.p
 changed-target and unconfirmed states at both viewports.
 
 Image input uses the same toolbar and adds no permanent row when empty. A conditional strip holds
-up to four short previews with individually named 44px Remove targets. Native selection and desktop
+up to four short previews, each opening the image viewer (§3.9.3) with **Not sent yet** and no actions,
+with an individually named 44px Remove target on its corner as a round × badge. Native selection and desktop
 image-file paste preserve ordinary text paste; image-only sends work. PNG/JPEG/static WebP limits
 are four images, 10 MiB each, 20 MiB total, 25 megapixels and 8192 pixels per side. Selection remains
 local until Send; leaving the conversation releases it and late results cannot fill another draft.
@@ -759,8 +760,8 @@ local until Send; leaving the conversation releases it and late results cannot f
 | Confirmed refusal | No partial message is accepted. The message shows Not sent with its previews; Retry sends the saved images again and Edit returns the caption to the field and the images to the picker. |
 | Uncertain response | The message shows Unconfirmed with its previews and Copy to draft (the caption); a read that shows it settles it. Navigation remains available. |
 | Queued / delivery failure | Images retain their caption. Project rows and unclaimed task messages offer Remove; removed task messages show a muted placeholder without images. Failed project-turn Retry uses saved images; task recovery keeps existing authority. |
-| Sent / viewer | Thumbnails belong to the saved message. A message this page sent keeps each picture in place until its saved thumbnail loads, so nothing blinks; its Open works from the first frame. Open shows the full image in a modal with Fit/Zoom, Close and Escape; closing restores thumbnail focus, or focuses the same image's stored thumbnail once history admission has replaced a queued opener. Archived tasks retain viewing without a composer. |
-| Loading / missing / denied | Image-sized placeholder names loading (an image the page did not just send, or a queued project message once its turn begins) or the error; Retry repeats only the private read, never the send. Text remains readable. |
+| Sent / viewer | Thumbnails belong to the saved message, each named beneath in 12px muted text cut to its width. One picture shows at its own aspect between 9:16 and 16:9 inside 240 × 280 px (phone 200 × 240), cropped from the top; two to four are tiles 112 px tall (phone 96) at their own aspect between 3:4 and 4:3, and four on a phone make a 2 × 2 grid. The shape comes from the saved size, or for a sending picture the size read when it was picked, so nothing jumps. A message this page sent keeps each picture in place until its saved thumbnail loads, so nothing blinks; its Open works from the first frame. Open shows the image viewer (§3.9.3) with the sender and time; closing restores thumbnail focus, or focuses the same image's stored thumbnail once history admission has replaced a queued opener. Archived tasks retain viewing without a composer. |
+| Loading / missing / denied | A flat grey block at the tile's size, "Loading image…" for screen readers (an image the page did not just send, or a queued project message once its turn begins). A failed read shows the tile bordered with a broken-image icon, the reason on one line (**Access denied**, **Image unavailable**, **Could not load**) and a **Retry** pill with a 44 px target; Retry repeats only the private read, never the send. Text remains readable. |
 | Capability unavailable | Add images explains why input is unavailable. Known converter refusal restores selections; removing them allows text. |
 | Voice / scope changes | Listening/transcribing retain previews and lock text editing. Cancel preserves preexisting text; empty/failed transcription sends nothing. Explicit voice Send captures its images and completes for the original conversation after navigation. Other unsent image selection is released on leaving. |
 
@@ -1241,9 +1242,9 @@ Under the question, its detail and any shown files, above the review box: **Pict
 secondary), then one bordered tile per picture, stacked, full card width up to 480 px (the review box's width):
 replaced pictures first, then new ones, then removed ones, each group in path order. A tile is a frame 240 px tall on
 desktop and 160 px on phone, the picture fitted whole and centred on the page colour (never cropped or enlarged), with
-the expand badge; the frame is a button ("Open image overview.png") opening the gallery, which holds each picture at
-the side its tile shows and names it with that side first in its header, so a cut name keeps it (**Before ·
-overview.png**, **Removed · banner.png**). Under the frame, at least 44 px tall, the picture's path in 12.5px muted monospace on one line, cut at
+the expand badge; the frame is a button ("Open image overview.png") opening the image viewer (§3.9.3), which holds
+each picture at the side its tile shows and leads its context line with that side, so a long name never hides it
+(**Before · Pictures in this PR**, **Removed · Pictures in this PR**). Under the frame, at least 44 px tall, the picture's path in 12.5px muted monospace on one line, cut at
 its start so the file name stays, the full path as its tooltip; at the right:
 
 | Picture | Right of the path | Frame |
@@ -1375,19 +1376,17 @@ reloads the whole page, clearing unsent text only on that action. The button has
 target. Content-read failures keep their existing Retry, and unrelated renderer errors retain the
 route's error page. Document styles load with the app; formatting code remains deferred.
 
-**Gallery.** The image viewer shows one set's images in order (extra images, then the document's in
-document order), with a quiet **2 / 5** count in its header, **Zoom image** and **Close image**, and
-previous and next arrows at the sides (hidden at the ends). Arrow keys and a horizontal swipe move
-between images; while zoomed a swipe pans instead. The operator's own chat images use the same viewer.
-Opening adds one history entry and moving adds none, so Back, Escape or **Close image** always closes
-the gallery to the exact place it was opened from, and the next Back closes the reader.
+**Gallery.** A shown image opens the image viewer (§3.9.3) on its set in order (extra images, then the
+document's in document order), named in its context line by the reply's sender and time, **Shown with a
+question**, or the document's name. Back, Escape or **Close image** closes it to the exact place it was
+opened from, and the next Back closes the reader.
 
 | Where | State | What shows |
 | --- | --- | --- |
 | Card | Ready | Cover, icon, name, chevron, excerpt. |
 | Card | Cover or thumbnail loading | A flat grey block of the same size; no text. |
 | Card | Cover failed | The card without its cover strip; it still opens. |
-| Card | Thumbnail failed | The tile becomes a bordered button with a broken-image icon over a circular retry icon ("Retry image timeline.png"), its only control. |
+| Card | Thumbnail failed | The tile, bordered, holds a broken-image icon, **Image unavailable** and a **Retry** pill ("Retry image timeline.png"), as a failed chat picture does. |
 | Card | Earlier | Greyscale, faded cover with **Earlier**; name, excerpt and chevron at full contrast. |
 | Card | Saved files missing or resized | No cover or chevron, a broken-document icon and **Preview unavailable** under the name; not a control. Its question's answers are disabled until the owner shows the files again; the conversation stays open. Previews saved before shown files existed show the same card with their title. A copy whose content changed at its saved size opens to the reader's Unavailable state. |
 | Reader | Loading | A page skeleton (heading bar, text lines, image block), static under reduced motion; "Loading README.md". |
@@ -1397,10 +1396,7 @@ the gallery to the exact place it was opened from, and the next Back closes the 
 | Reader | Earlier | **Newer** in the header. |
 | Reader | Unavailable | A broken-document icon, **Preview unavailable**, "It could not be loaded. Try again, or ask in the conversation." and **Retry**; × still closes. |
 | Reader | Denied | A lock icon, **Preview unavailable**, "This device has no access right now." and **Retry**. |
-| Gallery | Open | The image fitted, count, Zoom image, Close image, previous and next. |
-| Gallery | Image loading | The spinner where the image goes; count, arrows and Close stay usable. |
-| Gallery | Image failed | A broken-image icon, **Image unavailable** and **Retry**; arrows and Close stay usable, Zoom is hidden. |
-| Gallery | Zoomed | **Fit image**; a swipe pans; the arrows change image and reset zoom. |
+| Gallery | Any | The image viewer's states (§3.9.3). |
 
 Every phone control is at least 44 px. The reader has no approval control or banner; the question
 card keeps its own. Phone and desktop states are walked in `web/e2e/shown-files.pw.ts`, including an
@@ -1414,12 +1410,126 @@ An L2 reply with attached validation captures shows an underlined **Watch captur
 `/projects/:name/tasks/:slug/captures/:messageId` in another browser tab, leaving the conversation and
 draft intact. The page shows **← Back to conversation**, **Captures from validation run N**, when the
 reply attached them, and each capture as its title, size, length and frame count above the GIF looping
-at its recorded size, narrowed to the page. A reply without captures has no link.
+at its recorded size, narrowed to the page, with the expand badge. Each GIF is a button ("Open capture Desktop
+send") that opens the run's captures in the image viewer (§3.9.3) at that capture, context **Validation run
+4**. A reply without captures has no link.
 
 Phone and desktop states are walked in `web/e2e/captures.pw.ts`: **Loading captures…** gives way to
 content; an unknown, denied or failed read shows **Capture unavailable** with **Retry** and Back. A
-capture starts at **Loading capture…**; a missing or altered one hides its meta and shows **Capture
-unavailable.** with **Retry capture**, and recovery removes the error.
+capture starts as a grey block at its saved size; a missing or altered one shows the document's failed box,
+a broken-image icon, **Capture unavailable** and **Retry**, and recovery removes it.
+
+#### 3.9.3 Image viewer
+
+Every picture in Altitude opens in one viewer: a message's pictures, an owner's shown images and document
+images, a held PR's pictures, a validation run's captures and the composer's picked pictures. The app shell
+holds it, so it stays open while the row that opened it is replaced (issue #461), and a new project or task
+closes it. Opening adds one history entry and moving between pictures adds none, so Back, Escape and
+**Close image** always return to the exact place it opened from. Boards:
+[`image-viewer/`](image-viewer/) (this section outranks them).
+
+**Stage.** The viewer covers the screen in near-black (`#0b0d12` at 97%) whatever the theme; the page
+behind is inert. A top bar and a bottom band, both solid dark (90%), always show, and the picture fits
+whole in the space between them, so the viewer's own controls never sit on a screenshot's header or
+composer. While zoomed, the picture pans under the bars.
+
+| | Phone | Desktop |
+| --- | --- | --- |
+| Bar, left | **×** Close image (44 px) | Name over context |
+| Bar, middle | Name over context | — |
+| Bar, right | **Share image** where the browser can share files, else **Download image** (44 px) | **Zoom image**, **Copy image**, **Download image**, **Open in new tab**, a hairline divider, **×** Close image (40 px each) |
+| Previous / next | Round 44 px buttons 8 px from the edges | Round 48 px buttons 24 px from the edges |
+
+- **Name**: 15px, 600, one line with an ellipsis. **Context**: 12.5px at 70% white, one line with an
+  ellipsis, in the conversation's own words: a message's sender and time (**You · 14:05**, **L2 · Oct 20,
+  09:12**), **Shown with a question** for a question's shown images, a document's name for its images,
+  the side and the card for a PR's pictures (**Before · Pictures in this PR**), **Validation run 4** for
+  captures, and **Not sent yet** for a picked picture.
+- Desktop buttons are icons with a tooltip equal to their name. Zoom is a toggle: **Zoom image**
+  (`aria-pressed="false"`) at fit, **Fit image** when zoomed. **Copy image** shows only where the browser
+  writes images to the clipboard, and not for a GIF, whose copy would hold one frame.
+- Previous and next are white chevrons on dark grey at 78% with a faint white ring, vertically centred,
+  and hidden at the ends.
+- **Bottom band** (56 px plus the phone's safe area): with more than one picture, a quiet **2 / 5** pill
+  (12.5px, tabular figures) centred in it, a polite live region. A separate status takes the pill's place
+  for two seconds to say **Image copied** (with a check), **Could not copy the image** or **Could not share
+  the image**; a cancelled share says nothing.
+
+**Fit and zoom.** Fit shows the whole picture between the bars, never enlarged past its own pixels, so
+a small picture shows at its own size; on desktop the fit area keeps 88 px at each side for the arrows.
+Most zoom is the larger of 4× fit and 2× the picture's pixels.
+
+| Input | What happens |
+| --- | --- |
+| Pinch (two fingers, or a trackpad pinch) | Zooms around the point between the fingers and pans with them; past the limits it gives a third as much and settles back on release. |
+| Double-tap or double-click on the picture | At fit, zooms toward that point to the picture's own pixels, kept between 2× and 4× fit; zoomed, returns to fit. |
+| Mouse wheel | One step (1.25×) per notch toward the pointer. A trackpad's two-finger scroll pans while zoomed and does nothing at fit. |
+| **Zoom image** / **Fit image** | Fit and the double-tap level, around the centre. |
+| Keys | `+` or `=` zooms in 1.5×, `-` zooms out, `0` fits; arrow keys pan 15% of the screen while zoomed. |
+
+While zoomed, a finger or the mouse drags the picture; a side never leaves its edge of the screen
+between the bars and an axis that fits stays centred; a flick glides and slows to a stop. The cursor is
+zoom-in over a fitted picture, grab and grabbing while zoomed. Changing picture, resizing the window or
+turning the phone returns to fit.
+
+**Gestures.** The first 10 px of a touch decide what it does:
+
+| Starts as | At fit | Zoomed |
+| --- | --- | --- |
+| Mostly sideways | The picture follows the finger with its neighbour 16 px beside it; released past a third of the width or flicked, it slides on (250 ms), otherwise it springs back. At the first and last picture the strip moves a third as far and springs back. | Pan |
+| Mostly downward | Swipe down: the picture follows, shrinking to 85% at most, and the dark and the bars fade with the distance; released past 120 px or flicked down, it closes, otherwise it springs back. | Pan |
+| Mostly upward | Nothing | Pan |
+| Two fingers | Pinch | Pinch |
+| One tap | Nothing, so nothing waits to tell it from a double-tap | Nothing |
+
+A mouse drag does the same as a finger. A desktop click on the dark space beside the picture closes the
+viewer, but not when it ends a drag of more than 6 px. Arrows, ← and → (at fit) and Previous/Next slide to
+the neighbour (220 ms). The browser's own pinch-zoom, scrolling and pull-to-refresh stay off inside the viewer.
+
+**Opening and closing.** Opening grows the thumbnail's own picture into place (200 ms) while the dark fades
+in, and the viewer's full picture replaces it when its read finishes. Closing with **×**, Escape or a swipe
+down shrinks the picture to the current picture's thumbnail when that is on screen, otherwise fades
+(180 ms); Back closes at once. Focus starts on **Close image** and returns to the thumbnail that opened the
+viewer, or to the same picture's thumbnail once history admission has replaced a queued opener. With
+reduced motion, opening, closing, changing picture and released gestures land at once; a picture still
+follows the fingers while touched.
+
+**Reading ahead.** The viewer reads each picture itself with one private request to the project's image
+API and holds it in memory as encoded bytes; it never depends on a thumbnail's copy, whose row can be replaced
+while the viewer is open. Until its own read arrives, the opened picture shows the thumbnail's for display only,
+with every action waiting, and falls back to the spinner if the thumbnail releases it. Once the current
+picture is in, it reads the previous and next ones, so a swipe shows the neighbour under the finger; it holds
+at most three, and decodes a neighbour only while a swipe shows it. Moving on releases a picture more than one step away; a hidden page releases the neighbours and
+reads them again when it shows; closing, Back, leaving the page and a new scope release everything. Nothing
+is written to storage, and the image API stays `no-store`. Every picture is immutable at its address, so a
+held picture is the picture at that address; a device whose access is withdrawn keeps a picture it already
+read until the viewer closes, as it keeps a thumbnail on screen, and the next opening reads again.
+
+**Actions** use the held bytes, so they need no second request; Altitude uploads nothing.
+
+- **Share image** (phone) opens the system share sheet with the picture as a file built at the press.
+- **Download image** saves the bytes under the picture's name; a capture's title gains its `.gif` extension.
+- **Copy image** (desktop) writes a PNG, converting a JPEG or WebP on the way.
+- **Open in new tab** (desktop) opens the picture's own address, where the browser's viewer and Save work.
+- A picked picture, not sent yet, has none: it is the operator's own file.
+
+| State | Phone | Desktop |
+| --- | --- | --- |
+| Open | Picture fitted between the bars, count, arrows | Picture fitted, actions, count, arrows |
+| Loading | The thumbnail's picture, or a white spinner, under "Loading image…"; bars, count, arrows and Close work; Share or Download dimmed and disabled | Same; Zoom, Copy, Download and Open disabled |
+| Failed | A broken-image icon, the reason (**Image unavailable**, **Access denied**, **Could not load**) and a bordered **Retry** that reads only that picture again; arrows and Close work; Share or Download hidden | Same; the actions hidden |
+| Zoomed | Pans under the bars; no swipe between pictures | **Fit image** pressed; grab cursor |
+| Swiping | Two pictures side by side under the finger | A mouse drag, the same |
+| Swiping down | The picture smaller, the page showing through | The same |
+| Copied / not copied / not shared | The message in the count's place for two seconds | The same |
+
+The viewer is a modal dialog named after the picture ("Image export.png"). No control hides while the
+picture shows, so a screen reader reaches them all; DOM order follows the screen. Every phone control is
+at least 44 px. `web/e2e/image-viewer.pw.ts` walks these states at both widths with real storage and
+private reads: opening fitted between the bars, double-tap toward the tap, panning to an edge, pinch, wheel
+and keys, a finger-following swipe and its resistance at the ends, swipe down and click-outside closing,
+an 8192-pixel picture, a picture smaller than the screen, the actions, an unsent picture, reduced motion,
+and reading ahead counted by request and held object URL, including a hidden page.
 
 ### 3.10 Task page
 
