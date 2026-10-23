@@ -5,6 +5,7 @@ supervision, sequence rules and failure paths run for real without the model.
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import http.client
 import io
@@ -808,6 +809,46 @@ class TestSetup(SpeechCase):
         with self.assertRaisesRegex(speech.SpeechError, "already being set up"):
             speech.setup()
         release.set()
+        self.wait(lambda: host.setup_attempt is None)
+        self.assertEqual(speech.status()["state"], "ready")
+
+    def test_a_status_read_never_makes_setup_look_busy(self):
+        # A read probing the setup lock just as Retry or the startup update took it refused them as already running.
+        speech.ROOT.mkdir(parents=True)
+        (speech.ROOT / ".lock").touch()
+        probing, release, tried = threading.Event(), threading.Event(), threading.Event()
+        flock = fcntl.flock
+
+        def held(handle, operation):
+            name, path = threading.current_thread().name, getattr(handle, "name", "")
+            if name == "retry" and path.endswith("/.control"):
+                tried.set()  # Retry waits here for the read
+            flock(handle, operation)
+            if name == "status" and path.endswith("/.lock"):
+                probing.set()
+                release.wait(5)  # the read is preempted while it holds the lock
+
+        self.patch(fcntl, "flock", new=held)
+        reader = threading.Thread(target=speech.status, name="status")
+        reader.start()
+        self.assertTrue(probing.wait(5))
+        host, refused = self.host(), []
+
+        def retry():
+            try:
+                host.start_setup()
+            except speech.SpeechError as exc:
+                refused.append(exc)
+            finally:
+                tried.set()
+
+        retrying = threading.Thread(target=retry, name="retry")
+        retrying.start()
+        self.assertTrue(tried.wait(5))  # Retry was refused, or waits for the read
+        release.set()
+        retrying.join(5)
+        reader.join(5)
+        self.assertEqual(refused, [])
         self.wait(lambda: host.setup_attempt is None)
         self.assertEqual(speech.status()["state"], "ready")
 

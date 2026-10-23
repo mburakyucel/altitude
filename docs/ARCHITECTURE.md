@@ -3780,7 +3780,8 @@ of `host.update`: `preparing`, `downloading` with bytes, `waiting`, `checking`, 
 Settings shows phase/progress with Cancel or Retry; ready voice remains usable. Unsupported voice links
 to the running update instead of offering a duplicate setup.
 
-One file lock admits setup across CLI and daemon. Workers inherit a shared use lock; verification,
+One file lock admits setup across CLI and daemon. Status reads probe it, and setup takes it, only under
+the voice control lock, so a read never makes setup look already running. Workers inherit a shared use lock; verification,
 promotion and cleanup acquire it exclusively. Active recordings finish before the idle worker exits
 for the update. Finished response replay remains available. Staging temporarily uses another runtime's
 disk space; preflight budgets downloads and bounded wheel expansion. Cancel or failure deletes staging
