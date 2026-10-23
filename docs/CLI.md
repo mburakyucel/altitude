@@ -445,14 +445,15 @@ alt agent list
 alt agent show AGENT [--run N]
 alt agent new --name NAME --brief - [--schedules 'weekdays 07:00; fri 17:00'|none] [--events|--no-events]
               [--tell found|every|never] [--limit 10|20|60] [--may worktrees|none]
+              [--command NAME=WORDS ... | --no-commands]
               [--engine ENGINE --model MODEL --effort EFFORT | --default-model] [--on]
 alt agent set AGENT [the same flags, without --on]
 alt agent on|pause|resume|retire|stop AGENT
 alt agent run AGENT [TEXT|-]
 alt agent send AGENT TEXT|- [--key KEY]
 alt agent undo AGENT --run N CHANGE|all
-alt agent offer [AGENT] [the same flags as new]
-alt act set-aside-worktree|delete-branch NAME
+alt agent offer [AGENT] [the same flags as new, without --command]
+alt act set-aside-worktree|delete-branch|run NAME
 ```
 
 `alt agent` reads and changes a project's [routines](ARCHITECTURE.md#routines). `AGENT` is a routine's id
@@ -463,7 +464,8 @@ ends a waiting or running run. `--events` gives a routine the trigger "When it's
 `--default-model` gives it the model a new task gets, in place of `--engine`, `--model` and `--effort`.
 `--may worktrees` lets a routine ask Altitude to set aside worktrees and delete branches nothing needs
 ([routines that act](ARCHITECTURE.md#routines-that-act)); `--may none` makes it only report, as a new routine
-does. `show AGENT --run N` lists what the run asked Altitude to change, and `undo` puts back one of those changes
+does. `--command NAME='WORDS'`, once for each, gives the whole list of commands the routine may ask Altitude to run
+as you, and `--no-commands` empties it. `show AGENT --run N` lists what the run asked Altitude to change, and `undo` puts back one of those changes
 by its number, or `all` that can be, each on its own, printing the numbers put back and those refused with why. A
 refusal prints "alt agent: <reason>" with exit status 1, the reason as the page says it after "Not saved: ",
 such as a Run now that does not fit the week's budget.
@@ -482,14 +484,18 @@ L3 reaches the same grammar through its coordinator socket. `list` and `show` ar
 answers the operator's own message, which becomes the change's recorded source. A routine that may change
 things only the operator turns on, resumes or runs; L3 may pause, stop and undo it. L3 never writes a
 definition: `offer` drafts a new routine, or a change to `AGENT` from the flags it names, `--may` included, as a
-card under its reply, and only the operator's press saves it; it has no `send`.
+card under its reply, and only the operator's press saves it; an offer never carries commands, and it has no
+`send`. A routine with commands is one that may change things.
 
 `alt act` is a routine run's one verb, and only a run asks with it, through its own door. It names one worktree
 under the project's worktree folder or one local branch, and prints Altitude's answer: "Set aside worktree NAME.
 The operator can undo it until <day>.", "Deleted branch NAME. Merged into main.", "Kept: <reason>.", "Not
 allowed: <reason>." or "Failed: <reason>.". A run whose routine only reports is told "Not allowed: this routine
-only reports; the operator can let it change worktrees and branches on its form.". Every other `alt` verb in a
-run, and `alt act` anywhere else, is refused.
+only reports; the operator can let it change worktrees and branches on its form.". `alt act run NAME` asks for
+one of the routine's commands by name and waits for it, up to its 10 minutes, printing how it ended and the end of
+its output ("Ran NAME: it exited with 0 after 12 s.", "Failed: …", "Stopped: …" or "Not allowed: …"); asked again
+while it runs, it waits for the same result. Every other `alt` verb in a run, and `alt act` anywhere else, is
+refused.
 
 ## GitHub issues
 

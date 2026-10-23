@@ -2,16 +2,20 @@
 and Git: Clear old worktrees may change them, and its last run set two helper worktrees aside, deleted a merged
 branch and kept a worktree with uncommitted work and a branch with work found nowhere else; Dependency check only
 reports, and its last run's one request was refused; the built-in Tidy worktrees and branches waits to be turned on.
-Only the engine seam is replaced, and GitHub's answer about merged pull requests: workers are fictional records, so
-nothing launches a provider."""
+Free disk space lists three commands: its last run ran one, saw one fail and was refused twice, and the run it has
+going now waits on its third. Only the engine seam is replaced, and GitHub's answer about merged pull requests:
+workers are fictional records, so nothing launches a provider, and the listed commands run in a plain shell of their
+own instead of the operator's service manager."""
 import os
+import signal
 import subprocess
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from service_support import configure, serve
 from tests.support import git, make_repo
-from altitude import config, engines, l3, project_agents as A, route, verify
+from altitude import config, engines, l3, platform, project_agents as A, route, verify
 
 PROJECT = "harbor"
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
@@ -30,6 +34,31 @@ def start_project_agent_run(engine, name, prompt, *, cwd, job_root, model, effor
 def owned_worker(worker, *, job_root):
     row = workers.get(worker)
     return row and {"id": worker, "state": row["state"], "detail": "", "detail_at": 0, "usage": row["usage"]}
+
+
+# The command runner's seam: each listed command's job by its unit, in a shell of its own with no input.
+jobs: dict[str, subprocess.Popen] = {}
+
+
+def machine_command(command, *, cwd, folder, unit, identity, timeout, properties=()):
+    log, status = engines.machine_files(folder, unit)
+    folder.mkdir(parents=True, exist_ok=True)
+    with open(log, "ab") as out:
+        jobs[unit] = subprocess.Popen(
+            ["/bin/bash", "-c", 'bash -c "$1"; s=$?; printf %s "$s" > "$2.tmp" && mv "$2.tmp" "$2"', "job", command,
+             str(status)], cwd=cwd, env=engines.launch_env(identity), stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+            start_new_session=True)
+    jobs[unit].wait()
+    return None
+
+
+def machine_stop(unit):
+    job = jobs.get(unit)
+    if job and job.poll() is None:
+        try:
+            os.killpg(job.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def age(*paths: Path) -> None:
@@ -63,22 +92,31 @@ def branch(repo: Path, name: str, *, commit: bool = False) -> None:
         subprocess.run(["git", "update-ref", f"refs/heads/{name}", sha], cwd=repo, env=env, check=True)
 
 
-def make(name: str, brief: str, may: list[str]) -> str:
+def make(name: str, brief: str, may: list[str], commands: list[dict] = ()) -> str:
     definition = {"name": name, "brief": brief, "schedules": [{"days": [0], "time": "09:00"}], "events": False,
-                  "tell": "found", "model": None, "limit": 20, "may": may}
+                  "tell": "found", "model": None, "limit": 20, "may": may, "commands": list(commands)}
     agent = A.change(PROJECT, "create", {"definition": definition}, by="operator", source="fixture", now=OLD)["agent"]
     A.change(PROJECT, "turn_on", {"agent": agent}, by="operator", source="fixture", now=OLD)
     return agent
 
 
-def run(agent: str, at: datetime, requests: list[tuple[str, str]], answer: str) -> None:
-    """A run started at `at` that asks Altitude for each change in turn, then ends four minutes later."""
+def start(agent: str, at: datetime) -> int:
+    """A run of `agent` started at `at`; its number."""
     A.change(PROJECT, "run", {"agent": agent}, by="operator", source="fixture", now=at)
     A.start_next(PROJECT, now=at)
-    n = A.agent_view(PROJECT, agent)["runs"][0]["n"]
+    return A.agent_view(PROJECT, agent)["runs"][0]["n"]
+
+
+def ask(agent: str, n: int, action: str, target: str, request: str) -> None:
+    A.act(PROJECT, f"{agent}/{n}", {"project": PROJECT, "run": f"{agent}/{n}", "kind": "act", "action": action,
+                                    "target": target, "request": request})
+
+
+def run(agent: str, at: datetime, requests: list[tuple[str, str]], answer: str) -> None:
+    """A run started at `at` that asks Altitude for each change in turn, then ends four minutes later."""
+    n = start(agent, at)
     for i, (action, target) in enumerate(requests):
-        A.act(PROJECT, f"{agent}/{n}", {"project": PROJECT, "run": f"{agent}/{n}", "kind": "act", "action": action,
-                                        "target": target, "request": f"{agent}-{n}-{i}"})
+        ask(agent, n, action, target, f"{agent}-{n}-{i}")
     worker = list(workers)[-1]
     workers[worker].update(state="done", answer=answer, usage={"input_tokens": 1_900_000, "output_tokens": 8_000})
     A.reconcile(PROJECT, now=at + timedelta(minutes=4))
@@ -92,6 +130,8 @@ def main():
                                                                                    "sessions": []}
     engines.worker_answer = lambda worker, *, job_root: workers[worker]["answer"]
     route.reserve = lambda _engine: None
+    engines.machine_command, engines.machine_stop = machine_command, machine_stop
+    platform.job_active = lambda unit, _env: unit in jobs and jobs[unit].poll() is None
     verify.gh = lambda _args, _repo, **_kw: []  # GitHub knows no merged pull request for these branches
 
     repo = make_repo(config.PROJECT_ROOTS[0] / PROJECT)
@@ -115,6 +155,16 @@ def main():
         "it has uncommitted changes to `sync.py`.")
     run(reports, NOW - timedelta(hours=1), [("delete-branch", "retry-limit-tests")],
         "Nothing: Every dependency is on its fixed release.")
+    disk = make("Free disk space", "When the disk is nearly full, free space with the commands listed. Say what you ran "
+                "and how much it freed.", [], [
+                    {"name": "prune-images", "words": "printf 'Deleted 3 images\\nTotal reclaimed space: 1.2 GB\\n'"},
+                    {"name": "clear-cache", "words": "echo 'harbor-build: cache folder is busy' >&2; exit 1"},
+                    {"name": "wait-for-mirror", "words": "echo 'Waiting for the mirror…'; sleep 120"}])
+    run(disk, NOW - timedelta(hours=3), [("run", "prune-images"), ("run", "clear-cache"), ("run", "Prune Images!"),
+                                         ("run", "prune-images")],
+        "Found: the disk was 94% full.\n\nPruning images freed 1.2 GB; clearing the cache failed.")
+    n = start(disk, NOW - timedelta(minutes=3))
+    threading.Thread(target=ask, args=(disk, n, "run", "wait-for-mirror", f"{disk}-{n}-0"), daemon=True).start()
     serve()
 
 

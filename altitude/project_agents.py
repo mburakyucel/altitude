@@ -9,8 +9,9 @@ record under its agent, never a task, so nothing that reads tasks sees it. See d
 
 A run whose routine may change things asks Altitude with `alt act`, one request at a time, through its door (`act`).
 Altitude acts only when the routine's fence allows that kind of change, both in the version the run ran with and now,
-and its own rule for the target passes (`tidy`). Each request is a numbered change on the run, a `routine-action`
-project event and a row on the run's page with Undo (docs/ARCHITECTURE.md#routines-that-act).
+and its own rule for the target passes (`tidy`), or, for a command the operator listed, runs the operator's exact words
+as the operator (`_command`). Each request is a numbered change on the run, a `routine-action` project event and a row
+on the run's page (docs/ARCHITECTURE.md#routines-that-act).
 """
 from __future__ import annotations
 
@@ -19,6 +20,8 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,13 +34,17 @@ BUDGET = 120
 LIMITS = (10, 20, 60)
 LIMIT = 20
 TELLS = {"found": "Tells you when it finds something", "every": "Tells you every run", "never": "Never tells you in chat"}
-DEFINITION = ("name", "brief", "schedules", "events", "tell", "model", "limit", "may")
+DEFINITION = ("name", "brief", "schedules", "events", "tell", "model", "limit", "may", "commands")
 #: What a routine may change, as its form and offers name it; a routine with none only reports.
 MAYS = {"worktrees": "worktrees and branches"}
 #: `alt act` requests: the kind of change each makes and the permission it needs.
 ACTIONS = {"set-aside-worktree": ("worktree", "worktrees"), "delete-branch": ("branch", "worktrees")}
 #: The requests a run may make, and a target's length.
 ACTS, TARGET = 20, 300
+#: Commands the operator lists: how many, a name, the words' length, the time each may take (the runner's own limit)
+#: and how much of its output goes back to the run. Its page keeps what `engines.machine_output` reads.
+COMMANDS, COMMAND, WORDS = 10, re.compile(r"[a-z0-9-]{1,40}"), 2000
+COMMAND_TIME, COMMAND_BACK = config.MACHINE_COMMAND_TIMEOUT, 4000
 NAME, BRIEF, SCHEDULES = 60, 8000, 4
 SUMMARY, REPORT, PREVIOUS, LINE = 200, 20000, 4000, 120
 #: An event's text, its key, the events one run reads, the keys an agent keeps, and an event's name in a line.
@@ -109,6 +116,7 @@ def _load(project: str) -> dict:
     for d in [*record["agents"], *(v["definition"] for v in record["versions"]),
               *(o["definition"] for o in record["offers"])]:
         d.setdefault("may", [])  # saved before routines could act
+        d.setdefault("commands", [])
     return record
 
 
@@ -165,8 +173,8 @@ def _say(owner: dict, key: str, text: str, tone: str) -> None:
 def definition(value) -> dict:
     """A checked definition: the operator's words for an agent, as the form, the CLI or an offer gives them."""
     if not isinstance(value, dict) or value.keys() - set(DEFINITION):
-        raise ValueError("A routine has a name, a brief, schedules, events, Tell me, a model, a limit and what it "
-                         "may change.")
+        raise ValueError("A routine has a name, a brief, schedules, events, Tell me, a model, a limit, what it "
+                         "may change and its commands.")
     name = " ".join(str(value.get("name") or "").split())
     brief = str(value.get("brief") or "").strip()
     if not name or not brief:
@@ -203,7 +211,26 @@ def definition(value) -> dict:
     if not isinstance(may, list) or any(m not in MAYS for m in may):
         raise ValueError("What it may change is worktrees and branches, or nothing.")
     return {"name": name, "brief": brief, "schedules": kept, "events": events, "tell": tell, "model": model,
-            "limit": limit, "may": sorted(set(may))}
+            "limit": limit, "may": sorted(set(may)), "commands": _commands(value.get("commands", []))}
+
+
+def _commands(value) -> list[dict]:
+    """The operator's commands, in their order: each a name the run asks for and the words Altitude runs."""
+    if not isinstance(value, list) or len(value) > COMMANDS:
+        raise ValueError(f"A routine has at most {COMMANDS} commands.")
+    out = []
+    for entry in value:
+        if not isinstance(entry, dict) or entry.keys() != {"name", "words"}:
+            raise ValueError("A command is a name and its words.")
+        name, words = entry["name"], entry["words"]
+        if not isinstance(name, str) or not COMMAND.fullmatch(name):
+            raise ValueError("A command's name is lowercase letters, digits and dashes, at most 40.")
+        if not isinstance(words, str) or not words.strip() or len(words) > WORDS or "\0" in words:
+            raise ValueError(f"Write each command, under {WORDS:,} characters.")
+        if any(c["name"] == name for c in out):
+            raise ValueError(f"Another command is named {name}.")
+        out.append({"name": name, "words": words.strip()})
+    return out
 
 
 def builtins() -> list[dict]:
@@ -271,8 +298,21 @@ def _changes(old: dict, new: dict) -> list[str]:
 
 
 def may_line(d: dict) -> str | None:
-    """"Changes worktrees and branches" for a routine that may change them; None for one that only reports."""
-    return f"Changes {MAYS['worktrees']}" if d.get("may") else None
+    """What a routine may do, as the routines list says it: "Changes worktrees and branches · Runs 2 commands"; None
+    for one that only reports."""
+    count = len(d["commands"])
+    said = ([f"Changes {MAYS['worktrees']}"] if d["may"] else []) + (
+        [f"Runs {count} command{'' if count == 1 else 's'}"] if count else [])
+    return " · ".join(said) or None
+
+
+def acts(d: dict) -> bool:
+    """Whether a routine may change anything: a permission ticked or a command listed."""
+    return bool(d["may"] or d["commands"])
+
+
+def _and(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def _lower(text: str) -> str:
@@ -309,6 +349,9 @@ def change(project: str, action: str, fields: dict, *, by: str, source: str, req
         _save(project, record)
     if action == "stop" and receipt.get("stopping"):
         _stop_worker(project, receipt["agent"], receipt["n"])
+    if action == "stop_command" and receipt.get("stopping"):
+        # Its follower stops it again until it ends, and records how.
+        engines.machine_stop(_unit(project, receipt["agent"], receipt["n"], receipt["change"]))
     return receipt
 
 
@@ -373,7 +416,7 @@ def _switch(state: str, allowed: tuple[str, ...]):
         if agent["state"] != state:
             if agent["state"] not in allowed:
                 raise Refused(f"{agent['name']} is {agent['state'] if agent['state'] != 'new' else 'not on yet'}.")
-            if by == "l3" and state == "on" and agent["may"]:
+            if by == "l3" and state == "on" and acts(agent):
                 raise Refused(f"Only the operator turns on {agent['name']}, since it may change things.")
             at = _at(now)
             if by == "l3":
@@ -402,7 +445,7 @@ def _run_now(record, fields, *, by, source, now):
         raise Refused(f"{agent['name']} is retired.")
     if _active(record, agent["id"]):
         raise Refused("Its last run is still going.")
-    if by == "l3" and agent["may"]:
+    if by == "l3" and acts(agent):
         raise Refused(f"Only the operator runs {agent['name']}, since it may change things.")
     left = _budget(record) - _used(record, now)
     if agent["limit"] > left:
@@ -527,9 +570,27 @@ def _accept(record, fields, *, by, source, now):
     return {"agent": agent["id"], "state": agent["state"], "version": agent["version"]}
 
 
+def _stop_command(record, fields, *, by, source, now):
+    """Stop on a running command's row: the command stops and the run goes on. A press after it ended changes
+    nothing; its row already says how it ended."""
+    if by != "operator":
+        raise Refused("Only the operator stops a command; L3 can stop the run.")
+    agent = _agent(record, str(fields.get("agent")))
+    run = _run(record, agent["id"], fields.get("n") if type(fields.get("n")) is int else -1)
+    row = next((c for c in run.get("changes") or [] if c["n"] == fields.get("change") and c["kind"] == "command"),
+               None)
+    if not row:
+        raise Missing("There is no such command.")
+    if row["outcome"] != "running":
+        return {"agent": agent["id"], "n": run["n"], "change": row["n"], "stopping": False}
+    row.setdefault("stopping", "you")
+    return {"agent": agent["id"], "n": run["n"], "change": row["n"], "stopping": True}
+
+
 CHANGES = {"create": _create, "set": _set, "turn_on": _switch("on", ("new",)), "resume": _switch("on", ("paused",)),
            "pause": _switch("paused", ("on",)), "retire": _switch("retired", ("new", "on", "paused")),
-           "run": _run_now, "send": _send, "stop": _stop, "budget": _budget_change, "builtin": _builtin, "offer": _accept}
+           "run": _run_now, "send": _send, "stop": _stop, "budget": _budget_change, "builtin": _builtin, "offer": _accept,
+           "stop_command": _stop_command}
 
 
 def _undo(project: str, record: dict, fields: dict, *, by: str, source: str, now: datetime) -> dict:
@@ -558,7 +619,8 @@ def _undo(project: str, record: dict, fields: dict, *, by: str, source: str, now
 
 
 def _undoable(change: dict) -> bool:
-    return change["outcome"] == "done" and (change.get("undo") or {}).get("state") != "undone"
+    return (change["kind"] != "command" and change["outcome"] == "done"
+            and (change.get("undo") or {}).get("state") != "undone")
 
 
 # ---- offers: L3 drafts a new agent or a change, only the operator's press saves it ------------------------------
@@ -566,7 +628,8 @@ def _undoable(change: dict) -> bool:
 def offer(project: str, turn: str, value: dict, *, agent_id: str | None = None, on: bool = False,
           now: datetime | None = None) -> dict:
     """Store what L3's reply offers, drawn by the page as a card under that reply. A change names the agent and the
-    version it was drafted from; a later change to the agent refuses it."""
+    version it was drafted from; a later change to the agent refuses it. An offer never carries commands: a change
+    keeps the routine's own, and a new routine has none."""
     now = now or datetime.now(timezone.utc)
     with S.project_lock(project):
         record = _load(project)
@@ -574,11 +637,11 @@ def offer(project: str, turn: str, value: dict, *, agent_id: str | None = None, 
             agent = _agent(record, agent_id)
             if agent["state"] == "retired":
                 raise ValueError(f"{agent['name']} is retired.")
-            d = definition({**{k: agent[k] for k in DEFINITION}, **value})
+            d = definition({**{k: agent[k] for k in DEFINITION}, **value, "commands": agent["commands"]})
             if not _changes(agent, d):
                 raise ValueError("This offer changes nothing.")
         else:
-            d = definition(value)
+            d = definition({**value, "commands": []})
         item = {"id": uuid.uuid4().hex[:12], "turn": turn, "at": _at(now), "kind": "change" if agent_id else "new",
                 "agent": agent_id, "base": agent["version"] if agent_id else None, "definition": d, "on": bool(on),
                 "state": "open", "reason": None, "result": None}
@@ -658,13 +721,24 @@ def _end(record: dict, run: dict, state: str, reason: str | None, now: datetime,
 
 def did_line(run: dict) -> str | None:
     """Altitude's own sentence of what a run changed, from its recorded changes rather than the run's words: "Set
-    aside 6 worktrees and deleted 2 branches."; None when it changed nothing."""
-    done = [c for c in run.get("changes") or [] if c["outcome"] == "done"]
+    aside 6 worktrees and deleted 2 branches. Ran prune-images; clear-cache failed."; None when it changed nothing.
+    A command that started is named by how it ended, and one still running when the run ends is stopped with it; a
+    refused request is on the run's page only."""
+    rows = run.get("changes") or []
+    done = [c for c in rows if c["outcome"] == "done" and c["kind"] != "command"]
     worktrees = sum(c["kind"] == "worktree" for c in done)
     branches = len(done) - worktrees
     parts = ([f"set aside {worktrees} worktree{'' if worktrees == 1 else 's'}"] if worktrees else []) + (
         [f"deleted {branches} branch{'' if branches == 1 else 'es'}"] if branches else [])
-    return " and ".join(parts).capitalize() + "." if parts else None
+    said = [" and ".join(parts).capitalize() + "."] if parts else []
+    commands = [c for c in rows if c["kind"] == "command"]
+    ran, failed, stopped = ([c["target"] for c in commands if c["outcome"] in outcomes]
+                            for outcomes in (("done",), ("failed", "timed_out", "not_started"), ("stopped", "running")))
+    ended = (([f"Ran {_and(ran)}"] if ran else []) + ([f"{_and(failed)} failed"] if failed else [])
+             + ([f"{_and(stopped)} {'was' if len(stopped) == 1 else 'were'} stopped"] if stopped else []))
+    if ended:
+        said.append("; ".join(ended) + ".")
+    return " ".join(said) or None
 
 
 def event_name(events: list[dict] | None) -> str | None:
@@ -716,8 +790,9 @@ def _duration(minutes: int) -> str:
 
 
 def tick(project: str, now: datetime | None = None) -> bool:
-    """The project's tick: finish ended runs, set aside checks past their deadline, claim due schedules; whether a
-    run waits to start."""
+    """The project's tick: follow commands a restart left running, finish ended runs, set aside checks past their
+    deadline, claim due schedules; whether a run waits to start."""
+    follow_commands(project)
     reconcile(project, now)
     unchecked(project, now)
     aside(project, now)
@@ -970,19 +1045,25 @@ def prompt(project: str, run: dict, agent: dict, worktree: Path, sha: str) -> st
                "wonders about. The explanation says what to change, not the finding again. L3 checks each suggestion "
                "first, and only the operator's press makes it a task.")
     template = (config.TEMPLATES / "project-agent-run.md").read_text()
-    acting = "worktrees" in version["definition"]["may"]
+    d = version["definition"]
+    tidying, listed = "worktrees" in d["may"], d["commands"]
+    asks = " and ".join((["tidy this project's worktrees and branches"] if tidying else [])
+                        + (["run commands the operator listed"] if listed else []))
     return template.format(
-        name=version["definition"]["name"], project=project, brief=version["definition"]["brief"], fired=fired,
+        name=d["name"], project=project, brief=d["brief"], fired=fired,
         previous=earlier, worktree=worktree, sha=sha[:12], limit=agent["limit"], summary=SUMMARY, suggest=suggest,
-        acts=(ASKS if acting else ONLY_REPORTS), changes=(CHANGING.format(acts=ACTS, inventory=tidy.inventory(
-            project, now)) if acting else ""))
+        acts=ASKS.format(asks=asks) if asks else ONLY_REPORTS,
+        changes=(CHANGING.format(acts=ACTS, inventory=tidy.inventory(project, now)) if tidying else "")
+        + (RUNNING.format(acts=ACTS, project=project, minutes=COMMAND_TIME // 60, back=f"{COMMAND_BACK:,}",
+                          listed="\n".join(f"    alt act run {c['name']}\n        runs: {c['words']}" for c in listed))
+           if listed else ""))
 
 
 ONLY_REPORTS = ("- It cannot push, open pull requests, file issues, message anyone or change anything outside this copy; "
                 "GitHub is not signed in here. Your report is the one thing that leaves this run, and the operator "
                 "decides what happens next.")
 ASKS = ("- It cannot push, open pull requests, file issues or message anyone; GitHub is not signed in here. Beyond your "
-        "report, it may ask Altitude to tidy this project's worktrees and branches, as **What you may change** says.")
+        "report, it may ask Altitude to {asks}, as the sections below say.")
 CHANGING = """## What you may change
 
 The operator lets this routine ask Altitude to set aside worktrees and delete local branches that nothing needs. You
@@ -1000,6 +1081,20 @@ count of what changed to your report. Say in the report what you left alone and 
 What Git and Altitude's records say now is data, a starting point, not the rule:
 
 {inventory}
+
+"""
+RUNNING = """## Commands you may ask for
+
+The operator listed these commands for this routine. You cannot run them yourself or pass them anything; ask Altitude
+to run one by its name, when the brief says it is needed:
+
+{listed}
+
+Altitude runs the operator's exact words as the operator, in {project}'s own folder (not your copy), for up to
+{minutes} minutes, and answers with its exit status and the last {back} characters of its output. Each runs at most
+once in this run, one at a time, within your {acts} requests. Give the call a timeout of {minutes} minutes or the
+longest your tools allow; if your call ends first, ask again for the same name and Altitude answers with that
+command's result instead of running it again. Say in the report which commands you ran, why, and what they did.
 
 """
 
@@ -1297,9 +1392,11 @@ def act(project: str, ref: str, body: dict, *, now: datetime | None = None) -> d
     `routine-action` project event; the same request again returns its first answer."""
     now = now or datetime.now(timezone.utc)
     action, target, request = body.get("action"), body.get("target"), body.get("request")
+    if action == "run" and isinstance(target, str):
+        return _command(project, ref, target, request, now)
     if (action not in ACTIONS or not isinstance(target, str) or not target.strip() or len(target) > TARGET
             or any(c in target for c in "\0\n\r")):
-        raise ValueError("Ask with alt act set-aside-worktree NAME or alt act delete-branch NAME.")
+        raise ValueError("Ask with alt act set-aside-worktree NAME, alt act delete-branch NAME or alt act run NAME.")
     kind, permission = ACTIONS[action]
     looked, record = None, _load(project)
     if kind == "branch" and permission in _agent(record, door_run(project, ref, record=record)["agent"])["may"]:
@@ -1344,21 +1441,253 @@ def act(project: str, ref: str, body: dict, *, now: datetime | None = None) -> d
     return _answer(row)
 
 
-def _answer(change: dict) -> dict:
-    """What `alt act` prints for a change."""
+def _answer(change: dict, output: str = "") -> dict:
+    """What `alt act` prints for a change; for a command that ran, how it ended and the end of its output."""
     name, outcome = change["target"], change["outcome"]
+    if change["kind"] == "command" and outcome != "refused":
+        took, code = _took(change.get("seconds") or 0), change.get("exit")
+        if outcome == "done":
+            said = f"Ran {name}: it exited with 0 after {took}."
+        elif outcome == "failed":
+            said = (f"Failed: {name} exited with {code} after {took}." if code is not None
+                    else f"Failed: {name} ended without an exit status after {took}.")
+        elif outcome == "timed_out":
+            said = f"Stopped: {name} reached its {COMMAND_TIME // 60}-minute limit."
+        elif outcome == "stopped":
+            said = {"you": f"Stopped: the operator stopped {name} after {took}.",
+                    "run": f"Stopped: {name} stopped with this run after {took}."}.get(
+                change.get("by"), f"Stopped: the operator changed the routine, so {name} stopped after {took}.")
+        elif outcome == "not_started":
+            said = f"Failed: Altitude could not start {name}, so nothing ran."
+        else:
+            said = f"{name} is still running; ask again for its result."
+        tail = output[-COMMAND_BACK:]
+        if tail.strip():
+            said += f"\n\nThe end of its output:\n{tail}"
+        return {"said": said, "done": outcome == "done"}
     if outcome == "done" and change["kind"] == "worktree":
         said = f"Set aside worktree {name}. The operator can undo it until {improve._day(change['until'])}."
     elif outcome == "done":
         said = f"Deleted branch {name}. {change['merged']}"
     elif outcome == "kept":
         said = f"Kept: {change['reason']}"
+    elif outcome == "refused" and change["kind"] == "command" and not name:
+        said = "Not allowed: ask for a command by its name, as your prompt lists them."
     elif outcome == "refused" and change["reason"] == "This routine only reports.":
         said = ("Not allowed: this routine only reports; the operator can let it change worktrees and branches on its "
                 "form.")
     else:
         said = f"{'Not allowed' if outcome == 'refused' else 'Failed'}: {_lower(change['reason'])}"
     return {"said": said, "done": outcome == "done"}
+
+
+# ---- commands the operator lists -----------------------------------------------------------------------------------
+
+#: The commands this altd follows to their end: the request that started one, or the tick after a restart.
+_following: set[str] = set()
+_following_lock = threading.Lock()
+#: How often a follower reads whether its command must stop.
+POLL = 2
+
+
+def _unit(project: str, agent_id: str, n: int, change: int) -> str:
+    return engines.machine_unit(project, f"agent-{agent_id}-{n}", change)
+
+
+def _words(d: dict, name: str | None) -> str | None:
+    return next((c["words"] for c in d["commands"] if c["name"] == name), None)
+
+
+def _command(project: str, ref: str, target: str, request, now: datetime) -> dict:
+    """`alt act run NAME`: run the operator's command of that name, as the operator, and answer with how it ended.
+
+    Altitude runs it only when the routine has a command of that name with the same words both in the version the run
+    ran with and now, is not retired, has not run it in this run and the run has requests left. A name that is not a
+    command name is refused without its text. The row is recorded before the job starts, so a restart finds it; the
+    command then runs outside the project lock, one at a time per run. The same request again, or another request for
+    a command still running, waits for that command's result."""
+    name = target.strip() if COMMAND.fullmatch(target.strip()) else None
+    with S.project_lock(project):
+        record = _load(project)
+        run = door_run(project, ref, record=record)
+        changes = run.setdefault("changes", [])
+        same = next((c for c in changes if request and c.get("request") == request), None) or next(
+            (c for c in changes if c["kind"] == "command" and c["outcome"] == "running" and name
+             and c["target"] == name), None)
+        if not same:
+            row, reason = _admit(project, record, run, name, request, now)
+    if same:
+        return _awaited(project, run, same)
+    if reason:
+        return row if "said" in row else _answer(row)
+    try:
+        return _carry(project, run["agent"], run["n"], row)
+    finally:
+        _unfollow(row["unit"])
+
+
+def _admit(project: str, record: dict, run: dict, name: str | None, request, now: datetime) -> tuple[dict, str | None]:
+    """In the caller's locked record, a command request's row and why it is refused, or None when it runs: then its
+    job is claimed for this altd before the row is saved, so no tick follows a command that has not started."""
+    changes = run["changes"]
+    if len(changes) > ACTS:
+        return {"said": f"Not allowed: this run used its {ACTS} requests.", "done": False}, "requests"
+    agent = _agent(record, run["agent"])
+    ran = next(v for v in record["versions"] if v["agent"] == agent["id"] and v["version"] == run["version"])
+    row = {"n": len(changes) + 1, "kind": "command", "target": name, "at": _at(now), "request": request}
+    words = _words(agent, name)
+    reason = ("The run asked for something that is not a command name." if name is None
+              else "This routine is retired." if agent["state"] == "retired"
+              else "This routine has no command by that name." if words is None
+              else "This command changed after the run started." if _words(ran["definition"], name) != words
+              else "It already ran in this run." if any(c["kind"] == "command" and c["target"] == name
+                                                        and c["outcome"] not in ("refused", "not_started")
+                                                        for c in changes)
+              else f"This run used its {ACTS} requests." if len(changes) == ACTS
+              else "Another of its commands is still running." if any(
+                  c["kind"] == "command" and c["outcome"] == "running" for c in changes)
+              else None)
+    if reason:
+        row.update(outcome="refused", reason=reason)
+        S.project_log(project, "routine-action", agent=agent["id"], run=run["n"], change=row["n"], what="command",
+                      target=name, outcome="refused", reason=reason)
+    else:
+        row.update(outcome="running", words=words, unit=_unit(project, agent["id"], run["n"], row["n"]),
+                   started=_at(now))
+        _follow(row["unit"])
+    changes.append(row)
+    _save(project, record)
+    return row, reason
+
+
+def _follow(unit: str) -> bool:
+    """Claim following `unit` in this altd; False when another request or the tick already follows it."""
+    with _following_lock:
+        if unit in _following:
+            return False
+        _following.add(unit)
+        return True
+
+
+def _unfollow(unit: str) -> None:
+    with _following_lock:
+        _following.discard(unit)
+
+
+def _carry(project: str, agent_id: str, n: int, row: dict) -> dict:
+    """Run a recorded command as the operator, outside every sandbox, through the runner `alt task run` uses: a login
+    shell in the project's folder as its own job, with Altitude's clean environment and no input, so nothing of the
+    run reaches it. A watcher stops it when it must (`_must_stop`) while the launcher waits for the job."""
+    folder, ended = run_dir(project, agent_id, n), threading.Event()
+
+    def watch() -> None:
+        while not ended.wait(POLL):
+            if _must_stop(project, agent_id, n, row["n"]):
+                engines.machine_stop(row["unit"])  # again each poll: the job may not exist yet, or a stop may fail
+    watcher = threading.Thread(target=watch, name=f"command-{row['unit']}", daemon=True)
+    watcher.start()
+    try:
+        launch_error = engines.machine_command(row["words"], cwd=config.project_path(project), folder=folder,
+                                               unit=row["unit"], identity={}, timeout=COMMAND_TIME)
+    except (OSError, RuntimeError, ValueError) as exc:
+        launch_error = str(exc)[:300]
+    finally:
+        ended.set()
+        watcher.join()
+    return _settle(project, agent_id, n, row["n"], watched=True, launch_error=launch_error)
+
+
+def _must_stop(project: str, agent_id: str, n: int, change: int) -> str | None:
+    """Who stops a running command, recorded on its row the first time: "you" by Stop on its row, "run" when the run
+    ended or is stopping, "changed" when the routine was retired or saved without it or with other words."""
+    with S.project_lock(project):
+        record = _load(project)
+        run = _run(record, agent_id, n)
+        row = next(c for c in run["changes"] if c["n"] == change)
+        if row["outcome"] != "running":
+            return None
+        if not row.get("stopping"):
+            agent = _agent(record, agent_id)
+            by = ("run" if run["state"] != "running" or run.get("stop") else
+                  "changed" if agent["state"] == "retired" or _words(agent, row["target"]) != row["words"] else None)
+            if not by:
+                return None
+            row["stopping"] = by
+            _save(project, record)
+        return row["stopping"]
+
+
+def _settle(project: str, agent_id: str, n: int, change: int, *, watched: bool,
+            launch_error: str | None = None) -> dict:
+    """Wait for a command's job to end, then record how once: its exit status and time, a stop and by whom, its
+    limit, or a start that failed. Its `routine-action` event follows. Answer the run as `alt act` prints it."""
+    folder = run_dir(project, agent_id, n)
+    row = next(c for c in _run(_load(project), agent_id, n)["changes"] if c["n"] == change)
+    ended = engines.machine_outcome(folder, row["unit"], row["started"], watched=watched, timeout=COMMAND_TIME,
+                                    launch_error=launch_error, poll=POLL,
+                                    stop=lambda: _must_stop(project, agent_id, n, change))
+    with S.project_lock(project):
+        record = _load(project)
+        run = _run(record, agent_id, n)
+        row = next(c for c in run["changes"] if c["n"] == change)
+        if row["outcome"] == "running":
+            seconds = max(0, round((_date(ended["finished"]) - _date(row["started"])).total_seconds()))
+            outcome = ("stopped" if row.get("stopping") else "done" if ended["exit"] == 0
+                       else "failed" if ended["exit"] is not None
+                       else "not_started" if launch_error
+                       else "timed_out" if seconds >= COMMAND_TIME else "failed")
+            row.update(outcome=outcome, exit=ended["exit"], seconds=seconds, finished=ended["finished"])
+            if outcome == "stopped":
+                row["by"] = row.pop("stopping")
+            if outcome in ("not_started", "failed") and ended["exit"] is None:
+                row["reason"] = _line(ended["error"])
+            S.project_log(project, "routine-action", agent=agent_id, run=n, change=change, what="command",
+                          target=row["target"], outcome=outcome, exit=row["exit"], seconds=seconds, by=row.get("by"),
+                          reason=row.get("reason"))
+            _save(project, record)
+    return _answer(row, engines.machine_output(folder, row["unit"])["output"])
+
+
+def _awaited(project: str, run: dict, row: dict) -> dict:
+    """The answer to a request whose command started earlier: at once when it ended, else once it ends, followed
+    here when no one in this altd follows it, as after a restart."""
+    if row["outcome"] != "running":
+        return _answer(row, engines.machine_output(run_dir(project, run["agent"], run["n"]), row["unit"])["output"]
+                       if row.get("unit") else "")
+    if _follow(row["unit"]):
+        try:
+            return _settle(project, run["agent"], run["n"], row["n"], watched=False)
+        finally:
+            _unfollow(row["unit"])
+    deadline = time.monotonic() + COMMAND_TIME + 120
+    while time.monotonic() < deadline:
+        time.sleep(POLL)
+        current = next(c for c in _run(_load(project), run["agent"], run["n"])["changes"] if c["n"] == row["n"])
+        if current["outcome"] != "running":
+            return _awaited(project, run, current)
+    return {"said": f"{row['target']} is still running; ask again for its result.", "done": False}
+
+
+def follow_commands(project: str) -> None:
+    """The tick's commands: one a restart left running is followed again, here, to its end. The job's own limit ends
+    it meanwhile, so the follower only stops it when it must and records how it ended."""
+    for run in _load(project)["runs"]:
+        for row in run.get("changes") or []:
+            if row["kind"] == "command" and row["outcome"] == "running" and _follow(row["unit"]):
+                threading.Thread(target=_follow_one, args=(project, run["agent"], run["n"], row),
+                                 name=f"command-{row['unit']}", daemon=True).start()
+
+
+def _follow_one(project: str, agent_id: str, n: int, row: dict) -> None:
+    try:
+        _settle(project, agent_id, n, row["n"], watched=False)
+    finally:
+        _unfollow(row["unit"])
+
+
+def _took(seconds: int) -> str:
+    """"12 s", "2 min": how long a command ran."""
+    return f"{seconds} s" if seconds < 60 else f"{seconds // 60} min"
 
 
 def _put_back(record: dict, agent: dict) -> dict:
@@ -1433,7 +1762,10 @@ def agent_view(project: str, agent_id: str, *, runs: int = 10, now: datetime | N
     return {"id": agent["id"], "name": agent["name"], "state": agent["state"], "builtin": agent.get("builtin"),
             "version": agent["version"], "status": _status(record, agent, now),
             "definition": {k: agent[k] for k in DEFINITION}, "definition_line": _definition_line(agent),
-            "may_line": f"May change {MAYS['worktrees']}, with Undo" if agent["may"] else None,
+            "may_lines": ([f"May change {MAYS['worktrees']}, with Undo"] if agent["may"] else []) + (
+                [f"May run as you: {_and([c['name'] for c in agent['commands']])}"] if agent["commands"] else []),
+            "running_commands": [c["target"] for r in own if r["state"] == "running" for c in r.get("changes") or []
+                                 if c["kind"] == "command" and c["outcome"] == "running"],
             "runs": [_run_row(r) for r in reversed(own[-runs:])], "more": len(own) > runs,
             "send": _send(project, record, agent) if agent["events"] and agent["state"] != "retired" else None}
 
@@ -1554,7 +1886,8 @@ def run_view(project: str, agent_id: str, n: int, *, now: datetime | None = None
                         if run.get("session") else None),
             "suggested": (suggested(project, record, run, suggestions.made(project), now)
                           if run.get("suggestions") else None),
-            "changes": [_change_row(c) for c in run.get("changes") or []],
+            "changes": [_command_row(project, run, c, now) if c["kind"] == "command" else _change_row(c)
+                        for c in run.get("changes") or []],
             "undo_all": sum(map(_undoable, run.get("changes") or [])) >= 2}
 
 
@@ -1582,6 +1915,37 @@ def _change_row(change: dict) -> dict:
             "head": HEADS[(change["kind"], change["outcome"])], "name": change["target"], "note": note,
             "undone": undo.get("state") == "undone", "undo": _undoable(change),
             "refused": undo.get("reason") if undo.get("state") == "refused" else None}
+
+
+def _command_row(project: str, run: dict, change: dict, now: datetime) -> dict:
+    """A command request as What it changed draws it: how it ran or why it was refused, Stop while it runs, and the
+    output it kept once it ended. A command has no Undo."""
+    outcome, name, took = change["outcome"], change["target"], _took(change.get("seconds") or 0)
+    if outcome == "running":
+        note = f"For {_took(max(0, int((now - _date(change['started'])).total_seconds())))}."
+    elif outcome == "done":
+        note = f"Finished in {took}."
+    elif outcome == "failed":
+        note = (f"Exited with {change['exit']} after {took}." if change.get("exit") is not None
+                else f"Ended without an exit status after {took}.")
+    elif outcome == "timed_out":
+        note = f"Stopped after {COMMAND_TIME // 60} min."
+    elif outcome == "stopped":
+        note = {"you": f"You stopped it after {took}.", "run": f"Stopped with the run after {took}."}.get(
+            change.get("by"), "Stopped when you changed the routine.")
+    elif outcome == "not_started":
+        note = "Altitude could not start it, so nothing ran."
+    else:
+        note = change["reason"]
+    head = ("Running" if outcome == "running" else "Couldn't run" if outcome == "not_started"
+            else "Not allowed: run" if outcome == "refused" and name else "Not allowed: a command"
+            if outcome == "refused" else "Ran")
+    ran = outcome in ("done", "failed", "timed_out", "stopped")
+    return {"n": change["n"], "kind": "command", "outcome": outcome, "head": head, "name": name, "note": note,
+            "tone": "danger" if outcome in ("failed", "timed_out") else None, "undone": False, "undo": False,
+            "refused": None, "stop": outcome == "running", "stopping": bool(change.get("stopping")),
+            "output": engines.machine_output(run_dir(project, run["agent"], run["n"]), change["unit"])["output"]
+            if ran else None}
 
 
 def suggested(project: str, record: dict, run: dict, made: dict[str, str], now: datetime) -> dict:
@@ -1757,7 +2121,7 @@ def parser():
         def error(self, message):
             raise ValueError(f"alt agent: {message}")
 
-    def definition_flags(sub, *, change: bool):
+    def definition_flags(sub, *, change: bool, offering: bool = False):
         sub.add_argument("--name")
         sub.add_argument("--brief", help="'-': the brief on stdin")
         sub.add_argument("--schedules", help="'weekdays 07:00; fri 17:00', or 'none' to run only when asked")
@@ -1771,6 +2135,10 @@ def parser():
         sub.add_argument("--default-model", action="store_true", help="use the model a new task gets")
         sub.add_argument("--may", choices=(*MAYS, "none"),
                          help="what Altitude may change when a run asks: worktrees (and branches), or none")
+        if not offering:
+            sub.add_argument("--command", action="append", metavar="NAME=WORDS", dest="commands",
+                             help="a command the run may ask Altitude to run as you; once for each, the whole list")
+            sub.add_argument("--no-commands", action="store_true", help="list no commands")
         if not change:
             sub.add_argument("--on", action="store_true", help="on as soon as it is saved")
 
@@ -1786,7 +2154,7 @@ def parser():
     definition_flags(changed, change=True)
     offered = actions.add_parser("offer")
     offered.add_argument("agent", nargs="?", help="the routine a change is for; none for a new routine")
-    definition_flags(offered, change=False)
+    definition_flags(offered, change=False, offering=True)
     for name in ("on", "pause", "resume", "retire", "stop"):
         actions.add_parser(name).add_argument("agent")
     ran = actions.add_parser("run")
@@ -1846,6 +2214,15 @@ def _flags(options, stdin: str, base: dict | None) -> dict:
         value["limit"] = options.limit
     if options.may is not None:
         value["may"] = [] if options.may == "none" else [options.may]
+    listed, empty = getattr(options, "commands", None), getattr(options, "no_commands", False)
+    if listed and empty:
+        raise ValueError("alt agent: --command and --no-commands are each the whole list; give one")
+    if listed:
+        if any("=" not in entry for entry in listed):
+            raise ValueError("alt agent: give each command as --command NAME='WORDS'")
+        value["commands"] = [dict(zip(("name", "words"), entry.split("=", 1))) for entry in listed]
+    elif empty:
+        value["commands"] = []
     if options.default_model and (options.engine or options.model or options.effort):
         raise ValueError("alt agent: --default-model takes no --engine, --model or --effort")
     if options.default_model:

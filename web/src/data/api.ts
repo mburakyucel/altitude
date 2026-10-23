@@ -572,6 +572,9 @@ export const ProjectAgentDefinitionSchema = z.object({
   limit: z.number(),
   /** What Altitude may change when a run asks (`alt act`): ["worktrees"] for worktrees and branches; empty, it only reports. */
   may: z.array(z.literal("worktrees")),
+  /** The operator's commands, in order: a run asks for one by its name (`alt act run NAME`) and Altitude runs the
+   * words as the operator. Set only by the operator's own press or terminal, never by an offer. */
+  commands: z.array(z.object({ name: z.string(), words: z.string() })),
 });
 export type ProjectAgentDefinition = z.infer<typeof ProjectAgentDefinitionSchema>;
 const ToneSchema = z.enum(["accent", "danger", "muted"]);
@@ -782,7 +785,7 @@ const AgentStateSchema = z.enum(["new", "on", "paused", "retired"]);
 export const ProjectAgentSummarySchema = z.object({
   id: z.string(), name: z.string(), state: AgentStateSchema,
   triggers: z.string(), news: z.string(), news_at: z.string().nullable(),
-  /** "Changes worktrees and branches" after the triggers; null for a routine that only reports. */
+  /** "Changes worktrees and branches · Runs 2 commands" after the triggers; null for a routine that only reports. */
   may: z.string().nullable(),
   cue: z.enum(["running", "paused"]).nullable(), retired_line: z.string().nullable(),
 });
@@ -826,8 +829,11 @@ export const ProjectAgentDetailSchema = z.object({
   status: z.object({ line: z.string(), note: z.string().nullable(), actions: z.array(AgentActionSchema), run: z.number().nullable(), spinning: z.boolean() }),
   definition: ProjectAgentDefinitionSchema,
   definition_line: z.string(),
-  /** "May change worktrees and branches, with Undo"; null for a routine that only reports. */
-  may_line: z.string().nullable(),
+  /** "May change worktrees and branches, with Undo" and "May run as you: prune-images and clear-cache", each when it
+   * applies; empty for a routine that only reports. */
+  may_lines: z.array(z.string()),
+  /** The commands running now, which saving without them or with other words stops. */
+  running_commands: z.array(z.string()),
   runs: z.array(ProjectAgentRunSchema),
   more: z.boolean(),
   /** With the event trigger: the command that sends it an event, the id the examples use when the command names the
@@ -836,11 +842,16 @@ export const ProjectAgentDetailSchema = z.object({
 });
 export type ProjectAgentDetail = z.infer<typeof ProjectAgentDetailSchema>;
 /** One request a run made: its opening words and target ("Set aside worktree" agent-7c41e2d0), a muted line,
- * Undo while it can be undone, and why the last Undo was refused. */
+ * Undo while it can be undone, and why the last Undo was refused. A command (project_agents._command_row) has no
+ * Undo: Stop while it runs, the danger tone for its own failure and the output it kept once it ended; a request for
+ * something that is not a command name has no name. */
 const AgentChangeSchema = z.object({
-  n: z.number(), kind: z.enum(["worktree", "branch"]), outcome: z.enum(["done", "kept", "refused", "failed"]),
-  head: z.string(), name: z.string(), note: z.string().nullable(), undone: z.boolean(), undo: z.boolean(),
+  n: z.number(), kind: z.enum(["worktree", "branch", "command"]),
+  outcome: z.enum(["done", "kept", "refused", "failed", "running", "timed_out", "stopped", "not_started"]),
+  head: z.string(), name: z.string().nullable(), note: z.string().nullable(), undone: z.boolean(), undo: z.boolean(),
   refused: z.string().nullable(),
+  tone: z.literal("danger").nullish(), stop: z.boolean().optional(), stopping: z.boolean().optional(),
+  output: z.string().nullish(),
 });
 export const ProjectAgentRunDetailSchema = ProjectAgentRunSchema.extend({
   agent: z.object({ id: z.string(), name: z.string() }),

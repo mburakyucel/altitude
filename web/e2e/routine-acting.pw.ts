@@ -76,12 +76,12 @@ test("the permission on the list, the routine page and the form, and the built-i
   const may = page.getByRole("checkbox", { name: "Worktrees and branches" });
   await walk.state("a06-form-ticked", {
     visible: [may, page.getByText(/^Sets aside worktrees and deletes branches nothing needs/)],
-    hidden: [page.getByText("Unticked, it only reports.", { exact: true })],
+    hidden: [page.getByText("Nothing ticked or listed: it only reports.", { exact: true })],
   });
   await expect(may).toBeChecked();
   await fits();
   await press(may);
-  await walk.state("a07-form-unticked", { visible: [page.getByText("Unticked, it only reports.", { exact: true })], hidden: [] });
+  await walk.state("a07-form-unticked", { visible: [page.getByText("Nothing ticked or listed: it only reports.", { exact: true })], hidden: [] });
   await expect(may).not.toBeChecked();
   await press(page.getByRole("button", { name: "Save" }));
   await expect(page.getByRole("heading", { level: 1, name: "Clear old worktrees", exact: true })).toBeVisible();
@@ -145,4 +145,97 @@ test("a run's What it changed: each request in order, Undo, Undo all, a refused 
     visible: [refused.getByText("This routine only reports.", { exact: true })],
     hidden: [refused.getByRole("button"), page.getByRole("button", { name: "Undo all" })],
   });
+});
+
+test("commands you list: the form's list and draft, the routine page, a run's command rows with Stop and Output, and chat", async ({ page }, info) => {
+  test.setTimeout(120_000);
+  const walk = walkthrough(page, info);
+  const phone = info.project.name === "phone";
+  const { press, fits } = setup(page, phone);
+  const tall = async (target: Locator) => { if (phone) expect((await target.boundingBox())!.height, "44px on the phone").toBeGreaterThanOrEqual(44); };
+
+  // In chat, Altitude's sentence names what ran and what failed; a refused request is on the run's page only.
+  await walk.open(project);
+  await walk.state("c01-chat", {
+    visible: [page.locator(".agent-line").filter({ hasText: "Free disk space found something: the disk was 94% full. Ran prune-images; clear-cache failed." })],
+    hidden: [],
+  });
+
+  // The list names how many it runs; the routine page says what it may run as you.
+  await walk.open(`${project}/agents`);
+  await expect(page.getByRole("link", { name: /^Free disk space Mondays at 09:00 · Runs 3 commands · / })).toBeVisible();
+  await openAgent(page, press, "Free disk space");
+  await walk.state("c02-may-run", {
+    visible: [page.getByText("May run as you: prune-images, clear-cache and wait-for-mirror", { exact: true })],
+    hidden: [page.getByText("Only reports", { exact: true })],
+  });
+
+  // The ended run: each request in order, the failure in the danger tone, output folded, no Undo.
+  await press(page.getByRole("link", { name: /^Found something.*Ran prune-images; clear-cache failed\.$/ }));
+  const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "What it changed" }) });
+  const row = (text: string) => card.locator(".agent-change").filter({ hasText: text });
+  await walk.state("c03-run-commands", {
+    visible: [row("Ran prune-images").getByText(/^Finished in \d+ s\.$/), row("Ran clear-cache").getByText(/^Exited with 1 after \d+ s\.$/),
+      row("Not allowed: a command").getByText("The run asked for something that is not a command name.", { exact: true }),
+      row("Not allowed: run prune-images").getByText("It already ran in this run.", { exact: true })],
+    hidden: [card.getByRole("button"), page.getByText("Prune Images!")],
+  });
+  await expect(card.locator(".agent-change")).toHaveCount(4);
+  await expect(row("Ran clear-cache").getByText(/^Exited with 1/)).toHaveClass(/text-danger/);
+  const output = row("Ran clear-cache").locator("summary", { hasText: "Output" });
+  await tall(output);
+  await press(output);
+  await walk.state("c04-output", { visible: [row("Ran clear-cache").getByText("harbor-build: cache folder is busy")], hidden: [] });
+  await fits();
+
+  // The form: the list under its sub-label, the note, a draft's errors, Save refusing an open draft.
+  await openAgent(page, press, "Free disk space");
+  await press(page.getByRole("link", { name: "Edit" }));
+  const list = page.getByRole("group", { name: "Commands" });
+  const note = page.getByText(/^These run as you, outside Altitude’s sandbox, whenever the routine decides\./);
+  await walk.state("c05-form-commands", {
+    visible: [list.getByText("prune-images", { exact: true }), list.getByRole("button", { name: "Edit wait-for-mirror" }), note,
+      list.getByRole("button", { name: "Add a command" })],
+    hidden: [page.getByText("Nothing ticked or listed: it only reports.", { exact: true })],
+  });
+  await tall(list.getByRole("button", { name: "Remove clear-cache" }));
+  await fits();
+  await press(list.getByRole("button", { name: "Add a command" }));
+  const draft = page.getByRole("group", { name: "New command" });
+  await press(draft.getByRole("button", { name: "Done" }));
+  await walk.state("c06-draft-errors", {
+    visible: [draft.getByText("Give it a name.", { exact: true }), draft.getByText("Write the command.", { exact: true })],
+    hidden: [list.getByRole("button", { name: "Add a command" }), list.getByRole("button", { name: "Edit prune-images" })],
+  });
+  await press(page.getByRole("button", { name: "Save" }));
+  await walk.state("c07-save-with-draft", { visible: [page.getByText("Finish or cancel the command first.", { exact: true })], hidden: [] });
+  await draft.getByRole("textbox", { name: "Name" }).fill("trim-logs");
+  await draft.getByRole("textbox", { name: "Command" }).fill("./scripts/trim-logs.sh --older-than 30d");
+  await walk.state("c08-draft", {
+    visible: [draft.getByText("Starts in harbor’s folder, with its files as they are then. Up to 10 minutes, once a run at most.", { exact: true })],
+    hidden: [],
+  });
+  await press(draft.getByRole("button", { name: "Done" }));
+  await expect(list.getByText("trim-logs", { exact: true })).toBeVisible();
+  // Editing the running command's words says saving stops it.
+  await press(list.getByRole("button", { name: "Edit wait-for-mirror" }));
+  await page.getByRole("group", { name: "Edit wait-for-mirror" }).getByRole("textbox", { name: "Command" }).fill("sleep 60");
+  await press(page.getByRole("group", { name: "Edit wait-for-mirror" }).getByRole("button", { name: "Done" }));
+  await walk.state("c09-saving-stops", { visible: [page.getByText("Saving stops wait-for-mirror, which is running.", { exact: true })], hidden: [] });
+  await fits();
+  await press(page.getByRole("button", { name: "Cancel" }).last());
+
+  // The running run: Stop on the command's row reads Stopping… until the row says you stopped it.
+  await openAgent(page, press, "Free disk space");
+  await press(page.getByRole("link", { name: /^Running/ }).first());
+  const running = row("Running wait-for-mirror");
+  const stop = running.getByRole("button", { name: "Stop wait-for-mirror" });
+  await walk.state("c10-running", { visible: [running.getByText(/^For \d+ (s|min)\.$/), stop], hidden: [running.getByText("Output")] });
+  await tall(stop);
+  await press(stop);
+  await walk.state("c11-stopped", {
+    visible: [row("Ran wait-for-mirror").getByText(/^You stopped it after \d+ (s|min)\.$/), row("Ran wait-for-mirror").getByText("Output")],
+    hidden: [stop],
+  });
+  await fits();
 });

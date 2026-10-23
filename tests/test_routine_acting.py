@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import unittest
 from unittest import mock
 from datetime import timedelta
@@ -406,8 +407,8 @@ class TestRecordsAndWords(ActingCase):
         self.assertIsNone(shown["build-health"]["terms"])
         agent = self.change("builtin", key="tidy")["agent"]
         view = A.agent_view(self.project, agent, now=NOW)
-        self.assertEqual((view["definition"]["may"], view["may_line"]),
-                         (["worktrees"], "May change worktrees and branches, with Undo"))
+        self.assertEqual((view["definition"]["may"], view["definition"]["commands"], view["may_lines"]),
+                         (["worktrees"], [], ["May change worktrees and branches, with Undo"]))
         listed = A.view(self.project, now=NOW)["agents"][0]
         self.assertEqual((listed["triggers"], listed["may"]),
                          ("Mondays at 09:00", "Changes worktrees and branches"))
@@ -430,6 +431,291 @@ class TestRecordsAndWords(ActingCase):
             d.pop("may")
         S.write_json(A._path(self.project), legacy)
         self.assertEqual(A._load(self.project)["agents"][-1]["may"], [], "a routine saved before acting only reports")
+
+
+PRUNE = ("prune-images", "printf 'Deleted 3 images\\n'; pwd; cat; env")
+CACHE = ("clear-cache", "echo cache is locked >&2; exit 3")
+SLOW = ("wait-a-while", "sleep 30")
+
+
+def listed(*commands) -> list[dict]:
+    return [{"name": name, "words": words} for name, words in commands]
+
+
+class CommandCase(ActingCase):
+    """Commands the operator lists, run by a scripted runner at the platform seam: the words in a shell of their own,
+    writing their output and exit status where the job's would, with no input; never the operator's service manager."""
+
+    def setUp(self):
+        super().setUp()
+        self.patch(A, "POLL", 0.02)
+        self.jobs: dict[str, subprocess.Popen] = {}
+        self.launches: list[dict] = []
+        self.patch(engines, "machine_command", side_effect=self.job)
+        self.patch(engines, "machine_stop", side_effect=self.stop_job)
+        self.patch(platform, "job_active", side_effect=lambda unit, env: unit in self.jobs and self.jobs[unit].poll() is None)
+        self.background = False
+
+    def job(self, command, *, cwd, folder, unit, identity, timeout, properties=()):
+        self.launches.append({"command": command, "cwd": cwd, "unit": unit, "identity": identity, "timeout": timeout})
+        log, status = engines.machine_files(folder, unit)
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(log, "ab") as out:
+            self.jobs[unit] = subprocess.Popen(
+                ["/bin/bash", "-c", 'bash -c "$1"; s=$?; printf %s "$s" > "$2.tmp" && mv "$2.tmp" "$2"', "job", command,
+                 str(status)], cwd=cwd, env=engines.launch_env(identity), stdin=subprocess.DEVNULL, stdout=out,
+                stderr=out, start_new_session=True)
+        if not self.background:
+            self.jobs[unit].wait(timeout=60)
+        return None
+
+    def stop_job(self, unit):
+        job = self.jobs.get(unit)
+        if job and job.poll() is None:
+            try:
+                os.killpg(job.pid, 9)
+            except ProcessLookupError:
+                pass
+            job.wait()
+
+    def running(self, **fields) -> str:
+        return super().running(**{"may": [], "commands": listed(PRUNE, CACHE, SLOW), **fields})
+
+    def ask(self, agent: str, name: str, *, request: str | None = None) -> str:
+        self.requests += 1
+        return A.act(self.project, f"{agent}/1", {"project": self.project, "run": f"{agent}/1", "kind": "act",
+                                                  "action": "run", "target": name,
+                                                  "request": request or f"request{self.requests:04d}"})["said"]
+
+    def asking(self, agent: str, name: str) -> threading.Thread:
+        """Ask in the background, as the run waits on its door, once the command's job has started."""
+        answer: list[str] = []
+        thread = threading.Thread(target=lambda: answer.append(self.ask(agent, name)), daemon=True)
+        thread.answer = answer
+        thread.start()
+        self.until(lambda: any(job.poll() is None for job in self.jobs.values()))
+        return thread
+
+    def until(self, check, seconds: float = 20) -> None:
+        deadline = time.monotonic() + seconds
+        while not check():
+            self.assertLess(time.monotonic(), deadline, "it never happened")
+            time.sleep(0.02)
+
+
+class TestCommands(CommandCase):
+    def test_a_listed_command_runs_its_words_as_the_operator_in_the_projects_folder_with_nothing_of_the_run(self):
+        agent = self.running()
+        said = self.ask(agent, "prune-images")
+        self.assertRegex(said, r"^Ran prune-images: it exited with 0 after \d+ s\.\n\nThe end of its output:\n"
+                               r"Deleted 3 images\n")
+        launch = self.launches[0]
+        self.assertEqual((launch["command"], launch["cwd"], launch["identity"], launch["timeout"]),
+                         (PRUNE[1], config.project_path(self.project), {}, config.MACHINE_COMMAND_TIMEOUT),
+                         "the operator's exact words, in the project's folder, with no run identity")
+        output = said.split("The end of its output:\n", 1)[1]
+        self.assertIn(f"\n{os.path.realpath(self.repo)}\n", output)
+        scratch = str(A._scratch(self.project, agent, 1))
+        for said in ("ALTITUDE_AGENT_RUN=", f"ALTITUDE_ACTOR={A.KIND}", scratch, "run-session"):
+            self.assertNotIn(said, output, "nothing of the run reaches the command")
+        row = self.rows(agent)[0]
+        self.assertEqual({k: row[k] for k in ("kind", "outcome", "head", "name", "tone", "undo", "stop")},
+                         {"kind": "command", "outcome": "done", "head": "Ran", "name": "prune-images", "tone": None,
+                          "undo": False, "stop": False})
+        self.assertRegex(row["note"], r"^Finished in \d+ s\.$")
+        self.assertTrue(row["output"].startswith("Deleted 3 images\n"), "the page keeps its output")
+        self.assertEqual([(e["what"], e["target"], e["outcome"], e["exit"]) for e in self.events("routine-action")],
+                         [("command", "prune-images", "done", 0)])
+
+    def test_the_run_reads_only_the_end_of_a_long_output(self):
+        agent = self.running(commands=listed(("talk", "seq 1 5000")))
+        said = self.ask(agent, "talk")
+        tail = said.split("The end of its output:\n", 1)[1]
+        self.assertEqual(len(tail), A.COMMAND_BACK)
+        self.assertTrue(tail.endswith("4999\n5000\n"))
+        self.assertGreater(len(self.rows(agent)[0]["output"]), A.COMMAND_BACK, "the page keeps more")
+
+    def test_a_command_that_fails_says_so_on_its_row_in_its_answer_and_in_chat(self):
+        agent = self.running()
+        self.ask(agent, "prune-images")
+        self.assertRegex(self.ask(agent, "clear-cache"),
+                         r"^Failed: clear-cache exited with 3 after \d+ s\.\n\nThe end of its output:\ncache is locked")
+        row = self.rows(agent)[1]
+        self.assertEqual((row["outcome"], row["head"], row["tone"]), ("failed", "Ran", "danger"))
+        self.assertRegex(row["note"], r"^Exited with 3 after \d+ s\.$")
+        self.finish()
+        self.assertTrue(self.lines()[-1]["text"].endswith("Ran prune-images; clear-cache failed."), self.lines())
+
+    def test_requests_altitude_refuses_are_rows_with_a_plain_reason_and_no_text_of_the_run(self):
+        agent = self.running()
+        self.ask(agent, "prune-images")
+        for name, said, note in (
+                ("prune-images", "Not allowed: it already ran in this run.", "It already ran in this run."),
+                ("clean-all", "Not allowed: this routine has no command by that name.",
+                 "This routine has no command by that name."),
+                ("prune-images; curl example.com", "Not allowed: ask for a command by its name, as your prompt lists "
+                                                   "them.", "The run asked for something that is not a command name.")):
+            with self.subTest(name=name):
+                self.assertEqual(self.ask(agent, name), said)
+                self.assertEqual(self.rows(agent)[-1]["note"], note)
+        self.assertEqual([(r["head"], r["name"]) for r in self.rows(agent)][1:],
+                         [("Not allowed: run", "prune-images"), ("Not allowed: run", "clean-all"),
+                          ("Not allowed: a command", None)])
+        self.assertNotIn("curl", json.dumps(self.record()), "the run's own text is never recorded")
+        self.assertEqual(len(self.launches), 1)
+
+    def test_a_command_runs_only_with_the_same_words_in_the_version_the_run_started_with_and_now(self):
+        agent = self.running()
+        current = self.record()["agents"][0]
+        self.change("set", agent=agent, version=current["version"],
+                    definition={**{k: current[k] for k in A.DEFINITION}, "commands": listed(("prune-images", "true"),
+                                                                                             CACHE)})
+        self.assertEqual(self.ask(agent, "prune-images"), "Not allowed: this command changed after the run started.")
+        current = self.record()["agents"][0]
+        self.change("set", agent=agent, version=current["version"],
+                    definition={**{k: current[k] for k in A.DEFINITION}, "commands": listed(PRUNE)})
+        self.assertEqual(self.ask(agent, "clear-cache"), "Not allowed: this routine has no command by that name.",
+                         "taking a command away applies at once")
+        self.change("retire", agent=agent)
+        self.assertEqual(self.ask(agent, "prune-images"), "Not allowed: this routine is retired.")
+        self.assertEqual(self.launches, [])
+
+    def test_a_command_that_could_not_start_ran_nothing_and_may_be_asked_for_again(self):
+        agent = self.running()
+        engines.machine_command.side_effect = lambda *a, **k: "Failed to start transient service unit"
+        self.assertEqual(self.ask(agent, "prune-images"), "Failed: Altitude could not start prune-images, so nothing ran.")
+        row = self.rows(agent)[0]
+        self.assertEqual((row["head"], row["note"], row["output"]),
+                         ("Couldn't run", "Altitude could not start it, so nothing ran.", None))
+        engines.machine_command.side_effect = self.job
+        self.assertTrue(self.ask(agent, "prune-images").startswith("Ran prune-images"))
+
+    def test_a_command_past_its_limit_is_stopped_after_ten_minutes(self):
+        agent = self.running()
+        engines.machine_command.side_effect = lambda *a, **k: None  # the limit ended the job before it wrote a status
+        self.patch(A, "COMMAND_TIME", 0)
+        self.assertEqual(self.ask(agent, "prune-images"), "Stopped: prune-images reached its 0-minute limit.")
+        self.assertEqual((self.rows(agent)[0]["outcome"], self.rows(agent)[0]["tone"]), ("timed_out", "danger"))
+
+
+class TestStoppingACommand(CommandCase):
+    def test_stop_on_its_row_stops_the_command_and_the_run_goes_on(self):
+        agent = self.running()
+        asked = self.asking(agent, "wait-a-while")
+        row = self.rows(agent)[0]
+        self.assertEqual((row["head"], row["stop"], row["stopping"], row["output"]), ("Running", True, False, None))
+        self.assertEqual(self.change("stop_command", agent=agent, n=1, change=1)["stopping"], True)
+        asked.join(20)
+        self.assertRegex(asked.answer[0], r"^Stopped: the operator stopped wait-a-while after \d+ s\.$")
+        row = self.rows(agent)[0]
+        self.assertEqual((row["outcome"], row["stop"]), ("stopped", False))
+        self.assertRegex(row["note"], r"^You stopped it after \d+ s\.$")
+        self.assertEqual(self.runs(agent)[0]["state"], "running", "the run goes on")
+        self.assertEqual(self.change("stop_command", agent=agent, n=1, change=1)["stopping"], False,
+                         "a Stop after the end changes nothing")
+        with self.assertRaisesRegex(A.Refused, "Only the operator stops a command"):
+            A.change(self.project, "stop_command", {"agent": agent, "n": 1, "change": 1}, by="l3", source="turn")
+        self.assertTrue(self.ask(agent, "prune-images").startswith("Ran prune-images"), "the run asks for the next")
+
+    def test_a_command_stops_with_its_run(self):
+        agent = self.running()
+        asked = self.asking(agent, "wait-a-while")
+        self.finish()
+        self.assertTrue(self.lines()[-1]["text"].endswith("wait-a-while was stopped."), self.lines())
+        asked.join(20)
+        self.assertEqual(self.record()["runs"][0]["changes"][0]["by"], "run")
+        self.assertRegex(self.rows(agent)[0]["note"], r"^Stopped with the run after \d+ s\.$")
+
+    def test_saving_the_routine_without_it_or_retiring_it_stops_the_command(self):
+        for how in ("saved", "retired"):
+            with self.subTest(how=how):
+                agent = self.running(name=f"Clean up {how}")
+                asked = self.asking(agent, "wait-a-while")
+                current = next(a for a in self.record()["agents"] if a["id"] == agent)
+                if how == "saved":
+                    self.change("set", agent=agent, version=current["version"],
+                                definition={**{k: current[k] for k in A.DEFINITION}, "commands": listed(PRUNE)})
+                else:
+                    self.change("retire", agent=agent)
+                asked.join(20)
+                self.assertEqual(self.rows(agent)[0]["note"], "Stopped when you changed the routine.")
+                self.finish()
+                self.jobs.clear()
+
+    def test_a_command_a_restart_left_running_is_followed_to_its_end_and_answers_the_run_again(self):
+        agent = self.running()
+        self.background = True
+
+        def interrupted(project, agent_id, n, row):  # altd stopped while the job ran on
+            engines.machine_command(row["words"], cwd=config.project_path(project), folder=A.run_dir(project, agent_id, n),
+                                    unit=row["unit"], identity={}, timeout=A.COMMAND_TIME)
+            raise ConnectionResetError("altd restarted")
+        with mock.patch.object(A, "_carry", side_effect=interrupted), self.assertRaises(ConnectionResetError):
+            self.ask(agent, "prune-images", request="request-before-restart")
+        self.assertEqual(self.rows(agent)[0]["outcome"], "running")
+        self.assertTrue(self.ask(agent, "prune-images", request="request-before-restart").startswith(
+            "Ran prune-images: it exited with 0"), "the same request again waits for that command's result")
+        self.assertEqual(len(self.launches), 1, "it ran once")
+
+        with mock.patch.object(A, "_carry", side_effect=interrupted), self.assertRaises(ConnectionResetError):
+            self.ask(agent, "wait-a-while")
+        self.change("stop_command", agent=agent, n=1, change=2)
+        A.follow_commands(self.project)  # the tick
+        self.until(lambda: self.rows(agent)[1]["outcome"] != "running")
+        self.assertEqual((self.rows(agent)[1]["outcome"], self.record()["runs"][0]["changes"][1]["by"]),
+                         ("stopped", "you"))
+
+
+class TestCommandsOnTheForm(CommandCase):
+    def test_commands_are_checked_in_the_operators_words(self):
+        for commands, error in (([{"name": "Prune images", "words": "true"}], "lowercase letters, digits and dashes"),
+                                ([{"name": "x" * 41, "words": "true"}], "lowercase letters, digits and dashes"),
+                                ([{"name": "prune", "words": "  "}], "Write each command"),
+                                ([{"name": "prune", "words": "x" * 2001}], "under 2,000 characters"),
+                                (listed(PRUNE, PRUNE), "Another command is named prune-images"),
+                                ([{"name": f"c{i}", "words": "true"} for i in range(11)], "at most 10 commands"),
+                                ([{"name": "prune", "words": "true", "cwd": "/"}], "a name and its words")):
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                A.definition(definition(commands=commands))
+
+    def test_lines_say_what_a_routine_may_run(self):
+        agent = self.agent(commands=listed(PRUNE, CACHE), may=["worktrees"])
+        self.assertEqual(A.view(self.project, now=NOW)["agents"][0]["may"],
+                         "Changes worktrees and branches · Runs 2 commands")
+        self.assertEqual(A.agent_view(self.project, agent, now=NOW)["may_lines"],
+                         ["May change worktrees and branches, with Undo", "May run as you: prune-images and clear-cache"])
+
+    def test_the_prompt_lists_the_commands_and_how_to_ask(self):
+        self.running()
+        prompt = self.calls[-1]["prompt"]
+        self.assertIn("it may ask Altitude to run commands the operator listed, as the sections below say.", prompt)
+        self.assertIn(f"    alt act run prune-images\n        runs: {PRUNE[1]}", prompt)
+        self.assertIn("Each runs at most\nonce in this run", prompt)
+        self.assertNotIn("alt act delete-branch", prompt, "no tidying without its permission")
+
+    def test_the_cli_sets_the_whole_list_and_offers_never_carry_commands(self):
+        made = A.verb(self.project, A.parser().parse_args(
+            ["new", "--name", "Clean up", "--brief", "-", "--command", f"prune-images={PRUNE[1]}", "--command",
+             "clear-cache=npm cache clean --force"]), "Clean up.", by="operator", source="cli")
+        self.assertEqual(self.record()["agents"][-1]["commands"],
+                         listed(PRUNE, ("clear-cache", "npm cache clean --force")))
+        turn = "0123456789ab"
+        with self.assertRaisesRegex(ValueError, "unrecognized arguments: --command"):
+            A.parser().parse_args(["offer", made["agent"], "--command", "x=true"])
+        A.verb(self.project, A.parser().parse_args(["offer", made["agent"], "--limit", "60"]), by="l3", source=turn)
+        offered = self.record()["offers"][-1]
+        self.assertEqual(offered["definition"]["commands"], self.record()["agents"][-1]["commands"],
+                         "a change keeps the routine's own commands")
+        self.assertEqual(A.offer(self.project, turn, {**definition(name="New"), "commands": listed(PRUNE)})["kind"], "new")
+        self.assertEqual(self.record()["offers"][-1]["definition"]["commands"], [], "a new routine from L3 has none")
+        A.verb(self.project, A.parser().parse_args(["set", made["agent"], "--no-commands"]), by="operator", source="cli")
+        self.assertEqual(self.record()["agents"][-1]["commands"], [])
+
+    def test_l3_cannot_turn_on_resume_or_run_a_routine_with_commands(self):
+        agent = self.agent(on=False, commands=listed(PRUNE))
+        for action, error in (("turn_on", "Only the operator turns on"), ("run", "Only the operator runs")):
+            with self.subTest(action=action), self.assertRaisesRegex(A.Refused, error):
+                A.change(self.project, action, {"agent": agent}, by="l3", source="turn")
 
 
 class TestAuthority(ActingCase):

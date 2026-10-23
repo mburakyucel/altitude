@@ -578,9 +578,9 @@ def main(argv=None) -> None:
     sub.add_parser("improve", parents=[improve.parser()], add_help=False, help="improvement suggestions: status here; the rest through the project's coordinator")
     from altitude import project_agents
     sub.add_parser("agent", parents=[project_agents.parser()], add_help=False, help="routines a project runs on a schedule, when sent an event or when asked: list, show, new, set, on, pause, resume, retire, run, send, stop, undo")
-    acting = sub.add_parser("act", help="inside a routine run that may change things: ask Altitude to make one change, which it checks itself")
-    acting.add_argument("action", choices=("set-aside-worktree", "delete-branch"))
-    acting.add_argument("target", help="the worktree's or branch's name")
+    acting = sub.add_parser("act", help="inside a routine run that may change things: ask Altitude to make one change, which it checks itself, or run a command the operator listed")
+    acting.add_argument("action", choices=("set-aside-worktree", "delete-branch", "run"))
+    acting.add_argument("target", help="the worktree's or branch's name, or the command's")
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
@@ -653,7 +653,10 @@ def main(argv=None) -> None:
         if c != "act":
             sys.exit("alt: a routine run reports in its final answer; its one verb is alt act")
         try:
-            say(door.call("act", {"action": args.action, "target": args.target})["said"]); return
+            # A command the operator listed runs up to its limit before Altitude answers.
+            waits = {"timeout": config.MACHINE_COMMAND_TIMEOUT + 120, "wait": config.MACHINE_COMMAND_TIMEOUT + 300} \
+                if args.action == "run" else {}
+            say(door.call("act", {"action": args.action, "target": args.target}, **waits)["said"]); return
         except door.DoorError as exc:
             sys.exit(f"alt act: {exc}")
     if c == "act":

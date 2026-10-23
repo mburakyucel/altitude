@@ -15,7 +15,8 @@ import LiveSession from "./LiveSession";
  * waits or runs, else its outcome and report with the brief it ran and its session folded. A run has no message box,
  * review boxes, terminal or questions: its session is the task transcript component, read only. A run that suggested
  * tasks shows them under its report ("Suggestions"); one that asked Altitude to change something lists each request
- * under What it changed (ACTING.md, "The run page"), with Undo while it can be undone.
+ * under What it changed (ACTING.md, "The run page"), with Undo while it can be undone, and each command it asked for
+ * (COMMANDS.md, "A run's page") with Stop while it runs and its output once it ends.
  */
 
 /** A change's target cut in the middle at 40 characters, the full name on hover and for screen readers. */
@@ -25,11 +26,24 @@ function Name({ name }: { name: string }) {
 }
 
 /** What it changed: one row per request in order; Undo puts one back and Undo all every one that can be, each row
- * spinning until the run reads again and then saying on its own whether it was put back. */
+ * spinning until the run reads again and then saying on its own whether it was put back. Stop on a running command
+ * reads Stopping… until the row ends. */
 function Changes({ project, agent, run, onRead }: { project: string; agent: string; run: ProjectAgentRunDetail; onRead: () => Promise<unknown> }) {
   const [undoing, setUndoing] = useState<number[]>([]);
+  const [stopping, setStopping] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   if (!run.changes.length) return null;
+  const stop = async (change: number) => {
+    setStopping([...stopping, change]);
+    setError(null);
+    try {
+      await sendProjectAgent(project, "stop_command", { agent, n: run.n, change });
+      await onRead();
+    } catch (failure) {
+      setStopping((now) => now.filter((n) => n !== change));
+      setError((failure as Error).message);
+    }
+  };
   const undo = async (change: number | "all") => {
     setUndoing(change === "all" ? run.changes.filter((row) => row.undo).map((row) => row.n) : [change]);
     setError(null);
@@ -37,7 +51,7 @@ function Changes({ project, agent, run, onRead }: { project: string; agent: stri
       await sendProjectAgent(project, "undo", { agent, n: run.n, change });
       await onRead();
     } catch (failure) {
-      setError((failure as Error).message);
+      setError(refusal("Not undone", (failure as Error).message));
     }
     setUndoing([]);
   };
@@ -49,15 +63,19 @@ function Changes({ project, agent, run, onRead }: { project: string; agent: stri
     <div className="settings-card agent-changes">
       {run.changes.map((row) => <div key={row.n} className="agent-change">
         <span className="agent-change-words">
-          <strong>{row.head} <Name name={row.name} />{row.undone ? " · Undone" : ""}</strong>
+          <strong>{row.head}{row.name === null ? null : <> <Name name={row.name} /></>}{row.undone ? " · Undone" : ""}</strong>
           {row.refused ? <small className="text-danger">{refusal("Not undone", row.refused)}</small>
-            : row.note ? <small className="text-muted">{row.note}</small> : null}
+            : row.note ? <small className={row.tone === "danger" ? "text-danger" : "text-muted"}>{row.note}</small> : null}
+          {row.output ? <details className="agent-fold agent-output"><summary>Output</summary><pre className="agent-output-text">{row.output}</pre></details> : null}
         </span>
+        {row.stop ? <button type="button" className="btn" disabled={row.stopping || stopping.includes(row.n)} aria-label={`Stop ${row.name}`}
+          onClick={() => void stop(row.n)}>
+          {row.stopping || stopping.includes(row.n) ? <><span className="spinner" aria-hidden />Stopping…</> : "Stop"}</button> : null}
         {row.undo ? <button type="button" className="btn" disabled={busy} aria-label={`Undo: ${row.head} ${row.name}`} onClick={() => void undo(row.n)}>
           <BusyLabel busy={undoing.includes(row.n)} label="Undo" working="Undoing" /></button> : null}
       </div>)}
     </div>
-    {error ? <p role="alert" className="text-meta text-danger">{refusal("Not undone", error)}</p> : null}
+    {error ? <p role="alert" className="text-meta text-danger">{error}</p> : null}
   </section>;
 }
 
