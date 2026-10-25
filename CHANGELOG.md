@@ -5,8 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
-- The Routines page opens with what routines are: "Autonomous agents, scheduled or event-driven." The
-  README, walkthrough and diagrams say the same.
+- The Routines page opens with what routines are: "Autonomous agents, scheduled or event-driven, that
+  automate your recurring work." The README, walkthrough and diagrams say the same.
 - Opening Altitude on a phone from a notification, the app switcher or the lock screen shows the whole screen
   again: the chat, composer and tab bar no longer sit squeezed into the top part with empty space below until
   you tap the message box.

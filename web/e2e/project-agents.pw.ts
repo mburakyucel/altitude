@@ -99,7 +99,7 @@ test("Work shows agent runs and the Agents row; the Agents page lists, budgets a
   const builtIn = page.getByRole("region", { name: "Built in" });
   const budget = page.getByLabel("Routines may use up to");
   await walk.state("02-agents-page", {
-    visible: [title("Routines"), page.getByText("Autonomous agents, scheduled or event-driven.", { exact: true }),
+    visible: [title("Routines"), page.getByText("Autonomous agents, scheduled or event-driven, that automate your recurring work.", { exact: true }),
       ...Object.values(rows),
       page.getByText("Weekdays at 07:00 · Waiting while Flaky test watch runs", { exact: true }),
       page.getByText(/^Weekdays at 07:00 · Couldn't finish \S/),

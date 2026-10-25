@@ -102,7 +102,7 @@ export default function ProjectAgentsPage() {
   // Back returns to the tab that opened the routines: Work unless chat did.
   const tab = (useLocation().state as { tab?: string } | null)?.tab === "chat" ? "" : "?tab=work";
   return <AgentFrame back={{ to: `/projects/${name}${tab}`, label: name }} title="Routines">
-    <p className="text-meta text-muted agents-intro">Autonomous agents, scheduled or event-driven.</p>
+    <p className="text-meta text-muted agents-intro">Autonomous agents, scheduled or event-driven, that automate your recurring work.</p>
     {data?.budget.spent ? <p className="text-meta agents-spent">This week’s budget is used: no new runs until Monday unless you raise it.</p> : null}
     {agents.isPending ? <div className="settings-card"><StatusMark label="Loading routines…" /></div>
       : !data ? <div className="settings-card" role="alert"><p>Could not load routines.</p>

@@ -376,7 +376,7 @@ settings…**, is always there.
 
 ### All routines
 
-`/projects/<name>/agents`, with **‹ harbor** back to the project and the title **Routines** over "Autonomous agents, scheduled or event-driven." One card: a
+`/projects/<name>/agents`, with **‹ harbor** back to the project and the title **Routines** over "Autonomous agents, scheduled or event-driven, that automate your recurring work." One card: a
 whole-row link per routine with a chevron, the name in semibold and one muted line, its triggers then the
 latest news, with a cue before it when one applies (a pulsing dot running, a pause mark paused):
 
