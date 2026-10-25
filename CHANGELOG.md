@@ -5,8 +5,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
-- The Routines page opens with what routines are for: "Give an agent a job and schedule it or make it
-  event-driven." The README, walkthrough and diagrams say the same.
+- The Routines page opens with what routines are: "Autonomous agents, scheduled or event-driven." The
+  README, walkthrough and diagrams say the same.
 - Starting Altitude removes a leftover file from older installations.
 - The agents Altitude runs can no longer read repair records, which hold each step a repair took with your full
   access and its output. Repairs themselves, the app and `alt repair` read them as before. An agent already

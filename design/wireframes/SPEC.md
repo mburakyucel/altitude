@@ -2623,8 +2623,8 @@ A project's routines run briefs on a schedule, on events the operator sends or w
 ([design](project-agents/PROPOSAL.md#screens), whose screens, exact text and states table this section
 adopts; [behavior](../../docs/ARCHITECTURE.md#routines)). What ships:
 
-- **Routines page** (`/projects/:name/agents`): **‹ <project>** back, **Routines** over "Give an agent a
-  job and schedule it or make it event-driven.", one card of routine rows (name; triggers · latest
+- **Routines page** (`/projects/:name/agents`): **‹ <project>** back, **Routines** over "Autonomous agents,
+  scheduled or event-driven.", one card of routine rows (name; triggers · latest
   news, with a running dot or pause mark), **New routine** under it, and "N retired" opening the retired rows.
   **Built in** lists each built-in routine not on with **Turn on**. Last, **Weekly budget**: "Routines may use up to"
   with its select (30 min · 1 h · 2 h · 5 h · 10 h) over "N used this week", amber when spent. A spent budget also

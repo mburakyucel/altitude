@@ -32,8 +32,8 @@ One engine is enough, and each integration is
 
 - **Self-healing.** When something breaks, it gets repaired and the work picks up where it stopped.
 - **Self-improving.** Altitude learns from its own finished work and fixes what slowed it down.
-- **Routines.** Give an agent a job and schedule it or make it event-driven: send a report, check your
-  dependencies, clean up stale branches.
+- **Routines.** Autonomous agents, scheduled or event-driven, that send reports, check dependencies and clean up
+  stale branches.
 - **Parallel without collisions.** Many tasks at once, each on its own copy of the code.
 - **Balanced quotas.** By default, each task goes to the engine that has used less of its week, so both are
   used evenly.
@@ -57,7 +57,7 @@ One engine is enough, and each integration is
 Under the hood, one daemon on your computer, altd, holds the record of every project and task. The state of
 the work lives there, not in any model's memory, so a session that stops picks up where the record left off.
 
-<img src="docs/images/system.svg" alt="You give direction, answers and approvals: to the coordinator (L3) in project chat, to routines as briefs and a budget, and to any task directly, including Stop. In the middle, altd, the daemon, holds the records, task states, dispatch and merge gate, and agents act on the records only through alt commands it checks. The coordinator starts, answers and resumes tasks; routines give an agent a job, scheduled or event-driven, and bring back what it did for you to decide on. Each task agent (L2) works in a sandbox with its own worktree, branch and pull request, with L1 helpers for focused work; complex plans and changes get an independent review, preferably by the other engine; and GitHub holds pull requests and checks, with every merge passing altd's gate." width="1000">
+<img src="docs/images/system.svg" alt="You give direction, answers and approvals: to the coordinator (L3) in project chat, to routines as briefs and a budget, and to any task directly, including Stop. In the middle, altd, the daemon, holds the records, task states, dispatch and merge gate, and agents act on the records only through alt commands it checks. The coordinator starts, answers and resumes tasks; routines are autonomous agents, scheduled or event-driven, that bring back what they did for you to decide on. Each task agent (L2) works in a sandbox with its own worktree, branch and pull request, with L1 helpers for focused work; complex plans and changes get an independent review, preferably by the other engine; and GitHub holds pull requests and checks, with every merge passing altd's gate." width="1000">
 
 ## Get started
 
