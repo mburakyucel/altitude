@@ -1743,7 +1743,7 @@ questions keep their response surfaces independently.
 message "Approved: merge PR #N."; a stale card sends nothing and gives way to the task's current
 state. The L2 merges
 with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
-unrelated question never hides that review. An open operator question about the PR supplies its single
+unrelated question hides that review only after the operator has answered about the PR (below). An open operator question about the PR supplies its single
 response surface instead: one its owner marks as the merge question, or an unmarked one that links or
 names the PR, with quick options or a freeform field. Beside **Send answers** it offers **View PR #N**,
 as the card does. While the PR waits, Altitude refuses an owner's unmarked question with choices, so a

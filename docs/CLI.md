@@ -1648,12 +1648,11 @@ creates a new revision and restores its answer field even when wording is unchan
 unchanged re-parking retains the response. Independent unanswered members remain available.
 An open operator question about the held PR replaces its generated review card: one marked
 `"review": "changes"`, or an unmarked one linking or naming the PR, including a freeform question.
+This holds while a submitted response awaits owner interpretation. A withdrawal restores the card.
 Once its owner resolves such a question from the operator's own message (`answered` or `superseded`),
 the card stays away for that version of the PR, whatever the answer said, and the owner asks its next
-merge question itself; a withdrawal restores the card. A new head, another PR, a new hold or a later
-operator message naming the PR brings it back.
-This holds while a submitted response awaits owner interpretation.
-After resolution the fallback returns if merge approval is still needed. Automatic approval waits
+merge question itself. A new head, another PR, a new hold or a later operator message naming the PR
+brings it back. Automatic approval waits
 until every active review is completed and assessed with no open findings, and no L3 question or
 L3 wait remains. Explicit operator questions
 keep their saved response surfaces independently. The generated approval button checks the current
