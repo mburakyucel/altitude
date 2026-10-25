@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A held pull request shows one thing to decide. Once you answer the owner's question about it, Approve merge
+  no longer reappears for that version beside the owner's next question, such as after you turn its design
+  down; it comes back when the pull request gets a new version, the task moves to another pull request, or
+  you mention the pull request in chat.
 - Opening Altitude on a phone from a notification, the app switcher or the lock screen shows the whole screen
   again: the chat, composer and tab bar no longer sit squeezed into the top part with empty space below until
   you tap the message box.

@@ -109,3 +109,37 @@ test("denied approval preserves the card and disables its action", async ({ page
   await expect(chat.getByRole("alert")).toHaveText("You cannot approve here.");
   await expect(chat.getByRole("button", { name: "Approve merge", exact: true })).toHaveAttribute("aria-disabled", "true");
 });
+
+test("an answered PR question keeps Approve merge away until a new version", async ({ page, request }, info) => {
+  // Reported 2026-10-25: the owner's next question about a turned-down PR showed with Approve merge under it.
+  const walk = walkthrough(page, info);
+  await walk.open("/");
+  const answered = page.getByRole("article", { name: "Answered feature", exact: true });
+  await walk.state("08-needs-you-answered-question-only", {
+    visible: [answered.getByRole("button", { name: /^Suggest in chat/ })],
+    hidden: [answered.getByRole("button", { name: "Approve merge", exact: true }),
+      page.getByRole("article", { name: "Rebuilding feature", exact: true })],
+  });
+  await walk.open("/projects/atlas/tasks/answered-feature");
+  let chat = conversation(page);
+  await walk.state("09-answered-question-alone", {
+    visible: [chat.getByText("How should the feature start?", { exact: true }),
+      chat.getByRole("button", { name: /^Suggest in chat/ })],
+    hidden: [chat.getByRole("button", { name: "Approve merge", exact: true }),
+      chat.getByText("Your turn · review before merge", { exact: true })],
+  });
+  await walk.open("/projects/atlas/tasks/rebuilding-feature");
+  chat = conversation(page);
+  await walk.state("10-answered-same-version-no-card", {
+    visible: [page.getByText(/Merge held/).filter({ visible: true }).first()],
+    hidden: [chat.getByRole("button", { name: "Approve merge", exact: true }),
+      chat.getByText("Your turn · review before merge", { exact: true }), page.getByText(/Your turn · review PR/)],
+  });
+  await request.post("/fixture/rebuild");
+  await page.reload();
+  await walk.state("11-rebuilt-version-asks-for-review", {
+    visible: [chat.getByText("Your turn · review before merge", { exact: true }),
+      chat.getByRole("button", { name: "Approve merge", exact: true }),
+      chat.getByRole("link", { name: "View PR #47", exact: true })], hidden: [],
+  });
+});

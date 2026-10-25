@@ -3,10 +3,12 @@ import copy
 import http.client
 import json
 import threading
+import time
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import config, reviews, server, state as S, tasks as T
+from altitude import config, reviews, server, state as S, tasks as T, verify
 
 
 class TestMergeReviewReadiness(AltitudeCase):
@@ -129,6 +131,87 @@ class TestMergeReviewReadiness(AltitudeCase):
         self.assertEqual(answer["response"]["text"], "Approve the rollout after the API work.")
         self.assertEqual(saved["hold_merge"], task["hold_merge"])
         self.assertEqual(saved["reviews"], task["reviews"])
+
+    def park(self, slug, reason, question=None):
+        task = S.load_task(self.project, slug)
+        if task["state"] != "running":
+            T.resume(self.project, slug)
+        T.take_inbox(self.project, slug)  # the owner read the operator's words at its checkpoint
+        if question is None:
+            task = S.load_task(self.project, slug)
+            S.write_json(S.task_dir(self.project, slug) / "report.json", {
+                "landed": {"prs": [{"number": 42, "merged": False}], "main_runs": [], "deploy": "not-applicable"},
+                "review": [], "blocked": ""})
+            return T.report(self.project, slug, {"verdict": "ok", "owner": T.report_owner(task),
+                                                 "delivery": task["delivery"], "prs": task["prs"]})
+        T.block(self.project, slug, reason, actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+                questions={"questions": [question]})
+        return S.load_task(self.project, slug)["questions"][-1]
+
+    def answer(self, slug, question, text):
+        row = T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, text, question_id=question["id"],
+                        revision=question["revision"])
+        T.resume(self.project, slug)
+        T.resolve_question(self.project, slug, question["id"], question["revision"], row["id"],
+                           disposition="answered", reason=f"The operator said: {text}", expected_attempt=1)
+
+    def surfaces(self, slug):
+        task = S.load_task(self.project, slug)
+        code, view = self.request("GET", f"/api/project/{self.project}")  # Needs you and the task page's turn rows
+        self.assertEqual(code, 200, view)
+        rows = [row for row in view["decisions"] if row["slug"] == slug]
+        return T.review_pr(self.project, task), [row["kind"] for row in rows], T.wait_label(self.project, task)
+
+    def test_an_answered_pr_question_keeps_the_card_away_until_a_new_version(self):
+        # Reported 2026-10-25: the operator turned a held PR's design down through its merge question; the owner's
+        # next question, about the same PR's design and marked "none", showed with Approve merge directly under it.
+        task = self.held()
+        slug, name = task["slug"], config.operator_label()
+        time.sleep(1 - time.time() % 1)  # answers follow the whole-second hold evidence
+        self.assertEqual(self.surfaces(slug), (42, ["review"], f"{name}'s turn · review PR #42"),
+                         "an owner that never asked gets the card")
+        merge = self.park(slug, "Merge the feature?", {
+            "question": "Merge the feature (PR #42)?", "review": "changes", "recommended_key": "approve", "options": [
+                {"key": "approve", "label": "Approve merge", "text": "Merge the feature as shown."},
+                {"key": "changes", "label": "Request changes", "text": "Hold the feature for changes."}]})
+        self.answer(slug, merge, "Its menu and sheet feel off; the chat should offer it instead.")
+        design = self.park(slug, "How should the feature start?", {
+            "question": "How should the feature start?", "review": "none", "recommended_key": "chat", "options": [
+                {"key": "chat", "label": "Suggest in chat", "text": "Offer it in the conversation."},
+                {"key": "menu", "label": "Keep the menu", "text": "Keep the menu item."}]})
+        self.assertEqual(self.surfaces(slug), (None, ["asks"], f"{name}'s turn · 1 question"))
+        [row] = T.decisions(self.project)
+        self.assertEqual(row["question"], "How should the feature start?")
+        self.answer(slug, design, "Offer it in the conversation.")
+        self.park(slug, "Rebuilding the start in the conversation.")
+        self.assertEqual(self.surfaces(slug)[:2], (None, []), "the same version asks for nothing after the answer")
+        self.assertNotIn("review PR", T.wait_label(self.project, S.load_task(self.project, slug)) or "")
+        saved = S.load_task(self.project, slug)
+        self.assertEqual((saved["hold_merge"], saved["prs"]), (task["hold_merge"], [42]))
+
+        # Something new to review brings the card back: a new head, another PR, a new hold.
+        events = S.read_events(self.project, slug)
+        later = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
+        for event in ({"kind": "delivery", "number": 42, "head": "b" * 40, "at": later},
+                      {"kind": "pr-adopted", "number": 43, "at": later},
+                      {"kind": "hold-merge", "why": "Operator reviews the rebuilt feature", "at": later}):
+            with self.subTest(event=event["kind"]):
+                self.assertFalse(T._answered_pr(self.project, saved, [*events, event]))
+        # Only the operator's own answer or redirection counts; a withdrawal or L3's settlement does not.
+        for change, answered in (({"disposition": "superseded"}, True), ({"disposition": "withdrawn", "by": "l2"}, False),
+                                 ({"by": "l3", "l3_authority": "Recorded authority."}, False)):
+            with self.subTest(change=change):
+                questions = [{**q, "resolution": {**q["resolution"], **change}} if q["status"] == "resolved" else q
+                             for q in saved["questions"] if q["id"] in (merge["id"], design["id"])]
+                self.assertEqual(T._answered_pr(self.project, {**saved, "questions": questions}, events), answered)
+        self.assertTrue(T._answered_pr(self.project, saved, events))
+
+        # The operator naming the PR in chat brings the card back once its owner stops again.
+        with mock.patch.object(verify, "gh", return_value={"state": "OPEN"}):
+            T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, "PR #42 is ready for another look.")
+        self.assertEqual(self.surfaces(slug)[:2], (None, []), "the owner holds the turn it was handed")
+        self.park(slug, "Reported after the operator's note.")
+        self.assertEqual(self.surfaces(slug), (42, ["review"], f"{name}'s turn · review PR #42"))
 
     def approval_body(self, task):
         return {"project": self.project, "slug": task["slug"], "text": "Approved: merge PR #42.",
