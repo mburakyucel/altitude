@@ -16,7 +16,7 @@ import { Bubble, DayDivider, RemoveMessage, Reply, Typing, notDone, useEntrance 
 import Composer, { markSubmitted, releaseSubmitted, returnToComposer } from "../components/Composer";
 import { RoleModelButton } from "../components/ModelMenu";
 import type { ImageSubmission } from "../components/ImageDraft";
-import { MessageImages, PendingImages } from "../components/MessageImages";
+import { MessageImages, PendingImages, sentBy } from "../components/MessageImages";
 import { SystemGroup, SystemLine, notable, subjectOf } from "../components/SystemLine";
 import { TaskCards } from "../components/TaskCard";
 import { ImprovementCard, ImprovementEnding, ImprovementRunning, ImprovementTermsLine } from "../components/Improvement";
@@ -441,7 +441,7 @@ export default function Conversation({
       const keptRow = kept.get(turn.id);
       rows.push(
         <div key={turn.id} className="turn" data-turn={turn.id} data-joined={silent || undefined}>
-          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state} images={<MessageImages project={name} images={turn.user.images} previews={sentPreviews([turn.user.request_id, ...turn.user.queue_ids ?? []])} />}
+          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state} images={<MessageImages project={name} images={turn.user.images} previews={sentPreviews([turn.user.request_id, ...turn.user.queue_ids ?? []])} context={sentBy("You", turn.user.at)} />}
             enter={enter(`user:${turn.id}`, `turn:${turn.id}`, turn.user.request_id && `msg:${turn.user.request_id}`, ...(turn.user.queue_ids ?? []).map((id) => `msg:${id}`))} /> : null}
           {turn.assistant ? silent ? null : (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant" enter={enter(`reply:${turn.id}`)}>
@@ -584,7 +584,7 @@ export default function Conversation({
                       trigger: "project-message", prompt: row.text, reply: null, error: null,
                       inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} enter={enter(`sys:${row.id}`)} />
                   ) : !row.trigger || row.trigger === "chat" ? (
-                    <Bubble text={row.text} at={row.at} state={row.sending ? "sending" : "queued"} images={<MessageImages project={name} images={row.images} previews={sentPreviews([row.id])} />}
+                    <Bubble text={row.text} at={row.at} state={row.sending ? "sending" : "queued"} images={<MessageImages project={name} images={row.images} previews={sentPreviews([row.id])} context={sentBy("You", row.at)} />}
                       enter={enter(`queued:${row.id}`, `msg:${row.id}`, row.turn_id && `turn:${row.turn_id}`)}
                       side={row.sending || row.turn_id ? undefined : <RemoveMessage message={row.text} removing={dequeue.isPending && dequeue.variables === row.id}
                         disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => remove(row.id)} />}>

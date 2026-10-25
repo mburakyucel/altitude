@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { test } from "./fixtures";
+import { viewer, zoomIn } from "./viewer";
 import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "shown-files-service.py" });
@@ -105,6 +106,7 @@ test("a reply's document opens in the reader and closes back to the conversation
 });
 
 test("the gallery moves through a set's images and Back closes only the gallery", async ({ page, request }, info) => {
+  const phone = info.project.name === "phone";
   const { slug, readme } = await fixture(request);
   const walk = walkthrough(page, info);
   await walk.open(taskPath(slug));
@@ -125,8 +127,7 @@ test("the gallery moves through a set's images and Back closes only the gallery"
   await walk.state("03-gallery-last", { visible: [dialog.getByText("5 / 5", { exact: true })], hidden: [dialog.getByRole("button", { name: "Next image" })] });
   await page.keyboard.press("ArrowLeft");
   await expect(dialog.getByText("4 / 5", { exact: true })).toBeVisible();
-  await dialog.getByRole("button", { name: "Zoom image", exact: true }).click();
-  await walk.state("04-gallery-zoomed", { visible: [dialog.getByRole("button", { name: "Fit image", exact: true })], hidden: [] });
+  await walk.state("04-gallery-zoomed", { action: () => zoomIn(page, phone), visible: [viewer(page).zoomed], hidden: [] });
   await page.goBack();
   await expect(dialog).toBeHidden();
   await expect(page).toHaveURL(taskPath(slug));
@@ -294,23 +295,26 @@ test("loading, denied, failed and changed files explain themselves and recover",
   await page.unroute(files);
   await retryThumb.click();
   await expect(thumbs.getByRole("button", { name: "Open image timeline.png", exact: true })).toBeVisible();
-  // A gallery image that fails retries in place; Zoom waits until it shows.
+  // A gallery image that fails retries in place; its actions wait until it shows. The viewer reads the next picture
+  // ahead once the first is in, so every read but the first one fails until Retry.
+  const first = new URL((await thumbs.getByRole("button", { name: "Open image timeline.png", exact: true }).getAttribute("data-image"))!, page.url()).pathname;
+  const search = (url: URL) => url.pathname.includes("/files/") && url.pathname !== first;
+  await page.route(search, (route) => route.fulfill({ status: 404, body: "Unavailable" }));
   await thumbs.getByRole("button", { name: "Open image timeline.png", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("img")).toBeVisible();
-  await page.route(files, (route) => route.fulfill({ status: 404, body: "Unavailable" }));
   await dialog.getByRole("button", { name: "Next image" }).click();
   await walk.state("05-gallery-image-failed", {
-    visible: [dialog.getByText("Image unavailable", { exact: true }), dialog.getByRole("button", { name: "Retry", exact: true }), dialog.getByText("2 / 5", { exact: true })],
-    hidden: [dialog.getByRole("button", { name: "Zoom image" }), dialog.getByRole("img")],
+    visible: [dialog.getByRole("alert").getByText("Image unavailable", { exact: true }), dialog.getByRole("button", { name: "Retry", exact: true }), dialog.getByText("2 / 5", { exact: true })],
+    hidden: [dialog.getByRole("button", { name: "Download image" }), dialog.getByRole("img")],
   });
-  await page.unroute(files);
+  await page.unroute(search);
   let releaseImage!: () => void;
   const imageGate = new Promise<void>((resolve) => { releaseImage = resolve; });
-  await page.route((url) => url.searchParams.get("retry") === "1", async (route) => { await imageGate; await route.continue(); }, { times: 1 });
+  await page.route(search, async (route) => { await imageGate; await route.continue(); }, { times: 1 });
   await dialog.getByRole("button", { name: "Retry", exact: true }).click();
   try {
-    await walk.state("06-gallery-image-loading", { visible: [dialog.getByRole("status")], hidden: [dialog.getByText("Image unavailable", { exact: true })] });
+    await walk.state("06-gallery-image-loading", { visible: [dialog.getByRole("status", { name: "Loading image…" })], hidden: [dialog.getByText("Image unavailable", { exact: true })] });
   } finally { releaseImage(); }
   await expect(dialog.getByRole("img", { name: "search.png" })).toBeVisible();
   await dialog.getByRole("button", { name: "Close image", exact: true }).click();

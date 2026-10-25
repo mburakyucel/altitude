@@ -1,5 +1,6 @@
-import { useState } from "react";
 import { Link, useParams } from "react-router";
+import { useGallery } from "../components/MessageImages";
+import { SavedImage } from "../components/Shown";
 import { StatusMark } from "../components/StatusMark";
 import { ApiError, useTaskCaptures } from "../data/api";
 import type { TaskCapture } from "../data/api";
@@ -11,17 +12,13 @@ function captureMeta({ bytes, seconds, frames }: Pick<TaskCapture, "bytes" | "se
   return `${size} · ${Number(seconds.toFixed(1))} s · ${frames} ${frames === 1 ? "frame" : "frames"}`;
 }
 
-function Capture({ title, url, width, height, ...meta }: TaskCapture) {
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  return <figure className="capture" aria-label={title} aria-busy={state === "loading"}>
-    <figcaption><b>{title}</b>{state !== "error" ? <span className="text-muted">{captureMeta(meta)}</span> : null}</figcaption>
-    {state === "error" ? <p className="text-danger" role="alert">Capture unavailable. <button className="link" onClick={() => { setState("loading"); setAttempt((value) => value + 1); }}>Retry capture</button></p> : <>
-      {state === "loading" ? <p className="text-muted"><StatusMark label="Loading capture…" /></p> : null}
-      {/* A GIF loops by itself; its saved dimensions reserve the space before it loads. */}
-      <img key={attempt} src={`${url}${attempt ? `?retry=${attempt}` : ""}`} alt={title} width={width} height={height} hidden={state !== "ready"}
-        onLoad={() => setState("ready")} onError={() => setState("error")} />
-    </>}
+/** One GIF over its title: a grey block at its saved size while it loads, a button into the viewer, or Retry. */
+function Capture({ capture, open }: { capture: TaskCapture; open: () => void }) {
+  const { title, url, width, height, ...meta } = capture;
+  return <figure className="capture" aria-label={title}>
+    <figcaption><b>{title}</b><span className="text-muted">{captureMeta(meta)}</span></figcaption>
+    <SavedImage className="capture-open" image={{ url, name: title, width, height }} alt={title} open={open}
+      label={`Open capture ${title}`} unavailable="Capture unavailable" />
   </figure>;
 }
 
@@ -29,6 +26,7 @@ function Capture({ title, url, width, height, ...meta }: TaskCapture) {
 export default function TaskCaptures() {
   const { name = "", slug = "", messageId = "" } = useParams();
   const captures = useTaskCaptures(name, slug, messageId);
+  const gallery = useGallery();
   const denied = captures.error instanceof ApiError && [401, 403].includes(captures.error.status);
   return <div className="page design-page">
     <Link className="text-meta" to={captures.data?.conversation_url ?? `/projects/${name}/tasks/${slug}`} replace>← Back to conversation</Link>
@@ -41,7 +39,8 @@ export default function TaskCaptures() {
         <h1>Captures from validation run {captures.data.run}</h1>
         {captures.data.at ? <p className="text-meta text-muted" title={exactTime(captures.data.at)}>Attached {agoText(captures.data.at)}</p> : null}
       </header>
-      {captures.data.captures.map((item) => <Capture key={item.url} {...item} />)}
+      {captures.data.captures.map((item, index, all) => <Capture key={item.url} capture={item} open={() => gallery(all.map((capture) => ({
+        key: capture.url, name: capture.title, url: capture.url, width: capture.width, height: capture.height, context: `Validation run ${captures.data.run}` })), index)} />)}
     </>}
   </div>;
 }

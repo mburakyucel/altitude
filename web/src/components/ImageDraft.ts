@@ -39,7 +39,7 @@ export function useImageDraft(scope?: ImageScope) {
     if (!scope) return;
     const controller = new AbortController();
     setCapability(null);
-    void api<ImageCapability>(`/api/images/${scope.project}${scope.task ? `?task=${scope.task}` : ""}`, { signal: controller.signal }).then((value) => {
+    void api<ImageCapability>(`/api/images/${scope.project}${scope.task ? `?task=${scope.task}` : scope.engine ? `?engine=${scope.engine}` : ""}`, { signal: controller.signal }).then((value) => {
       if (!controller.signal.aborted) setCapability(ImageCapabilitySchema.parse(value));
     }).catch(() => {
       if (!controller.signal.aborted) setCapability({ ...LIMITS, max_pixels: 25_000_000, max_dimension: 8192, available: false, reason: "Could not check image input. Try again later." });
@@ -76,12 +76,19 @@ export function useImageDraft(scope?: ImageScope) {
             const url = URL.createObjectURL(file);
             pendingPreview.current = url;
             const unreadable = `${file.name} could not be read. Export a PNG, JPEG or static WebP and try again.`;
+            let width = 0;
+            let height = 0;
             let problem = await new Promise<string>((resolve) => {
               const image = new Image();
               image.onerror = () => resolve(unreadable);
-              image.onload = () => resolve(!image.naturalWidth || !image.naturalHeight ? unreadable
-                : image.naturalWidth > limits.max_dimension || image.naturalHeight > limits.max_dimension || image.naturalWidth * image.naturalHeight > limits.max_pixels
-                  ? `${file.name} exceeds 25 megapixels or 8192 pixels per side. Choose a smaller image.` : "");
+              image.onload = () => {
+                // The size shapes its thumbnail from Sending on, so the saved picture lands in the same place.
+                width = image.naturalWidth;
+                height = image.naturalHeight;
+                resolve(!width || !height ? unreadable
+                  : width > limits.max_dimension || height > limits.max_dimension || width * height > limits.max_pixels
+                    ? `${file.name} exceeds 25 megapixels or 8192 pixels per side. Choose a smaller image.` : "");
+              };
               image.src = url;
             });
             const data = problem ? null : await new Promise<string | null>((resolve) => {
@@ -94,7 +101,7 @@ export function useImageDraft(scope?: ImageScope) {
             pendingPreview.current = null;
             if (!problem && data === null) problem = unreadable;
             if (problem || data === null) { URL.revokeObjectURL(url); failure = problem; }
-            else replace([...selection.current, { name: file.name, key: crypto.randomUUID(), file, url, data }]);
+            else replace([...selection.current, { name: file.name, key: crypto.randomUUID(), file, url, data, width, height }]);
           }
         }
         if (current()) setError(failure);
@@ -107,22 +114,22 @@ export function useImageDraft(scope?: ImageScope) {
     /** Edit returns a failed message's images to the picker from the copies its bubble kept; nothing changes and
         the picker says why when they do not fit beside the current selection. */
     restore(previews: ImagePreview[]): boolean {
-      const files = previews.map(({ name, url }) => {
+      const files = previews.map(({ name, url, width, height }) => {
         const [head = "", data = ""] = url.split(",");
-        return { data, file: new File([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))], name, { type: head.slice(5, head.indexOf(";")) }) };
+        return { data, width, height, file: new File([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))], name, { type: head.slice(5, head.indexOf(";")) }) };
       });
       const problem = selection.current.length + files.length > LIMITS.max_count ? "Up to 4 images per message. Remove an image to add another."
         : [...selection.current, ...files].reduce((sum, { file }) => sum + file.size, 0) > LIMITS.max_total_bytes
           ? "Images exceed 20 MiB total. Remove an image or choose smaller copies." : "";
       if (problem) { setError(problem); return false; }
-      replace([...selection.current, ...files.map(({ file, data }) => ({ name: file.name, key: crypto.randomUUID(), file, data, url: URL.createObjectURL(file) }))]);
+      replace([...selection.current, ...files.map(({ file, data, width, height }) => ({ name: file.name, key: crypto.randomUUID(), file, data, width, height, url: URL.createObjectURL(file) }))]);
       return true;
     },
     /** The selection as one message: its images and the previews its bubble shows. */
     submission(): ImageSubmission {
       const chosen = selection.current;
       return { request_id: crypto.randomUUID(), images: chosen.map(({ name, data }) => ({ name, data })),
-        previews: chosen.map(({ name, file, data }) => ({ name, url: `data:${file.type};base64,${data}` })) };
+        previews: chosen.map(({ name, file, data, width, height }) => ({ name, url: `data:${file.type};base64,${data}`, width, height })) };
     },
   };
 }

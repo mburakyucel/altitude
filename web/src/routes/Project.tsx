@@ -13,6 +13,7 @@ import type { GraphNode } from "../components/AgentGraph";
 import { useNow } from "../components/TaskActivity";
 import { useWorkView } from "../shell/workView";
 import { WorkRepairs } from "../components/Repairs";
+import { WorkChats } from "../components/WorkChats";
 import { RoleModelButton } from "../components/ModelMenu";
 import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
@@ -207,6 +208,7 @@ export function WorkPanel({
               <div className="wp-rows">{doneThisWeek.map(row)}</div>
             </details>
           ) : null}
+          <WorkChats project={name} />
           {agents?.count ? (
             <Link className="wp-agents" to={`/projects/${name}/agents`} state={{ from: "project", tab: "work" }}>
               Routines · {agents.count}

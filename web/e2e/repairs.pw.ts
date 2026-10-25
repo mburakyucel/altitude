@@ -281,7 +281,7 @@ test("a repair's page while it works: steps, messages, questions, your step and 
   const stop = page.getByRole("button", { name: /^Stop/ });
   const composer = page.getByRole("textbox", { name: "Message the repair" });
   const status = statusOf(page, phone);
-  const step = (text: string) => page.locator(".repair-step").filter({ hasText: text });
+  const step = (text: string) => page.locator(".agent-step").filter({ hasText: text });
   const turn = page.locator(".conversation-question");
 
   await walk.open(`/repairs/${id("a")}`);
@@ -397,7 +397,7 @@ test("how a repair ends: Stop, the time limit, its report and Altitude's check, 
   await expect(composer).toBeVisible();
   if (!phone) {
     // Escape asks too on a computer, as a task's Stop does.
-    await page.locator(".repair-sys").first().click();
+    await page.locator(".agent-sys").first().click();
     await page.keyboard.press("Escape");
     await expect(confirm).toBeVisible();
     await confirm.getByRole("button", { name: "Keep running" }).click();
@@ -416,7 +416,7 @@ test("how a repair ends: Stop, the time limit, its report and Altitude's check, 
   const card = page.getByRole("article", { name: "Go ahead?" });
   await walk.state("03-stopped", {
     visible: [status.getByText("Stopped"), page.getByText("Stopped by you · the agent and its processes were stopped"),
-      page.locator(".repair-step").filter({ hasText: "alt doctor --json" }).getByText("cut off"),
+      page.locator(".agent-step").filter({ hasText: "alt doctor --json" }).getByText("cut off"),
       card.getByText("Expired · the session ended"), page.getByRole("heading", { name: "Left running" }), page.getByText("altitude-tunnel.service")],
     hidden: [stop, composer, card.getByRole("button", { name: "Go ahead" }), continueRepair, page.getByText("The repair ended without a report"),
       page.getByText(/Full access ·/), page.getByText("Your turn")],

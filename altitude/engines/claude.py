@@ -742,12 +742,13 @@ RESTRICTED_TOOLS = "Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch"
 
 
 def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, settings, effort, resume, images,
-                   restricted=False):
+                   restricted=False, commits=False):
     """A Claude worker in Altitude's sandbox: its worktree, Git directories, scratch folder and own Claude folder
     (`l2-engine/claude`) writable, and the operator's Claude folder hidden from it except the entries its folder
     links to, the project's notes its settings name and a session it resumes for the first time. A `restricted`
     worker links nothing of the operator's and runs in restricted mode, which ignores every settings file but
-    Altitude's own and confines its file tools to its working directories."""
+    Altitude's own and confines its file tools to its working directories; it writes the repository's objects and
+    branches only when it `commits`."""
     cmd = [config.CLAUDE_BIN, "-p", "--input-format", "stream-json", "--replay-user-messages",
            "--output-format", "stream-json", "--verbose", "--name", name,
            "--permission-mode", "auto", "--allowedTools", "Bash(alt *)",
@@ -768,7 +769,7 @@ def prepare_worker(name, prompt, *, cwd, scratch, job_root, persona, model, sett
     for row in claude_agents():
         if row.get("name") == name and row.get("state") not in ("done", "failed", "stopped"):
             claude_stop(row["id"])
-    git_writable, read_only = git_policy.worker_git_access(cwd, shared=not restricted)
+    git_writable, read_only = git_policy.worker_git_access(cwd, shared=commits or not restricted)
     home = Path(job_root) / "claude"
     copies = _first_resume(home, resume)
     notes = S.read_json(settings, {}).get("autoMemoryDirectory") if settings else None

@@ -6,9 +6,10 @@ import { Prose } from "../components/Prose";
 import { BusyLabel, StatusMark } from "../components/StatusMark";
 import { REPAIR_STATUS, RepairQuestion, moment, repairDot } from "../components/Repairs";
 import { RepairButton } from "../components/RepairSheet";
+import { StepRow, SysLine } from "../components/Steps";
 import { ApiError, newRequest, repairRequest, useOverview, useRepair, useRepairAction } from "../data/api";
 import type { Overview, Repair, RepairItem } from "../data/api";
-import { clockText, dayText, modelName } from "../data/observed";
+import { dayText, modelName } from "../data/observed";
 import { Overlay } from "../shell/Overlay";
 import { useViewport } from "../shell/breakpoints";
 import { scopedProject } from "../shell/projects";
@@ -40,42 +41,6 @@ function useNow() {
     return () => clearInterval(timer);
   }, []);
   return now;
-}
-
-function SysLine({ children, at, fault = false }: { children: ReactNode; at?: string | null; fault?: boolean }) {
-  return <div className="sys-line repair-sys">
-    <span className="sys-dot" data-tone={fault ? "danger" : undefined} aria-hidden />
-    {at ? <span className="repair-sys-time">{clockText(at)}</span> : null}
-    <span className="sys-text">{children}</span>
-  </div>;
-}
-
-type Step = Extract<RepairItem, { kind: "step" }>;
-
-function stepHint(item: Step): ReactNode {
-  if (item.verb === "running") return <><span className="spinner" aria-hidden /> running</>;
-  if (item.verb === "failed") return item.exit != null ? `exit ${item.exit}` : "error";
-  if (item.verb === "cut") return "cut off";
-  if (item.verb === "changed" || item.verb === "fetched") return item.verb;
-  const lines = item.output.split("\n").filter(Boolean).length;
-  return lines ? `${lines} line${lines === 1 ? "" : "s"}` : "no output";
-}
-
-/** One step as a Live session row: what ran on one line, opening its whole command and what it printed. */
-function StepRow({ item }: { item: Step }) {
-  const name = item.verb === "changed" ? "Edit" : item.verb === "fetched" ? "Fetch" : "$";
-  const bad = item.verb === "failed" || item.verb === "cut";
-  return <details className="session-tool repair-step" data-kind={name === "$" ? "command" : "file"} data-error={bad ? "true" : undefined}>
-    <summary>
-      <b className="session-tool-name">{name}</b>
-      <code className="session-call">{item.text}</code>
-      <span className="session-hint">{stepHint(item)}</span>
-      {item.at ? <span className="session-time">{clockText(item.at)}</span> : null}
-    </summary>
-    {item.detail && item.detail !== item.text ? <pre className="session-out">{item.detail}</pre> : null}
-    {item.output ? <pre className="session-out" data-output="true">{item.output}</pre>
-      : <p className="session-notice">{item.verb === "running" ? <StatusMark label="Waiting for output…" /> : "No output."}</p>}
-  </details>;
 }
 
 function checkLine(repair: Pick<Repair, "check" | "update" | "report">) {
@@ -154,7 +119,7 @@ function Timeline({ repair }: { repair: Repair }) {
   let day = "";
   let steps: ReactNode[] = [];
   const flush = () => {
-    if (steps.length) rows.push(<div key={`steps-${rows.length}`} className="repair-steps">{steps}</div>);
+    if (steps.length) rows.push(<div key={`steps-${rows.length}`} className="agent-steps">{steps}</div>);
     steps = [];
   };
   (repair.timeline ?? []).forEach((item, i) => {

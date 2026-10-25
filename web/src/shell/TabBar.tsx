@@ -14,7 +14,7 @@ const ICONS: Record<Tab, string> = {
 };
 
 /** Which tab the current page belongs to; a task, decision or Settings page pushed over a tab keeps that tab lit, and a
- * repair's page keeps Work lit, where repairs are listed. */
+ * repair's or agent chat's page keeps Work lit, where they are listed. */
 export function activeTab(pathname: string, state: unknown, search: string): Tab | null {
   if (pathname === "/") return "needs";
   if (pathname.startsWith("/repairs/")) return "work";
@@ -25,6 +25,8 @@ export function activeTab(pathname: string, state: unknown, search: string): Tab
   }
   // A project's routines are reached from Work, and their pages keep it lit unless chat opened them.
   if (/^\/projects\/[^/]+\/agents(\/|$)/.test(pathname)) return from === "chat" ? "chat" : "work";
+  // Agent chats are listed in Work.
+  if (/^\/projects\/[^/]+\/chats\//.test(pathname)) return "work";
   if (/^\/projects\/[^/]+\/decisions\//.test(pathname)) {
     return from === "work" || from === "chat" ? from : "needs";
   }

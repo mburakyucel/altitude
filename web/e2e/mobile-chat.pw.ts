@@ -9,16 +9,16 @@ import { walkthrough } from "./walkthrough";
  */
 
 // Browser layout simulation, not a claim about native iOS/Android keyboard events.
-async function visualViewport(page: Page, height: number, top = 0, scale = 1) {
-  await page.evaluate(({ height, top, scale }) => {
+async function visualViewport(page: Page, height: number, top = 0, scale = 1, resize = true) {
+  await page.evaluate(({ height, top, scale, resize }) => {
     const viewport = window.visualViewport!;
     Object.defineProperties(viewport, {
       height: { configurable: true, value: height },
       offsetTop: { configurable: true, value: top },
       scale: { configurable: true, value: scale },
     });
-    viewport.dispatchEvent(new Event("resize"));
-  }, { height, top, scale });
+    if (resize) viewport.dispatchEvent(new Event("resize"));
+  }, { height, top, scale, resize });
 }
 
 test("compact chat keeps bottom and older reading anchors through keyboard, details and restoration", async ({ page, request }, info) => {
@@ -222,4 +222,63 @@ test("phone text controls keep their line and answer taps across a 44px target @
     const hit = await control.evaluate((el, { x, y }) => el.contains(document.elementFromPoint(x, y)), { x: box.x + box.width / 2, y: box.y + 2 });
     expect(hit).toBe(true);
   }
+});
+
+test("the phone shell fills the screen again when the app returns from the background @phone-only", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  await walk.open(project.path);
+  const shell = page.locator(".shell");
+  const field = page.getByRole("textbox", { name: /^Message L3/ });
+  const nav = page.getByRole("navigation", { name: "Primary" });
+  const full = `${page.viewportSize()!.height}px`;
+  // A phone hides and shows the page as the app goes away and comes back; browser emulation does neither.
+  const away = (hidden: boolean) => page.evaluate((hidden) => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: hidden });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, hidden);
+  await expect(shell).toHaveCSS("height", full);
+
+  // Away with the keyboard open: the field loses focus and the page hides; shown again, the visual viewport still
+  // reports the keyboard-era height, so neither the keyboard nor the short height survives the return.
+  await field.focus();
+  await visualViewport(page, 510);
+  await expect(shell).toHaveAttribute("data-keyboard", "");
+  await field.blur();
+  await away(true);
+  await away(false);
+  await walk.state("01-returned-with-stale-keyboard-height", { visible: [nav, field], hidden: [] });
+  await expect(shell).not.toHaveAttribute("data-keyboard");
+  await expect(shell).toHaveCSS("height", full);
+
+  // Opened from a notification or restored from the back-forward cache: the return itself measures, and a short
+  // reading with no field focused is not a keyboard, so the shell stays whole.
+  for (const [label, event] of [["notification-focus", "focus"], ["restored-pageshow", "pageshow"]] as const) {
+    await visualViewport(page, 760); // Toolbar movement before going away: the shell follows it.
+    await expect(shell).toHaveCSS("height", "760px");
+    await visualViewport(page, 480, 24, 1, false);
+    await page.evaluate((event) => window.dispatchEvent(event === "pageshow" ? new PageTransitionEvent("pageshow", { persisted: true }) : new Event("focus")), event);
+    await walk.state(`02-${label}-stale-reading`, { visible: [nav, field], hidden: [] });
+    await expect(shell).toHaveCSS("height", full);
+    expect(await shell.evaluate((el) => el.getBoundingClientRect().top)).toBe(0);
+  }
+
+  // A window focus while typing, with focus on a composer control, keeps the keyboard layout: only going away ends it.
+  await field.focus();
+  await visualViewport(page, 510);
+  await page.getByRole("button", { name: "More actions" }).focus();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(shell).toHaveAttribute("data-keyboard", "");
+  await expect(shell).toHaveCSS("height", "510px");
+  await visualViewport(page, page.viewportSize()!.height);
+
+  // The keyboard still works as before once the operator types.
+  await field.focus();
+  await visualViewport(page, 510);
+  await walk.state("03-keyboard-after-return", { visible: [field], hidden: [nav] });
+  await expect(shell).toHaveCSS("height", "510px");
+  await visualViewport(page, page.viewportSize()!.height);
+  await walk.state("04-keyboard-dismissed-after-return", { visible: [nav, field], hidden: [] });
+  await expect(shell).toHaveCSS("height", full);
+  info.annotations.push({ type: "return evidence", description: "Visibility and VisualViewport readings are simulated; this does not establish native iOS return-from-background behavior." });
 });

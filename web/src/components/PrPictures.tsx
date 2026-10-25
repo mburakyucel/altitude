@@ -29,7 +29,9 @@ export function PrPictures({ pictures }: { pictures: PrImages }) {
   const open = (index: number) => gallery(items.map((picture) => {
     const shown = side(picture);
     const image = picture[shown]!;
-    return { key: image.url, name: `${picture.change === "changed" ? shown === "before" ? "Before" : "After" : picture.after ? "New" : "Removed"} · ${picture.name}`, url: image.url };
+    // The side leads the bar's second line, so it survives a long name.
+    return { key: image.url, name: picture.name, url: image.url, width: image.width, height: image.height,
+      context: `${picture.change === "changed" ? shown === "before" ? "Before" : "After" : picture.after ? "New" : "Removed"} · Pictures in this PR` };
   }), index);
   const more = items.length - FIRST;
   return <section className="pr-pictures" aria-label="Pictures in this PR">
@@ -38,7 +40,7 @@ export function PrPictures({ pictures }: { pictures: PrImages }) {
       const shown = side(picture);
       const image = picture[shown]!;
       return <figure key={picture.path} className="pr-picture" data-change={picture.change}>
-        <SavedImage key={image.url} image={{ ...image, name: picture.name, path: picture.path, embedded: false }}
+        <SavedImage key={image.url} image={{ ...image, name: picture.name }}
           alt={`${picture.name}, ${picture.change === "changed" ? shown : picture.change}`} className="pr-picture-frame" open={() => open(index)} />
         <figcaption>
           <span className="pr-picture-path" title={picture.path}><bdi>{picture.path}</bdi></span>

@@ -254,7 +254,8 @@ and action responses crossing the move return the archived task and state; an ev
 the archived log the same way, so the overview walking every task survives an archive mid-walk.
 Task status, documents and events share the archive lock while their snapshot is read.
 `GET /api/monitor` and `alt monitor` list only sessions Altitude runs: each project's L3 and its
-running, blocked or reported L2 tasks. Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
+running, blocked or reported L2 tasks and its running agents; a paired browser's `GET /api/monitor` also lists its
+answering [agent chats](#agent-chats). Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
 The configuration seam resolves model and effort through the existing routing paths. Explicit
@@ -624,7 +625,7 @@ Altitude records what a paired device sends as the operator's, and grants, merge
 it, so no agent may send it. Every POST without this machine's key that does not come through the
 [task door](#task-door) is refused with 403, before its body is read, when it comes from one of Altitude's
 own agents: chat and task messages, answers, decisions, task actions and reviews, settings, devices,
-sign-in, trust, pairing, voice, repairs and any route added later. The page's reads are not refused. The
+sign-in, trust, pairing, voice, repairs, agent chats and any route added later. The page's reads are not refused. The
 machine key keeps its routes, since no sandbox can read it; the terminal, voice, device sharing, update
 and validation controls refuse an agent even with it, and the repair routes refuse the key itself. One check decides, once per connection, for all of
 them: `terminal.agent_connection`, which names the process that opened the connection's client end
@@ -1577,7 +1578,8 @@ and write only under its own roots (a task worker's worktree, the worktree's Git
 home), the job's own engine folder and its own temporary folder, and never reads
 Altitude's credentials, the common browsers' profiles, the operator's stored credentials (below), the
 operator's own Codex folder, Claude folder and Claude state file (`engines.operator_places`), apart from the entries
-its launch reopens read-only, or the [repairs'](#repairs) records (`repairs/` in Altitude's home). On macOS it
+its launch reopens read-only, the [repairs'](#repairs) records (`repairs/` in Altitude's home), or the
+[agent chats](#agent-chats) (`config.CHATS`), apart from a chat turn's own engine and scratch folders. On macOS it
 neither reads nor writes macOS's [private places](DEVELOPMENT.md#macos-private-places) or the launcher's job folders,
 which hold each job's piped input and relay its output; launchd refuses service control to any sandboxed process. The Seatbelt profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
@@ -1708,7 +1710,7 @@ hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex she
 too. A launcher without a sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. A Codex coordinator turn keeps
 Codex's own sandbox inside the same job boundary (on macOS the two Seatbelt profiles cannot nest); its profile denies
 the per-user runtime folder, the shared temporary folders apart from its own, Altitude's credentials, the operator's
-stored credentials and the repairs' records present when its turn starts and, on macOS, the private places and the job folders. Both engines use the same door; private worker records and output identify both engines' sessions
+stored credentials, the repairs' records and the agent chats present when its turn starts and, on macOS, the private places and the job folders. Both engines use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
 recorded coalition has members. Unknown states, bus failures and query timeouts
@@ -2857,6 +2859,66 @@ the update notice and Needs you. Reads go
 through `storage`, so a link planted in a repair's folder reads as no record or no brief. A change to a
 repair publishes the change stream's repairs key, which refreshes the shell's repair reads.
 
+### Agent chats
+
+An agent chat is a conversation the operator drives with one of a project's coding agents, from a paired
+browser, with no brief, proposal or pull request ([walkthrough](WALKTHROUGH.md#agent-chats)). Each chat
+is one record, `~/.altitude-chats/<project>/<id>/chat.json` beside Altitude's home, changed under the project lock:
+its name, the model choice and the engine, model and session it answers with, its copy's base commit,
+whether and when it was archived, its messages, its turns and its system lines, each with a sequence
+number that orders the conversation. The operator's images go to the project's image store with the
+message that carries them, where the project's agents can read them as they read a task's, and `images` reads a
+chat's record as it reads a task's.
+
+Each message waits until the chat's previous turn ends; the messages waiting then go together as the
+next turn. A thread of the service (`chats.run`, one per chat) claims them, picks the engine and model
+the way New tasks does (`route.pick_engine("l2")` with the chat's choice), and starts the turn's
+worker with `engines.start_chat_turn`: the engine's headless worker in a detached job of its own, as a
+task's worker runs, inside Altitude's sandbox and restricted as a routine run is (no operator engine
+links, no GitHub sign-in, no Send now), except that it writes the project's shared Git store as a task
+worker does, objects and branches but not its settings, hooks or worktree records, so it can commit on its own branch. Its `alt` admits only the read commands a task worker has
+(`ALTITUDE_ACTOR=chat`). Its persona is `personas/chat.md`. The chat's copy is a worktree on the
+`chat-<id>` branch in the project's worktree folder, made with `--no-track` from the fetched main when
+the first turn starts. A copy whose folder went missing comes back on its branch, keeping its commits;
+main is fetched again only for a chat without a copy, and a copy main cannot be fetched for fails the turn
+with Retry. Tidy and task cleanup leave `chat-<id>` copies alone. A turn takes no task slot and waits only
+while Altitude restarts.
+
+The first turn's session is the chat's session, and later turns resume it from the chat's own engine
+folder (`~/.altitude-chats/<project>/<id>/l2-engine`). When the answering engine is not the one holding the session,
+because the operator chose another model or a resume fails, the turn starts a new session given the
+conversation so far as quoted evidence, and the conversation shows that line. The thread follows the
+worker (`engines.owned_worker`), records the session's context, and records the turn's end: its
+answer (`engines.worker_answer`), Stop, or why it could not answer, with Retry, which sends the same
+messages again. A message sent as the thread ends is taken by that thread, which another could not start
+beside it. The worker's job outlives a restart of the service: the service records a restart line
+on each chat whose turn's worker is running, and its tick finds every chat with a turn running or messages waiting
+(`chats.due`) and follows or starts it again. A turn whose worker is gone, or whose start a restart
+interrupted, reads cut off.
+
+Archive refuses while a turn runs or a message waits, and while the copy has changes (committed or
+not, since its base) the request has not accepted; it then removes the copy, its branch and its
+scratch folder and keeps the conversation and session. Reopen makes a fresh copy of main at the next
+turn, which continues the same session and is told first that its earlier changes are gone. Delete
+removes an archived chat's folder for good, its engine session with it, and anything left of its copy.
+
+`GET /api/chats/<project>` lists a project's chats with their state and latest activity;
+`GET /api/chats/<project>/<id>` is one chat with its conversation, each turn's steps (read from the
+worker's events as a repair's are, `altitude/steps.py`), its copy's changed files and context.
+`POST /api/chats/<project>` starts a chat with its first message, and
+`/api/chats/<project>/<id>/{message,remove,retry,rename,model,stop,archive,reopen,delete}` change one.
+Each request carries an identity the record keeps, so a repeat acts once. Every chat route takes a
+paired device's cookie, passes the page's own-origin and [own agents](#altitudes-own-agents) checks and
+refuses the machine key, as repair routes do: no agent reads or steers a chat through Altitude. Every job in
+[Altitude's sandbox](#isolation-and-landing), L3's included, and a Codex coordinator's own profile hide the chats
+folder (`config.CHATS`), which altd makes with its home, so no agent reads a chat's record or its turns' output; a
+chat turn's job reopens only its own engine folder, which keeps its session, and its scratch folder. The Monitor rows
+of answering chats go only to a paired browser, never to `alt monitor`. A chat's copy and branch are readable to the
+project's other agents, as a task's are. Like a task worker, a chat's agent reads what the operator's account reads outside the
+hidden places, other projects' code included, and reaches the network. The operator's terminal reads chats with `alt chats`. A chat's file changes
+publish the change stream's project key, which refreshes its reads; a running turn is a Monitor
+session row. Chats never appear in Needs you, the project's tasks in flight or L3's records.
+
 ### Web delivery
 
 The web app presents routine progress with accessible visual status marks: loading and pending
@@ -2990,8 +3052,10 @@ narrower is the phone: one 54px identity/activity header and an 84px tab bar (Ch
 Monitor). The shell follows visual viewport height and offset, hiding bottom navigation during
 detected software keyboard use and restoring it on dismissal, including when focus remains in the
 field. Editable focus alone, toolbar motion and pinch zoom do not hide navigation; without sufficient
-viewport evidence it remains reachable. Browser-managed safe areas remain intact, with any bottom
-inset owned once by the visible dock. The project header opens the switcher sheet, and a task conversation
+viewport evidence it remains reachable. Leaving the app forgets detected keyboard use, each return (shown,
+restored or focused) measures afresh, and a deep contraction without keyboard use, such as a stale height
+reported on return from the background, leaves the shell filling the screen. Browser-managed safe areas
+remain intact, with any bottom inset owned once by the visible dock. The project header opens the switcher sheet, and a task conversation
 pushes over its tab with a back control. Those widths are named once, in `web/src/shell/breakpoints.ts`. The
 selected project is browser state under `localStorage`, set by the rail, the switcher, a project
 route, or a Needs you card; the theme (light by default, dark on request) persists the same way. The
@@ -3496,9 +3560,11 @@ the composer stays free. Submitted captions use the existing text recovery; imag
 bytes are not persisted in browser storage. Private thumbnails belong to the original saved
 message. A saved message the page itself sent starts each thumbnail from the picture its outbox
 entry holds, and keeps that picture only until the thumbnail's own read, which starts at once on screen or off, replaces it or
-shows its error; a queued project message's turn row, which replaces its queued row, reads again. The shell owns one modal viewer per page (`ImageViewerHost`): it holds its own copy of the
-opened image's bytes, so it outlives the queued row that opened it when history admission replaces
-that row, and closes when the route changes. Image interaction states and boundaries are specified in
+shows its error; a queued project message's turn row, which replaces its queued row, reads again. The shell owns one modal viewer per page (`ImageViewerHost`): it reads the opened picture's bytes
+itself, so it outlives the queued row that opened it when history admission replaces that row, then
+reads the previous and next pictures and holds at most those three in memory. Moving on releases a
+picture more than one step away, a hidden page releases the neighbours, and closing or a route change
+releases everything; nothing is written to browser storage. Image interaction states and boundaries are specified in
 `design/wireframes/IMAGE_INPUT.md` and walked at both viewports by `web/e2e/image-input.pw.ts`.
 
 The L2 task's phone tabs replace the current router history entry and retain its location state;
@@ -4046,7 +4112,8 @@ an **Image not shown** box with its path. Web and mail links open in a new tab w
 a `#heading` link scrolls within the document, and other relative links stay text with their target
 as a title. Headings carry GitHub's `user-content-` anchors. The gallery (`ImageViewerHost`) adds one
 history entry while open, so Back closes it; it moves between a set's images with buttons, arrow keys
-and a horizontal swipe, zooms, and shows **Image unavailable** with Retry when a copy fails to load.
+and a finger-following swipe, zooms by pinch, double-tap, wheel and keys, and shows **Image unavailable**
+with Retry when a copy fails to load ([SPEC §3.9.3](../design/wireframes/SPEC.md#393-image-viewer)).
 
 Validation captures follow the same fixed-evidence path ([validation captures](DEVELOPMENT.md#validation-captures)).
 `alt task reply --capture <run>` reads that run's GIFs from the task's own `validation/` evidence through

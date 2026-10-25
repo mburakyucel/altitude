@@ -526,12 +526,12 @@ test("the terminal keeps its prompt in view as the keyboard opens and closes, th
     // The keyboard takes the bottom of the screen: the shell gets fewer rows once, and the prompt and the key row
     // stay above the keyboard while the tab bar gives way.
     resizes.length = 0;
+    await page.locator(".terminal-screen").click();
     await keyboard(480);
     await expect.poll(rows).toHaveLength(1);
     expect(rows()[0]).toBeLessThan(opened);
     await expect.poll(() => promptInView(page)).toBe(true);
     expect((await keys.boundingBox())!.y + (await keys.boundingBox())!.height).toBeLessThanOrEqual(480);
-    await page.locator(".terminal-screen").click();
     await page.keyboard.type("echo typed-$((6*7))");
     await page.keyboard.press("Enter");
     await expect(output.getByText("typed-42", { exact: true })).toBeVisible();

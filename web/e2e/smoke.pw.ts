@@ -37,8 +37,9 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
   // The Weekly improvement review's page exists only in Altitude's own project, which its fixture stands for.
   const weekly = route === "/projects/:name/agents/weekly";
   const agents = route.startsWith("/projects/:name/agents") && !weekly;
+  const chat = route.startsWith("/projects/:name/chats/");
   test.use({ serviceScript: shown ? "shown-files-service.py" : captures ? "captures-service.py" : file ? "file-references-service.py"
-    : repair ? "repairs-service.py" : weekly ? "weekly-review-service.py" : agents ? "project-agents-service.py" : "" });
+    : repair ? "repairs-service.py" : chat ? "chats-service.py" : weekly ? "weekly-review-service.py" : agents ? "project-agents-service.py" : "" });
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request, browserName }, info) => {
     const project = await fixtureProject(request, route === "/projects" || route === "/chat");
     // The reader opens the fixture's own reply and question; other task routes take the project's first task.
@@ -57,7 +58,8 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       .replace(":questionId", encodeURIComponent(task?.question?.id ?? ""))
       .replace(":revision", String(task?.question?.revision ?? ""))
       .replace(":messageId", encodeURIComponent(reply))
-      .replace(":id", repair ? (await (await request.get("/api/repairs")).json()).repairs[0].id : agent?.id ?? "")
+      .replace(":id", repair ? (await (await request.get("/api/repairs")).json()).repairs[0].id
+        : chat ? (await (await request.get(`/api/chats/${encodeURIComponent(project.name)}`)).json()).chats[0].id : agent?.id ?? "")
       .replace(":n", String(runs[0]?.n ?? ""))
       .replace("*", "__ui_unknown_route__");
     if (file) {
@@ -163,6 +165,13 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       // A repair's page in a task's form: its title, the report, and the way back to Work (SPEC §3.15).
       await expect(page.getByRole("heading", { level: 1, name: "Voice input stopped working.", exact: true })).toBeVisible();
       await expect(main.getByRole("region", { name: "Report", exact: true }).getByText("Set voice input up again.", { exact: true })).toBeVisible();
+      await expect(info.project.name === "phone" ? page.getByRole("button", { name: "Back", exact: true }) : main.getByRole("button", { name: "‹ Work", exact: true })).toBeVisible();
+    } else if (chat) {
+      // A new chat, and the fixture's answered chat, in a task page's form with the way back to Work (SPEC §3.18).
+      const title = route.endsWith("/new") ? "New chat" : "Why is the export slow?";
+      await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
+      await expect(main.getByRole("textbox", { name: "Message the agent", exact: true })).toBeVisible();
+      if (!route.endsWith("/new")) await expect(main.getByText("It reads every row twice.", { exact: true })).toBeVisible();
       await expect(info.project.name === "phone" ? page.getByRole("button", { name: "Back", exact: true }) : main.getByRole("button", { name: "‹ Work", exact: true })).toBeVisible();
     } else if (route === "/settings/voice") {
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();

@@ -94,8 +94,8 @@ not by itself mean work has resumed or a merge hold has been released.
 
 When the owner shows you a document or screenshots, such as a proposal or a README draft, the
 question or reply carries a card for them. Tap it to read the document beside the conversation, or
-over it on a phone; pictures open full screen. Closing returns you to the question with your unsent
-answer intact, and an older version is marked **Earlier** with a link to the newer one.
+over it on a phone. Closing returns you to the question with your unsent answer intact, and an older
+version is marked **Earlier** with a link to the newer one.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/decision-phone.png">
@@ -108,6 +108,19 @@ answer intact, and an older version is marked **Earlier** with a link to the new
 The silent recording follows the real interface through the project, work, task and live-session
 views, sends a task message, then selects and sends the seven-day answer. Owner replies are
 example text; it demonstrates the interaction, not live agents or voice recognition.
+
+Pictures, whether shown by an owner, attached to a message or captured by a validation run, open in a
+full-screen viewer that works like a phone's photo app. Its top bar names the picture and where it came
+from. Double-tap or pinch to zoom, drag to look around, swipe to the next picture and swipe down to
+close; on a computer, scroll or press **+** to zoom and use the arrow keys. A phone shares the picture,
+and a computer copies, downloads or opens it in a new tab.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/viewer-phone.png">
+  <img src="images/viewer-desktop.png" alt="The image viewer on a computer: the synonyms editor's draft fitted between a top bar naming the picture, L2 and its time with zoom, copy, download, new-tab and close buttons, and a bottom bar counting 2 of 2, with a previous-picture arrow at the left." width="1440">
+</picture>
+
+[Full-size desktop](images/viewer-desktop.png) · [Phone viewer](images/viewer-phone.png)
 
 The [current decision boards](../design/wireframes/CONVERSATION_FIRST.md) illustrate these states;
 [phone/desktop walkthroughs](DEVELOPMENT.md#browser-walkthroughs) retain implementation evidence
@@ -125,6 +138,16 @@ results justify a rollout task, or whether one needs further work first.
 The scope and ordering here are an example of engineering judgment, not a prescribed pipeline.
 For session identity and engine-specific message timing, see [lifecycle](SESSION_LIFECYCLE.md).
 To try a project, follow [setup](SETUP.md).
+
+## Agent chats
+
+Not everything is a task. To ask why the export is slow or try an idea on a failing test, open **New chat**
+under Agent chats in Work and write to one of your coding agents directly, with images or your voice. It works
+in its own copy of the project's code, made from main when you send, and its steps fold under one line as it
+answers. A message you send while it answers waits and goes as its next turn; Stop ends the reply. A chat picks
+up the same session every time you come back, and keeps its copy until you archive it from its ⋯ menu, which
+asks first when the copy has changes. Chats use your plan like a short task turn, never appear in Needs you
+and publish nothing.
 
 ## See the features
 

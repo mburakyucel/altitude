@@ -6,6 +6,7 @@ import type { SendFailure, SubmittedText } from "../data/recovery";
 import { Link } from "react-router";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
+import { useOptionalGallery } from "./MessageImages";
 import type { ImagePreview } from "./MessageImages";
 import { HostCapture, MAX_RETAINED, UNREACHED, serviceFailures, type ServiceFailure } from "./hostCapture";
 import { useLiveReveal } from "./liveReveal";
@@ -417,6 +418,7 @@ export default function Composer({
   visible.current = active;
   const picker = useRef<HTMLInputElement>(null);
   const images = useImageDraft(imageScope);
+  const gallery = useOptionalGallery();
   const imageDraft = useRef(images);
   imageDraft.current = images;
   const showing = useRef(shows);
@@ -1078,8 +1080,11 @@ export default function Composer({
       <div className="composer-box">
         {phase !== "idle" ? feedback : null}
         {images.selected.length ? <div className="image-draft" aria-label="Selected images">{images.selected.map((image) =>
-          <div className="image-draft-item" key={image.key}>
-            <img src={image.url} alt={image.name} />
+          <div className="image-draft-item" key={image.key} data-image={image.key}>
+            {/* A picked picture opens in the viewer to check it before sending; it is the operator's own file, so no actions. */}
+            {gallery ? <button type="button" className="image-draft-open" aria-label={`Open image ${image.name}`} onClick={() => gallery(images.selected.map((item) => (
+              { key: item.key, name: item.name, url: item.url, context: "Not sent yet", width: item.width, height: item.height, local: true })),
+              images.selected.indexOf(image))}><img src={image.url} alt={image.name} /></button> : <img src={image.url} alt={image.name} />}
             <button className="image-remove" type="button" aria-label={`Remove image ${image.name}`} disabled={disabled || phase !== "idle"} onClick={() => images.remove(image.key)}><CloseIcon /></button>
           </div>)}</div> : null}
         <textarea
