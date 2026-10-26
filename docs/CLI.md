@@ -1294,8 +1294,10 @@ applies the verb to the owner's own task and attempt only. `alt task save` store
 in the task's folder from a file or stdin, while the task runs; a report or receipt is a JSON object. A report
 has the shapes in `schemas/report.json`: it requires `landed` (`prs`, `main_runs` and `deploy`) and `review` (a
 list of findings, empty when there were none), and `blocked` names the exact block, left out when nothing is
-blocked. The save refuses a report missing a required key or with a section of another shape, naming the key and
-the shape it expects; the verifier hands back the same problems for a report written any other way.
+blocked. The save checks the whole report against the schema and refuses one with a missing or unknown key or a
+value of another shape at any level, naming each path and what the schema expects there, such as
+`` `landed.prs[0]` lacks `merge_sha`: GitHub merge commit, … ``; the verifier hands back the same problems for a report
+written any other way before it compares anything with GitHub.
 
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
 and installation commands remain available through `bin/alt --help` and the relevant subcommand

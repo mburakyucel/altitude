@@ -31,7 +31,6 @@ class TestReportOpenFindings(AltitudeCase):
             "blocked": blocked,
             "follow_ups": [],
             "spend": {"turns": 3, "subagent_launches": 1, "retries": 0, "model_tiers": "coding", "reverts": 0},
-            "roadmap_complete": True,
         }
         S.write_json(directory / "report.json", report)
         with mock.patch.object(verify, "gh", return_value={"state": "MERGED"}):
@@ -41,7 +40,7 @@ class TestReportOpenFindings(AltitudeCase):
         finding_text = "The retry path still loses the original finding text."
         task, verdict = self._report(
             "blocked-open",
-            [{"tag": "resume-text", "severity": "major", "summary": finding_text,
+            [{"severity": "major", "summary": finding_text,
               "disposition": "open", "reason": "Needs the blocked dependency."}],
             "Waiting for the dependency owner.",
         )
@@ -59,7 +58,7 @@ class TestReportOpenFindings(AltitudeCase):
     def test_unblocked_report_rejects_open_finding_with_named_problem(self):
         _, verdict = self._report(
             "unblocked-open",
-            [{"tag": "must-block", "severity": "minor", "summary": "This remains unresolved.",
+            [{"severity": "minor", "summary": "This remains unresolved.",
               "disposition": "open", "reason": "Deferred."}],
             "",
         )
@@ -72,9 +71,9 @@ class TestReportOpenFindings(AltitudeCase):
         _, verdict = self._report(
             "resolved-findings",
             [
-                {"tag": "resolved", "severity": "major", "summary": "Resolved.",
+                {"severity": "major", "summary": "Resolved.",
                  "disposition": "fixed", "reason": "Fixed in the PR."},
-                {"tag": "not-applicable", "severity": "minor", "summary": "Not applicable.",
+                {"severity": "minor", "summary": "Not applicable.",
                  "disposition": "dismissed", "reason": "Outside the behavior."},
             ],
             "",

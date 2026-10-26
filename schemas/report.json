@@ -17,9 +17,9 @@
             "additionalProperties": false,
             "required": ["number", "title", "merged", "merge_sha"],
             "properties": {
-              "number": {"type": "integer"},
-              "title": {"type": ["string", "null"]},
-              "merged": {"type": "boolean"},
+              "number": {"type": "integer", "description": "the pull request's number"},
+              "title": {"type": ["string", "null"], "description": "the pull request's title"},
+              "merged": {"type": "boolean", "description": "whether GitHub merged the pull request"},
               "merge_sha": {"type": ["string", "null"],
                             "description": "GitHub merge commit, in full or an unambiguous prefix of at least seven characters"}
             }
@@ -32,8 +32,8 @@
             "additionalProperties": false,
             "required": ["id", "conclusion"],
             "properties": {
-              "id": {"type": "string"},
-              "conclusion": {"type": "string"}
+              "id": {"type": "string", "description": "the GitHub Actions run id on main, as text"},
+              "conclusion": {"type": "string", "description": "the run's conclusion, such as success"}
             }
           }
         },
@@ -48,11 +48,11 @@
         "additionalProperties": false,
         "required": ["summary", "disposition", "reason"],
         "properties": {
-          "summary": {"type": ["string", "null"]},
+          "summary": {"type": ["string", "null"], "description": "the finding in a sentence"},
           "severity": {"type": ["string", "null"]},
           "pr": {"type": ["integer", "null"], "description": "the delivered PR whose review raised the finding, in a task that ships several"},
           "disposition": {"type": "string", "enum": ["fixed", "dismissed", "open"]},
-          "reason": {"type": ["string", "null"]}
+          "reason": {"type": ["string", "null"], "description": "why it was fixed or dismissed, or what tracks it while open"}
         }
       }
     },
