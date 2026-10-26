@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- `alt task save report` checks the whole report against its schema, nested entries included, and refuses one with a
+  missing, misspelled or extra key, naming where it is and what belongs there, so the owner fixes it in the same
+  turn. A merged pull request reported without its merge commit is handed back asking for `merge_sha`.
 - The Routines page opens with what routines are: "Autonomous agents, scheduled or event-driven, that
   automate your recurring work." The README, walkthrough and diagrams say the same.
 - A held pull request shows one thing to decide. Once you answer the owner's question about it, Approve merge

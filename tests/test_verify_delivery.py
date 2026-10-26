@@ -4,7 +4,10 @@ import json
 import os
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import incidents, state as S, tasks as T, verify
+from altitude import config, incidents, state as S, tasks as T, verify
+
+
+LANDED_ABOUT = json.loads((config.SCHEMAS / "report.json").read_text())["properties"]["landed"]["description"]
 
 
 class TestVerifyDelivery(AltitudeCase):
@@ -199,6 +202,18 @@ class TestVerifyDelivery(AltitudeCase):
         self.assertEqual(result["verdict"], "contradicted")
         self.assertIn("PR #41: reported merge SHA differs from GitHub", result["problems"])
 
+    def test_a_merged_pr_reported_without_its_merge_commit_names_merge_sha(self):
+        self.publish(41)
+        report = self.report()
+        report["landed"]["prs"][0]["merge_sha"] = None
+        S.write_json(self.report_path, report)
+
+        result = self.result()
+
+        self.assertEqual(result["verdict"], "contradicted")
+        self.assertIn("PR #41: GitHub merged it; report its merge commit in `merge_sha`", result["problems"])
+        self.assertNotIn("PR #41: reported merge SHA differs from GitHub", result["problems"])
+
     def test_abbreviated_merge_sha_names_the_same_commit(self):
         head, merge = self.publish(41)
         report = self.report()
@@ -316,11 +331,12 @@ class TestVerifyDelivery(AltitudeCase):
         self.publish(41)
         well_formed = self.report()
         for field, change in (
-                ("report.landed.prs: expected a list of objects", lambda r: r["landed"].update(prs=[41])),
-                ("report.landed: expected an object", lambda r: r.update(landed="merged")),
-                ("report.review: expected a list of objects", lambda r: r.update(review=["looked fine"])),
-                ("report.blocked: expected text", lambda r: r.update(blocked={"why": "waiting"})),
-                ("report.follow_ups: expected a list", lambda r: r.update(follow_ups="later"))):
+                ("`landed.prs[0]` is not an object", lambda r: r["landed"].update(prs=[41])),
+                ("`landed` is not an object: " + LANDED_ABOUT, lambda r: r.update(landed="merged")),
+                ("`review[0]` is not an object", lambda r: r.update(review=["looked fine"])),
+                ("`blocked` is not text or null: the exact block; left out when nothing is blocked",
+                 lambda r: r.update(blocked={"why": "waiting"})),
+                ("`follow_ups` is not a list", lambda r: r.update(follow_ups="later"))):
             with self.subTest(field=field):
                 report = json.loads(json.dumps(well_formed))
                 change(report)

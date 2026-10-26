@@ -52,7 +52,7 @@ def open_findings(report: dict | None) -> list[dict]:
 
 def report_sections(report: dict, errors: list[str]) -> dict:
     """The report's sections in their schema shapes. A section of another shape names its field in `errors` and
-    reads as empty, so readers show the rest and the verifier hands the report back (I-20261019-110932)."""
+    reads as empty, so readers show the rest (I-20261019-110932)."""
     def objects(section: dict, key: str, field: str) -> list:
         rows = section.get(key) or []
         if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
@@ -85,14 +85,50 @@ def report_sections(report: dict, errors: list[str]) -> dict:
             **{key: items(key) for key in ("decisions", "fyi", "follow_ups", "deviations")}}
 
 
+#: How each schema type reads in a refusal, and the values it admits: a boolean is not an integer.
+_TYPES = {"object": ("an object", lambda v: isinstance(v, dict)), "array": ("a list", lambda v: isinstance(v, list)),
+          "string": ("text", lambda v: isinstance(v, str)), "null": ("null", lambda v: v is None),
+          "integer": ("a whole number", lambda v: isinstance(v, int) and not isinstance(v, bool)),
+          "boolean": ("true or false", lambda v: isinstance(v, bool))}
+
+
+def schema_problems(value, schema: dict, path: str = "") -> list[str]:
+    """Where `value` departs from `schema`, in the part of JSON Schema `schemas/report.json` uses (`type`, `enum`,
+    `required`, `properties`, `additionalProperties: false` and `items`), each named by its path and followed by the
+    schema's description there."""
+    where = f"`{path}`" if path else "report.json"
+
+    def about(node: dict) -> str:
+        return f": {node['description']}" if node.get("description") else ""
+
+    types = [schema["type"]] if isinstance(schema.get("type"), str) else schema.get("type") or []
+    if types and not any(_TYPES[kind][1](value) for kind in types):
+        return [f"{where} is not {' or '.join(_TYPES[kind][0] for kind in types)}{about(schema)}"]
+    if "enum" in schema and value not in schema["enum"]:
+        return [f"{where} is not one of {', '.join(map(str, schema['enum']))}{about(schema)}"]
+    problems: list[str] = []
+    if isinstance(value, dict):
+        known = schema.get("properties") or {}
+        problems += [f"{where} lacks `{key}`{about(known.get(key, {}))}"
+                     for key in schema.get("required", []) if key not in value]
+        prefix = f"{path}." if path else ""
+        for key in known:  # in schema order, whatever order the file has
+            if key in value:
+                problems += schema_problems(value[key], known[key], prefix + key)
+        if schema.get("additionalProperties") is False:
+            problems += [f"`{prefix}{key}` is not a known key: {where} takes " + ", ".join(f"`{name}`" for name in known)
+                         for key in sorted(value.keys() - known.keys())]
+    if isinstance(value, list) and "items" in schema:
+        for index, item in enumerate(value):
+            problems += schema_problems(item, schema["items"], f"{path}[{index}]")
+    return problems
+
+
 def report_problems(report: dict) -> list[str]:
-    """Why the report cannot be read: a section of another shape, or a key `schemas/report.json` requires, named with
-    the shape it expects. `alt task save report` refuses such a report and the verifier hands it back."""
-    errors: list[str] = []
-    report_sections(report, errors)
-    schema = json.loads((config.SCHEMAS / "report.json").read_text())
-    return errors + [f"report.json lacks `{key}`: {schema['properties'][key]['description']}"
-                     for key in schema["required"] if key not in report]
+    """Where the report departs from `schemas/report.json`: a missing or unknown key, or a value of another shape,
+    named by its path with what the schema expects there. `alt task save report` refuses such a report and the
+    verifier hands it back before reading the rest, so a missing key never reads as a GitHub mismatch."""
+    return schema_problems(report, json.loads((config.SCHEMAS / "report.json").read_text()))
 
 
 def gh(args: list[str], cwd: Path) -> dict | list | None:
@@ -187,7 +223,9 @@ def _verify(project: str, slug: str) -> dict:
                     out["problems"].append(f"PR #{n}: GitHub head differs from the current delivery; run alt land again")
                 out["problems"].extend(_worktree_problems(
                     project, task, delivery, (info.get("mergeCommit") or {}).get("oid") if merged else None))
-            if merged and not _same_commit(pr.get("merge_sha"), (info.get("mergeCommit") or {}).get("oid")):
+            if merged and not pr.get("merge_sha"):
+                out["problems"].append(f"PR #{n}: GitHub merged it; report its merge commit in `merge_sha`")
+            elif merged and not _same_commit(pr.get("merge_sha"), (info.get("mergeCommit") or {}).get("oid")):
                 out["problems"].append(f"PR #{n}: reported merge SHA differs from GitHub")
         if pr.get("merged") and not merged:
             out["problems"].append(f"PR #{n} reported merged but GitHub says {info.get('state')}")
