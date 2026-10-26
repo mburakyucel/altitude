@@ -3176,17 +3176,21 @@ def _answered_pr(project: str, task: dict, events: list[dict]) -> bool:
     Whatever the answer said, the owner holds the next step; an automatic Approve merge beside its next question
     would offer approval of a version the operator may have just turned down."""
     number = (task.get("prs") or [None])[-1]
-    answers = [q["resolution"]["at"] for q in task.get("questions", []) if q["status"] == "resolved"
-               and _references_held_pr(task, q) and q["resolution"].get("by") == OPERATOR_MESSAGE_ROLE
-               and q["resolution"]["disposition"] in ("answered", "superseded")]
-    if not answers:
+    answers = {(q["id"], q["revision"]): q["resolution"]["at"] for q in task.get("questions", [])
+               if q["status"] == "resolved" and _references_held_pr(task, q)
+               and q["resolution"].get("by") == OPERATOR_MESSAGE_ROLE
+               and q["resolution"]["disposition"] in ("answered", "superseded")}
+    # The event log orders the answer against the version it answered; whole-second times cannot.
+    answer = None
+    for e in events:
+        if e.get("kind") == "question-resolved":
+            answer = answers.get((e.get("question_id"), e.get("revision")), answer)
+        elif e.get("kind") in ("new", "hold-merge", "pr-adopted", "delivery"):
+            answer = None
+    if answer is None:
         return False
     at = lambda value: datetime.fromisoformat(value.replace("Z", "+00:00"))
-    answer = max(map(at, answers))
-    # Hold and adoption records keep whole seconds, as in `approved_pr`: the answer must come in a later second.
-    if any(at(e["at"]).replace(microsecond=0) >= answer.replace(microsecond=0) if e["kind"] != "delivery"
-           else at(e["at"]) >= answer for e in events if e.get("kind") in ("new", "hold-merge", "pr-adopted", "delivery")):
-        return False
+    answer = at(answer)
     names = _names_pr(number)
     return not any(row.get("role") == OPERATOR_MESSAGE_ROLE and not row.get("removed_at") and at(row["at"]) > answer
                    and names.search(row.get("text", "")) for row in task_messages(project, task["slug"]))
