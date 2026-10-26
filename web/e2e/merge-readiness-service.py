@@ -1,5 +1,6 @@
 """Issue #902: real readiness/API storage with fictional PRs and engine execution."""
 import time
+from datetime import datetime, timezone
 
 from service_support import configure, serve
 from tests.support import add_worktree, git, make_repo
@@ -60,7 +61,40 @@ def main():
     ready = held("Ready feature", 45)
     T.report("atlas", ready["slug"], {"verdict": "ok", "owner": T.report_owner(ready),
              "delivery": ready["delivery"], "prs": [45]})
-    time.sleep(1 - time.time() % 1)  # approvals follow the whole-second hold evidence
+    answered = held("Answered feature", 46)
+    rebuilding = held("Rebuilding feature", 47)
+    time.sleep(1 - time.time() % 1)  # approvals and answers follow the whole-second hold evidence
+
+    def answer_merge(task, number):
+        slug = task["slug"]
+        T.block("atlas", slug, "Merge the feature?", actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+                questions={"questions": [{"question": f"Merge the feature (PR #{number})?", "review": "changes",
+                    "recommended_key": "approve", "options": [
+                        {"key": "approve", "label": "Approve merge", "text": "Merge the feature as shown."},
+                        {"key": "changes", "label": "Request changes", "text": "Hold the feature for changes."}]}]})
+        merge = S.load_task("atlas", slug)["questions"][-1]
+        row = T.message("atlas", slug, T.OPERATOR_MESSAGE_ROLE, "Its menu and sheet feel off.",
+                        question_id=merge["id"], revision=merge["revision"])
+        T.resume("atlas", slug)
+        T.take_inbox("atlas", slug)
+        task = S.load_task("atlas", slug)  # the fictional owner received the answer
+        task.setdefault("message_deliveries", {})[row["id"]] = {"state": "delivered", "at": S.now()}
+        S.save_task("atlas", task)
+        T.resolve_question("atlas", slug, merge["id"], merge["revision"], row["id"], disposition="answered",
+                           reason="The operator turned the menu and sheet down.", expected_attempt=1)
+
+    # Reported 2026-10-25: the owner's next question about the turned-down PR, marked "none".
+    answer_merge(answered, 46)
+    T.block("atlas", answered["slug"], "How should the feature start?", actor="l2",
+            updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions={"questions": [{
+                "question": "How should the feature start?", "review": "none", "recommended_key": "chat", "options": [
+                    {"key": "chat", "label": "Suggest in chat", "text": "Offer it in the conversation."},
+                    {"key": "menu", "label": "Keep the menu", "text": "Keep the menu item."}]}]})
+    # The owner stops without asking again at the same head.
+    answer_merge(rebuilding, 47)
+    rebuilt = S.load_task("atlas", rebuilding["slug"])
+    T.report("atlas", rebuilt["slug"], {"verdict": "ok", "owner": T.report_owner(rebuilt),
+             "delivery": rebuilt["delivery"], "prs": [47]})
 
     class Handler(server.Handler):
         def do_POST(self):
@@ -81,6 +115,12 @@ def main():
                 task = S.load_task("atlas", ready["slug"])
                 task["reviews"][0]["dispositions"][0]["disposition"] = "fixed"
                 S.save_task("atlas", task)
+                return self._json({"ok": True})
+            if self.path == "/fixture/rebuild":
+                task = S.load_task("atlas", rebuilding["slug"])
+                task["delivery"] = {**task["delivery"], "head": "b" * 40, "at": datetime.now(timezone.utc).isoformat()}
+                S.save_task("atlas", task)
+                S.append_event("atlas", task["slug"], "delivery", **task["delivery"])
                 return self._json({"ok": True})
             return super().do_POST()
 

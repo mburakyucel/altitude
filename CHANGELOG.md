@@ -7,6 +7,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 - The Routines page opens with what routines are: "Autonomous agents, scheduled or event-driven, that
   automate your recurring work." The README, walkthrough and diagrams say the same.
+- A held pull request shows one thing to decide. Once you answer the owner's question about it, Approve merge
+  no longer reappears for that version beside the owner's next question, such as after you turn its design
+  down; it comes back when the pull request gets a new version, the task moves to another pull request, or
+  you mention the pull request in chat.
 - The README's How it works diagram keeps its drawing with far fewer words, in larger type: box titles, a short
   line saying what each part does where the picture needs one, and two arrow labels.
 - Opening Altitude on a phone from a notification, the app switcher or the lock screen shows the whole screen

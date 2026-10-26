@@ -3170,6 +3170,28 @@ def _references_held_pr(task: dict, question: dict) -> bool:
         f"{o['label']} {o['text']}" for o in question_choices(question))])))
 
 
+def _answered_pr(project: str, task: dict, events: list[dict]) -> bool:
+    """The operator answered a question about the held PR's current version: its owner resolved one from the
+    operator's own message, and no delivery, adoption, hold or later operator message naming the PR has followed.
+    Whatever the answer said, the owner holds the next step; an automatic Approve merge beside its next question
+    would offer approval of a version the operator may have just turned down."""
+    number = (task.get("prs") or [None])[-1]
+    answers = [q["resolution"]["at"] for q in task.get("questions", []) if q["status"] == "resolved"
+               and _references_held_pr(task, q) and q["resolution"].get("by") == OPERATOR_MESSAGE_ROLE
+               and q["resolution"]["disposition"] in ("answered", "superseded")]
+    if not answers:
+        return False
+    at = lambda value: datetime.fromisoformat(value.replace("Z", "+00:00"))
+    answer = max(map(at, answers))
+    # Hold and adoption records keep whole seconds, as in `approved_pr`: the answer must come in a later second.
+    if any(at(e["at"]).replace(microsecond=0) >= answer.replace(microsecond=0) if e["kind"] != "delivery"
+           else at(e["at"]) >= answer for e in events if e.get("kind") in ("new", "hold-merge", "pr-adopted", "delivery")):
+        return False
+    names = _names_pr(number)
+    return not any(row.get("role") == OPERATOR_MESSAGE_ROLE and not row.get("removed_at") and at(row["at"]) > answer
+                   and names.search(row.get("text", "")) for row in task_messages(project, task["slug"]))
+
+
 def _require_merge_mark(project: str, task: dict, published: set) -> None:
     """While the task's PR waits for the operator's review, a newly published operator question with choices says
     whether it is that PR's merge question: unmarked, it showed a second Approve merge beside the review card.
@@ -3191,16 +3213,18 @@ def review_pr(project: str, task: dict) -> int | None:
     field. Its submitted response stays there until the owner resolves the question.
     The question does not supply merge authority; recorded approval keeps its separate rules (#451).
     A PR observed closed without merging asks for no review (#575). Active review work and L3
-    prerequisites keep the automatic approval away without suppressing authored operator questions (#902)."""
+    prerequisites keep the automatic approval away without suppressing authored operator questions (#902).
+    After the operator answers a question about the PR, the next ask is its owner's until a new version."""
     from . import reviews
-    number = _held_pr(task, S.read_events(project, task["slug"]))
+    events = S.read_events(project, task["slug"])
+    number = _held_pr(task, events)
     if (number and (task.get("delivery") or task.get("adopted_pr"))
             and task.get("state") in ("blocked", "reported") and not any(
                 task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))
             and task.get("waiting_on") != "l3"
             and not any(q["status"] == "open" and q["audience"] == "l3" for q in task.get("questions", []))
             and not any(_references_held_pr(task, q) for q in task.get("questions", []) if q["status"] == "open")
-            and not approved_pr(project, task)):
+            and not approved_pr(project, task) and not _answered_pr(project, task, events)):
         try:
             reviews.require_resolved(task)
         except TransitionError:
