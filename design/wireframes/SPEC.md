@@ -1743,14 +1743,17 @@ questions keep their response surfaces independently.
 message "Approved: merge PR #N."; a stale card sends nothing and gives way to the task's current
 state. The L2 merges
 with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
-unrelated question never hides that review. An open operator question about the PR supplies its single
+unrelated question hides that review only after the operator has answered about the PR (below). An open operator question about the PR supplies its single
 response surface instead: one its owner marks as the merge question, or an unmarked one that links or
 names the PR, with quick options or a freeform field. Beside **Send answers** it offers **View PR #N**,
 as the card does. While the PR waits, Altitude refuses an owner's unmarked question with choices, so a
 question never offers **Approve merge** beside the card. The separate card stays
 away until the owner resolves the question, including while a submitted response waits for interpretation.
-Resolution restores the fallback when merge approval is still needed; a PR mention alone grants no
-approval. Independent questions and ordinary chat remain available. After **Approve merge**, a later park
+A withdrawn question restores the fallback. Once the owner resolves a question about the PR from the
+operator's own answer or redirection, whatever it said, the card stays away for that version of the PR,
+so the owner's next question never shows beside **Approve merge** for a design the operator just turned
+down; the owner asks again itself. A new head, another PR, a new hold or a later operator message naming
+the PR brings the card back; a PR mention alone grants no approval. Independent questions and ordinary chat remain available. After **Approve merge**, a later park
 on another dependency shows that wait and no card (the CLI and queue add "PR #N approved"), including after routine integration
 gives the PR a new head; a new hold or a later operator message naming the PR brings the card back. A fault keeps its red header state and red end-of-chat explanation of the interruption and its known wait. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.

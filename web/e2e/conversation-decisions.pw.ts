@@ -1069,13 +1069,14 @@ test("a pending PR question is the single review surface through response pickup
     .toMatchObject({ disposition: "answered", message_id: submitted.response!.message_id });
   await page.reload();
   const earlier = conversation.getByText("1 earlier question", { exact: true });
-  await walk.state("held-04-resolved-discussion-restores-unapproved-merge-review", {
-    visible: [earlier, approve, west],
-    hidden: [card.getByText("Decision recorded", { exact: true }), card.getByRole("textbox")],
+  // The operator answered about this version, so the owner asks next; no Approve merge returns beside the region.
+  await walk.state("held-04-answered-discussion-keeps-merge-review-away", {
+    visible: [earlier, west],
+    hidden: [card.getByText("Decision recorded", { exact: true }), card.getByRole("textbox"), approve],
   });
   await earlier.click();
   await walk.state("held-04b-expanded-earlier-question-shows-its-recorded-decision", {
-    visible: [card.getByText("Decision recorded", { exact: true }), approve, west], hidden: [card.getByRole("textbox")],
+    visible: [card.getByText("Decision recorded", { exact: true }), west], hidden: [card.getByRole("textbox"), approve],
   });
   expect((await request.post("/fixture/held-pr-options", { data: { slug } })).ok()).toBe(true);
   await page.reload();

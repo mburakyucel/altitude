@@ -1,4 +1,5 @@
 """Real decision API/storage with a deliberately stepped, deterministic L2 engine."""
+import time
 from pathlib import Path
 from service_support import configure, serve
 from tests.support import add_worktree, git, make_repo
@@ -189,6 +190,7 @@ def main():
                 held.update(prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
                 S.save_task("atlas", held)
                 T.set_hold_merge("atlas", slug, "Operator review of the checkout fix")
+                time.sleep(1 - time.time() % 1)  # answers follow the whole-second hold evidence
                 return self._json({"slug": slug})
             if self.path == "/fixture/held-pr-response":
                 body = self._body()
