@@ -385,7 +385,7 @@ class TestDecisions(AltitudeCase):
 
     def test_submitted_pr_question_keeps_one_surface_until_owner_resolution(self):
         # The freeform answer is delivered, not classified as merge permission. An independent
-        # question stays usable; resolving discussion restores the held review when still needed.
+        # question stays usable; once the owner resolves the answer, the next ask about this version is its own.
         task = self.blocked("Checkout review", "Choose the checkout rollout details.")
         slug = task["slug"]
         held = S.load_task(self.project, slug)
@@ -412,7 +412,8 @@ class TestDecisions(AltitudeCase):
         T.resolve_question(self.project, slug, question["id"], question["revision"], response["response"]["message_id"],
                            disposition="answered", reason="The release team announces it; merge approval is still needed.",
                            expected_attempt=1)
-        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks", "review"])
+        self.assertEqual([row["id"] for row in T.decisions(self.project)], [independent["id"]])
+        self.assertIsNone(T.review_pr(self.project, S.load_task(self.project, slug)), "the answered version shows no card")
         current = S.load_task(self.project, slug)
         self.assertEqual(current["hold_merge"], held["hold_merge"])
         self.assertIsNone(current.get("merge_approval"))

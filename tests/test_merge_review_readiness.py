@@ -3,8 +3,6 @@ import copy
 import http.client
 import json
 import threading
-import time
-from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
@@ -167,7 +165,6 @@ class TestMergeReviewReadiness(AltitudeCase):
         # next question, about the same PR's design and marked "none", showed with Approve merge directly under it.
         task = self.held()
         slug, name = task["slug"], config.operator_label()
-        time.sleep(1 - time.time() % 1)  # answers follow the whole-second hold evidence
         self.assertEqual(self.surfaces(slug), (42, ["review"], f"{name}'s turn · review PR #42"),
                          "an owner that never asked gets the card")
         merge = self.park(slug, "Merge the feature?", {
@@ -189,14 +186,17 @@ class TestMergeReviewReadiness(AltitudeCase):
         saved = S.load_task(self.project, slug)
         self.assertEqual((saved["hold_merge"], saved["prs"]), (task["hold_merge"], [42]))
 
-        # Something new to review brings the card back: a new head, another PR, a new hold.
+        # Something new to review brings the card back: a new head, another PR, a new hold. The task's log orders
+        # it against the answer, so one recorded in the answer's own whole second counts on the side it happened.
         events = S.read_events(self.project, slug)
-        later = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
-        for event in ({"kind": "delivery", "number": 42, "head": "b" * 40, "at": later},
-                      {"kind": "pr-adopted", "number": 43, "at": later},
-                      {"kind": "hold-merge", "why": "Operator reviews the rebuilt feature", "at": later}):
+        index = next(i for i, event in enumerate(events) if event.get("question_id") == merge["id"])
+        second = events[index]["at"]
+        for event in ({"kind": "delivery", "number": 42, "head": "b" * 40, "at": second},
+                      {"kind": "pr-adopted", "number": 43, "at": second},
+                      {"kind": "hold-merge", "why": "Operator reviews the rebuilt feature", "at": second}):
             with self.subTest(event=event["kind"]):
                 self.assertFalse(T._answered_pr(self.project, saved, [*events, event]))
+                self.assertTrue(T._answered_pr(self.project, saved, [*events[:index], event, *events[index:]]))
         # Only the operator's own answer or redirection counts; a withdrawal or L3's settlement does not.
         for change, answered in (({"disposition": "superseded"}, True), ({"disposition": "withdrawn", "by": "l2"}, False),
                                  ({"by": "l3", "l3_authority": "Recorded authority."}, False)):
