@@ -116,4 +116,6 @@ class ReportSave(AltitudeCase):
             self.assertLessEqual(set(node), read, node)
             types = node.get("type")
             self.assertLessEqual(set([types] if isinstance(types, str) else types or []), set(verify._TYPES), node)
-            self.assertIn(node.get("additionalProperties", False), (False,), node)
+            self.assertIn(node.get("additionalProperties", False), (False,), node)  # the check reads no other value
+            if "properties" in node:  # an object with named keys refuses any other; spend and decisions stay open
+                self.assertIs(node.get("additionalProperties"), False, node)
