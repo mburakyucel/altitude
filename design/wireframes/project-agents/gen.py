@@ -103,7 +103,7 @@ def builtin(rows=BUILTIN, state=None):
 def section(rows=None, state=None, bstate=None, retired=True, top=True, built=BUILTIN, bistate=None):
     rows = AGENTS if rows is None else rows
     head = (f'<a class="btn setting-back" href="#">{CHEVL}{P}</a><h1 style="margin-bottom:4px">Routines</h1>'
-            '<p class="muted" style="margin:0 0 14px">Each one runs a brief when its trigger fires, and tells you what it found.</p>')
+            '<p class="muted" style="margin:0 0 14px">Autonomous agents, scheduled or event-driven, that automate your recurring work.</p>')
     if not top:
         head = head.split("</h1>")[1]
     if state == "loading":

@@ -32,11 +32,7 @@ One engine is enough, and each integration is
 
 - **Self-healing.** When something breaks, it gets repaired and the work picks up where it stopped.
 - **Self-improving.** Altitude learns from its own finished work and fixes what slowed it down.
-- **Routines that keep watch.** Give a project standing briefs that run on a schedule or when your own scripts
-  send an event, like a look at each merge. A routine works on a throwaway copy, tells you what it found and
-  suggests the tasks worth doing; one tap makes one a task. Allow one to, and it clears worktrees and branches
-  nothing needs, each with Undo. A dependency check, a build health check, a weekly summary of what landed and a
-  weekly tidy-up come built in.
+- **Routines.** Autonomous agents, scheduled or event-driven, that automate your recurring work.
 - **Parallel without collisions.** Many tasks at once, each on its own copy of the code.
 - **Balanced quotas.** By default, each task goes to the engine that has used less of its week, so both are
   used evenly.
@@ -62,7 +58,7 @@ One engine is enough, and each integration is
 Under the hood, one daemon on your computer, altd, holds the record of every project and task. The state of
 the work lives there, not in any model's memory, so a session that stops picks up where the record left off.
 
-<img src="docs/images/system.svg" alt="You give answers, approvals and Stop straight to tasks, and direction to the coordinator (L3) and your routines. The coordinator plans with you and answers the agents; routines are autonomous agents that run on triggers you set. In the middle, altd, the daemon, maintains the state, dispatches the agents and gates every merge. Each task agent (L2) owns a task from idea to merge, with L1 helpers for focused work, asks for an independent review and sends pull requests to GitHub." width="1000">
+<img src="docs/images/system.svg" alt="You give answers, approvals and Stop straight to tasks, and direction to the coordinator (L3) and your routines. The coordinator plans with you and answers the agents; routines are autonomous agents, scheduled or event-driven, that automate your recurring work. In the middle, altd, the daemon, maintains the state, dispatches the agents and gates every merge. Each task agent (L2) owns a task from idea to merge, with L1 helpers for focused work, asks for an independent review and sends pull requests to GitHub." width="1000">
 
 ## Get started
 

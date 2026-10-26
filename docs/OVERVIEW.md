@@ -7,7 +7,7 @@ about, by heading, rather than whole files.
 
 ## The system in brief
 
-<img src="images/system.svg" alt="The operator gives answers, approvals and Stop straight to tasks, and direction to the coordinator (L3) and their routines. The coordinator plans with the operator and answers the agents; routines are autonomous agents that run on triggers the operator sets. In the middle, altd, the daemon, maintains the state, dispatches the agents and gates every merge. Each task agent (L2) owns a task from idea to merge, with L1 helpers for focused work, asks for an independent review and sends pull requests to GitHub." width="1000">
+<img src="images/system.svg" alt="The operator gives answers, approvals and Stop straight to tasks, and direction to the coordinator (L3) and their routines. The coordinator plans with the operator and answers the agents; routines are autonomous agents, scheduled or event-driven, that automate the operator's recurring work. In the middle, altd, the daemon, maintains the state, dispatches the agents and gates every merge. Each task agent (L2) owns a task from idea to merge, with L1 helpers for focused work, asks for an independent review and sends pull requests to GitHub." width="1000">
 
 Altitude runs for one operator on one machine. Each registered project has a persistent conversation
 with L3, the coordinator, which discusses direction, answers task questions from the record and
