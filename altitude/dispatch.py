@@ -1030,15 +1030,19 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
         return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120,
                               env=git_policy.git_env(repo))
 
-    branch_exists = git("show-ref", "--verify", "--quiet", f"refs/heads/{expected_branch}").returncode == 0
+    branch = git("rev-parse", "--verify", "--quiet", f"refs/heads/{expected_branch}").stdout.strip()
     if not worktree.exists():
-        if branch_exists:
+        # A task made from an agent chat's changes starts from the commit `tasks.new` recorded, on the branch it made
+        # there, or on one made again there when that branch is gone; never from main instead.
+        start = S.load_task(project, slug).get("start")
+        if branch and branch != start:
             raise T.TransitionError(
                 f"task branch {expected_branch!r} exists without its registered worktree {worktree}; "
                 "quarantine or remove the orphan branch before dispatch"
             )
         worktree.parent.mkdir(parents=True, exist_ok=True)
-        made = git("worktree", "add", "-b", expected_branch, str(worktree), origin_sha)
+        made = (git("worktree", "add", str(worktree), expected_branch) if branch
+                else git("worktree", "add", "-b", expected_branch, str(worktree), start or origin_sha))
         if made.returncode != 0:
             raise T.TransitionError(f"git worktree add failed: {(made.stderr or made.stdout).strip()[:300]}")
         return worktree

@@ -7,7 +7,8 @@ import { walkthrough } from "./walkthrough";
  * with none, with chats in every state and archived ones folded; a new chat from its empty page to its first turn,
  * with an image; a chat answering with its steps folded, a message that waits and Remove, Stop; a reply that could not
  * come, one cut off and Retry, a new session and a restart; the menu, Rename, Archive with and without changes, the
- * archived chat, Reopen and Delete; a failed and a missing read; Monitor's row. The service is real; the chats are
+ * archived chat, Reopen and Delete; Make a task with and without changes, refused, making and made with the task's
+ * card, and Make a task first from Archive; a failed and a missing read; Monitor's row. The service is real; the chats are
  * fictional fixtures behind routes, so no agent runs.
  */
 
@@ -53,7 +54,8 @@ const ROWS = [
 ];
 
 /** The project's chats behind every read and action route; `post` decides what each POST returns. */
-async function chats(page: Page, state: { listing: Json[]; detail: Record<string, Json>; post?: (path: string, body: Json) => { status: number; json: Json } }) {
+type Reply = { status: number; json: Json };
+async function chats(page: Page, state: { listing: Json[]; detail: Record<string, Json>; post?: (path: string, body: Json) => Reply | Promise<Reply> }) {
   const posts: { path: string; body: Json }[] = [];
   let fail = false;
   let failed = 0;
@@ -62,7 +64,7 @@ async function chats(page: Page, state: { listing: Json[]; detail: Record<string
     if (route.request().method() === "POST") {
       const body = route.request().postDataJSON() as Json;
       posts.push({ path, body });
-      const reply = state.post!(path, body);
+      const reply = await state.post!(path, body);
       return route.fulfill({ status: reply.status, json: reply.json });
     }
     if (fail) {
@@ -327,7 +329,7 @@ test("the menu, Rename, Archive with and without changes, Reopen and Delete", as
 
   await more.click();
   await walk.state("01-menu", {
-    visible: [menu.getByRole("menuitem", { name: "Rename" }), menu.getByRole("menuitem", { name: "Archive" }),
+    visible: [menu.getByRole("menuitem", { name: "Rename" }), menu.getByRole("menuitem", { name: "Make a task…" }), menu.getByRole("menuitem", { name: "Archive" }),
       menu.getByText(/^Opus 5 on .* · started .* · its copy: 1 changed file$/)],
     hidden: [],
   });
@@ -413,6 +415,111 @@ test("the menu, Rename, Archive with and without changes, Reopen and Delete", as
   await walk.state("08-deleted", { visible: [page.getByRole("region", { name: "Agent chats" })], hidden: [dialog] });
   expect(api.posts.map((post) => post.path.split("/").pop())).toEqual(["rename", "archive", "reopen", "archive", "delete"]);
   if (phone) await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Work", exact: true })).toHaveAttribute("aria-current", "page");
+});
+
+test("Make a task: the sheet with and without changes, refused, making, the task's card, and Make a task first", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const phone = info.project.name === "phone";
+  const done = chat({ changes: 1, items: [STARTED, YOU1, TURN1, YOU2, DONE2] });
+  const state = { listing: [] as Json[], detail: { [cid("a")]: done } as Record<string, Json>,
+    post: (_path: string, _body: Json): Reply | Promise<Reply> => reply(done) };
+  const api = await chats(page, state);
+  // The task the press makes, as the project's task list reads it once made.
+  let listed = false;
+  await page.route((url) => url.pathname === "/api/project/atlas", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json() as { tasks: Json[] };
+    if (listed) json.tasks.push({ slug: "faster-export", title: "Load export comments in one query", state: "queued", updated: ago(0) });
+    await route.fulfill({ response, json });
+  });
+  await walk.open(`/projects/atlas/chats/${cid("a")}`);
+  const more = page.getByRole("button", { name: "Chat actions" });
+  const menu = page.getByRole("menu", { name: "Chat actions" });
+  const sheet = page.getByRole("dialog", { name: "Make a task from this chat" });
+  const title = sheet.getByRole("textbox", { name: "Title" });
+  const deliver = sheet.getByRole("textbox", { name: "What should it deliver?" });
+  const make = sheet.getByRole("button", { name: "Make task" });
+  const cancel = sheet.getByRole("button", { name: "Cancel" });
+  const openSheet = async () => { await more.click(); await menu.getByRole("menuitem", { name: "Make a task…" }).click(); };
+
+  await openSheet();
+  await walk.state("01-task-sheet", {
+    visible: [title, deliver, sheet.getByText("Its changes (1 file) move to the task, with this conversation as its context. The chat goes on in a fresh copy of main."), make, cancel],
+    hidden: [sheet.getByText("It starts from main")],
+  });
+  await expect(title).toHaveValue("Why is the export slow?");
+  await expect(deliver).toHaveAttribute("placeholder", "For example: ship the faster export with a test");
+  await expect(make).toBeDisabled();
+  await cancel.click();
+  await expect(sheet).toBeHidden();
+  expect(api.posts).toHaveLength(0);
+
+  // Both fields are needed; a refusal says why and keeps what was written.
+  await openSheet();
+  await deliver.fill("Make the CSV and PDF exports load comments in one query, with a test for the big workspace.");
+  await title.fill(" ");
+  await expect(make).toBeDisabled();
+  await title.fill("Load export comments in one query");
+  state.post = () => ({ status: 409, json: { error: "Make a task when the reply has ended." } });
+  await make.click();
+  await walk.state("02-refused", { visible: [sheet.getByRole("alert").getByText("Make a task when the reply has ended."), make], hidden: [] });
+  await expect(deliver).toHaveValue(/^Make the CSV and PDF exports/);
+
+  // Making…, then the line and the task's card under it; the chat goes on.
+  const made = { ...done, changes: null, items: [...(done.items as Json[]),
+    { kind: "event", event: "task", at: ago(0), slug: "faster-export", moved: 1 }] };
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  state.post = async (path, body) => {
+    expect(path).toBe(`/api/chats/atlas/${cid("a")}/task`);
+    expect(body).toMatchObject({ title: "Load export comments in one query", text: "Make the CSV and PDF exports load comments in one query, with a test for the big workspace." });
+    await held;
+    state.detail[cid("a")] = made;
+    listed = true;
+    return reply(made);
+  };
+  await make.click();
+  await walk.state("03-making", { visible: [sheet.getByRole("button", { name: "Making…" })], hidden: [] });
+  await expect(cancel).toBeDisabled();
+  release();
+  const card = page.getByRole("link", { name: /^Load export comments in one query/ });
+  await walk.state("04-task-made", {
+    visible: [page.getByText("Task made by you · its changes moved to the task; a fresh copy of main"), card, page.getByRole("textbox", { name: "Message the agent" })],
+    hidden: [sheet],
+  });
+  await expect(card).toHaveAttribute("href", "/projects/atlas/tasks/faster-export");
+  // One request identity for the sheet: the refused press and the one that made the task are the same request.
+  const tasks = api.posts.filter((post) => post.path.endsWith("/task"));
+  expect(tasks).toHaveLength(2);
+  expect(tasks[0]!.body.request).toBe(tasks[1]!.body.request);
+
+  // A chat without changes starts the task from main.
+  await openSheet();
+  await walk.state("05-sheet-without-changes", { visible: [sheet.getByText("It starts from main, with this conversation as its context.")], hidden: [sheet.getByText(/^Its changes/)] });
+  await cancel.click();
+
+  // Archive with changes offers Make a task first, which opens the sheet.
+  state.detail[cid("a")] = done;
+  await page.reload();
+  await more.click();
+  await menu.getByRole("menuitem", { name: "Archive" }).click();
+  const archive = page.getByRole("dialog", { name: "Archive this chat?" });
+  await walk.state("06-archive-offers-a-task", {
+    visible: [archive.getByRole("button", { name: "Make a task first" }), archive.getByRole("button", { name: "Archive and delete changes" })], hidden: [],
+  });
+  await archive.getByRole("button", { name: "Make a task first" }).click();
+  await walk.state("07-make-a-task-first", { visible: [title, deliver], hidden: [archive] });
+  await cancel.click();
+
+  // While it answers, Make a task waits for the reply (the phone shows Stop in ⋯'s place).
+  if (!phone) {
+    state.detail[cid("a")] = chat({ state: "answering", changes: 1, items: [STARTED, YOU1, TURN1, YOU2, LIVE] });
+    await page.reload();
+    await more.click();
+    const item = menu.getByRole("menuitem", { name: /^Make a task…/ });
+    await walk.state("08-answering-menu", { visible: [item.getByText("Available when the reply ends")], hidden: [] });
+    await expect(item).toBeDisabled();
+  }
 });
 
 test("a chat that cannot be read: loading, a failed read with Retry, and one that is gone", async ({ page }, info) => {

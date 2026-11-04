@@ -54,6 +54,7 @@ class TestDispatchWorktreePolicy(AltitudeCase):
                           if e["kind"] == "task-branch-restored"], ["local-increment-3"])
 
     def test_orphan_task_branch_is_not_reattached_after_validation_races(self):
+        T.new("demo", "Orphan task", "Verify an orphan branch is refused")
         staging = self.tmp / "orphan-staging"
         git("worktree", "add", "-q", "-b", "worktree-orphan-task", str(staging), self.origin_sha, cwd=self.repo)
         git("worktree", "remove", str(staging), cwd=self.repo)

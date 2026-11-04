@@ -54,3 +54,13 @@
 /* An archived chat's dock: when, Reopen and Delete…. */
 .chat-archived-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px; }
 .shell[data-phone] .chat-archived-row .btn { min-height: 44px; }
+
+/* Make a task: the title field matches the sheet's text field. */
+.chat-task-sheet .chat-task-title {
+  width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--card); color: var(--text-primary); font: inherit;
+}
+.chat-task-sheet .chat-task-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.shell[data-phone] .chat-task-sheet .chat-task-title { min-height: 44px; font-size: 16px; }
+/* Archive's three choices stack on the phone, each one line wide. */
+.shell[data-phone] .chat-sheet-stack { flex-direction: column; }

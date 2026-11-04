@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -9,9 +9,10 @@ import { ChoiceButton } from "../components/ModelMenu";
 import { Prose, ProseScope } from "../components/Prose";
 import { BusyLabel } from "../components/StatusMark";
 import { StepRow, SysLine } from "../components/Steps";
+import { TaskCards } from "../components/TaskCard";
 import { chatDot, chatEngine } from "../components/WorkChats";
-import { ApiError, agentChatRequest, deleteAgentChat, newRequest, useAgentChat, useAgentChatAction, useOverview } from "../data/api";
-import type { AgentChat, AgentChatItem, Choice, Overview } from "../data/api";
+import { ApiError, agentChatRequest, deleteAgentChat, newRequest, taskMap, useAgentChat, useAgentChatAction, useOverview, useProject } from "../data/api";
+import type { AgentChat, AgentChatItem, Choice, Overview, TaskRow } from "../data/api";
 import { dayText, when } from "../data/observed";
 import { Overlay } from "../shell/Overlay";
 import { useViewport } from "../shell/breakpoints";
@@ -19,12 +20,13 @@ import "../components/chats.css";
 
 /*
  * One agent chat (SPEC.md §3.18, design/wireframes/chats/PROPOSAL.md): a task page's header with the Work crumb, its
- * name, Stop while it answers and ⋯ (Rename, Archive); one conversation of your messages, each turn's steps folded
- * under one line, and its reply; the composer with the model pill. `/chats/new` is the empty chat that the first
- * message makes.
+ * name, Stop while it answers and ⋯ (Rename, Make a task…, Archive); one conversation of your messages, each turn's
+ * steps folded under one line, and its reply, with the card of each task made from it; the composer with the model
+ * pill. `/chats/new` is the empty chat that the first message makes.
  */
 
 type Turn = Extract<AgentChatItem, { kind: "turn" }>;
+type ChatEvent = Extract<AgentChatItem, { kind: "event" }>;
 type Step = Turn["steps"][number];
 
 /** "3 min", "1 h 4 min": how long a turn worked. */
@@ -87,18 +89,19 @@ function TurnRows({ turn, chat, engine, last, onRetry, retrying }: {
   </>;
 }
 
-const EVENTS: Record<string, (engine: string) => string> = {
+const EVENTS: Record<string, (engine: string, event: ChatEvent) => string> = {
   started: (engine) => `Started · ${engine} · its own copy of main`,
   new_session: (engine) => `New session on ${engine} · it was given this conversation so far`,
   restarted: () => "Altitude restarted · the reply continued",
+  task: (_, event) => event.moved ? "Task made by you · its changes moved to the task; a fresh copy of main" : "Task made by you",
   archived: () => "Archived by you",
   reopened: () => "Reopened · a fresh copy of main",
 };
 
 /** The conversation in order, with a day divider whenever the day changes. */
-function Timeline({ project, chat, overview, onRemove, removing, onRetry, retrying }: {
-  project: string; chat: AgentChat; overview: Overview | undefined; onRemove: (message: string) => void; removing: string | null;
-  onRetry: () => void; retrying: boolean;
+function Timeline({ project, chat, overview, tasks, onRemove, removing, onRetry, retrying }: {
+  project: string; chat: AgentChat; overview: Overview | undefined; tasks: Map<string, TaskRow>; onRemove: (message: string) => void;
+  removing: string | null; onRetry: () => void; retrying: boolean;
 }) {
   const rows: ReactNode[] = [];
   let day = "";
@@ -112,7 +115,8 @@ function Timeline({ project, chat, overview, onRemove, removing, onRetry, retryi
     }
     if (item.kind === "event") {
       const engine = chatEngine({ engine: item.engine ?? null, model: item.model ?? null }, overview);
-      rows.push(<SysLine key={`event-${i}`} at={item.at}>{EVENTS[item.event]!(engine)}</SysLine>);
+      rows.push(<SysLine key={`event-${i}`} at={item.at}>{EVENTS[item.event]!(engine, item)}</SysLine>);
+      if (item.slug) rows.push(<TaskCards key={`task-${item.slug}`} project={project} slugs={[item.slug]} tasks={tasks} />);
     } else if (item.kind === "you") {
       const images = item.images.length ? <MessageImages project={project} images={item.images} context={sentBy("You", item.at)} /> : null;
       rows.push(item.waiting ? <Bubble key={item.id} text={item.text} state="queued" images={images}>
@@ -138,10 +142,10 @@ function started(value: string) {
   return then == null ? "" : new Date(then).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-/** ⋯: Rename and Archive, then what the chat runs on, when it started and what its copy holds. A bottom sheet on the
- * phone, a popover on desktop. */
-function ChatMenu({ chat, overview, answering, onRename, onArchive }: {
-  chat: AgentChat; overview: Overview | undefined; answering: boolean; onRename: () => void; onArchive: () => void;
+/** ⋯: Rename, Make a task… and Archive, then what the chat runs on, when it started and what its copy holds. A bottom
+ * sheet on the phone, a popover on desktop. */
+function ChatMenu({ chat, overview, answering, onRename, onTask, onArchive }: {
+  chat: AgentChat; overview: Overview | undefined; answering: boolean; onRename: () => void; onTask: () => void; onArchive: () => void;
 }) {
   const { phone } = useViewport();
   const [open, setOpen] = useState(false);
@@ -173,6 +177,9 @@ function ChatMenu({ chat, overview, answering, onRename, onArchive }: {
     chat.changes == null ? "" : `its copy: ${chat.changes ? changedFiles(chat.changes) : "no changes"}`].filter(Boolean).join(" · ");
   const items = <div role="menu" className={phone ? "chat-menu" : "menu chat-menu"} aria-label="Chat actions" onKeyDown={onMenuKey}>
     <button type="button" role="menuitem" className="menu-item" data-autofocus onClick={() => pick(onRename)}>Rename</button>
+    <button type="button" role="menuitem" className="menu-item" disabled={answering} onClick={() => pick(onTask)}>
+      Make a task…{answering ? <span className="menu-item-meta">Available when the reply ends</span> : null}
+    </button>
     <button type="button" role="menuitem" className="menu-item" disabled={answering} onClick={() => pick(onArchive)}>
       Archive{answering ? <span className="menu-item-meta">Available when the reply ends</span> : null}
     </button>
@@ -213,9 +220,52 @@ function Rename({ chat, project, onDone }: { chat: AgentChat; project: string; o
   </form>;
 }
 
-/** Archive asks only when the copy has changes no task has; otherwise it archives at once. */
-function ArchiveSheet({ chat, pending, error, onArchive, onClose }: {
-  chat: AgentChat; pending: boolean; error: string; onArchive: () => void; onClose: () => void;
+/** Make a task from the chat: its title (the chat's name to start) and what it should deliver. Its changes move to the
+ * task and the chat goes on in a fresh copy of main. One request identity per sheet makes a double tap, or a retry
+ * after a lost reply, make one task. */
+function TaskSheet({ chat, project, onClose }: { chat: AgentChat; project: string; onClose: () => void }) {
+  const { phone } = useViewport();
+  const client = useQueryClient();
+  const [title, setTitle] = useState(chat.name);
+  const [text, setText] = useState("");
+  const [request] = useState(newRequest);
+  const field = useRef<HTMLTextAreaElement>(null);
+  const make = useAgentChatAction(project, (input: { title: string; text: string }) => agentChatRequest(project, `/${chat.id}/task`, input, request));
+  useLayoutEffect(() => {
+    const node = field.current;
+    if (!node) return;
+    node.style.height = "auto";
+    node.style.height = `${node.scrollHeight}px`;
+  }, [text]);
+  const ready = Boolean(title.trim() && text.trim()) && !make.isPending;
+  const submit = () => make.mutate({ title: title.trim(), text: text.trim() }, {
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ["project", project] }); onClose(); },
+  });
+  const files = chat.changes ? `${chat.changes} file${chat.changes === 1 ? "" : "s"}` : "";
+  return <Overlay label="Make a task from this chat" side={phone ? "bottom" : "center"} onClose={() => { if (!make.isPending) onClose(); }}>
+    <form className="repair-sheet chat-task-sheet" onSubmit={(event) => { event.preventDefault(); if (ready) submit(); }}>
+      {phone ? <span className="repair-sheet-grab" aria-hidden /> : null}
+      <h2>Make a task from this chat</h2>
+      <label className="repair-sheet-label" htmlFor="chat-task-title">Title</label>
+      <input id="chat-task-title" className="chat-task-title" value={title} maxLength={120} disabled={make.isPending}
+        onChange={(event) => setTitle(event.target.value)} />
+      <label className="repair-sheet-label" htmlFor="chat-task-text">What should it deliver?</label>
+      <textarea id="chat-task-text" ref={field} rows={2} value={text} data-autofocus maxLength={20000} disabled={make.isPending}
+        placeholder="For example: ship the faster export with a test" onChange={(event) => setText(event.target.value)} />
+      <p className="text-meta text-muted">{files ? `Its changes (${files}) move to the task, with this conversation as its context. The chat goes on in a fresh copy of main.`
+        : "It starts from main, with this conversation as its context."}</p>
+      <div className="repair-sheet-buttons">
+        <button type="submit" className="btn btn-primary" disabled={!ready}><BusyLabel busy={make.isPending} label="Make task" working="Making…" /></button>
+        <button type="button" className="btn btn-ghost" disabled={make.isPending} onClick={onClose}>Cancel</button>
+      </div>
+      {make.isError ? <p className="text-meta text-danger" role="alert">{make.error.message}</p> : null}
+    </form>
+  </Overlay>;
+}
+
+/** Archive asks only when the copy has changes no task has, offering Make a task first; otherwise it archives at once. */
+function ArchiveSheet({ chat, pending, error, onArchive, onTask, onClose }: {
+  chat: AgentChat; pending: boolean; error: string; onArchive: () => void; onTask: () => void; onClose: () => void;
 }) {
   const { phone } = useViewport();
   return <Overlay label="Archive this chat?" side={phone ? "bottom" : "center"} onClose={() => { if (!pending) onClose(); }}>
@@ -225,7 +275,8 @@ function ArchiveSheet({ chat, pending, error, onArchive, onClose }: {
       <p>Its copy of the code has changes no task has: <b>{changedFiles(chat.changes ?? 0)}</b>. Archiving deletes them. The conversation
         stays, and Reopen starts a fresh copy from main.</p>
       {error ? <p className="text-meta text-danger" role="alert">{error}</p> : null}
-      <div className="repair-sheet-buttons">
+      <div className="repair-sheet-buttons chat-sheet-stack">
+        <button type="button" className="btn" disabled={pending} onClick={onTask}>Make a task first</button>
         <button type="button" className="btn btn-danger" disabled={pending} onClick={onArchive}>
           <BusyLabel busy={pending} label="Archive and delete changes" working="Archiving…" /></button>
         <button type="button" className="btn btn-ghost" data-autofocus disabled={pending} onClick={onClose}>Cancel</button>
@@ -348,6 +399,7 @@ export default function ChatRoute() {
   const [newChoice, setNewChoice] = useState<Choice>(null);
   const [renaming, setRenaming] = useState(false);
   const [archiveAsk, setArchiveAsk] = useState(false);
+  const [taskAsk, setTaskAsk] = useState(false);
   const [voiceOwnsEscape, setVoiceOwnsEscape] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const home = `/projects/${project}?tab=work`;
@@ -361,6 +413,11 @@ export default function ChatRoute() {
   const remove = useAgentChatAction(project, (message: string) => agentChatRequest(project, `/${id}/remove`, { message }, newRequest()));
   const archive = useAgentChatAction(project, (discard: boolean) => agentChatRequest(project, `/${id}/archive`, { discard }, newRequest()));
 
+  // The task cards' rows, read only once a task was made from the chat.
+  const made = Boolean(chat?.items.some((item) => item.kind === "event" && item.slug));
+  const projectView = useProject(project, made);
+  const tasks = useMemo(() => taskMap(projectView.data), [projectView.data]);
+
   const answering = chat?.state === "answering" || chat?.state === "starting";
   const archived = Boolean(chat?.archived);
   const engine = chat ? chatEngine(chat, overview.data) : "";
@@ -371,8 +428,10 @@ export default function ChatRoute() {
     : chat?.state === "failed" ? "Couldn’t answer" : "";
   const action = chat && !archived ? answering ? <>
     <StopButton project={project} chat={chat} escape={!phone} voiceOwnsEscape={voiceOwnsEscape} />
-    {phone ? null : <ChatMenu chat={chat} overview={overview.data} answering onRename={() => setRenaming(true)} onArchive={onArchive} />}
-  </> : <ChatMenu chat={chat} overview={overview.data} answering={false} onRename={() => setRenaming(true)} onArchive={onArchive} /> : null;
+    {phone ? null : <ChatMenu chat={chat} overview={overview.data} answering onRename={() => setRenaming(true)} onTask={() => setTaskAsk(true)}
+      onArchive={onArchive} />}
+  </> : <ChatMenu chat={chat} overview={overview.data} answering={false} onRename={() => setRenaming(true)} onTask={() => setTaskAsk(true)}
+    onArchive={onArchive} /> : null;
 
   let body: ReactNode;
   if (!id) body = <p className="chat-empty text-muted">Works in its own copy of {project}’s code, made from main when you send.</p>;
@@ -381,7 +440,7 @@ export default function ChatRoute() {
     body = query.error instanceof ApiError && query.error.status === 404 ? <p className="text-meta text-muted">{query.error.message}</p>
       : <p role="alert" className="text-danger">Couldn’t load this chat. <button type="button" className="link" onClick={() => void query.refetch()}>Retry</button></p>;
   } else if (chat) {
-    body = <Timeline project={project} chat={chat} overview={overview.data} removing={removing} retrying={retry.isPending}
+    body = <Timeline project={project} chat={chat} overview={overview.data} tasks={tasks} removing={removing} retrying={retry.isPending}
       onRetry={() => retry.mutate(undefined)}
       onRemove={(message) => { setRemoving(message); remove.mutate(message, { onSettled: () => setRemoving(null) }); }} />;
   }
@@ -407,8 +466,9 @@ export default function ChatRoute() {
     {foot}
   </section>;
   const dot = chat ? <span className="dot" data-state={chatDot(chat.state)} aria-hidden /> : null;
-  const sheets = chat && archiveAsk ? <ArchiveSheet chat={chat} pending={archive.isPending} error={archive.error?.message ?? ""}
-    onArchive={() => doArchive(true)} onClose={() => setArchiveAsk(false)} /> : null;
+  const sheets = chat && taskAsk ? <TaskSheet chat={chat} project={project} onClose={() => setTaskAsk(false)} />
+    : chat && archiveAsk ? <ArchiveSheet chat={chat} pending={archive.isPending} error={archive.error?.message ?? ""}
+      onArchive={() => doArchive(true)} onTask={() => { setArchiveAsk(false); setTaskAsk(true); }} onClose={() => setArchiveAsk(false)} /> : null;
   const rename = chat && renaming ? <Rename chat={chat} project={project} onDone={() => setRenaming(false)} /> : null;
 
   if (phone) {

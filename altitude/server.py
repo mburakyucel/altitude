@@ -2174,7 +2174,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, 404)
 
     def _chat_post(self, parts: list[str], o: dict) -> None:
-        """New, message, remove, retry, rename, model, stop, archive, reopen and delete, from a paired browser only
+        """New, message, remove, retry, rename, model, stop, task, archive, reopen and delete, from a paired browser only
         (`_repair_denied`); each request names itself, so a repeated tap or a replayed request acts once. A message
         starts the chat's next turn when none is running (`chats.run`)."""
         if self._repair_denied(json_body=True, subject="Agent chat"):
@@ -2206,6 +2206,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = chats.set_choice(project, chat_id, o.get("choice"), request)
             elif action == "stop":
                 result = chats.stop(project, chat_id, request)
+            elif action == "task":
+                result = chats.make_task(project, chat_id, o.get("title"), o.get("text"), request)
             elif action == "archive":
                 result = chats.archive(project, chat_id, request, discard=o.get("discard") is True)
             elif action == "reopen":
@@ -2214,7 +2216,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(chats.delete(project, chat_id))
             else:
                 return self._json({"error": "not found"}, 404)
-            if action in ("message", "retry", "stop"):
+            if action in ("message", "retry", "stop", "task"):
                 spawn(f"chat:{project}:{chat_id}", chats.run, project, chat_id)
             return self._json(chats.view(project, result["id"]))
         except chats.Refused as exc:

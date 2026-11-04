@@ -82,7 +82,7 @@ def _chats(args) -> None:
             lines.append(f"\nAgent, {item['started']} · {ran} steps · {item['state']}:\n"
                          + (item["answer"] or item["error"] or ""))
         else:
-            lines.append(f"\n· {item['event']} {item['at']}")
+            lines.append(f"\n· {item['event']}{' ' + item['slug'] if item.get('slug') else ''} {item['at']}")
     say("\n".join(lines))
 
 
