@@ -268,8 +268,9 @@ def fetch_ref_collision(result: subprocess.CompletedProcess, base: str) -> bool:
 
 def _fetch(repo: Path, branch: str, refspec: str) -> None:
     """Fetch `refspec` for `branch` from `repo`'s origin. The checkout and Altitude's copy of its repository fetch one
-    origin, so a failure reads the same from either, `git fetch origin <branch>: <Git's words>`, and a lasting one is
-    one observation, not a changed fault each time the other fetch fails first (#1167)."""
+    origin, so the origin's refusal or silence reads the same from either, `git fetch origin <branch>: <Git's words>`
+    or `...: timed out after 300 seconds`, and a lasting one is one observation, not a changed fault each time the
+    other fetch fails first (#1167)."""
     what = f"git fetch origin {branch}"
     env = dict(os.environ, LC_ALL="C")
     try:
@@ -280,10 +281,8 @@ def _fetch(repo: Path, branch: str, refspec: str) -> None:
             result = _run(repo, "fetch", "--quiet", "--no-tags", "origin", refspec, timeout=300, env=env)
         _output(result, what)
     except GitPolicyError as exc:
-        cause = exc.__cause__   # Git did not run to the end; a timeout's own text names the repository's path
-        if cause is not None:
-            reason = f"timed out after {cause.timeout:g} seconds" if isinstance(cause, subprocess.TimeoutExpired) else cause
-            raise FetchError(f"{what}: {reason}") from exc
+        if isinstance(exc.__cause__, subprocess.TimeoutExpired):  # its own text names the repository's path
+            raise FetchError(f"{what}: timed out after {exc.__cause__.timeout:g} seconds") from exc
         raise FetchError(str(exc)) from exc
 
 

@@ -1317,9 +1317,8 @@ def self_deploy(project: str) -> None:
             _refused[step] = str(e)
         _failing_since.pop(step, None)
         return
-    failed = _failing_since.pop(step, None) is not None
-    if _refused.pop(step, None) is not None or failed:   # a failure after this success is news, as in #1167
-        incidents.fault_cleared("self-deploy", project)
+    _failing_since.pop(step, None)
+    _refused.pop(step, None)
 
 
 def tick_project(project: str) -> None:

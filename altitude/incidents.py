@@ -186,8 +186,11 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
 
 def fault_cleared(kind: str, project: str | None = None) -> None:
     """The one step behind a taskless fault succeeded: its next failure is a new observation, even in the same words,
-    while its incident stays the one that holds the evidence (#1167)."""
+    while its incident stays the one that holds the evidence (#1167). Cheap when nothing is recorded, as on most
+    ticks."""
     key = json.dumps([project, kind])
+    if ((S.read_json(FAULTS, {}) or {}).get(key) or {}).get("detail") is None:
+        return
     with _fault_lock():
         faults = S.read_json(FAULTS, {}) or {}
         if (faults.get(key) or {}).get("detail") is not None:

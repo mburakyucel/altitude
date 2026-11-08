@@ -367,8 +367,14 @@ class TestSelfDeploy(AltitudeCase):
         for step, site in enumerate((config.SOURCE_COPY, self.repo, config.SOURCE_COPY), start=6):
             tick(1000.0 + grace * step, site)
         self.assertEqual(notices(), (3, 3))
-        tick(1000.0 + grace * 9, self.tmp)   # GitHub answers again
-        for step in (10, 11):   # the same timeout after a recovery is news
+        with mock.patch.object(config, "restart_in_progress", return_value=True):   # postponed, not recovered
+            tick(1000.0 + grace * 9, self.repo)
+        for step in (10, 11):
+            tick(1000.0 + grace * step, config.SOURCE_COPY)
+        self.assertEqual(notices(), (3, 3))
+        server._failing_since.clear()   # Altitude restarts, then GitHub answers again
+        tick(1000.0 + grace * 12, self.tmp)
+        for step in (13, 14):   # the same timeout after a recovery is news
             tick(1000.0 + grace * step, self.repo)
         self.assertEqual(notices(), (4, 4))
 
