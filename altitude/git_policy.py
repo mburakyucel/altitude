@@ -266,19 +266,29 @@ def fetch_ref_collision(result: subprocess.CompletedProcess, base: str) -> bool:
     return bool(result.returncode and len(diagnostics) == 1 and re.fullmatch(collision, diagnostics[0]))
 
 
+def _fetch(repo: Path, branch: str, refspec: str) -> None:
+    """Fetch `refspec` for `branch` from `repo`'s origin. The checkout and Altitude's copy of its repository fetch one
+    origin, so a failure reads the same from either, `git fetch origin <branch>: <Git's words>`, and a lasting one is
+    one observation, not a changed fault each time the other fetch fails first (#1167)."""
+    what = f"git fetch origin {branch}"
+    env = dict(os.environ, LC_ALL="C")
+    try:
+        result = _run(repo, "fetch", "--quiet", "--no-tags", "origin", refspec, timeout=300, env=env)
+        # #404: another worktree's fetch can win the remote ref's compare-and-swap.
+        # Require a fresh successful fetch, never infer success from the cached ref.
+        if fetch_ref_collision(result, branch):
+            result = _run(repo, "fetch", "--quiet", "--no-tags", "origin", refspec, timeout=300, env=env)
+        _output(result, what)
+    except GitPolicyError as exc:
+        if isinstance(exc.__cause__, subprocess.TimeoutExpired):  # its own text names the repository's path
+            raise FetchError(f"{what}: timed out after {exc.__cause__.timeout:g} seconds") from exc
+        raise FetchError(str(exc)) from exc
+
+
 def fetch_origin(repo: str | Path, base: str = DEFAULT_BASE) -> str:
     """Fetch one remote base and return its new immutable commit id."""
     root = Path(repo).resolve()
-    env = dict(os.environ, LC_ALL="C")
-    try:
-        result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300, env=env)
-        # #404: another worktree's fetch can win the remote ref's compare-and-swap.
-        # Require a fresh successful fetch, never infer success from the cached ref.
-        if fetch_ref_collision(result, base):
-            result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300, env=env)
-        _output(result, f"git fetch origin {base}")
-    except GitPolicyError as exc:
-        raise FetchError(str(exc)) from exc
+    _fetch(root, base, base)
     return capture_origin_sha(root, base)
 
 
@@ -461,10 +471,8 @@ def _seed_source_copy(repo: Path, branch: str) -> None:
 
 
 def _fetch_source_copy(branch: str) -> None:
-    try:
-        _copy("fetch", "--quiet", "--no-tags", "origin", f"+refs/heads/{branch}:refs/heads/{branch}", timeout=300)
-    except GitPolicyError as exc:
-        raise FetchError(str(exc)) from exc
+    from . import config
+    _fetch(config.SOURCE_COPY, branch, f"+refs/heads/{branch}:refs/heads/{branch}")
 
 
 def source_head(repo: str | Path, branch: str) -> str:
