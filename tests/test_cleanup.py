@@ -328,7 +328,7 @@ class TestSelfDeploy(AltitudeCase):
         self.assertEqual(fault.call_args.args[0], "self-deploy")
         self.assertIn("altitude: git fetch origin main:", fault.call_args.args[1])
 
-    def test_a_lasting_refusal_from_either_fetch_wakes_l3_and_the_chat_once(self):
+    def test_a_lasting_fetch_failure_notifies_once_until_its_error_changes_or_it_recurs(self):
         """#1167: GitHub refused the checkout's fetch on some ticks and the source copy's on others."""
         self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)
         self.patch(config, "REPO", self.repo)
@@ -367,6 +367,10 @@ class TestSelfDeploy(AltitudeCase):
         for step, site in enumerate((config.SOURCE_COPY, self.repo, config.SOURCE_COPY), start=6):
             tick(1000.0 + grace * step, site)
         self.assertEqual(notices(), (3, 3))
+        tick(1000.0 + grace * 9, self.tmp)   # GitHub answers again
+        for step in (10, 11):   # the same timeout after a recovery is news
+            tick(1000.0 + grace * step, self.repo)
+        self.assertEqual(notices(), (4, 4))
 
     def test_tick_faults_a_policy_refusal_immediately(self):
         self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)

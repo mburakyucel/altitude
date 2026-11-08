@@ -184,6 +184,17 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
     return {"kind": kind, "incident": inc["id"], "count": rec["count"], "issue": issue.get("issue")}
 
 
+def fault_cleared(kind: str, project: str | None = None) -> None:
+    """The one step behind a taskless fault succeeded: its next failure is a new observation, even in the same words,
+    while its incident stays the one that holds the evidence (#1167)."""
+    key = json.dumps([project, kind])
+    with _fault_lock():
+        faults = S.read_json(FAULTS, {}) or {}
+        if (faults.get(key) or {}).get("detail") is not None:
+            faults[key] = {**faults[key], "detail": None}
+            S.write_json(FAULTS, faults)
+
+
 def index(project: str | None = None) -> list[dict]:
     path = config.project_dir(project) / "incidents.jsonl" if project else config.INCIDENT_INDEX
     if not path.exists():

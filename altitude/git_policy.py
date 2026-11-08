@@ -280,8 +280,10 @@ def _fetch(repo: Path, branch: str, refspec: str) -> None:
             result = _run(repo, "fetch", "--quiet", "--no-tags", "origin", refspec, timeout=300, env=env)
         _output(result, what)
     except GitPolicyError as exc:
-        if isinstance(exc.__cause__, subprocess.TimeoutExpired):  # its own text names the repository's path
-            raise FetchError(f"{what}: timed out after {exc.__cause__.timeout:g} seconds") from exc
+        cause = exc.__cause__   # Git did not run to the end; a timeout's own text names the repository's path
+        if cause is not None:
+            reason = f"timed out after {cause.timeout:g} seconds" if isinstance(cause, subprocess.TimeoutExpired) else cause
+            raise FetchError(f"{what}: {reason}") from exc
         raise FetchError(str(exc)) from exc
 
 
