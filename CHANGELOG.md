@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A lasting GitHub outage during self-deploy wakes the coordinator and posts its chat notice once. Both of
+  Altitude's fetches from GitHub describe a failure in the same words, so the notice no longer repeats each
+  time the other fetch is the one that fails. A different error, or the same one returning after self-deploy
+  worked again, sends a new notice.
 - `alt task save report` checks the whole report against its schema, nested entries included, and refuses one with a
   missing, misspelled or extra key, naming where it is and what belongs there, so the owner fixes it in the same
   turn. A merged pull request reported without its merge commit is handed back asking for `merge_sha`.

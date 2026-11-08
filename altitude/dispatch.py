@@ -1995,7 +1995,10 @@ def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]
     with config.restart_lock() as ready:
         if not ready or config.restart_in_progress():
             return ["deferred self-deploy: activation in progress"]
-        return _self_deploy_fast_forward(project, slug)
+        notes = _self_deploy_fast_forward(project, slug)
+    from . import incidents
+    incidents.fault_cleared("self-deploy", project)   # it ran to the end: the same failure again is news (#1167)
+    return notes
 
 
 def _self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:

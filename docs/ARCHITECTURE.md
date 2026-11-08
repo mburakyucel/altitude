@@ -1439,7 +1439,11 @@ failure; otherwise valid isolated tasks continue. Publication retains its curren
 ownership boundaries and review holds.
 
 A failing `git fetch origin main` for self-deploy, or a checkout fetch that still disagrees with Altitude's copy
-of its repository, raises `git_policy.FetchError`. The tick logs each
+of its repository, raises `git_policy.FetchError`. The checkout and the copy fetch through one `git_policy._fetch`,
+so a refusal or timeout at either reads the same, `git fetch origin <branch>: <Git's words>`, and a lasting
+outage stays one unchanged fault observation whichever fetch fails first (#1167). A self-deploy that runs to
+the end, not one postponed during activation, clears that observation with `incidents.fault_cleared`, so the same
+error coming back, even across a restart, notifies L3 and the chat again under the same incident. The tick logs each
 such failure, and each command of the tick that outlives its time limit on a busy host (#724), and
 retries it on the next tick. It raises the system fault (`self-deploy`, or `tick` for the setup check
 and the rest of the tick) only once the same step has failed for five minutes without a success in

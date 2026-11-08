@@ -1,5 +1,6 @@
 """cleanup_task frees a finished task's worktree and branch once nothing needs them, and
 prune_source_exports removes launch exports nothing names (real git, disposable repositories)."""
+import json
 import os
 import subprocess
 import time
@@ -7,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.support import AltitudeCase, git, make_repo
-from altitude import config, dispatch, engines, project_setup, server, state as S
+from tests.support import AltitudeCase, fyi_rows, git, make_repo
+from altitude import config, dispatch, engines, git_policy, incidents, l3, project_setup, server, state as S
 
 
 class TestCleanup(AltitudeCase):
@@ -326,6 +327,56 @@ class TestSelfDeploy(AltitudeCase):
         fault.assert_called_once()
         self.assertEqual(fault.call_args.args[0], "self-deploy")
         self.assertIn("altitude: git fetch origin main:", fault.call_args.args[1])
+
+    def test_a_lasting_fetch_failure_notifies_once_until_its_error_changes_or_it_recurs(self):
+        """#1167: GitHub refused the checkout's fetch on some ticks and the source copy's on others."""
+        self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)
+        self.patch(config, "REPO", self.repo)
+        server.self_deploy("altitude")   # healthy: the source copy exists, as on a running installation
+        denied = "git@github.example: Permission denied (publickey).\nfatal: Could not read from remote repository.\n"
+        refusing, run = [None, denied], subprocess.run
+
+        def fetch(cmd, *args, **kwargs):
+            if cmd[3:4] == ["fetch"] and Path(cmd[2]).resolve() == refusing[0]:
+                if refusing[1] is None:
+                    raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+                return subprocess.CompletedProcess(cmd, 128, "", refusing[1])
+            return run(cmd, *args, **kwargs)
+
+        def tick(now: float, site: Path) -> None:
+            refusing[0] = site.resolve()
+            with mock.patch.object(git_policy.subprocess, "run", side_effect=fetch), mock.patch.object(server, "log"), \
+                 mock.patch.object(server.time, "monotonic", return_value=now):
+                server.self_deploy("altitude")
+
+        def notices() -> tuple[int, int]:
+            wakes = l3.queue_path("altitude")
+            return (sum("SYSTEM FAULT [self-deploy]" in row["text"] for row in fyi_rows("altitude")),
+                    len(wakes.read_text().splitlines()) if wakes.exists() else 0)
+
+        grace = server.TICK_GRACE_SECONDS
+        for step, site in enumerate((self.repo, self.repo, config.SOURCE_COPY, self.repo, config.SOURCE_COPY)):
+            tick(1000.0 + grace * step, site)
+        self.assertEqual(notices(), (1, 1))
+        detail = S.read_json(incidents.FAULTS)[json.dumps(["altitude", "self-deploy"])]["detail"]
+        self.assertEqual(detail, "altitude: git fetch origin main: " + denied.strip())
+        refusing[1] = "ssh: Could not resolve hostname github.example\nfatal: Could not read from remote repository.\n"
+        tick(1000.0 + grace * 5, config.SOURCE_COPY)   # a different error is news
+        self.assertEqual(notices(), (2, 2))
+        refusing[1] = None   # GitHub stops answering: a timeout names neither repository
+        for step, site in enumerate((config.SOURCE_COPY, self.repo, config.SOURCE_COPY), start=6):
+            tick(1000.0 + grace * step, site)
+        self.assertEqual(notices(), (3, 3))
+        with mock.patch.object(config, "restart_in_progress", return_value=True):   # postponed, not recovered
+            tick(1000.0 + grace * 9, self.repo)
+        for step in (10, 11):
+            tick(1000.0 + grace * step, config.SOURCE_COPY)
+        self.assertEqual(notices(), (3, 3))
+        server._failing_since.clear()   # Altitude restarts, then GitHub answers again
+        tick(1000.0 + grace * 12, self.tmp)
+        for step in (13, 14):   # the same timeout after a recovery is news
+            tick(1000.0 + grace * step, self.repo)
+        self.assertEqual(notices(), (4, 4))
 
     def test_tick_faults_a_policy_refusal_immediately(self):
         self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)
